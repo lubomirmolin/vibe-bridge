@@ -45,6 +45,31 @@ pub struct ThreadSummaryDto {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadDetailDto {
+    pub contract_version: String,
+    pub thread_id: String,
+    pub title: String,
+    pub status: ThreadStatus,
+    pub workspace: String,
+    pub repository: String,
+    pub branch: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub source: String,
+    pub access_mode: AccessMode,
+    pub last_turn_summary: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadTimelineEntryDto {
+    pub event_id: String,
+    pub kind: BridgeEventKind,
+    pub occurred_at: String,
+    pub summary: String,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecurityAuditEventDto {
     pub actor: String,
     pub action: String,
@@ -86,7 +111,7 @@ impl<TPayload> BridgeEventEnvelope<TPayload> {
 mod tests {
     use super::{
         BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, SecurityAuditEventDto,
-        ThreadStatus, ThreadSummaryDto,
+        ThreadDetailDto, ThreadStatus, ThreadSummaryDto, ThreadTimelineEntryDto,
     };
 
     #[test]
@@ -110,6 +135,28 @@ mod tests {
         assert_eq!(event.contract_version, CONTRACT_VERSION);
         assert_eq!(event.kind, BridgeEventKind::MessageDelta);
         assert_eq!(event.payload["delta"], "Working on foundation contracts");
+    }
+
+    #[test]
+    fn thread_detail_fixture_matches_contract() {
+        let fixture = include_str!("../../../shared/contracts/fixtures/thread_detail.json");
+        let detail: ThreadDetailDto =
+            serde_json::from_str(fixture).expect("thread detail fixture should decode");
+
+        assert_eq!(detail.contract_version, CONTRACT_VERSION);
+        assert_eq!(detail.thread_id, "thread-123");
+        assert_eq!(detail.last_turn_summary, "Summarized lifecycle behavior");
+    }
+
+    #[test]
+    fn thread_timeline_fixture_matches_contract() {
+        let fixture = include_str!("../../../shared/contracts/fixtures/thread_timeline.json");
+        let timeline: Vec<ThreadTimelineEntryDto> =
+            serde_json::from_str(fixture).expect("thread timeline fixture should decode");
+
+        assert_eq!(timeline.len(), 2);
+        assert_eq!(timeline[0].kind, BridgeEventKind::MessageDelta);
+        assert_eq!(timeline[1].payload["command"], "cargo test --workspace");
     }
 
     #[test]

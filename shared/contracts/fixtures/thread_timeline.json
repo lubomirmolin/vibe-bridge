@@ -1,0 +1,21 @@
+[
+  {
+    "event_id": "evt-1",
+    "kind": "message_delta",
+    "occurred_at": "2026-03-17T18:01:00Z",
+    "summary": "Agent emitted message delta",
+    "payload": {
+      "delta": "Working on foundation contracts"
+    }
+  },
+  {
+    "event_id": "evt-2",
+    "kind": "command_delta",
+    "occurred_at": "2026-03-17T18:01:10Z",
+    "summary": "Command output streamed",
+    "payload": {
+      "command": "cargo test --workspace",
+      "delta": "running 12 tests"
+    }
+  }
+]
