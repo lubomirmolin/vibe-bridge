@@ -75,3 +75,43 @@ struct BridgeEventEnvelope<TPayload: Codable & Equatable>: Codable, Equatable {
         case payload
     }
 }
+
+struct PairingBridgeIdentityDTO: Codable, Equatable {
+    let bridgeID: String
+    let displayName: String
+    let apiBaseURL: String
+
+    enum CodingKeys: String, CodingKey {
+        case bridgeID = "bridge_id"
+        case displayName = "display_name"
+        case apiBaseURL = "api_base_url"
+    }
+}
+
+struct PairingSessionDTO: Codable, Equatable {
+    let sessionID: String
+    let pairingToken: String
+    let issuedAtEpochSeconds: UInt64
+    let expiresAtEpochSeconds: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case sessionID = "session_id"
+        case pairingToken = "pairing_token"
+        case issuedAtEpochSeconds = "issued_at_epoch_seconds"
+        case expiresAtEpochSeconds = "expires_at_epoch_seconds"
+    }
+}
+
+struct PairingSessionResponseDTO: Codable, Equatable {
+    let contractVersion: String
+    let bridgeIdentity: PairingBridgeIdentityDTO
+    let pairingSession: PairingSessionDTO
+    let qrPayload: String
+
+    enum CodingKeys: String, CodingKey {
+        case contractVersion = "contract_version"
+        case bridgeIdentity = "bridge_identity"
+        case pairingSession = "pairing_session"
+        case qrPayload = "qr_payload"
+    }
+}

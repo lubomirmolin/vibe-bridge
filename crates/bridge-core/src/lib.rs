@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use serde_json::json;
@@ -77,6 +77,7 @@ where
         thread_api,
         runtime,
         StreamRouter::new(),
+        PairingSessionService::new(config.host.as_str(), config.port),
     ));
 
     let api_listener = TcpListener::bind((config.host.as_str(), config.port)).map_err(|error| {
@@ -210,6 +211,7 @@ struct BridgeApplication {
     thread_api: Mutex<ThreadApiService>,
     runtime: Mutex<CodexRuntimeSupervisor>,
     stream_router: StreamRouter,
+    pairing_sessions: Mutex<PairingSessionService>,
 }
 
 impl BridgeApplication {
@@ -217,11 +219,13 @@ impl BridgeApplication {
         thread_api: ThreadApiService,
         runtime: CodexRuntimeSupervisor,
         stream_router: StreamRouter,
+        pairing_sessions: PairingSessionService,
     ) -> Self {
         Self {
             thread_api: Mutex::new(thread_api),
             runtime: Mutex::new(runtime),
             stream_router,
+            pairing_sessions: Mutex::new(pairing_sessions),
         }
     }
 
@@ -406,6 +410,7 @@ fn route_request(request_line: &str, app: &BridgeApplication) -> String {
                 runtime: app.runtime_snapshot(),
                 api: ApiSurface {
                     endpoints: vec![
+                        "POST /pairing/session",
                         "GET /threads",
                         "GET /threads/:id",
                         "GET /threads/:id/timeline",
@@ -422,6 +427,14 @@ fn route_request(request_line: &str, app: &BridgeApplication) -> String {
                 },
             };
             json_response("200 OK", &payload)
+        }
+        ("POST", "/pairing/session") | ("GET", "/pairing/session") => {
+            let session = app
+                .pairing_sessions
+                .lock()
+                .expect("pairing sessions mutex should not be poisoned")
+                .issue_session();
+            json_response("200 OK", &session)
         }
         ("GET", "/threads") => {
             let response = app
@@ -640,14 +653,131 @@ struct ApiSurface {
     seeded_thread_count: usize,
 }
 
+#[derive(Debug)]
+struct PairingSessionService {
+    bridge_id: String,
+    bridge_name: String,
+    api_base_url: String,
+    next_sequence: u64,
+}
+
+impl PairingSessionService {
+    fn new(host: &str, port: u16) -> Self {
+        Self {
+            bridge_id: derive_bridge_id(host, port),
+            bridge_name: "Codex Mobile Companion".to_string(),
+            api_base_url: format!("http://{host}:{port}"),
+            next_sequence: 1,
+        }
+    }
+
+    fn issue_session(&mut self) -> PairingSessionResponse {
+        let issued_at_epoch_seconds = unix_now_epoch_seconds();
+        let expires_at_epoch_seconds = issued_at_epoch_seconds.saturating_add(300);
+        let sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.saturating_add(1);
+
+        let session_id = format!("pairing-session-{sequence}");
+        let pairing_token = format!("ptk-{issued_at_epoch_seconds:x}-{sequence:x}");
+
+        let qr_payload = PairingQrPayload {
+            contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+            bridge_id: self.bridge_id.clone(),
+            bridge_name: self.bridge_name.clone(),
+            bridge_api_base_url: self.api_base_url.clone(),
+            session_id: session_id.clone(),
+            pairing_token: pairing_token.clone(),
+            issued_at_epoch_seconds,
+            expires_at_epoch_seconds,
+        };
+
+        let qr_payload =
+            serde_json::to_string(&qr_payload).expect("pairing QR payload should serialize");
+
+        eprintln!(
+            "token-issued bridge_id={} session_id={session_id}",
+            self.bridge_id
+        );
+
+        PairingSessionResponse {
+            contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+            bridge_identity: PairingBridgeIdentity {
+                bridge_id: self.bridge_id.clone(),
+                display_name: self.bridge_name.clone(),
+                api_base_url: self.api_base_url.clone(),
+            },
+            pairing_session: PairingSession {
+                session_id,
+                pairing_token,
+                issued_at_epoch_seconds,
+                expires_at_epoch_seconds,
+            },
+            qr_payload,
+        }
+    }
+}
+
+fn derive_bridge_id(host: &str, port: u16) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in format!("{host}:{port}").bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3_u64);
+    }
+    format!("bridge-{hash:016x}")
+}
+
+fn unix_now_epoch_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct PairingSessionResponse {
+    contract_version: String,
+    bridge_identity: PairingBridgeIdentity,
+    pairing_session: PairingSession,
+    qr_payload: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct PairingBridgeIdentity {
+    bridge_id: String,
+    display_name: String,
+    api_base_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct PairingSession {
+    session_id: String,
+    pairing_token: String,
+    issued_at_epoch_seconds: u64,
+    expires_at_epoch_seconds: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct PairingQrPayload {
+    contract_version: String,
+    bridge_id: String,
+    bridge_name: String,
+    bridge_api_base_url: String,
+    session_id: String,
+    pairing_token: String,
+    issued_at_epoch_seconds: u64,
+    expires_at_epoch_seconds: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc::RecvTimeoutError;
     use std::time::Duration;
 
+    use serde_json::Value;
+
     use super::{
         BridgeApplication, CodexRuntimeConfig, CodexRuntimeMode, CodexRuntimeSupervisor, Config,
-        StreamRouter, build_foundations, parse_args, route_request,
+        PairingSessionService, StreamRouter, build_foundations, parse_args, route_request,
     };
     use crate::thread_api::ThreadApiService;
 
@@ -790,6 +920,55 @@ mod tests {
     }
 
     #[test]
+    fn pairing_session_route_returns_bridge_identity_and_qr_payload() {
+        let app = test_application();
+
+        let response = route_request("POST /pairing/session HTTP/1.1", &app);
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+
+        let body = parse_json_body(&response);
+        assert_eq!(body["contract_version"], shared_contracts::CONTRACT_VERSION);
+        assert_eq!(
+            body["bridge_identity"]["display_name"],
+            "Codex Mobile Companion"
+        );
+        assert_eq!(
+            body["bridge_identity"]["api_base_url"],
+            "http://127.0.0.1:3110"
+        );
+        assert_eq!(body["pairing_session"]["session_id"], "pairing-session-1");
+
+        let qr_payload = body["qr_payload"]
+            .as_str()
+            .expect("qr payload should be a JSON string");
+        let qr_payload: Value =
+            serde_json::from_str(qr_payload).expect("qr payload should decode as JSON");
+
+        assert_eq!(qr_payload["bridge_api_base_url"], "http://127.0.0.1:3110");
+        assert_eq!(
+            qr_payload["pairing_token"],
+            body["pairing_session"]["pairing_token"]
+        );
+    }
+
+    #[test]
+    fn pairing_session_route_issues_new_session_on_each_request() {
+        let app = test_application();
+
+        let first = parse_json_body(&route_request("POST /pairing/session HTTP/1.1", &app));
+        let second = parse_json_body(&route_request("POST /pairing/session HTTP/1.1", &app));
+
+        assert_ne!(
+            first["pairing_session"]["session_id"],
+            second["pairing_session"]["session_id"]
+        );
+        assert_ne!(
+            first["pairing_session"]["pairing_token"],
+            second["pairing_session"]["pairing_token"]
+        );
+    }
+
+    #[test]
     fn stream_events_are_scoped_to_subscribed_thread() {
         let app = test_application();
         let thread_123 = app.stream_router.subscribe(vec!["thread-123".to_string()]);
@@ -825,6 +1004,19 @@ mod tests {
             .initialize()
             .expect("test runtime should initialize");
 
-        BridgeApplication::new(ThreadApiService::sample(), runtime, StreamRouter::new())
+        BridgeApplication::new(
+            ThreadApiService::sample(),
+            runtime,
+            StreamRouter::new(),
+            PairingSessionService::new("127.0.0.1", 3110),
+        )
+    }
+
+    fn parse_json_body(response: &str) -> Value {
+        let body = response
+            .split("\r\n\r\n")
+            .nth(1)
+            .expect("response should include body");
+        serde_json::from_str(body).expect("response body should decode as JSON")
     }
 }
