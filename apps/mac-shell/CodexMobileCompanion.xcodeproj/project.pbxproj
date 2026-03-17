@@ -7,8 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		076DAD3555DF80C951B9329F /* PersistenceBoundary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 253C6D9A6CE243C2E4429D55 /* PersistenceBoundary.swift */; };
 		1342931C8BE082D128529EA4 /* CodexMobileCompanionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 728B378B81F809C4F14EC72D /* CodexMobileCompanionTests.swift */; };
+		21BFE2AD6196F327135F493B /* BridgeContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F2D601B571120586CB68C0 /* BridgeContracts.swift */; };
+		47EF301FD4DB23F23CE7051A /* SecureStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE2411DE1FFF6CE64E10B9C0 /* SecureStore.swift */; };
 		973354979576A95DFA9E1DB1 /* CodexMobileCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B069849D192547B8F4FA416 /* CodexMobileCompanionApp.swift */; };
+		B17D93EC9AC73B9003D48DD9 /* StructuredLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED9789893934082730104731 /* StructuredLogger.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -22,13 +26,52 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		253C6D9A6CE243C2E4429D55 /* PersistenceBoundary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceBoundary.swift; sourceTree = "<group>"; };
 		5B069849D192547B8F4FA416 /* CodexMobileCompanionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexMobileCompanionApp.swift; sourceTree = "<group>"; };
 		728B378B81F809C4F14EC72D /* CodexMobileCompanionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexMobileCompanionTests.swift; sourceTree = "<group>"; };
 		A90B6FE0AC3C66F2B1FA806D /* CodexMobileCompanionTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CodexMobileCompanionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B2F2D601B571120586CB68C0 /* BridgeContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeContracts.swift; sourceTree = "<group>"; };
 		C0824473A42415E32ECD7C7B /* CodexMobileCompanion.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CodexMobileCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		ED9789893934082730104731 /* StructuredLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StructuredLogger.swift; sourceTree = "<group>"; };
+		FE2411DE1FFF6CE64E10B9C0 /* SecureStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
+		06A1A52B8E050A92076962B5 /* Foundation */ = {
+			isa = PBXGroup;
+			children = (
+				26164932D6129823FBDE21BE /* Contracts */,
+				127F99BDB4362D4644ECFD26 /* Logging */,
+				6FC3EB7AE2D7FB93BAD402FB /* Storage */,
+			);
+			path = Foundation;
+			sourceTree = "<group>";
+		};
+		127F99BDB4362D4644ECFD26 /* Logging */ = {
+			isa = PBXGroup;
+			children = (
+				ED9789893934082730104731 /* StructuredLogger.swift */,
+			);
+			path = Logging;
+			sourceTree = "<group>";
+		};
+		26164932D6129823FBDE21BE /* Contracts */ = {
+			isa = PBXGroup;
+			children = (
+				B2F2D601B571120586CB68C0 /* BridgeContracts.swift */,
+			);
+			path = Contracts;
+			sourceTree = "<group>";
+		};
+		6FC3EB7AE2D7FB93BAD402FB /* Storage */ = {
+			isa = PBXGroup;
+			children = (
+				253C6D9A6CE243C2E4429D55 /* PersistenceBoundary.swift */,
+				FE2411DE1FFF6CE64E10B9C0 /* SecureStore.swift */,
+			);
+			path = Storage;
+			sourceTree = "<group>";
+		};
 		7E4952BCF99AA6B331B860F8 /* Tests */ = {
 			isa = PBXGroup;
 			children = (
@@ -41,6 +84,7 @@
 			isa = PBXGroup;
 			children = (
 				5B069849D192547B8F4FA416 /* CodexMobileCompanionApp.swift */,
+				06A1A52B8E050A92076962B5 /* Foundation */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -145,7 +189,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				21BFE2AD6196F327135F493B /* BridgeContracts.swift in Sources */,
 				973354979576A95DFA9E1DB1 /* CodexMobileCompanionApp.swift in Sources */,
+				076DAD3555DF80C951B9329F /* PersistenceBoundary.swift in Sources */,
+				47EF301FD4DB23F23CE7051A /* SecureStore.swift in Sources */,
+				B17D93EC9AC73B9003D48DD9 /* StructuredLogger.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -1,0 +1,10 @@
+{
+  "contract_version": "2026-03-17",
+  "thread_id": "thread-123",
+  "title": "Implement shared contracts",
+  "status": "running",
+  "workspace": "/workspace/codex-mobile-companion",
+  "repository": "codex-mobile-companion",
+  "branch": "master",
+  "updated_at": "2026-03-17T18:00:00Z"
+}

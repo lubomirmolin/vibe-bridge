@@ -1,0 +1,7 @@
+{
+  "actor": "mobile-device-1",
+  "action": "approve",
+  "target": "git.push",
+  "outcome": "allowed",
+  "reason": "full_control_mode"
+}

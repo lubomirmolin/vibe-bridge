@@ -1,0 +1,34 @@
+{
+  "contract_version": "2026-03-17",
+  "thread_status_values": [
+    "idle",
+    "running",
+    "completed",
+    "interrupted",
+    "failed"
+  ],
+  "access_mode_values": [
+    "read_only",
+    "control_with_approvals",
+    "full_control"
+  ],
+  "event_kind_values": [
+    "message_delta",
+    "plan_delta",
+    "command_delta",
+    "file_change",
+    "approval_requested",
+    "thread_status_changed",
+    "security_audit"
+  ],
+  "secure_storage_keys": [
+    "pairing_private_key",
+    "session_token",
+    "trusted_bridge_identity"
+  ],
+  "persistence_scopes": [
+    "threads_cache",
+    "timeline_cache",
+    "security_audit"
+  ]
+}
