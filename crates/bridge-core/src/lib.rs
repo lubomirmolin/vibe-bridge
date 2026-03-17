@@ -487,6 +487,26 @@ impl SecurityState {
         Ok(record.clone())
     }
 
+    fn rollback_approval_resolution(
+        &mut self,
+        approval_id: &str,
+    ) -> Result<PendingApprovalRecord, ResolveApprovalError> {
+        let record = self
+            .approvals
+            .iter_mut()
+            .find(|record| record.approval.approval_id == approval_id)
+            .ok_or(ResolveApprovalError::NotFound)?;
+
+        if record.approval.status == ApprovalStatus::Pending {
+            return Ok(record.clone());
+        }
+
+        record.approval.status = ApprovalStatus::Pending;
+        record.approval.resolved_at = None;
+
+        Ok(record.clone())
+    }
+
     fn log_security_audit(
         &mut self,
         severity: LogSeverity,
@@ -639,6 +659,27 @@ impl BridgeApplication {
             .lock()
             .expect("security state mutex should not be poisoned")
             .resolve_approval(approval_id, approved)
+    }
+
+    fn rollback_approval_resolution(
+        &self,
+        approval_id: &str,
+    ) -> Result<PendingApprovalRecord, ResolveApprovalError> {
+        self.security_state
+            .lock()
+            .expect("security state mutex should not be poisoned")
+            .rollback_approval_resolution(approval_id)
+    }
+
+    fn authorize_trusted_session(
+        &self,
+        request: PairingHandshakeRequest,
+    ) -> Result<(), PairingHandshakeError> {
+        self.pairing_sessions
+            .lock()
+            .expect("pairing sessions mutex should not be poisoned")
+            .handshake(request)
+            .map(|_| ())
     }
 
     fn security_events_snapshot(&self) -> Vec<SecurityEventRecordDto> {
@@ -878,15 +919,61 @@ fn route_request(request_line: &str, app: &BridgeApplication) -> String {
                 return bad_request_response("invalid_access_mode");
             };
 
+            let actor = query
+                .get("actor")
+                .cloned()
+                .unwrap_or_else(|| "mobile-device".to_string());
+
+            let trusted_session = match trusted_session_request_from_query(&query) {
+                Ok(request) => request,
+                Err((code, message)) => {
+                    app.record_security_audit(
+                        LogSeverity::Warn,
+                        "policy",
+                        SecurityAuditEventDto {
+                            actor: actor.clone(),
+                            action: "set_access_mode".to_string(),
+                            target: "policy.access_mode".to_string(),
+                            outcome: "denied".to_string(),
+                            reason: code.to_string(),
+                        },
+                    );
+                    return json_error_response(
+                        "403 Forbidden",
+                        "policy_access_mode_denied",
+                        code,
+                        message,
+                    );
+                }
+            };
+
+            if let Err(error) = app.authorize_trusted_session(trusted_session) {
+                app.record_security_audit(
+                    LogSeverity::Warn,
+                    "policy",
+                    SecurityAuditEventDto {
+                        actor: actor.clone(),
+                        action: "set_access_mode".to_string(),
+                        target: "policy.access_mode".to_string(),
+                        outcome: "denied".to_string(),
+                        reason: error.code().to_string(),
+                    },
+                );
+
+                return json_error_response(
+                    "403 Forbidden",
+                    "policy_access_mode_denied",
+                    error.code(),
+                    error.message(),
+                );
+            }
+
             app.set_access_mode(access_mode);
             app.record_security_audit(
                 LogSeverity::Info,
                 "policy",
                 SecurityAuditEventDto {
-                    actor: query
-                        .get("actor")
-                        .cloned()
-                        .unwrap_or_else(|| "system".to_string()),
+                    actor,
                     action: "set_access_mode".to_string(),
                     target: "policy.access_mode".to_string(),
                     outcome: "allowed".to_string(),
@@ -1064,6 +1151,35 @@ fn query_required(query: &HashMap<String, String>, key: &str) -> Option<String> 
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
+}
+
+fn trusted_session_request_from_query(
+    query: &HashMap<String, String>,
+) -> Result<PairingHandshakeRequest, (&'static str, &'static str)> {
+    let Some(phone_id) = query_required(query, "phone_id") else {
+        return Err((
+            "trusted_session_required",
+            "Trusted session authorization is required for access mode changes.",
+        ));
+    };
+    let Some(bridge_id) = query_required(query, "bridge_id") else {
+        return Err((
+            "trusted_session_required",
+            "Trusted session authorization is required for access mode changes.",
+        ));
+    };
+    let Some(session_token) = query_required(query, "session_token") else {
+        return Err((
+            "trusted_session_required",
+            "Trusted session authorization is required for access mode changes.",
+        ));
+    };
+
+    Ok(PairingHandshakeRequest {
+        phone_id,
+        bridge_id,
+        session_token,
+    })
 }
 
 fn route_thread_request(
@@ -1478,6 +1594,19 @@ fn resolve_approval_request(
 
     let dispatch = execute_pending_approval_action(app, &record.action);
     let Some(dispatch) = dispatch else {
+        let _ = app.rollback_approval_resolution(approval_id);
+        app.record_security_audit(
+            LogSeverity::Warn,
+            record.approval.thread_id.clone(),
+            SecurityAuditEventDto {
+                actor: actor.to_string(),
+                action: action_name.to_string(),
+                target: record.approval.target.clone(),
+                outcome: "denied".to_string(),
+                reason: "approval_target_not_found".to_string(),
+            },
+        );
+
         return json_error_response(
             "404 Not Found",
             "approval_resolution_failed",
@@ -1763,8 +1892,8 @@ mod tests {
 
     use super::{
         BridgeApplication, CodexRuntimeConfig, CodexRuntimeMode, CodexRuntimeSupervisor, Config,
-        InMemoryLogSink, PairingSessionService, StreamRouter, StructuredLogger, build_foundations,
-        parse_args, route_request,
+        InMemoryLogSink, PairingSessionService, PendingApprovalAction, RepositoryContextDto,
+        StreamRouter, StructuredLogger, build_foundations, parse_args, route_request,
     };
     use crate::thread_api::ThreadApiService;
 
@@ -1888,8 +2017,12 @@ mod tests {
     #[test]
     fn turn_and_git_mutation_routes_return_product_shaped_results() {
         let app = test_application();
+        let trusted_session_query = trusted_session_query(&app);
 
-        let mode = route_request("POST /policy/access-mode?mode=full_control HTTP/1.1", &app);
+        let mode = route_request(
+            &format!("POST /policy/access-mode?mode=full_control&{trusted_session_query} HTTP/1.1"),
+            &app,
+        );
         assert!(mode.starts_with("HTTP/1.1 200 OK"));
 
         let turn_start = route_request(
@@ -1917,8 +2050,12 @@ mod tests {
     #[test]
     fn read_only_mode_blocks_turn_and_git_mutations() {
         let app = test_application();
+        let trusted_session_query = trusted_session_query(&app);
 
-        let mode = route_request("POST /policy/access-mode?mode=read_only HTTP/1.1", &app);
+        let mode = route_request(
+            &format!("POST /policy/access-mode?mode=read_only&{trusted_session_query} HTTP/1.1"),
+            &app,
+        );
         assert!(mode.starts_with("HTTP/1.1 200 OK"));
 
         let turn_start = route_request(
@@ -1936,9 +2073,12 @@ mod tests {
     #[test]
     fn control_with_approvals_gates_git_mutations_until_full_control_resolution() {
         let app = test_application();
+        let trusted_session_query = trusted_session_query(&app);
 
         let mode = route_request(
-            "POST /policy/access-mode?mode=control_with_approvals HTTP/1.1",
+            &format!(
+                "POST /policy/access-mode?mode=control_with_approvals&{trusted_session_query} HTTP/1.1"
+            ),
             &app,
         );
         assert!(mode.starts_with("HTTP/1.1 200 OK"));
@@ -1973,7 +2113,10 @@ mod tests {
         );
         assert!(blocked_resolution.starts_with("HTTP/1.1 403 Forbidden"));
 
-        let elevate = route_request("POST /policy/access-mode?mode=full_control HTTP/1.1", &app);
+        let elevate = route_request(
+            &format!("POST /policy/access-mode?mode=full_control&{trusted_session_query} HTTP/1.1"),
+            &app,
+        );
         assert!(elevate.starts_with("HTTP/1.1 200 OK"));
 
         let resolved = route_request(
@@ -1994,12 +2137,18 @@ mod tests {
     #[test]
     fn security_events_capture_denied_gated_and_allowed_outcomes() {
         let app = test_application();
+        let trusted_session_query = trusted_session_query(&app);
 
-        let _ = route_request("POST /policy/access-mode?mode=read_only HTTP/1.1", &app);
+        let _ = route_request(
+            &format!("POST /policy/access-mode?mode=read_only&{trusted_session_query} HTTP/1.1"),
+            &app,
+        );
         let _ = route_request("POST /threads/thread-123/turns/start HTTP/1.1", &app);
 
         let _ = route_request(
-            "POST /policy/access-mode?mode=control_with_approvals HTTP/1.1",
+            &format!(
+                "POST /policy/access-mode?mode=control_with_approvals&{trusted_session_query} HTTP/1.1"
+            ),
             &app,
         );
         let gated = parse_json_body(&route_request(
@@ -2011,7 +2160,10 @@ mod tests {
             .expect("approval id should be present")
             .to_string();
 
-        let _ = route_request("POST /policy/access-mode?mode=full_control HTTP/1.1", &app);
+        let _ = route_request(
+            &format!("POST /policy/access-mode?mode=full_control&{trusted_session_query} HTTP/1.1"),
+            &app,
+        );
         let _ = route_request(
             &format!("POST /approvals/{approval_id}/approve HTTP/1.1"),
             &app,
@@ -2028,6 +2180,71 @@ mod tests {
         assert!(outcomes.contains(&"denied"));
         assert!(outcomes.contains(&"gated"));
         assert!(outcomes.contains(&"allowed"));
+    }
+
+    #[test]
+    fn access_mode_mutations_require_trusted_session_authorization() {
+        let app = test_application();
+
+        let unauthorized =
+            route_request("POST /policy/access-mode?mode=full_control HTTP/1.1", &app);
+        assert!(unauthorized.starts_with("HTTP/1.1 403 Forbidden"));
+
+        let trusted_session_query = trusted_session_query(&app);
+        let authorized = route_request(
+            &format!("POST /policy/access-mode?mode=full_control&{trusted_session_query} HTTP/1.1"),
+            &app,
+        );
+        assert!(authorized.starts_with("HTTP/1.1 200 OK"));
+    }
+
+    #[test]
+    fn failed_approval_execution_keeps_approval_pending() {
+        let app = test_application();
+        let trusted_session_query = trusted_session_query(&app);
+
+        let elevated = route_request(
+            &format!("POST /policy/access-mode?mode=full_control&{trusted_session_query} HTTP/1.1"),
+            &app,
+        );
+        assert!(elevated.starts_with("HTTP/1.1 200 OK"));
+
+        let approval = app.queue_approval(
+            PendingApprovalAction::Pull {
+                thread_id: "thread-missing".to_string(),
+                remote: Some("origin".to_string()),
+            },
+            "dangerous_action_requires_approval",
+            RepositoryContextDto {
+                workspace: "/workspace/missing".to_string(),
+                repository: "missing-repo".to_string(),
+                branch: "main".to_string(),
+                remote: "origin".to_string(),
+            },
+            crate::thread_api::GitStatusDto {
+                dirty: false,
+                ahead_by: 0,
+                behind_by: 0,
+            },
+        );
+
+        let resolve = route_request(
+            &format!("POST /approvals/{}/approve HTTP/1.1", approval.approval_id),
+            &app,
+        );
+        assert!(resolve.starts_with("HTTP/1.1 404 Not Found"));
+        assert!(resolve.contains("\"code\":\"approval_target_not_found\""));
+
+        let approvals = parse_json_body(&route_request("GET /approvals HTTP/1.1", &app));
+        let record = approvals["approvals"]
+            .as_array()
+            .expect("approvals should be an array")
+            .iter()
+            .find(|record| record["approval_id"] == approval.approval_id)
+            .expect("queued approval should still exist");
+
+        assert_eq!(record["status"], "pending");
+        assert!(record["resolved_at"].is_null());
     }
 
     #[test]
@@ -2245,5 +2462,28 @@ mod tests {
             .nth(1)
             .expect("response should include body");
         serde_json::from_str(body).expect("response body should decode as JSON")
+    }
+
+    fn trusted_session_query(app: &BridgeApplication) -> String {
+        let session = parse_json_body(&route_request("POST /pairing/session HTTP/1.1", app));
+        let session_id = session["pairing_session"]["session_id"]
+            .as_str()
+            .expect("session id should be present");
+        let pairing_token = session["pairing_session"]["pairing_token"]
+            .as_str()
+            .expect("pairing token should be present");
+        let bridge_id = session["bridge_identity"]["bridge_id"]
+            .as_str()
+            .expect("bridge id should be present");
+
+        let finalize_path = format!(
+            "POST /pairing/finalize?session_id={session_id}&pairing_token={pairing_token}&phone_id=phone-1&phone_name=iPhone&bridge_id={bridge_id} HTTP/1.1"
+        );
+        let finalized = parse_json_body(&route_request(&finalize_path, app));
+        let session_token = finalized["session_token"]
+            .as_str()
+            .expect("session token should be present");
+
+        format!("phone_id=phone-1&bridge_id={bridge_id}&session_token={session_token}")
     }
 }
