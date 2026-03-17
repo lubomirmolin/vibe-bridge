@@ -1,6 +1,9 @@
 use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use shared_contracts::{
     AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ThreadDetailDto,
@@ -103,6 +106,10 @@ pub struct MutationDispatch {
 }
 
 impl ThreadApiService {
+    pub fn empty() -> Self {
+        Self::with_seed_data(Vec::new(), HashMap::new())
+    }
+
     pub fn with_seed_data(
         thread_records: Vec<UpstreamThreadRecord>,
         timeline_by_thread_id: HashMap<String, Vec<UpstreamTimelineEvent>>,
@@ -112,6 +119,28 @@ impl ThreadApiService {
             timeline_by_thread_id,
             next_event_sequence: 10,
         }
+    }
+
+    pub fn from_codex_app_server(command: &str, args: &[String]) -> Result<Self, String> {
+        let mut client = CodexRpcClient::start(command, args)?;
+        let threads = client.fetch_all_threads()?;
+
+        let thread_records = threads
+            .iter()
+            .map(map_codex_thread_to_upstream_record)
+            .collect::<Vec<_>>();
+
+        let timeline_by_thread_id = threads
+            .iter()
+            .map(|thread| {
+                (
+                    thread.id.clone(),
+                    map_codex_thread_to_timeline_events(thread),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        Ok(Self::with_seed_data(thread_records, timeline_by_thread_id))
     }
 
     pub fn sample() -> Self {
@@ -197,13 +226,24 @@ impl ThreadApiService {
     }
 
     pub fn timeline_response(&self, thread_id: &str) -> Option<ThreadTimelineResponse> {
-        self.timeline_by_thread_id
+        if !self
+            .thread_records
+            .iter()
+            .any(|thread| thread.id == thread_id)
+        {
+            return None;
+        }
+
+        let events = self
+            .timeline_by_thread_id
             .get(thread_id)
-            .map(|events| ThreadTimelineResponse {
-                contract_version: CONTRACT_VERSION.to_string(),
-                thread_id: thread_id.to_string(),
-                events: events.iter().map(map_timeline_entry).collect::<Vec<_>>(),
-            })
+            .cloned()
+            .unwrap_or_default();
+        Some(ThreadTimelineResponse {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread_id: thread_id.to_string(),
+            events: events.iter().map(map_timeline_entry).collect::<Vec<_>>(),
+        })
     }
 
     pub fn git_status_response(&self, thread_id: &str) -> Option<GitStatusResponse> {
@@ -543,6 +583,380 @@ impl ThreadApiService {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CodexThreadListResult {
+    data: Vec<CodexThread>,
+    #[serde(rename = "nextCursor")]
+    next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CodexThreadReadResult {
+    thread: CodexThread,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CodexThread {
+    id: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    preview: Option<String>,
+    status: CodexThreadStatus,
+    cwd: String,
+    #[serde(rename = "gitInfo")]
+    git_info: Option<CodexGitInfo>,
+    #[serde(rename = "createdAt")]
+    created_at: i64,
+    #[serde(rename = "updatedAt")]
+    updated_at: i64,
+    #[serde(default)]
+    source: Value,
+    #[serde(default)]
+    turns: Vec<CodexTurn>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CodexThreadStatus {
+    #[serde(rename = "type")]
+    kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CodexGitInfo {
+    branch: Option<String>,
+    #[serde(rename = "originUrl")]
+    origin_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CodexTurn {
+    id: String,
+    #[serde(default)]
+    items: Vec<Value>,
+}
+
+#[derive(Debug)]
+struct CodexRpcClient {
+    next_id: i64,
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+}
+
+impl CodexRpcClient {
+    const MAX_THREADS_TO_FETCH: usize = 50;
+
+    fn start(command: &str, args: &[String]) -> Result<Self, String> {
+        let mut command_args = if args.is_empty() {
+            vec!["app-server".to_string()]
+        } else {
+            args.to_vec()
+        };
+
+        if !command_args.iter().any(|arg| arg == "--listen") {
+            command_args.push("--listen".to_string());
+            command_args.push("stdio://".to_string());
+        }
+
+        let mut child = Command::new(command)
+            .args(command_args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| {
+                format!("failed to spawn codex app-server via '{command}': {error}")
+            })?;
+
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "failed to acquire codex app-server stdin".to_string())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "failed to acquire codex app-server stdout".to_string())?;
+
+        let mut client = Self {
+            next_id: 1,
+            child,
+            stdin,
+            stdout: BufReader::new(stdout),
+        };
+
+        client.request(
+            "initialize",
+            json!({
+                "clientInfo": {
+                    "name": "bridge-core",
+                    "version": CONTRACT_VERSION,
+                }
+            }),
+        )?;
+
+        Ok(client)
+    }
+
+    fn fetch_all_threads(&mut self) -> Result<Vec<CodexThread>, String> {
+        let mut threads = Vec::new();
+        let mut cursor: Option<String> = None;
+
+        loop {
+            if threads.len() >= Self::MAX_THREADS_TO_FETCH {
+                break;
+            }
+
+            let mut params = serde_json::Map::new();
+            if let Some(cursor) = &cursor {
+                params.insert("cursor".to_string(), Value::String(cursor.clone()));
+            }
+
+            let result = self.request("thread/list", Value::Object(params))?;
+            let response: CodexThreadListResult =
+                serde_json::from_value(result).map_err(|error| {
+                    format!("invalid thread/list response from codex app-server: {error}")
+                })?;
+
+            let remaining = Self::MAX_THREADS_TO_FETCH.saturating_sub(threads.len());
+            for thread in response.data.into_iter().take(remaining) {
+                let thread_id = thread.id.clone();
+                match self.request(
+                    "thread/read",
+                    json!({
+                        "threadId": thread_id,
+                        "includeTurns": true,
+                    }),
+                ) {
+                    Ok(read_result) => {
+                        let read_response: CodexThreadReadResult =
+                            serde_json::from_value(read_result).map_err(|error| {
+                                format!(
+                                    "invalid thread/read response from codex app-server: {error}"
+                                )
+                            })?;
+                        threads.push(read_response.thread);
+                    }
+                    Err(_) => {
+                        threads.push(thread);
+                    }
+                }
+            }
+
+            if let Some(next_cursor) = response.next_cursor {
+                cursor = Some(next_cursor);
+            } else {
+                break;
+            }
+        }
+
+        Ok(threads)
+    }
+
+    fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        let payload = json!({
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+        let line = serde_json::to_string(&payload).map_err(|error| {
+            format!("failed to serialize codex rpc request '{method}': {error}")
+        })?;
+
+        writeln!(self.stdin, "{line}")
+            .map_err(|error| format!("failed to write codex rpc request '{method}': {error}"))?;
+        self.stdin
+            .flush()
+            .map_err(|error| format!("failed to flush codex rpc request '{method}': {error}"))?;
+
+        let mut response_line = String::new();
+        loop {
+            response_line.clear();
+            let bytes_read = self.stdout.read_line(&mut response_line).map_err(|error| {
+                format!("failed to read codex rpc response for '{method}': {error}")
+            })?;
+
+            if bytes_read == 0 {
+                return Err(format!(
+                    "codex app-server closed stdout while waiting for '{method}'"
+                ));
+            }
+
+            let response: Value = serde_json::from_str(response_line.trim()).map_err(|error| {
+                format!("failed to parse codex rpc response for '{method}' as JSON: {error}")
+            })?;
+
+            if response.get("id").and_then(Value::as_i64) != Some(id) {
+                continue;
+            }
+
+            if let Some(error) = response.get("error") {
+                return Err(format!(
+                    "codex rpc request '{method}' failed: {}",
+                    error
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown error")
+                ));
+            }
+
+            return response.get("result").cloned().ok_or_else(|| {
+                format!("codex rpc response for '{method}' did not include result")
+            });
+        }
+    }
+}
+
+impl Drop for CodexRpcClient {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn map_codex_thread_to_upstream_record(thread: &CodexThread) -> UpstreamThreadRecord {
+    let repository_name = thread
+        .git_info
+        .as_ref()
+        .and_then(|git| git.origin_url.as_deref())
+        .and_then(parse_repository_name_from_origin)
+        .or_else(|| derive_repository_name_from_cwd(&thread.cwd))
+        .unwrap_or_else(|| "unknown-repository".to_string());
+
+    let branch_name = thread
+        .git_info
+        .as_ref()
+        .and_then(|git| git.branch.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let remote_name = if thread
+        .git_info
+        .as_ref()
+        .and_then(|git| git.origin_url.as_ref())
+        .is_some()
+    {
+        "origin".to_string()
+    } else {
+        "local".to_string()
+    };
+
+    let source = thread.source.as_str().unwrap_or("unknown").to_string();
+
+    let title = thread
+        .name
+        .as_deref()
+        .or(thread.preview.as_deref())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("Untitled thread")
+        .to_string();
+
+    UpstreamThreadRecord {
+        id: thread.id.clone(),
+        headline: title,
+        lifecycle_state: map_codex_status_to_lifecycle_state(&thread.status.kind),
+        workspace_path: thread.cwd.clone(),
+        repository_name,
+        branch_name,
+        remote_name,
+        git_dirty: false,
+        git_ahead_by: 0,
+        git_behind_by: 0,
+        created_at: thread.created_at.to_string(),
+        updated_at: thread.updated_at.to_string(),
+        source,
+        approval_mode: "control_with_approvals".to_string(),
+        last_turn_summary: thread.preview.clone().unwrap_or_default(),
+    }
+}
+
+fn map_codex_thread_to_timeline_events(thread: &CodexThread) -> Vec<UpstreamTimelineEvent> {
+    let mut events = Vec::new();
+    for turn in &thread.turns {
+        for (index, item) in turn.items.iter().enumerate() {
+            let item_type = item
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let item_id = item
+                .get("id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("{}-{index}", turn.id));
+
+            events.push(UpstreamTimelineEvent {
+                id: format!("{}-{item_id}", turn.id),
+                event_type: map_codex_item_type_to_event_type(item_type).to_string(),
+                happened_at: thread.updated_at.to_string(),
+                summary_text: summarize_codex_item(item_type, item),
+                data: item.clone(),
+            });
+        }
+    }
+    events
+}
+
+fn map_codex_status_to_lifecycle_state(status_kind: &str) -> String {
+    match status_kind {
+        "active" => "active".to_string(),
+        "systemError" => "error".to_string(),
+        _ => "idle".to_string(),
+    }
+}
+
+fn map_codex_item_type_to_event_type(item_type: &str) -> &'static str {
+    match item_type {
+        "plan" => "plan_delta",
+        "commandExecution" => "command_output_delta",
+        "fileChange" => "file_change_delta",
+        _ => "agent_message_delta",
+    }
+}
+
+fn summarize_codex_item(item_type: &str, item: &Value) -> String {
+    match item_type {
+        "agentMessage" => item
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or("Agent message")
+            .to_string(),
+        "userMessage" => item
+            .get("content")
+            .and_then(Value::as_array)
+            .and_then(|content| content.first())
+            .and_then(|first| first.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or("User message")
+            .to_string(),
+        "plan" => item
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or("Plan update")
+            .to_string(),
+        "commandExecution" => "Command output update".to_string(),
+        "fileChange" => "File change update".to_string(),
+        _ => format!("{item_type} event"),
+    }
+}
+
+fn parse_repository_name_from_origin(origin_url: &str) -> Option<String> {
+    let trimmed = origin_url.trim_end_matches('/');
+    let segment = trimmed
+        .rsplit(['/', ':'])
+        .next()
+        .filter(|segment| !segment.is_empty())?;
+    Some(segment.trim_end_matches(".git").to_string())
+}
+
+fn derive_repository_name_from_cwd(cwd: &str) -> Option<String> {
+    Path::new(cwd)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(ToString::to_string)
+}
+
 fn map_thread_summary(upstream: &UpstreamThreadRecord) -> ThreadSummaryDto {
     ThreadSummaryDto {
         contract_version: CONTRACT_VERSION.to_string(),
@@ -711,6 +1125,37 @@ mod tests {
         assert_eq!(timeline.contract_version, CONTRACT_VERSION);
         assert_eq!(timeline.events.len(), 1);
         assert_eq!(timeline.events[0].kind, BridgeEventKind::CommandDelta);
+    }
+
+    #[test]
+    fn timeline_response_for_existing_thread_without_events_returns_empty_payload() {
+        let service = ThreadApiService::with_seed_data(
+            vec![UpstreamThreadRecord {
+                id: "thread-empty".to_string(),
+                headline: "Thread without timeline events".to_string(),
+                lifecycle_state: "done".to_string(),
+                workspace_path: "/workspace/codex-mobile-companion".to_string(),
+                repository_name: "codex-mobile-companion".to_string(),
+                branch_name: "master".to_string(),
+                remote_name: "origin".to_string(),
+                git_dirty: false,
+                git_ahead_by: 0,
+                git_behind_by: 0,
+                created_at: "2026-03-17T10:00:00Z".to_string(),
+                updated_at: "2026-03-17T10:05:00Z".to_string(),
+                source: "cli".to_string(),
+                approval_mode: "control_with_approvals".to_string(),
+                last_turn_summary: "No turns yet".to_string(),
+            }],
+            HashMap::new(),
+        );
+
+        let timeline = service
+            .timeline_response("thread-empty")
+            .expect("existing thread should return timeline payload");
+
+        assert_eq!(timeline.thread_id, "thread-empty");
+        assert!(timeline.events.is_empty());
     }
 
     #[test]

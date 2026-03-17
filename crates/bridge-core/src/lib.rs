@@ -64,8 +64,17 @@ where
     let mut runtime = CodexRuntimeSupervisor::new(config.codex_runtime.clone());
     runtime.initialize()?;
 
+    let thread_api = ThreadApiService::from_codex_app_server(
+        &config.codex_runtime.command,
+        &config.codex_runtime.args,
+    )
+    .unwrap_or_else(|error| {
+        eprintln!("failed to load codex-backed thread data: {error}");
+        ThreadApiService::empty()
+    });
+
     let app = Arc::new(BridgeApplication::new(
-        ThreadApiService::sample(),
+        thread_api,
         runtime,
         StreamRouter::new(),
     ));

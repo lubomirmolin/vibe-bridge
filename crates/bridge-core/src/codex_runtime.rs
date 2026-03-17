@@ -1,5 +1,8 @@
 use serde::Serialize;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::process::{Child, Command, Stdio};
+use std::time::Duration;
+use tungstenite::http::Uri;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodexRuntimeMode {
@@ -99,8 +102,29 @@ impl CodexRuntimeSupervisor {
             }
             CodexRuntimeMode::Auto => {
                 if let Some(endpoint) = self.config.endpoint.clone() {
-                    self.state = RuntimeState::Attached { endpoint };
-                    return Ok(());
+                    match verify_endpoint_reachable(&endpoint) {
+                        Ok(()) => {
+                            self.state = RuntimeState::Attached { endpoint };
+                            return Ok(());
+                        }
+                        Err(attach_error) => {
+                            match spawn_managed_process(&self.config.command, &self.config.args) {
+                                Ok(child) => {
+                                    let pid = child.id();
+                                    self.state = RuntimeState::Managed { pid };
+                                    self.managed_process = Some(child);
+                                }
+                                Err(spawn_error) => {
+                                    self.state = RuntimeState::Degraded {
+                                        reason: format!(
+                                            "auto mode could not attach ({attach_error}) or start codex runtime ({spawn_error})"
+                                        ),
+                                    };
+                                }
+                            }
+                            return Ok(());
+                        }
+                    }
                 }
 
                 match spawn_managed_process(&self.config.command, &self.config.args) {
@@ -184,8 +208,47 @@ fn spawn_managed_process(command: &str, args: &[String]) -> Result<Child, String
         .map_err(|error| format!("failed to spawn '{command} {}': {error}", args.join(" ")))
 }
 
+fn verify_endpoint_reachable(endpoint: &str) -> Result<(), String> {
+    let uri: Uri = endpoint
+        .parse()
+        .map_err(|error| format!("invalid codex endpoint '{endpoint}': {error}"))?;
+    let host = uri
+        .host()
+        .ok_or_else(|| format!("codex endpoint '{endpoint}' is missing host"))?;
+    let port = uri.port_u16().unwrap_or(match uri.scheme_str() {
+        Some("wss") => 443,
+        _ => 80,
+    });
+
+    let addresses = (host, port)
+        .to_socket_addrs()
+        .map_err(|error| format!("failed to resolve codex endpoint host '{host}:{port}': {error}"))?
+        .collect::<Vec<_>>();
+
+    if addresses.is_empty() {
+        return Err(format!(
+            "failed to resolve codex endpoint host '{host}:{port}'"
+        ));
+    }
+
+    let mut last_error = None;
+    for address in addresses {
+        match TcpStream::connect_timeout(&address, Duration::from_millis(500)) {
+            Ok(_) => return Ok(()),
+            Err(error) => last_error = Some(format!("{address}: {error}")),
+        }
+    }
+
+    Err(format!(
+        "codex endpoint '{endpoint}' is unreachable ({})",
+        last_error.unwrap_or_else(|| "unknown error".to_string())
+    ))
+}
+
 #[cfg(test)]
 mod tests {
+    use std::net::TcpListener;
+
     use super::{CodexRuntimeConfig, CodexRuntimeMode, CodexRuntimeSupervisor};
 
     #[test]
@@ -223,5 +286,71 @@ mod tests {
 
         assert_eq!(snapshot.state, "managed");
         assert!(snapshot.pid.is_some());
+    }
+
+    #[test]
+    fn auto_mode_only_reports_attached_when_endpoint_is_reachable() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .expect("test should bind a local reachability probe listener");
+        let endpoint = format!(
+            "ws://127.0.0.1:{}",
+            listener
+                .local_addr()
+                .expect("listener should have local addr")
+                .port()
+        );
+
+        let mut supervisor = CodexRuntimeSupervisor::new(CodexRuntimeConfig {
+            mode: CodexRuntimeMode::Auto,
+            endpoint: Some(endpoint.clone()),
+            command: "missing-command".to_string(),
+            args: vec![],
+        });
+
+        supervisor
+            .initialize()
+            .expect("auto mode should initialize when endpoint is reachable");
+        let snapshot = supervisor.snapshot();
+
+        assert_eq!(snapshot.state, "attached");
+        assert_eq!(snapshot.endpoint.as_deref(), Some(endpoint.as_str()));
+        assert_eq!(snapshot.pid, None);
+    }
+
+    #[test]
+    fn auto_mode_falls_back_to_managed_when_attach_is_unreachable() {
+        let mut supervisor = CodexRuntimeSupervisor::new(CodexRuntimeConfig {
+            mode: CodexRuntimeMode::Auto,
+            endpoint: Some("ws://127.0.0.1:1".to_string()),
+            command: "sleep".to_string(),
+            args: vec!["30".to_string()],
+        });
+
+        supervisor
+            .initialize()
+            .expect("auto mode should initialize by spawning when attach is unreachable");
+        let snapshot = supervisor.snapshot();
+
+        assert_eq!(snapshot.state, "managed");
+        assert!(snapshot.pid.is_some());
+    }
+
+    #[test]
+    fn auto_mode_reports_degraded_when_attach_and_spawn_are_unavailable() {
+        let mut supervisor = CodexRuntimeSupervisor::new(CodexRuntimeConfig {
+            mode: CodexRuntimeMode::Auto,
+            endpoint: Some("ws://127.0.0.1:1".to_string()),
+            command: "nonexistent-codex-runtime-command".to_string(),
+            args: vec![],
+        });
+
+        supervisor
+            .initialize()
+            .expect("auto mode should still initialize into degraded state");
+        let snapshot = supervisor.snapshot();
+
+        assert_eq!(snapshot.state, "degraded");
+        assert!(snapshot.detail.contains("auto mode could not attach"));
+        assert!(snapshot.detail.contains("or start codex runtime"));
     }
 }
