@@ -68,21 +68,27 @@ extension BridgeEventKindWire on BridgeEventKind {
 ThreadStatus threadStatusFromWire(String wireValue) {
   return ThreadStatus.values.firstWhere(
     (status) => status.wireValue == wireValue,
-    orElse: () => ThreadStatus.idle,
+    orElse: () => throw FormatException(
+      'Unknown ThreadStatus wire value "$wireValue".',
+    ),
   );
 }
 
 AccessMode accessModeFromWire(String wireValue) {
   return AccessMode.values.firstWhere(
     (mode) => mode.wireValue == wireValue,
-    orElse: () => AccessMode.readOnly,
+    orElse: () => throw FormatException(
+      'Unknown AccessMode wire value "$wireValue".',
+    ),
   );
 }
 
 BridgeEventKind bridgeEventKindFromWire(String wireValue) {
   return BridgeEventKind.values.firstWhere(
     (kind) => kind.wireValue == wireValue,
-    orElse: () => BridgeEventKind.messageDelta,
+    orElse: () => throw FormatException(
+      'Unknown BridgeEventKind wire value "$wireValue".',
+    ),
   );
 }
 
