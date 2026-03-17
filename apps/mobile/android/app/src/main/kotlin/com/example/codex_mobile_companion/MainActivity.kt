@@ -1,0 +1,5 @@
+package com.example.codex_mobile_companion
+
+import io.flutter.embedding.android.FlutterActivity
+
+class MainActivity : FlutterActivity()

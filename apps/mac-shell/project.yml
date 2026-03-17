@@ -1,0 +1,45 @@
+name: CodexMobileCompanion
+options:
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: 5.9
+targets:
+  CodexMobileCompanion:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.codex.mobile.companion.shell
+        PRODUCT_NAME: CodexMobileCompanion
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: CodexMobileCompanion
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Codex Mobile Companion"
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+
+  CodexMobileCompanionTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests
+    dependencies:
+      - target: CodexMobileCompanion
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.codex.mobile.companion.shell.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  CodexMobileCompanion:
+    build:
+      targets:
+        CodexMobileCompanion: all
+        CodexMobileCompanionTests: [test]
+    test:
+      gatherCoverageData: false
+      targets:
+        - name: CodexMobileCompanionTests

@@ -1,0 +1,10 @@
+[package]
+name = "bridge-core"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "bridge-server"
+path = "src/main.rs"
+
+[dependencies]
