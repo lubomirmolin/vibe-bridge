@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::json;
@@ -15,6 +15,10 @@ use codex_runtime::{
     CodexRuntimeConfig, CodexRuntimeMode, CodexRuntimeSupervisor, RuntimeSnapshot,
 };
 use logging::{InMemoryLogSink, StructuredLogger};
+use pairing::{
+    PairingFinalizeError, PairingFinalizeRequest, PairingHandshakeError, PairingHandshakeRequest,
+    PairingRevokeRequest, PairingSessionService,
+};
 use persistence::PersistenceBoundary;
 use secure_storage::InMemorySecureStore;
 use stream_router::StreamRouter;
@@ -22,6 +26,7 @@ use thread_api::{MutationDispatch, ThreadApiService};
 
 pub mod codex_runtime;
 pub mod logging;
+pub mod pairing;
 pub mod persistence;
 pub mod secure_storage;
 pub mod stream_router;
@@ -32,6 +37,7 @@ struct Config {
     host: String,
     port: u16,
     admin_port: u16,
+    pairing_base_url: String,
     codex_runtime: CodexRuntimeConfig,
 }
 
@@ -59,7 +65,7 @@ where
     I: IntoIterator<Item = String>,
 {
     let config = parse_args(args)?;
-    let _foundations = build_foundations(".");
+    let foundations = build_foundations(".");
 
     let mut runtime = CodexRuntimeSupervisor::new(config.codex_runtime.clone());
     runtime.initialize()?;
@@ -77,7 +83,12 @@ where
         thread_api,
         runtime,
         StreamRouter::new(),
-        PairingSessionService::new(config.host.as_str(), config.port),
+        PairingSessionService::new(
+            config.host.as_str(),
+            config.port,
+            config.pairing_base_url.clone(),
+            foundations.persistence.state_directory(),
+        ),
     ));
 
     let api_listener = TcpListener::bind((config.host.as_str(), config.port)).map_err(|error| {
@@ -123,6 +134,7 @@ where
     let mut codex_command = String::from("codex");
     let mut codex_args = vec!["app-server".to_string()];
     let mut codex_args_overridden = false;
+    let mut pairing_base_url: Option<String> = None;
 
     let mut args_iter = args.into_iter();
     while let Some(argument) = args_iter.next() {
@@ -176,9 +188,15 @@ where
                 }
                 codex_args.push(value);
             }
+            "--pairing-base-url" => {
+                let value = args_iter
+                    .next()
+                    .ok_or_else(|| String::from("missing value for --pairing-base-url"))?;
+                pairing_base_url = Some(value.trim().to_string());
+            }
             "--help" | "-h" => {
                 return Err(String::from(
-                    "usage: bridge-server [--host <ip-or-hostname>] [--port <u16>] [--admin-port <u16>] [--codex-mode <auto|spawn|attach>] [--codex-endpoint <ws-url>] [--codex-command <binary>] [--codex-arg <arg>]",
+                    "usage: bridge-server [--host <ip-or-hostname>] [--port <u16>] [--admin-port <u16>] [--pairing-base-url <https://bridge.ts.net>] [--codex-mode <auto|spawn|attach>] [--codex-endpoint <ws-url>] [--codex-command <binary>] [--codex-arg <arg>]",
                 ));
             }
             _ => {
@@ -193,10 +211,13 @@ where
         ));
     }
 
+    let pairing_base_url = pairing_base_url.unwrap_or_else(|| format!("http://{host}:{port}"));
+
     Ok(Config {
         host,
         port,
         admin_port,
+        pairing_base_url,
         codex_runtime: CodexRuntimeConfig {
             mode: codex_mode,
             endpoint: codex_endpoint,
@@ -411,6 +432,9 @@ fn route_request(request_line: &str, app: &BridgeApplication) -> String {
                 api: ApiSurface {
                     endpoints: vec![
                         "POST /pairing/session",
+                        "POST /pairing/finalize",
+                        "POST /pairing/handshake",
+                        "POST /pairing/trust/revoke",
                         "GET /threads",
                         "GET /threads/:id",
                         "GET /threads/:id/timeline",
@@ -428,14 +452,6 @@ fn route_request(request_line: &str, app: &BridgeApplication) -> String {
             };
             json_response("200 OK", &payload)
         }
-        ("POST", "/pairing/session") | ("GET", "/pairing/session") => {
-            let session = app
-                .pairing_sessions
-                .lock()
-                .expect("pairing sessions mutex should not be poisoned")
-                .issue_session();
-            json_response("200 OK", &session)
-        }
         ("GET", "/threads") => {
             let response = app
                 .thread_api
@@ -445,8 +461,146 @@ fn route_request(request_line: &str, app: &BridgeApplication) -> String {
             json_response("200 OK", &response)
         }
         (_, "/stream") => upgrade_required_response(),
-        _ => route_thread_request(method, path, &query, app).unwrap_or_else(not_found_response),
+        _ => route_pairing_request(method, path, &query, app)
+            .or_else(|| route_thread_request(method, path, &query, app))
+            .unwrap_or_else(not_found_response),
     }
+}
+
+fn route_pairing_request(
+    method: &str,
+    path: &str,
+    query: &HashMap<String, String>,
+    app: &BridgeApplication,
+) -> Option<String> {
+    match (method, path) {
+        ("POST", "/pairing/session") | ("GET", "/pairing/session") => {
+            let session = app
+                .pairing_sessions
+                .lock()
+                .expect("pairing sessions mutex should not be poisoned")
+                .issue_session();
+            Some(json_response("200 OK", &session))
+        }
+        ("POST", "/pairing/finalize") => {
+            let Some(session_id) = query_required(query, "session_id") else {
+                return Some(bad_request_response(
+                    "missing_required_query_param: session_id",
+                ));
+            };
+            let Some(pairing_token) = query_required(query, "pairing_token") else {
+                return Some(bad_request_response(
+                    "missing_required_query_param: pairing_token",
+                ));
+            };
+            let Some(phone_id) = query_required(query, "phone_id") else {
+                return Some(bad_request_response(
+                    "missing_required_query_param: phone_id",
+                ));
+            };
+            let Some(phone_name) = query_required(query, "phone_name") else {
+                return Some(bad_request_response(
+                    "missing_required_query_param: phone_name",
+                ));
+            };
+            let Some(bridge_id) = query_required(query, "bridge_id") else {
+                return Some(bad_request_response(
+                    "missing_required_query_param: bridge_id",
+                ));
+            };
+
+            let request = PairingFinalizeRequest {
+                session_id,
+                pairing_token,
+                phone_id,
+                phone_name,
+                bridge_id,
+            };
+
+            let result = app
+                .pairing_sessions
+                .lock()
+                .expect("pairing sessions mutex should not be poisoned")
+                .finalize_trust(request);
+
+            Some(match result {
+                Ok(response) => json_response("200 OK", &response),
+                Err(error) => pairing_finalize_error_response(error),
+            })
+        }
+        ("POST", "/pairing/handshake") => {
+            let Some(phone_id) = query_required(query, "phone_id") else {
+                return Some(bad_request_response(
+                    "missing_required_query_param: phone_id",
+                ));
+            };
+            let Some(bridge_id) = query_required(query, "bridge_id") else {
+                return Some(bad_request_response(
+                    "missing_required_query_param: bridge_id",
+                ));
+            };
+            let Some(session_token) = query_required(query, "session_token") else {
+                return Some(bad_request_response(
+                    "missing_required_query_param: session_token",
+                ));
+            };
+
+            let request = PairingHandshakeRequest {
+                phone_id,
+                bridge_id,
+                session_token,
+            };
+
+            let result = app
+                .pairing_sessions
+                .lock()
+                .expect("pairing sessions mutex should not be poisoned")
+                .handshake(request);
+
+            Some(match result {
+                Ok(response) => json_response("200 OK", &response),
+                Err(error) => pairing_handshake_error_response(error),
+            })
+        }
+        ("POST", "/pairing/trust/revoke") => {
+            let phone_id = query
+                .get("phone_id")
+                .map(|value| value.trim())
+                .and_then(|value| {
+                    if value.is_empty() {
+                        None
+                    } else {
+                        Some(value.to_string())
+                    }
+                });
+
+            let result = app
+                .pairing_sessions
+                .lock()
+                .expect("pairing sessions mutex should not be poisoned")
+                .revoke_trust(PairingRevokeRequest { phone_id });
+
+            Some(match result {
+                Ok(response) => json_response("200 OK", &response),
+                Err(error) => json_error_response(
+                    "500 Internal Server Error",
+                    "pairing_revoke_failed",
+                    "storage_error",
+                    &error,
+                ),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn query_required(query: &HashMap<String, String>, key: &str) -> Option<String> {
+    query
+        .get(key)
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }
 
 fn route_thread_request(
@@ -615,9 +769,46 @@ fn method_not_allowed_response() -> String {
 }
 
 fn bad_request_response(message: &str) -> String {
+    json_error_response("400 Bad Request", "bad_request", "bad_request", message)
+}
+
+fn pairing_finalize_error_response(error: PairingFinalizeError) -> String {
+    let status = match error {
+        PairingFinalizeError::UnknownPairingSession
+        | PairingFinalizeError::InvalidPairingToken
+        | PairingFinalizeError::PairingSessionExpired => "400 Bad Request",
+        PairingFinalizeError::SessionAlreadyConsumed
+        | PairingFinalizeError::TrustedPhoneConflict => "409 Conflict",
+        PairingFinalizeError::BridgeIdentityMismatch
+        | PairingFinalizeError::PrivateBridgePathRequired => "403 Forbidden",
+        PairingFinalizeError::Storage(_) => "500 Internal Server Error",
+    };
+
+    json_error_response(
+        status,
+        "pairing_finalize_failed",
+        error.code(),
+        &error.message(),
+    )
+}
+
+fn pairing_handshake_error_response(error: PairingHandshakeError) -> String {
+    json_error_response(
+        "403 Forbidden",
+        "pairing_handshake_failed",
+        error.code(),
+        error.message(),
+    )
+}
+
+fn json_error_response(status: &str, error: &str, code: &str, message: &str) -> String {
     json_response(
-        "400 Bad Request",
-        &json!({ "error": "bad_request", "message": message }),
+        status,
+        &json!({
+            "error": error,
+            "code": code,
+            "message": message,
+        }),
     )
 }
 
@@ -653,121 +844,6 @@ struct ApiSurface {
     seeded_thread_count: usize,
 }
 
-#[derive(Debug)]
-struct PairingSessionService {
-    bridge_id: String,
-    bridge_name: String,
-    api_base_url: String,
-    next_sequence: u64,
-}
-
-impl PairingSessionService {
-    fn new(host: &str, port: u16) -> Self {
-        Self {
-            bridge_id: derive_bridge_id(host, port),
-            bridge_name: "Codex Mobile Companion".to_string(),
-            api_base_url: format!("http://{host}:{port}"),
-            next_sequence: 1,
-        }
-    }
-
-    fn issue_session(&mut self) -> PairingSessionResponse {
-        let issued_at_epoch_seconds = unix_now_epoch_seconds();
-        let expires_at_epoch_seconds = issued_at_epoch_seconds.saturating_add(300);
-        let sequence = self.next_sequence;
-        self.next_sequence = self.next_sequence.saturating_add(1);
-
-        let session_id = format!("pairing-session-{sequence}");
-        let pairing_token = format!("ptk-{issued_at_epoch_seconds:x}-{sequence:x}");
-
-        let qr_payload = PairingQrPayload {
-            contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
-            bridge_id: self.bridge_id.clone(),
-            bridge_name: self.bridge_name.clone(),
-            bridge_api_base_url: self.api_base_url.clone(),
-            session_id: session_id.clone(),
-            pairing_token: pairing_token.clone(),
-            issued_at_epoch_seconds,
-            expires_at_epoch_seconds,
-        };
-
-        let qr_payload =
-            serde_json::to_string(&qr_payload).expect("pairing QR payload should serialize");
-
-        eprintln!(
-            "token-issued bridge_id={} session_id={session_id}",
-            self.bridge_id
-        );
-
-        PairingSessionResponse {
-            contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
-            bridge_identity: PairingBridgeIdentity {
-                bridge_id: self.bridge_id.clone(),
-                display_name: self.bridge_name.clone(),
-                api_base_url: self.api_base_url.clone(),
-            },
-            pairing_session: PairingSession {
-                session_id,
-                pairing_token,
-                issued_at_epoch_seconds,
-                expires_at_epoch_seconds,
-            },
-            qr_payload,
-        }
-    }
-}
-
-fn derive_bridge_id(host: &str, port: u16) -> String {
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in format!("{host}:{port}").bytes() {
-        hash ^= byte as u64;
-        hash = hash.wrapping_mul(0x100000001b3_u64);
-    }
-    format!("bridge-{hash:016x}")
-}
-
-fn unix_now_epoch_seconds() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or_default()
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct PairingSessionResponse {
-    contract_version: String,
-    bridge_identity: PairingBridgeIdentity,
-    pairing_session: PairingSession,
-    qr_payload: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct PairingBridgeIdentity {
-    bridge_id: String,
-    display_name: String,
-    api_base_url: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct PairingSession {
-    session_id: String,
-    pairing_token: String,
-    issued_at_epoch_seconds: u64,
-    expires_at_epoch_seconds: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct PairingQrPayload {
-    contract_version: String,
-    bridge_id: String,
-    bridge_name: String,
-    bridge_api_base_url: String,
-    session_id: String,
-    pairing_token: String,
-    issued_at_epoch_seconds: u64,
-    expires_at_epoch_seconds: u64,
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc::RecvTimeoutError;
@@ -791,6 +867,7 @@ mod tests {
                 host: "127.0.0.1".to_string(),
                 port: 3110,
                 admin_port: 3111,
+                pairing_base_url: "http://127.0.0.1:3110".to_string(),
                 codex_runtime: CodexRuntimeConfig {
                     mode: CodexRuntimeMode::Auto,
                     endpoint: Some("ws://127.0.0.1:4222".to_string()),
@@ -816,6 +893,8 @@ mod tests {
             "sleep".to_string(),
             "--codex-arg".to_string(),
             "10".to_string(),
+            "--pairing-base-url".to_string(),
+            "https://bridge.ts.net".to_string(),
         ])
         .expect("explicit values should parse");
 
@@ -825,6 +904,7 @@ mod tests {
                 host: "0.0.0.0".to_string(),
                 port: 9999,
                 admin_port: 9998,
+                pairing_base_url: "https://bridge.ts.net".to_string(),
                 codex_runtime: CodexRuntimeConfig {
                     mode: CodexRuntimeMode::Spawn,
                     endpoint: Some("ws://127.0.0.1:4222".to_string()),
@@ -934,7 +1014,7 @@ mod tests {
         );
         assert_eq!(
             body["bridge_identity"]["api_base_url"],
-            "http://127.0.0.1:3110"
+            "https://bridge.ts.net"
         );
         assert_eq!(body["pairing_session"]["session_id"], "pairing-session-1");
 
@@ -944,7 +1024,7 @@ mod tests {
         let qr_payload: Value =
             serde_json::from_str(qr_payload).expect("qr payload should decode as JSON");
 
-        assert_eq!(qr_payload["bridge_api_base_url"], "http://127.0.0.1:3110");
+        assert_eq!(qr_payload["bridge_api_base_url"], "https://bridge.ts.net");
         assert_eq!(
             qr_payload["pairing_token"],
             body["pairing_session"]["pairing_token"]
@@ -993,6 +1073,104 @@ mod tests {
         assert!(matches!(error, RecvTimeoutError::Timeout));
     }
 
+    #[test]
+    fn pairing_finalize_consumes_session_and_rejects_reuse() {
+        let app = test_application();
+
+        let session = parse_json_body(&route_request("POST /pairing/session HTTP/1.1", &app));
+        let session_id = session["pairing_session"]["session_id"]
+            .as_str()
+            .expect("session id should be present");
+        let pairing_token = session["pairing_session"]["pairing_token"]
+            .as_str()
+            .expect("pairing token should be present");
+        let bridge_id = session["bridge_identity"]["bridge_id"]
+            .as_str()
+            .expect("bridge id should be present");
+
+        let finalize_path = format!(
+            "POST /pairing/finalize?session_id={session_id}&pairing_token={pairing_token}&phone_id=phone-1&phone_name=iPhone&bridge_id={bridge_id} HTTP/1.1"
+        );
+        let first_finalize = route_request(&finalize_path, &app);
+        assert!(first_finalize.starts_with("HTTP/1.1 200 OK"));
+
+        let second_finalize = route_request(&finalize_path, &app);
+        assert!(second_finalize.starts_with("HTTP/1.1 409 Conflict"));
+        assert!(second_finalize.contains("\"code\":\"session_already_consumed\""));
+    }
+
+    #[test]
+    fn pairing_handshake_fails_closed_on_bridge_identity_mismatch() {
+        let app = test_application();
+
+        let session = parse_json_body(&route_request("POST /pairing/session HTTP/1.1", &app));
+        let session_id = session["pairing_session"]["session_id"]
+            .as_str()
+            .expect("session id should be present");
+        let pairing_token = session["pairing_session"]["pairing_token"]
+            .as_str()
+            .expect("pairing token should be present");
+        let bridge_id = session["bridge_identity"]["bridge_id"]
+            .as_str()
+            .expect("bridge id should be present");
+
+        let finalize_path = format!(
+            "POST /pairing/finalize?session_id={session_id}&pairing_token={pairing_token}&phone_id=phone-1&phone_name=iPhone&bridge_id={bridge_id} HTTP/1.1"
+        );
+        let finalize_response = route_request(&finalize_path, &app);
+        assert!(finalize_response.starts_with("HTTP/1.1 200 OK"));
+
+        let finalized = parse_json_body(&finalize_response);
+        let session_token = finalized["session_token"]
+            .as_str()
+            .expect("session token should be present");
+
+        let handshake_path = format!(
+            "POST /pairing/handshake?phone_id=phone-1&bridge_id=bridge-other&session_token={session_token} HTTP/1.1"
+        );
+        let handshake = route_request(&handshake_path, &app);
+        assert!(handshake.starts_with("HTTP/1.1 403 Forbidden"));
+        assert!(handshake.contains("\"code\":\"bridge_identity_mismatch\""));
+    }
+
+    #[test]
+    fn pairing_finalize_enforces_single_trusted_phone_per_mac() {
+        let app = test_application();
+
+        let first_session = parse_json_body(&route_request("POST /pairing/session HTTP/1.1", &app));
+        let first_bridge_id = first_session["bridge_identity"]["bridge_id"]
+            .as_str()
+            .expect("bridge id should be present");
+        let first_session_id = first_session["pairing_session"]["session_id"]
+            .as_str()
+            .expect("session id should be present");
+        let first_pairing_token = first_session["pairing_session"]["pairing_token"]
+            .as_str()
+            .expect("pairing token should be present");
+
+        let first_finalize_path = format!(
+            "POST /pairing/finalize?session_id={first_session_id}&pairing_token={first_pairing_token}&phone_id=phone-1&phone_name=iPhone&bridge_id={first_bridge_id} HTTP/1.1"
+        );
+        let first_finalize = route_request(&first_finalize_path, &app);
+        assert!(first_finalize.starts_with("HTTP/1.1 200 OK"));
+
+        let second_session =
+            parse_json_body(&route_request("POST /pairing/session HTTP/1.1", &app));
+        let second_session_id = second_session["pairing_session"]["session_id"]
+            .as_str()
+            .expect("session id should be present");
+        let second_pairing_token = second_session["pairing_session"]["pairing_token"]
+            .as_str()
+            .expect("pairing token should be present");
+
+        let second_finalize_path = format!(
+            "POST /pairing/finalize?session_id={second_session_id}&pairing_token={second_pairing_token}&phone_id=phone-2&phone_name=SecondPhone&bridge_id={first_bridge_id} HTTP/1.1"
+        );
+        let second_finalize = route_request(&second_finalize_path, &app);
+        assert!(second_finalize.starts_with("HTTP/1.1 409 Conflict"));
+        assert!(second_finalize.contains("\"code\":\"trusted_phone_conflict\""));
+    }
+
     fn test_application() -> BridgeApplication {
         let mut runtime = CodexRuntimeSupervisor::new(CodexRuntimeConfig {
             mode: CodexRuntimeMode::Attach,
@@ -1008,8 +1186,25 @@ mod tests {
             ThreadApiService::sample(),
             runtime,
             StreamRouter::new(),
-            PairingSessionService::new("127.0.0.1", 3110),
+            PairingSessionService::new(
+                "127.0.0.1",
+                3110,
+                "https://bridge.ts.net",
+                unique_test_state_dir(),
+            ),
         )
+    }
+
+    fn unique_test_state_dir() -> std::path::PathBuf {
+        let unique = format!(
+            "bridge-core-lib-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time before unix epoch")
+                .as_nanos()
+        );
+
+        std::env::temp_dir().join(unique)
     }
 
     fn parse_json_body(response: &str) -> Value {

@@ -47,10 +47,22 @@ void main() {
     expect(result.isValid, isFalse);
     expect(result.error, PairingValidationError.reused);
   });
+
+  test('rejects payloads that are not private Tailscale bridge paths', () {
+    final result = validatePairingQrPayload(
+      _validPayload(bridgeApiBaseUrl: 'http://127.0.0.1:3110'),
+      nowUtc: DateTime.fromMillisecondsSinceEpoch(150 * 1000, isUtc: true),
+      consumedSessionIds: <String>{},
+    );
+
+    expect(result.isValid, isFalse);
+    expect(result.error, PairingValidationError.privateRouteRequired);
+  });
 }
 
 String _validPayload({
   String bridgeId = 'bridge-a1',
+  String bridgeApiBaseUrl = 'https://bridge.ts.net',
   String sessionId = 'session-1',
   int issuedAtEpochSeconds = 100,
   int expiresAtEpochSeconds = 200,
@@ -60,7 +72,7 @@ String _validPayload({
   "contract_version": "2026-03-17",
   "bridge_id": "$bridgeId",
   "bridge_name": "Codex Mobile Companion",
-  "bridge_api_base_url": "https://bridge.ts.net",
+  "bridge_api_base_url": "$bridgeApiBaseUrl",
   "session_id": "$sessionId",
   "pairing_token": "ptk-abc",
   "issued_at_epoch_seconds": $issuedAtEpochSeconds,

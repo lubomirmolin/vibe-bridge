@@ -36,7 +36,10 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
     final pairingController = ref.read(pairingControllerProvider.notifier);
 
     final body = switch (pairingState.step) {
-      PairingStep.unpaired => _buildUnpairedView(pairingController),
+      PairingStep.unpaired => _buildUnpairedView(
+        pairingController,
+        errorMessage: pairingState.errorMessage,
+      ),
       PairingStep.scanning => _buildScannerView(
         pairingState,
         pairingController,
@@ -51,7 +54,10 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
     );
   }
 
-  Widget _buildUnpairedView(PairingController pairingController) {
+  Widget _buildUnpairedView(
+    PairingController pairingController, {
+    String? errorMessage,
+  }) {
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -70,6 +76,13 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
             onPressed: pairingController.openScanner,
             child: const Text('Scan pairing QR'),
           ),
+          if (errorMessage != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              errorMessage,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
         ],
       ),
     );
@@ -200,6 +213,13 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
               ),
             ],
           ),
+          if (pairingState.errorMessage != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              pairingState.errorMessage!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
         ],
       ),
     );
@@ -211,7 +231,10 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
   ) {
     final bridge = pairingState.trustedBridge;
     if (bridge == null) {
-      return _buildUnpairedView(pairingController);
+      return _buildUnpairedView(
+        pairingController,
+        errorMessage: pairingState.errorMessage,
+      );
     }
 
     return Padding(
@@ -232,6 +255,13 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
             onPressed: pairingController.openScanner,
             child: const Text('Scan another QR'),
           ),
+          if (pairingState.errorMessage != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              pairingState.errorMessage!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
         ],
       ),
     );

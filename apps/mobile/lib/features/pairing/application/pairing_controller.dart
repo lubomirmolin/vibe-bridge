@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:codex_mobile_companion/features/pairing/data/pairing_bridge_api.dart';
 import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
 import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_validator.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
@@ -13,10 +14,20 @@ final nowUtcProvider = Provider<DateTime>((ref) {
   return DateTime.now().toUtc();
 });
 
+final pairingBridgeApiProvider = Provider<PairingBridgeApi>((ref) {
+  return const HttpPairingBridgeApi();
+});
+
+final phoneDisplayNameProvider = Provider<String>((ref) {
+  return 'Codex Mobile Companion Phone';
+});
+
 final pairingControllerProvider =
     StateNotifierProvider<PairingController, PairingState>((ref) {
       return PairingController(
         secureStore: ref.watch(secureStoreProvider),
+        bridgeApi: ref.watch(pairingBridgeApiProvider),
+        phoneDisplayName: ref.watch(phoneDisplayNameProvider),
         nowUtc: () => ref.read(nowUtcProvider),
       );
     });
@@ -80,14 +91,20 @@ class PairingState {
 class PairingController extends StateNotifier<PairingState> {
   PairingController({
     required SecureStore secureStore,
+    required PairingBridgeApi bridgeApi,
+    required String phoneDisplayName,
     required DateTime Function() nowUtc,
   }) : _secureStore = secureStore,
+       _bridgeApi = bridgeApi,
+       _phoneDisplayName = phoneDisplayName,
        _nowUtc = nowUtc,
        super(PairingState.initial()) {
     _restoreTrustedBridge();
   }
 
   final SecureStore _secureStore;
+  final PairingBridgeApi _bridgeApi;
+  final String _phoneDisplayName;
   final DateTime Function() _nowUtc;
 
   Future<void> _restoreTrustedBridge() async {
@@ -95,6 +112,12 @@ class PairingController extends StateNotifier<PairingState> {
       SecureValueKey.trustedBridgeIdentity,
     );
     if (raw == null) {
+      return;
+    }
+
+    final sessionToken = await _secureStore.readSecret(SecureValueKey.sessionToken);
+    if (sessionToken == null || sessionToken.trim().isEmpty) {
+      await _clearLocalTrust();
       return;
     }
 
@@ -107,12 +130,41 @@ class PairingController extends StateNotifier<PairingState> {
       }
 
       final trustedBridge = TrustedBridgeIdentity.fromJson(decoded);
+      final phoneId = await _readOrCreatePhoneId();
+      final handshake = await _bridgeApi.handshake(
+        trustedBridge: trustedBridge,
+        phoneId: phoneId,
+        sessionToken: sessionToken,
+      );
+
+      if (handshake.isTrusted) {
+        state = state.copyWith(
+          step: PairingStep.paired,
+          trustedBridge: trustedBridge,
+          clearErrorMessage: true,
+        );
+        return;
+      }
+
+      if (handshake.requiresRePair) {
+        await _clearLocalTrust();
+        state = state.copyWith(
+          step: PairingStep.unpaired,
+          clearTrustedBridge: true,
+          clearPendingPayload: true,
+          errorMessage: handshake.message,
+          isPersistingTrust: false,
+        );
+        return;
+      }
+
       state = state.copyWith(
         step: PairingStep.paired,
         trustedBridge: trustedBridge,
+        errorMessage: handshake.message,
       );
     } on FormatException {
-      await _secureStore.removeSecret(SecureValueKey.trustedBridgeIdentity);
+      await _clearLocalTrust();
     }
   }
 
@@ -165,7 +217,33 @@ class PairingController extends StateNotifier<PairingState> {
       return;
     }
 
+    if (state.trustedBridge != null &&
+        state.trustedBridge!.bridgeId != payload.bridgeId) {
+      state = state.copyWith(
+        errorMessage:
+            'This phone is already paired with a different Mac. Reset trust before replacing it.',
+      );
+      return;
+    }
+
     state = state.copyWith(isPersistingTrust: true, clearErrorMessage: true);
+    final phoneId = await _readOrCreatePhoneId();
+    final finalizeResult = await _bridgeApi.finalizeTrust(
+      payload: payload,
+      phoneId: phoneId,
+      phoneName: _phoneDisplayName,
+    );
+
+    if (!finalizeResult.isSuccess) {
+      state = state.copyWith(
+        step: finalizeResult.requiresRescan ? PairingStep.scanning : PairingStep.review,
+        clearPendingPayload: finalizeResult.requiresRescan,
+        isPersistingTrust: false,
+        errorMessage: finalizeResult.message,
+      );
+      return;
+    }
+
     final trust = TrustedBridgeIdentity.fromPayload(
       payload,
       pairedAtUtc: _nowUtc(),
@@ -177,7 +255,7 @@ class PairingController extends StateNotifier<PairingState> {
     );
     await _secureStore.writeSecret(
       SecureValueKey.sessionToken,
-      payload.pairingToken,
+      finalizeResult.sessionToken!,
     );
 
     final consumedSessionIds = Set<String>.from(state.consumedSessionIds)
@@ -191,5 +269,22 @@ class PairingController extends StateNotifier<PairingState> {
       isPersistingTrust: false,
       consumedSessionIds: consumedSessionIds,
     );
+  }
+
+  Future<void> _clearLocalTrust() async {
+    await _secureStore.removeSecret(SecureValueKey.trustedBridgeIdentity);
+    await _secureStore.removeSecret(SecureValueKey.sessionToken);
+  }
+
+  Future<String> _readOrCreatePhoneId() async {
+    final existing = await _secureStore.readSecret(SecureValueKey.pairingPrivateKey);
+    if (existing != null && existing.trim().isNotEmpty) {
+      return existing.trim();
+    }
+
+    final generated =
+        'phone-${_nowUtc().microsecondsSinceEpoch.toRadixString(16)}';
+    await _secureStore.writeSecret(SecureValueKey.pairingPrivateKey, generated);
+    return generated;
   }
 }

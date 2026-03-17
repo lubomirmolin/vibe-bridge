@@ -1,6 +1,6 @@
 import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
 
-enum PairingValidationError { malformed, expired, reused }
+enum PairingValidationError { malformed, expired, reused, privateRouteRequired }
 
 class PairingValidationResult {
   const PairingValidationResult._({
@@ -43,6 +43,12 @@ PairingValidationResult validatePairingQrPayload(
       return PairingValidationResult.invalid(PairingValidationError.reused);
     }
 
+    if (!isPrivateBridgeApiBaseUrl(payload.bridgeApiBaseUrl)) {
+      return PairingValidationResult.invalid(
+        PairingValidationError.privateRouteRequired,
+      );
+    }
+
     return PairingValidationResult.valid(payload);
   } on FormatException {
     return PairingValidationResult.invalid(PairingValidationError.malformed);
@@ -57,5 +63,7 @@ String _messageFor(PairingValidationError error) {
       return 'This pairing QR code expired. Please rescan from your Mac.';
     case PairingValidationError.reused:
       return 'This pairing QR code was already used. Please rescan from your Mac.';
+    case PairingValidationError.privateRouteRequired:
+      return 'This QR does not use a private Tailscale bridge path. Please rescan from your Mac.';
   }
 }
