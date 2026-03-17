@@ -1,0 +1,70 @@
+import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_validator.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  test('accepts a valid pairing payload', () {
+    final result = validatePairingQrPayload(
+      _validPayload(),
+      nowUtc: DateTime.fromMillisecondsSinceEpoch(150 * 1000, isUtc: true),
+      consumedSessionIds: <String>{},
+    );
+
+    expect(result.isValid, isTrue);
+    expect(result.payload?.bridgeId, 'bridge-a1');
+    expect(result.payload?.sessionId, 'session-1');
+  });
+
+  test('rejects malformed payload with rescan guidance', () {
+    final result = validatePairingQrPayload(
+      '{"broken":',
+      nowUtc: DateTime.utc(2026, 3, 17, 21, 0),
+      consumedSessionIds: <String>{},
+    );
+
+    expect(result.isValid, isFalse);
+    expect(result.error, PairingValidationError.malformed);
+    expect(result.message, contains('Please rescan from your Mac'));
+  });
+
+  test('rejects expired payload', () {
+    final result = validatePairingQrPayload(
+      _validPayload(issuedAtEpochSeconds: 1, expiresAtEpochSeconds: 10),
+      nowUtc: DateTime.fromMillisecondsSinceEpoch(11 * 1000, isUtc: true),
+      consumedSessionIds: <String>{},
+    );
+
+    expect(result.isValid, isFalse);
+    expect(result.error, PairingValidationError.expired);
+  });
+
+  test('rejects reused payload by session id', () {
+    final result = validatePairingQrPayload(
+      _validPayload(sessionId: 'session-reused'),
+      nowUtc: DateTime.fromMillisecondsSinceEpoch(150 * 1000, isUtc: true),
+      consumedSessionIds: <String>{'session-reused'},
+    );
+
+    expect(result.isValid, isFalse);
+    expect(result.error, PairingValidationError.reused);
+  });
+}
+
+String _validPayload({
+  String bridgeId = 'bridge-a1',
+  String sessionId = 'session-1',
+  int issuedAtEpochSeconds = 100,
+  int expiresAtEpochSeconds = 200,
+}) {
+  return '''
+{
+  "contract_version": "2026-03-17",
+  "bridge_id": "$bridgeId",
+  "bridge_name": "Codex Mobile Companion",
+  "bridge_api_base_url": "https://bridge.ts.net",
+  "session_id": "$sessionId",
+  "pairing_token": "ptk-abc",
+  "issued_at_epoch_seconds": $issuedAtEpochSeconds,
+  "expires_at_epoch_seconds": $expiresAtEpochSeconds
+}
+''';
+}
