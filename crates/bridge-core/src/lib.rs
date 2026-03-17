@@ -8,26 +8,34 @@ use std::thread;
 use std::time::Duration;
 
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{Value, json};
+use shared_contracts::{
+    AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, SecurityAuditEventDto,
+};
 use tungstenite::{Message, accept};
 
 use codex_runtime::{
     CodexRuntimeConfig, CodexRuntimeMode, CodexRuntimeSupervisor, RuntimeSnapshot,
 };
-use logging::{InMemoryLogSink, StructuredLogger};
+use logging::{InMemoryLogSink, LogSeverity, LogSink, StructuredLogger};
 use pairing::{
     PairingFinalizeError, PairingFinalizeRequest, PairingHandshakeError, PairingHandshakeRequest,
     PairingRevokeRequest, PairingSessionService,
 };
 use persistence::PersistenceBoundary;
+use policy::{PolicyAction, PolicyDecision, PolicyEngine};
 use secure_storage::InMemorySecureStore;
 use stream_router::StreamRouter;
-use thread_api::{MutationDispatch, ThreadApiService};
+use thread_api::{
+    GitStatusResponse, MutationDispatch, MutationResultResponse, RepositoryContextDto,
+    ThreadApiService,
+};
 
 pub mod codex_runtime;
 pub mod logging;
 pub mod pairing;
 pub mod persistence;
+pub mod policy;
 pub mod secure_storage;
 pub mod stream_router;
 pub mod thread_api;
@@ -89,6 +97,7 @@ where
             config.pairing_base_url.clone(),
             foundations.persistence.state_directory(),
         ),
+        foundations.logger,
     ));
 
     let api_listener = TcpListener::bind((config.host.as_str(), config.port)).map_err(|error| {
@@ -227,12 +236,299 @@ where
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct AccessModeResponse {
+    contract_version: String,
+    access_mode: AccessMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct ApprovalListResponse {
+    contract_version: String,
+    approvals: Vec<ApprovalRecordDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct ApprovalGateResponse {
+    contract_version: String,
+    operation: String,
+    outcome: String,
+    message: String,
+    approval: ApprovalRecordDto,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct ApprovalResolutionResponse {
+    contract_version: String,
+    approval: ApprovalRecordDto,
+    mutation_result: Option<MutationResultResponse>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct SecurityEventsResponse {
+    contract_version: String,
+    events: Vec<SecurityEventRecordDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct SecurityEventRecordDto {
+    severity: String,
+    category: String,
+    event: BridgeEventEnvelope<Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ApprovalStatus {
+    Pending,
+    Approved,
+    Rejected,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PendingApprovalAction {
+    BranchSwitch {
+        thread_id: String,
+        branch: String,
+    },
+    Pull {
+        thread_id: String,
+        remote: Option<String>,
+    },
+    Push {
+        thread_id: String,
+        remote: Option<String>,
+    },
+}
+
+impl PendingApprovalAction {
+    fn thread_id(&self) -> &str {
+        match self {
+            Self::BranchSwitch { thread_id, .. }
+            | Self::Pull { thread_id, .. }
+            | Self::Push { thread_id, .. } => thread_id,
+        }
+    }
+
+    fn operation_name(&self) -> &'static str {
+        match self {
+            Self::BranchSwitch { .. } => "git_branch_switch",
+            Self::Pull { .. } => "git_pull",
+            Self::Push { .. } => "git_push",
+        }
+    }
+
+    fn target_name(&self) -> &'static str {
+        match self {
+            Self::BranchSwitch { .. } => "git.branch_switch",
+            Self::Pull { .. } => "git.pull",
+            Self::Push { .. } => "git.push",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct ApprovalRecordDto {
+    contract_version: String,
+    approval_id: String,
+    thread_id: String,
+    action: String,
+    target: String,
+    reason: String,
+    status: ApprovalStatus,
+    requested_at: String,
+    resolved_at: Option<String>,
+    repository: RepositoryContextDto,
+    git_status: thread_api::GitStatusDto,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingApprovalRecord {
+    approval: ApprovalRecordDto,
+    action: PendingApprovalAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ResolveApprovalError {
+    NotFound,
+    NotPending,
+}
+
+#[derive(Debug)]
+struct SecurityState {
+    policy_engine: PolicyEngine,
+    approvals: Vec<PendingApprovalRecord>,
+    next_approval_sequence: u64,
+    next_security_event_sequence: u64,
+    logger: StructuredLogger<InMemoryLogSink>,
+}
+
+impl SecurityState {
+    fn new(logger: StructuredLogger<InMemoryLogSink>) -> Self {
+        Self {
+            policy_engine: PolicyEngine::default(),
+            approvals: Vec::new(),
+            next_approval_sequence: 1,
+            next_security_event_sequence: 1,
+            logger,
+        }
+    }
+
+    fn access_mode(&self) -> AccessMode {
+        self.policy_engine.access_mode()
+    }
+
+    fn set_access_mode(&mut self, access_mode: AccessMode) {
+        self.policy_engine.set_access_mode(access_mode);
+    }
+
+    fn decide(&self, action: PolicyAction) -> PolicyDecision {
+        self.policy_engine.decide(action)
+    }
+
+    fn queue_approval(
+        &mut self,
+        action: PendingApprovalAction,
+        reason: &str,
+        repository: RepositoryContextDto,
+        git_status: thread_api::GitStatusDto,
+    ) -> ApprovalRecordDto {
+        let sequence = self.next_approval_sequence;
+        self.next_approval_sequence = self.next_approval_sequence.saturating_add(1);
+
+        let approval = ApprovalRecordDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            approval_id: format!("approval-{sequence}"),
+            thread_id: action.thread_id().to_string(),
+            action: action.operation_name().to_string(),
+            target: action.target_name().to_string(),
+            reason: reason.to_string(),
+            status: ApprovalStatus::Pending,
+            requested_at: timestamp_from_sequence(sequence),
+            resolved_at: None,
+            repository,
+            git_status,
+        };
+
+        self.approvals.push(PendingApprovalRecord {
+            approval: approval.clone(),
+            action,
+        });
+
+        approval
+    }
+
+    fn approvals_snapshot(&self) -> Vec<ApprovalRecordDto> {
+        self.approvals
+            .iter()
+            .map(|record| record.approval.clone())
+            .collect::<Vec<_>>()
+    }
+
+    fn resolve_approval(
+        &mut self,
+        approval_id: &str,
+        approved: bool,
+    ) -> Result<PendingApprovalRecord, ResolveApprovalError> {
+        let sequence = self.next_approval_sequence;
+        self.next_approval_sequence = self.next_approval_sequence.saturating_add(1);
+
+        let record = self
+            .approvals
+            .iter_mut()
+            .find(|record| record.approval.approval_id == approval_id)
+            .ok_or(ResolveApprovalError::NotFound)?;
+
+        if record.approval.status != ApprovalStatus::Pending {
+            return Err(ResolveApprovalError::NotPending);
+        }
+
+        record.approval.status = if approved {
+            ApprovalStatus::Approved
+        } else {
+            ApprovalStatus::Rejected
+        };
+        record.approval.resolved_at = Some(timestamp_from_sequence(sequence));
+
+        Ok(record.clone())
+    }
+
+    fn log_security_audit(
+        &mut self,
+        severity: LogSeverity,
+        thread_id: impl Into<String>,
+        audit_event: SecurityAuditEventDto,
+    ) -> BridgeEventEnvelope<Value> {
+        let sequence = self.next_security_event_sequence;
+        self.next_security_event_sequence = self.next_security_event_sequence.saturating_add(1);
+        let event_id = format!("evt-security-{sequence}");
+        let occurred_at = timestamp_from_sequence(sequence);
+        let payload = serde_json::to_value(&audit_event)
+            .expect("security audit event serialization should never fail");
+        let event = BridgeEventEnvelope::new(
+            event_id,
+            thread_id,
+            BridgeEventKind::SecurityAudit,
+            occurred_at,
+            payload,
+        );
+
+        self.logger.log_security_audit(
+            severity,
+            event.event_id.clone(),
+            event.thread_id.clone(),
+            event.occurred_at.clone(),
+            audit_event,
+        );
+
+        event
+    }
+
+    fn security_events_snapshot(&self) -> Vec<SecurityEventRecordDto> {
+        self.logger
+            .sink()
+            .records()
+            .iter()
+            .map(|record| SecurityEventRecordDto {
+                severity: log_severity_wire(record.severity).to_string(),
+                category: record.category.to_string(),
+                event: record.event.clone(),
+            })
+            .collect::<Vec<_>>()
+    }
+}
+
+fn log_severity_wire(severity: LogSeverity) -> &'static str {
+    match severity {
+        LogSeverity::Debug => "debug",
+        LogSeverity::Info => "info",
+        LogSeverity::Warn => "warn",
+        LogSeverity::Error => "error",
+    }
+}
+
+fn timestamp_from_sequence(sequence: u64) -> String {
+    let minute = (sequence / 60) % 60;
+    let second = sequence % 60;
+    format!("2026-03-17T23:{minute:02}:{second:02}Z")
+}
+
+fn parse_access_mode(raw: &str) -> Option<AccessMode> {
+    match raw.trim() {
+        "read_only" => Some(AccessMode::ReadOnly),
+        "control_with_approvals" => Some(AccessMode::ControlWithApprovals),
+        "full_control" => Some(AccessMode::FullControl),
+        _ => None,
+    }
+}
+
 #[derive(Debug)]
 struct BridgeApplication {
     thread_api: Mutex<ThreadApiService>,
     runtime: Mutex<CodexRuntimeSupervisor>,
     stream_router: StreamRouter,
     pairing_sessions: Mutex<PairingSessionService>,
+    security_state: Mutex<SecurityState>,
 }
 
 impl BridgeApplication {
@@ -241,12 +537,14 @@ impl BridgeApplication {
         runtime: CodexRuntimeSupervisor,
         stream_router: StreamRouter,
         pairing_sessions: PairingSessionService,
+        logger: StructuredLogger<InMemoryLogSink>,
     ) -> Self {
         Self {
             thread_api: Mutex::new(thread_api),
             runtime: Mutex::new(runtime),
             stream_router,
             pairing_sessions: Mutex::new(pairing_sessions),
+            security_state: Mutex::new(SecurityState::new(logger)),
         }
     }
 
@@ -255,6 +553,79 @@ impl BridgeApplication {
             .lock()
             .expect("runtime mutex should not be poisoned")
             .snapshot()
+    }
+
+    fn access_mode(&self) -> AccessMode {
+        self.security_state
+            .lock()
+            .expect("security state mutex should not be poisoned")
+            .access_mode()
+    }
+
+    fn set_access_mode(&self, access_mode: AccessMode) {
+        self.security_state
+            .lock()
+            .expect("security state mutex should not be poisoned")
+            .set_access_mode(access_mode);
+    }
+
+    fn decide_policy(&self, action: PolicyAction) -> PolicyDecision {
+        self.security_state
+            .lock()
+            .expect("security state mutex should not be poisoned")
+            .decide(action)
+    }
+
+    fn queue_approval(
+        &self,
+        action: PendingApprovalAction,
+        reason: &str,
+        repository: RepositoryContextDto,
+        git_status: thread_api::GitStatusDto,
+    ) -> ApprovalRecordDto {
+        self.security_state
+            .lock()
+            .expect("security state mutex should not be poisoned")
+            .queue_approval(action, reason, repository, git_status)
+    }
+
+    fn approvals_snapshot(&self) -> Vec<ApprovalRecordDto> {
+        self.security_state
+            .lock()
+            .expect("security state mutex should not be poisoned")
+            .approvals_snapshot()
+    }
+
+    fn resolve_approval(
+        &self,
+        approval_id: &str,
+        approved: bool,
+    ) -> Result<PendingApprovalRecord, ResolveApprovalError> {
+        self.security_state
+            .lock()
+            .expect("security state mutex should not be poisoned")
+            .resolve_approval(approval_id, approved)
+    }
+
+    fn security_events_snapshot(&self) -> Vec<SecurityEventRecordDto> {
+        self.security_state
+            .lock()
+            .expect("security state mutex should not be poisoned")
+            .security_events_snapshot()
+    }
+
+    fn record_security_audit(
+        &self,
+        severity: LogSeverity,
+        thread_id: impl Into<String>,
+        audit_event: SecurityAuditEventDto,
+    ) {
+        let event = self
+            .security_state
+            .lock()
+            .expect("security state mutex should not be poisoned")
+            .log_security_audit(severity, thread_id, audit_event);
+        self.stream_router.publish(event);
     }
 }
 
@@ -435,6 +806,8 @@ fn route_request(request_line: &str, app: &BridgeApplication) -> String {
                         "POST /pairing/finalize",
                         "POST /pairing/handshake",
                         "POST /pairing/trust/revoke",
+                        "GET /policy/access-mode",
+                        "POST /policy/access-mode?mode=<read_only|control_with_approvals|full_control>",
                         "GET /threads",
                         "GET /threads/:id",
                         "GET /threads/:id/timeline",
@@ -445,10 +818,65 @@ fn route_request(request_line: &str, app: &BridgeApplication) -> String {
                         "POST /threads/:id/git/branch-switch",
                         "POST /threads/:id/git/pull",
                         "POST /threads/:id/git/push",
+                        "GET /approvals",
+                        "POST /approvals/:id/approve",
+                        "POST /approvals/:id/reject",
+                        "GET /security/events",
                         "WS /stream?thread_id=<id>",
                     ],
                     seeded_thread_count,
                 },
+            };
+            json_response("200 OK", &payload)
+        }
+        ("GET", "/policy/access-mode") => {
+            let payload = AccessModeResponse {
+                contract_version: CONTRACT_VERSION.to_string(),
+                access_mode: app.access_mode(),
+            };
+            json_response("200 OK", &payload)
+        }
+        ("POST", "/policy/access-mode") => {
+            let Some(raw_mode) = query_required(&query, "mode") else {
+                return bad_request_response("missing_required_query_param: mode");
+            };
+            let Some(access_mode) = parse_access_mode(&raw_mode) else {
+                return bad_request_response("invalid_access_mode");
+            };
+
+            app.set_access_mode(access_mode);
+            app.record_security_audit(
+                LogSeverity::Info,
+                "policy",
+                SecurityAuditEventDto {
+                    actor: query
+                        .get("actor")
+                        .cloned()
+                        .unwrap_or_else(|| "system".to_string()),
+                    action: "set_access_mode".to_string(),
+                    target: "policy.access_mode".to_string(),
+                    outcome: "allowed".to_string(),
+                    reason: format!("mode={raw_mode}"),
+                },
+            );
+
+            let payload = AccessModeResponse {
+                contract_version: CONTRACT_VERSION.to_string(),
+                access_mode,
+            };
+            json_response("200 OK", &payload)
+        }
+        ("GET", "/approvals") => {
+            let payload = ApprovalListResponse {
+                contract_version: CONTRACT_VERSION.to_string(),
+                approvals: app.approvals_snapshot(),
+            };
+            json_response("200 OK", &payload)
+        }
+        ("GET", "/security/events") => {
+            let payload = SecurityEventsResponse {
+                contract_version: CONTRACT_VERSION.to_string(),
+                events: app.security_events_snapshot(),
             };
             json_response("200 OK", &payload)
         }
@@ -462,6 +890,7 @@ fn route_request(request_line: &str, app: &BridgeApplication) -> String {
         }
         (_, "/stream") => upgrade_required_response(),
         _ => route_pairing_request(method, path, &query, app)
+            .or_else(|| route_approval_request(method, path, &query, app))
             .or_else(|| route_thread_request(method, path, &query, app))
             .unwrap_or_else(not_found_response),
     }
@@ -618,11 +1047,12 @@ fn route_thread_request(
 
     match (method, segments.as_slice()) {
         ("GET", [_]) => {
-            let detail = app
+            let mut detail = app
                 .thread_api
                 .lock()
                 .expect("thread API mutex should not be poisoned")
                 .detail_response(thread_id)?;
+            detail.thread.access_mode = app.access_mode();
             Some(json_response("200 OK", &detail))
         }
         ("GET", [_, "timeline"]) => {
@@ -642,29 +1072,110 @@ fn route_thread_request(
             Some(json_response("200 OK", &status))
         }
         ("POST", [_, "turns", "start"]) => {
+            let actor = query
+                .get("actor")
+                .map(String::as_str)
+                .unwrap_or("mobile-device");
+            let decision = app.decide_policy(PolicyAction::TurnStart);
+            if let PolicyDecision::Deny { reason } = decision {
+                return Some(policy_denied_response_with_audit(
+                    app,
+                    thread_id,
+                    actor,
+                    "turn_start",
+                    "turn.start",
+                    reason,
+                ));
+            }
+
             let prompt = query.get("prompt").map(String::as_str);
             let dispatch = app
                 .thread_api
                 .lock()
                 .expect("thread API mutex should not be poisoned")
                 .start_turn(thread_id, prompt)?;
+            app.record_security_audit(
+                LogSeverity::Info,
+                thread_id,
+                SecurityAuditEventDto {
+                    actor: actor.to_string(),
+                    action: "turn_start".to_string(),
+                    target: "turn.start".to_string(),
+                    outcome: "allowed".to_string(),
+                    reason: "policy_allow".to_string(),
+                },
+            );
             Some(dispatch_response(app, dispatch))
         }
         ("POST", [_, "turns", "steer"]) => {
+            let actor = query
+                .get("actor")
+                .map(String::as_str)
+                .unwrap_or("mobile-device");
+            let decision = app.decide_policy(PolicyAction::TurnSteer);
+            if let PolicyDecision::Deny { reason } = decision {
+                return Some(policy_denied_response_with_audit(
+                    app,
+                    thread_id,
+                    actor,
+                    "turn_steer",
+                    "turn.steer",
+                    reason,
+                ));
+            }
+
             let instruction = query.get("instruction").map(String::as_str);
             let dispatch = app
                 .thread_api
                 .lock()
                 .expect("thread API mutex should not be poisoned")
                 .steer_turn(thread_id, instruction)?;
+            app.record_security_audit(
+                LogSeverity::Info,
+                thread_id,
+                SecurityAuditEventDto {
+                    actor: actor.to_string(),
+                    action: "turn_steer".to_string(),
+                    target: "turn.steer".to_string(),
+                    outcome: "allowed".to_string(),
+                    reason: "policy_allow".to_string(),
+                },
+            );
             Some(dispatch_response(app, dispatch))
         }
         ("POST", [_, "turns", "interrupt"]) => {
+            let actor = query
+                .get("actor")
+                .map(String::as_str)
+                .unwrap_or("mobile-device");
+            let decision = app.decide_policy(PolicyAction::TurnInterrupt);
+            if let PolicyDecision::Deny { reason } = decision {
+                return Some(policy_denied_response_with_audit(
+                    app,
+                    thread_id,
+                    actor,
+                    "turn_interrupt",
+                    "turn.interrupt",
+                    reason,
+                ));
+            }
+
             let dispatch = app
                 .thread_api
                 .lock()
                 .expect("thread API mutex should not be poisoned")
                 .interrupt_turn(thread_id)?;
+            app.record_security_audit(
+                LogSeverity::Info,
+                thread_id,
+                SecurityAuditEventDto {
+                    actor: actor.to_string(),
+                    action: "turn_interrupt".to_string(),
+                    target: "turn.interrupt".to_string(),
+                    outcome: "allowed".to_string(),
+                    reason: "policy_allow".to_string(),
+                },
+            );
             Some(dispatch_response(app, dispatch))
         }
         ("POST", [_, "git", "branch-switch"]) => {
@@ -672,33 +1183,398 @@ fn route_thread_request(
                 return Some(bad_request_response("missing_required_query_param: branch"));
             };
 
+            if branch.trim().is_empty() {
+                return Some(bad_request_response("invalid_branch"));
+            }
+
+            let actor = query
+                .get("actor")
+                .map(String::as_str)
+                .unwrap_or("mobile-device");
+            let decision = app.decide_policy(PolicyAction::GitBranchSwitch);
+
+            if let PolicyDecision::Deny { reason } = decision {
+                return Some(policy_denied_response_with_audit(
+                    app,
+                    thread_id,
+                    actor,
+                    "git_branch_switch",
+                    "git.branch_switch",
+                    reason,
+                ));
+            }
+
+            if let PolicyDecision::RequireApproval { reason } = decision {
+                let git_status = app
+                    .thread_api
+                    .lock()
+                    .expect("thread API mutex should not be poisoned")
+                    .git_status_response(thread_id)?;
+                return Some(queue_approval_response(
+                    app,
+                    actor,
+                    PendingApprovalAction::BranchSwitch {
+                        thread_id: thread_id.to_string(),
+                        branch: branch.trim().to_string(),
+                    },
+                    reason,
+                    git_status,
+                ));
+            }
+
             let dispatch = app
                 .thread_api
                 .lock()
                 .expect("thread API mutex should not be poisoned")
                 .switch_branch(thread_id, branch)?;
+            app.record_security_audit(
+                LogSeverity::Info,
+                thread_id,
+                SecurityAuditEventDto {
+                    actor: actor.to_string(),
+                    action: "git_branch_switch".to_string(),
+                    target: "git.branch_switch".to_string(),
+                    outcome: "allowed".to_string(),
+                    reason: "policy_allow".to_string(),
+                },
+            );
             Some(dispatch_response(app, dispatch))
         }
         ("POST", [_, "git", "pull"]) => {
             let remote = query.get("remote").map(String::as_str);
+
+            let actor = query
+                .get("actor")
+                .map(String::as_str)
+                .unwrap_or("mobile-device");
+            let decision = app.decide_policy(PolicyAction::GitPull);
+
+            if let PolicyDecision::Deny { reason } = decision {
+                return Some(policy_denied_response_with_audit(
+                    app, thread_id, actor, "git_pull", "git.pull", reason,
+                ));
+            }
+
+            if let PolicyDecision::RequireApproval { reason } = decision {
+                let git_status = app
+                    .thread_api
+                    .lock()
+                    .expect("thread API mutex should not be poisoned")
+                    .git_status_response(thread_id)?;
+                return Some(queue_approval_response(
+                    app,
+                    actor,
+                    PendingApprovalAction::Pull {
+                        thread_id: thread_id.to_string(),
+                        remote: remote.map(str::to_string),
+                    },
+                    reason,
+                    git_status,
+                ));
+            }
+
             let dispatch = app
                 .thread_api
                 .lock()
                 .expect("thread API mutex should not be poisoned")
                 .pull_repo(thread_id, remote)?;
+            app.record_security_audit(
+                LogSeverity::Info,
+                thread_id,
+                SecurityAuditEventDto {
+                    actor: actor.to_string(),
+                    action: "git_pull".to_string(),
+                    target: "git.pull".to_string(),
+                    outcome: "allowed".to_string(),
+                    reason: "policy_allow".to_string(),
+                },
+            );
             Some(dispatch_response(app, dispatch))
         }
         ("POST", [_, "git", "push"]) => {
             let remote = query.get("remote").map(String::as_str);
+
+            let actor = query
+                .get("actor")
+                .map(String::as_str)
+                .unwrap_or("mobile-device");
+            let decision = app.decide_policy(PolicyAction::GitPush);
+
+            if let PolicyDecision::Deny { reason } = decision {
+                return Some(policy_denied_response_with_audit(
+                    app, thread_id, actor, "git_push", "git.push", reason,
+                ));
+            }
+
+            if let PolicyDecision::RequireApproval { reason } = decision {
+                let git_status = app
+                    .thread_api
+                    .lock()
+                    .expect("thread API mutex should not be poisoned")
+                    .git_status_response(thread_id)?;
+                return Some(queue_approval_response(
+                    app,
+                    actor,
+                    PendingApprovalAction::Push {
+                        thread_id: thread_id.to_string(),
+                        remote: remote.map(str::to_string),
+                    },
+                    reason,
+                    git_status,
+                ));
+            }
+
             let dispatch = app
                 .thread_api
                 .lock()
                 .expect("thread API mutex should not be poisoned")
                 .push_repo(thread_id, remote)?;
+            app.record_security_audit(
+                LogSeverity::Info,
+                thread_id,
+                SecurityAuditEventDto {
+                    actor: actor.to_string(),
+                    action: "git_push".to_string(),
+                    target: "git.push".to_string(),
+                    outcome: "allowed".to_string(),
+                    reason: "policy_allow".to_string(),
+                },
+            );
             Some(dispatch_response(app, dispatch))
         }
         _ => Some(method_not_allowed_response()),
     }
+}
+
+fn route_approval_request(
+    method: &str,
+    path: &str,
+    query: &HashMap<String, String>,
+    app: &BridgeApplication,
+) -> Option<String> {
+    let approval_path = path.strip_prefix("/approvals/")?;
+    let segments = approval_path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+
+    match (method, segments.as_slice()) {
+        ("POST", [approval_id, "approve"]) => {
+            Some(resolve_approval_request(app, query, approval_id, true))
+        }
+        ("POST", [approval_id, "reject"]) => {
+            Some(resolve_approval_request(app, query, approval_id, false))
+        }
+        _ => Some(method_not_allowed_response()),
+    }
+}
+
+fn resolve_approval_request(
+    app: &BridgeApplication,
+    query: &HashMap<String, String>,
+    approval_id: &str,
+    approved: bool,
+) -> String {
+    let actor = query
+        .get("actor")
+        .map(String::as_str)
+        .unwrap_or("mobile-device");
+    let action_name = if approved {
+        "approval_approve"
+    } else {
+        "approval_reject"
+    };
+
+    match app.decide_policy(PolicyAction::ApprovalResolve) {
+        PolicyDecision::Allow => {}
+        PolicyDecision::Deny { reason } | PolicyDecision::RequireApproval { reason } => {
+            return policy_denied_response_with_audit(
+                app,
+                "approval",
+                actor,
+                action_name,
+                "approval.resolve",
+                reason,
+            );
+        }
+    }
+
+    let record = match app.resolve_approval(approval_id, approved) {
+        Ok(record) => record,
+        Err(ResolveApprovalError::NotFound) => {
+            return json_error_response(
+                "404 Not Found",
+                "approval_resolution_failed",
+                "approval_not_found",
+                "Approval request was not found.",
+            );
+        }
+        Err(ResolveApprovalError::NotPending) => {
+            return json_error_response(
+                "409 Conflict",
+                "approval_resolution_failed",
+                "approval_not_pending",
+                "Approval is no longer actionable.",
+            );
+        }
+    };
+
+    if !approved {
+        app.record_security_audit(
+            LogSeverity::Warn,
+            record.approval.thread_id.clone(),
+            SecurityAuditEventDto {
+                actor: actor.to_string(),
+                action: action_name.to_string(),
+                target: record.approval.target.clone(),
+                outcome: "rejected".to_string(),
+                reason: "approval_rejected".to_string(),
+            },
+        );
+
+        return json_response(
+            "200 OK",
+            &ApprovalResolutionResponse {
+                contract_version: CONTRACT_VERSION.to_string(),
+                approval: record.approval,
+                mutation_result: None,
+            },
+        );
+    }
+
+    let dispatch = execute_pending_approval_action(app, &record.action);
+    let Some(dispatch) = dispatch else {
+        return json_error_response(
+            "404 Not Found",
+            "approval_resolution_failed",
+            "approval_target_not_found",
+            "The target thread for this approval is no longer available.",
+        );
+    };
+
+    let mutation_result = dispatch.response.clone();
+    for event in dispatch.events {
+        app.stream_router.publish(event);
+    }
+
+    app.record_security_audit(
+        LogSeverity::Info,
+        record.approval.thread_id.clone(),
+        SecurityAuditEventDto {
+            actor: actor.to_string(),
+            action: action_name.to_string(),
+            target: record.approval.target.clone(),
+            outcome: "allowed".to_string(),
+            reason: "approval_resolved".to_string(),
+        },
+    );
+
+    json_response(
+        "200 OK",
+        &ApprovalResolutionResponse {
+            contract_version: CONTRACT_VERSION.to_string(),
+            approval: record.approval,
+            mutation_result: Some(mutation_result),
+        },
+    )
+}
+
+fn execute_pending_approval_action(
+    app: &BridgeApplication,
+    action: &PendingApprovalAction,
+) -> Option<MutationDispatch> {
+    let mut thread_api = app
+        .thread_api
+        .lock()
+        .expect("thread API mutex should not be poisoned");
+
+    match action {
+        PendingApprovalAction::BranchSwitch { thread_id, branch } => {
+            thread_api.switch_branch(thread_id, branch)
+        }
+        PendingApprovalAction::Pull { thread_id, remote } => {
+            thread_api.pull_repo(thread_id, remote.as_deref())
+        }
+        PendingApprovalAction::Push { thread_id, remote } => {
+            thread_api.push_repo(thread_id, remote.as_deref())
+        }
+    }
+}
+
+fn queue_approval_response(
+    app: &BridgeApplication,
+    actor: &str,
+    action: PendingApprovalAction,
+    reason: &str,
+    git_status: GitStatusResponse,
+) -> String {
+    let approval = app.queue_approval(
+        action,
+        reason,
+        git_status.repository.clone(),
+        git_status.status.clone(),
+    );
+
+    let payload = serde_json::to_value(&approval).expect("approval payload should serialize");
+    let approval_event = BridgeEventEnvelope::new(
+        format!("evt-{}", approval.approval_id),
+        approval.thread_id.clone(),
+        BridgeEventKind::ApprovalRequested,
+        approval.requested_at.clone(),
+        payload,
+    );
+    app.stream_router.publish(approval_event);
+
+    app.record_security_audit(
+        LogSeverity::Warn,
+        approval.thread_id.clone(),
+        SecurityAuditEventDto {
+            actor: actor.to_string(),
+            action: approval.action.clone(),
+            target: approval.target.clone(),
+            outcome: "gated".to_string(),
+            reason: reason.to_string(),
+        },
+    );
+
+    json_response(
+        "202 Accepted",
+        &ApprovalGateResponse {
+            contract_version: CONTRACT_VERSION.to_string(),
+            operation: approval.action.clone(),
+            outcome: "approval_required".to_string(),
+            message: "Dangerous action was gated pending explicit approval".to_string(),
+            approval,
+        },
+    )
+}
+
+fn policy_denied_response_with_audit(
+    app: &BridgeApplication,
+    thread_id: &str,
+    actor: &str,
+    action: &str,
+    target: &str,
+    reason: &str,
+) -> String {
+    app.record_security_audit(
+        LogSeverity::Warn,
+        thread_id,
+        SecurityAuditEventDto {
+            actor: actor.to_string(),
+            action: action.to_string(),
+            target: target.to_string(),
+            outcome: "denied".to_string(),
+            reason: reason.to_string(),
+        },
+    );
+
+    json_error_response(
+        "403 Forbidden",
+        "policy_denied",
+        "policy_denied",
+        &format!("{action} denied by current access mode: {reason}"),
+    )
 }
 
 fn dispatch_response(app: &BridgeApplication, dispatch: MutationDispatch) -> String {
@@ -853,7 +1729,8 @@ mod tests {
 
     use super::{
         BridgeApplication, CodexRuntimeConfig, CodexRuntimeMode, CodexRuntimeSupervisor, Config,
-        PairingSessionService, StreamRouter, build_foundations, parse_args, route_request,
+        InMemoryLogSink, PairingSessionService, StreamRouter, StructuredLogger, build_foundations,
+        parse_args, route_request,
     };
     use crate::thread_api::ThreadApiService;
 
@@ -977,6 +1854,9 @@ mod tests {
     fn turn_and_git_mutation_routes_return_product_shaped_results() {
         let app = test_application();
 
+        let mode = route_request("POST /policy/access-mode?mode=full_control HTTP/1.1", &app);
+        assert!(mode.starts_with("HTTP/1.1 200 OK"));
+
         let turn_start = route_request(
             "POST /threads/thread-123/turns/start?prompt=Ship+threaded+streaming HTTP/1.1",
             &app,
@@ -997,6 +1877,122 @@ mod tests {
         let git_status = route_request("GET /threads/thread-456/git/status HTTP/1.1", &app);
         assert!(git_status.starts_with("HTTP/1.1 200 OK"));
         assert!(git_status.contains("\"remote\":\"upstream\""));
+    }
+
+    #[test]
+    fn read_only_mode_blocks_turn_and_git_mutations() {
+        let app = test_application();
+
+        let mode = route_request("POST /policy/access-mode?mode=read_only HTTP/1.1", &app);
+        assert!(mode.starts_with("HTTP/1.1 200 OK"));
+
+        let turn_start = route_request(
+            "POST /threads/thread-123/turns/start?prompt=Blocked HTTP/1.1",
+            &app,
+        );
+        assert!(turn_start.starts_with("HTTP/1.1 403 Forbidden"));
+        assert!(turn_start.contains("\"error\":\"policy_denied\""));
+
+        let git_push = route_request("POST /threads/thread-123/git/push HTTP/1.1", &app);
+        assert!(git_push.starts_with("HTTP/1.1 403 Forbidden"));
+        assert!(git_push.contains("\"error\":\"policy_denied\""));
+    }
+
+    #[test]
+    fn control_with_approvals_gates_git_mutations_until_full_control_resolution() {
+        let app = test_application();
+
+        let mode = route_request(
+            "POST /policy/access-mode?mode=control_with_approvals HTTP/1.1",
+            &app,
+        );
+        assert!(mode.starts_with("HTTP/1.1 200 OK"));
+
+        let status_before = parse_json_body(&route_request(
+            "GET /threads/thread-123/git/status HTTP/1.1",
+            &app,
+        ));
+        assert_eq!(status_before["status"]["behind_by"], 1);
+
+        let gated = route_request(
+            "POST /threads/thread-123/git/pull?remote=origin HTTP/1.1",
+            &app,
+        );
+        assert!(gated.starts_with("HTTP/1.1 202 Accepted"));
+        let gated_body = parse_json_body(&gated);
+        assert_eq!(gated_body["outcome"], "approval_required");
+        let approval_id = gated_body["approval"]["approval_id"]
+            .as_str()
+            .expect("approval id should be present")
+            .to_string();
+
+        let status_after_gate = parse_json_body(&route_request(
+            "GET /threads/thread-123/git/status HTTP/1.1",
+            &app,
+        ));
+        assert_eq!(status_after_gate["status"]["behind_by"], 1);
+
+        let blocked_resolution = route_request(
+            &format!("POST /approvals/{approval_id}/approve HTTP/1.1"),
+            &app,
+        );
+        assert!(blocked_resolution.starts_with("HTTP/1.1 403 Forbidden"));
+
+        let elevate = route_request("POST /policy/access-mode?mode=full_control HTTP/1.1", &app);
+        assert!(elevate.starts_with("HTTP/1.1 200 OK"));
+
+        let resolved = route_request(
+            &format!("POST /approvals/{approval_id}/approve HTTP/1.1"),
+            &app,
+        );
+        assert!(resolved.starts_with("HTTP/1.1 200 OK"));
+        let resolved_body = parse_json_body(&resolved);
+        assert_eq!(resolved_body["mutation_result"]["operation"], "git_pull");
+
+        let status_after_resolve = parse_json_body(&route_request(
+            "GET /threads/thread-123/git/status HTTP/1.1",
+            &app,
+        ));
+        assert_eq!(status_after_resolve["status"]["behind_by"], 0);
+    }
+
+    #[test]
+    fn security_events_capture_denied_gated_and_allowed_outcomes() {
+        let app = test_application();
+
+        let _ = route_request("POST /policy/access-mode?mode=read_only HTTP/1.1", &app);
+        let _ = route_request("POST /threads/thread-123/turns/start HTTP/1.1", &app);
+
+        let _ = route_request(
+            "POST /policy/access-mode?mode=control_with_approvals HTTP/1.1",
+            &app,
+        );
+        let gated = parse_json_body(&route_request(
+            "POST /threads/thread-123/git/push HTTP/1.1",
+            &app,
+        ));
+        let approval_id = gated["approval"]["approval_id"]
+            .as_str()
+            .expect("approval id should be present")
+            .to_string();
+
+        let _ = route_request("POST /policy/access-mode?mode=full_control HTTP/1.1", &app);
+        let _ = route_request(
+            &format!("POST /approvals/{approval_id}/approve HTTP/1.1"),
+            &app,
+        );
+
+        let events = parse_json_body(&route_request("GET /security/events HTTP/1.1", &app));
+        let outcomes = events["events"]
+            .as_array()
+            .expect("security events list should be present")
+            .iter()
+            .filter_map(|record| record["event"]["payload"]["outcome"].as_str())
+            .collect::<Vec<_>>();
+
+        assert!(outcomes.contains(&"denied"));
+        assert!(outcomes.contains(&"gated"));
+        assert!(outcomes.contains(&"allowed"));
     }
 
     #[test]
@@ -1192,6 +2188,7 @@ mod tests {
                 "https://bridge.ts.net",
                 unique_test_state_dir(),
             ),
+            StructuredLogger::new(InMemoryLogSink::default()),
         )
     }
 
