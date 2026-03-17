@@ -3,10 +3,56 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+enum PairingScannerIssueType { permissionDenied, scannerFailure }
+
+@immutable
+class PairingScannerIssue {
+  const PairingScannerIssue._(this.type, {this.details});
+
+  const PairingScannerIssue.permissionDenied()
+    : this._(PairingScannerIssueType.permissionDenied);
+
+  const PairingScannerIssue.failure({String? details})
+    : this._(PairingScannerIssueType.scannerFailure, details: details);
+
+  factory PairingScannerIssue.fromScannerException(
+    MobileScannerException error,
+  ) {
+    if (error.errorCode == MobileScannerErrorCode.permissionDenied) {
+      return const PairingScannerIssue.permissionDenied();
+    }
+
+    final details = error.errorDetails?.message;
+    return PairingScannerIssue.failure(
+      details: details == null || details.trim().isEmpty
+          ? null
+          : details.trim(),
+    );
+  }
+
+  final PairingScannerIssueType type;
+  final String? details;
+
+  @override
+  bool operator ==(Object other) {
+    return other is PairingScannerIssue &&
+        other.type == type &&
+        other.details == details;
+  }
+
+  @override
+  int get hashCode => Object.hash(type, details);
+}
+
 class PairingFlowPage extends ConsumerStatefulWidget {
-  const PairingFlowPage({super.key, this.enableCameraPreview = true});
+  const PairingFlowPage({
+    super.key,
+    this.enableCameraPreview = true,
+    this.initialScannerIssue,
+  });
 
   final bool enableCameraPreview;
+  final PairingScannerIssue? initialScannerIssue;
 
   @override
   ConsumerState<PairingFlowPage> createState() => _PairingFlowPageState();
@@ -14,20 +60,75 @@ class PairingFlowPage extends ConsumerStatefulWidget {
 
 class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
   late final TextEditingController _manualPayloadController;
+  late final FocusNode _manualPayloadFocusNode;
   late final MobileScannerController _cameraController;
+  PairingScannerIssue? _scannerIssue;
 
   @override
   void initState() {
     super.initState();
     _manualPayloadController = TextEditingController();
+    _manualPayloadFocusNode = FocusNode();
     _cameraController = MobileScannerController();
+    _scannerIssue = widget.initialScannerIssue;
   }
 
   @override
   void dispose() {
     _manualPayloadController.dispose();
+    _manualPayloadFocusNode.dispose();
     _cameraController.dispose();
     super.dispose();
+  }
+
+  void _openScanner(PairingController pairingController) {
+    setState(() {
+      _scannerIssue = widget.initialScannerIssue;
+    });
+    pairingController.openScanner();
+  }
+
+  void _setScannerIssue(PairingScannerIssue issue) {
+    if (_scannerIssue == issue || !mounted) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _scannerIssue == issue) {
+        return;
+      }
+      setState(() {
+        _scannerIssue = issue;
+      });
+    });
+  }
+
+  Future<void> _retryCamera() async {
+    setState(() {
+      _scannerIssue = null;
+    });
+
+    try {
+      await _cameraController.start();
+    } on MobileScannerException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _scannerIssue = PairingScannerIssue.fromScannerException(error);
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _scannerIssue = const PairingScannerIssue.failure();
+      });
+    }
+  }
+
+  void _focusManualFallback() {
+    _manualPayloadFocusNode.requestFocus();
   }
 
   @override
@@ -73,7 +174,7 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
           ),
           const SizedBox(height: 24),
           FilledButton(
-            onPressed: pairingController.openScanner,
+            onPressed: () => _openScanner(pairingController),
             child: const Text('Scan pairing QR'),
           ),
           if (errorMessage != null) ...[
@@ -103,6 +204,16 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
           ),
           const SizedBox(height: 12),
           const Text('Point your camera at the desktop pairing QR code.'),
+          if (_scannerIssue != null) ...[
+            const SizedBox(height: 16),
+            _ScannerIssueBanner(
+              issue: _scannerIssue!,
+              onRetryCamera: () {
+                _retryCamera();
+              },
+              onUseManualFallback: _focusManualFallback,
+            ),
+          ],
           const SizedBox(height: 16),
           if (widget.enableCameraPreview)
             ClipRRect(
@@ -116,20 +227,41 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
                     for (final barcode in capture.barcodes) {
                       final rawValue = barcode.rawValue;
                       if (rawValue != null && rawValue.trim().isNotEmpty) {
+                        setState(() {
+                          _scannerIssue = null;
+                        });
                         pairingController.submitScannedPayload(rawValue);
                         break;
                       }
                     }
                   },
+                  errorBuilder: (context, error) {
+                    _setScannerIssue(
+                      PairingScannerIssue.fromScannerException(error),
+                    );
+                    return DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surfaceContainerLow,
+                      ),
+                      child: const Center(
+                        child: Icon(Icons.camera_alt_outlined, size: 48),
+                      ),
+                    );
+                  },
                 ),
               ),
             ),
           const SizedBox(height: 16),
-          const Text('Manual fallback (for debug/testing):'),
+          const Text(
+            'Manual fallback (use when camera scanning is unavailable):',
+          ),
           const SizedBox(height: 8),
           TextField(
             key: const Key('manual-payload-input'),
             controller: _manualPayloadController,
+            focusNode: _manualPayloadFocusNode,
             maxLines: 6,
             decoration: const InputDecoration(
               border: OutlineInputBorder(),
@@ -252,7 +384,7 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
           _IdentityRow(label: 'Trusted session', value: bridge.sessionId),
           const SizedBox(height: 24),
           FilledButton(
-            onPressed: pairingController.openScanner,
+            onPressed: () => _openScanner(pairingController),
             child: const Text('Scan another QR'),
           ),
           if (pairingState.errorMessage != null) ...[
@@ -262,6 +394,82 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ScannerIssueBanner extends StatelessWidget {
+  const _ScannerIssueBanner({
+    required this.issue,
+    required this.onRetryCamera,
+    required this.onUseManualFallback,
+  });
+
+  final PairingScannerIssue issue;
+  final VoidCallback onRetryCamera;
+  final VoidCallback onUseManualFallback;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    final (title, message) = switch (issue.type) {
+      PairingScannerIssueType.permissionDenied => (
+        'Camera permission is blocked',
+        'Enable camera access in system Settings, then retry scanning. You can still pair by pasting the QR payload below.',
+      ),
+      PairingScannerIssueType.scannerFailure => (
+        'Scanner is unavailable right now',
+        'We could not read from the camera. Retry scanning or continue with the manual payload fallback.',
+      ),
+    };
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: colorScheme.errorContainer.withValues(alpha: 0.3),
+        border: Border.all(color: colorScheme.error),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: colorScheme.error),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(message),
+          if (issue.details != null) ...[
+            const SizedBox(height: 6),
+            Text(issue.details!, style: Theme.of(context).textTheme.bodySmall),
+          ],
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            children: [
+              FilledButton(
+                onPressed: onRetryCamera,
+                child: const Text('Retry camera'),
+              ),
+              TextButton(
+                onPressed: onUseManualFallback,
+                child: const Text('Use manual payload'),
+              ),
+            ],
+          ),
         ],
       ),
     );

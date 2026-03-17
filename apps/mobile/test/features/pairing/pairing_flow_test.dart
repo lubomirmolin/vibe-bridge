@@ -88,6 +88,85 @@ void main() {
     expect(find.text('Pair your phone to this Mac'), findsNothing);
   });
 
+  testWidgets(
+    'permission denied scanner state shows recovery guidance and manual fallback path',
+    (tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
+            nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 17, 21, 0)),
+          ],
+          child: const MaterialApp(
+            home: PairingFlowPage(
+              enableCameraPreview: false,
+              initialScannerIssue: PairingScannerIssue.permissionDenied(),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Scan pairing QR'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Camera permission is blocked'), findsOneWidget);
+      expect(
+        find.text(
+          'Enable camera access in system Settings, then retry scanning. You can still pair by pasting the QR payload below.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Retry camera'), findsOneWidget);
+      expect(find.byKey(const Key('manual-payload-input')), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const Key('manual-payload-input')),
+        _validPayloadJson(sessionId: 'permission-denied-manual-fallback'),
+      );
+      await tester.ensureVisible(find.text('Submit scanned payload'));
+      await tester.tap(find.text('Submit scanned payload'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Confirm bridge trust'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'scanner failure state surfaces retry guidance and failure details',
+    (tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
+            nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 17, 21, 0)),
+          ],
+          child: const MaterialApp(
+            home: PairingFlowPage(
+              enableCameraPreview: false,
+              initialScannerIssue: PairingScannerIssue.failure(
+                details: 'Camera stream failed to initialize.',
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Scan pairing QR'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Scanner is unavailable right now'), findsOneWidget);
+      expect(
+        find.text(
+          'We could not read from the camera. Retry scanning or continue with the manual payload fallback.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Camera stream failed to initialize.'), findsOneWidget);
+      expect(find.text('Retry camera'), findsOneWidget);
+      expect(find.byKey(const Key('manual-payload-input')), findsOneWidget);
+    },
+  );
+
   testWidgets('cancel from confirmation leaves app in clean unpaired state', (
     tester,
   ) async {
@@ -176,87 +255,14 @@ void main() {
     );
   });
 
-  testWidgets(
-    'same phone cannot silently trust a second Mac without reset',
-    (tester) async {
-      final bridgeApi = FakePairingBridgeApi();
-
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            pairingBridgeApiProvider.overrideWithValue(bridgeApi),
-            nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 17, 21, 0)),
-          ],
-          child: const MaterialApp(
-            home: PairingFlowPage(enableCameraPreview: false),
-          ),
-        ),
-      );
-
-      await tester.tap(find.text('Scan pairing QR'));
-      await tester.pumpAndSettle();
-
-      await tester.enterText(
-        find.byKey(const Key('manual-payload-input')),
-        _validPayloadJson(bridgeId: 'bridge-a1', sessionId: 'session-first'),
-      );
-      await tester.tap(find.text('Submit scanned payload'));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('Confirm trust'));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('Scan another QR'));
-      await tester.pumpAndSettle();
-
-      await tester.enterText(
-        find.byKey(const Key('manual-payload-input')),
-        _validPayloadJson(bridgeId: 'bridge-b2', sessionId: 'session-second'),
-      );
-      await tester.tap(find.text('Submit scanned payload'));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('Confirm trust'));
-      await tester.pumpAndSettle();
-
-      expect(
-        find.text(
-          'This phone is already paired with a different Mac. Reset trust before replacing it.',
-        ),
-        findsOneWidget,
-      );
-    },
-  );
-
-  testWidgets('revoked trust on reconnect clears local trust and requires re-pair', (
+  testWidgets('same phone cannot silently trust a second Mac without reset', (
     tester,
   ) async {
-    final store = InMemorySecureStore();
-    await store.writeSecret(
-      SecureValueKey.trustedBridgeIdentity,
-      '''
-{
-  "bridge_id": "bridge-a1",
-  "bridge_name": "Codex Mobile Companion",
-  "bridge_api_base_url": "https://bridge.ts.net",
-  "session_id": "session-reconnect",
-  "paired_at_epoch_seconds": 100
-}
-''',
-    );
-    await store.writeSecret(SecureValueKey.sessionToken, 'revoked-session-token');
-
-    final bridgeApi = FakePairingBridgeApi(
-      handshakeResult: const PairingHandshakeResult.untrusted(
-        code: 'trust_revoked',
-        message: 'Trust was revoked for this session. Re-pair from the Mac pairing QR.',
-      ),
-    );
+    final bridgeApi = FakePairingBridgeApi();
 
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          secureStoreProvider.overrideWithValue(store),
           pairingBridgeApiProvider.overrideWithValue(bridgeApi),
           nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 17, 21, 0)),
         ],
@@ -265,26 +271,46 @@ void main() {
         ),
       ),
     );
+
+    await tester.tap(find.text('Scan pairing QR'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Pair your phone to this Mac'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('manual-payload-input')),
+      _validPayloadJson(bridgeId: 'bridge-a1', sessionId: 'session-first'),
+    );
+    await tester.tap(find.text('Submit scanned payload'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Confirm trust'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Scan another QR'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('manual-payload-input')),
+      _validPayloadJson(bridgeId: 'bridge-b2', sessionId: 'session-second'),
+    );
+    await tester.tap(find.text('Submit scanned payload'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Confirm trust'));
+    await tester.pumpAndSettle();
+
     expect(
       find.text(
-        'Trust was revoked for this session. Re-pair from the Mac pairing QR.',
+        'This phone is already paired with a different Mac. Reset trust before replacing it.',
       ),
       findsOneWidget,
     );
-    expect(await store.readSecret(SecureValueKey.trustedBridgeIdentity), isNull);
-    expect(await store.readSecret(SecureValueKey.sessionToken), isNull);
   });
 
   testWidgets(
-    'unreachable trusted bridge path on reconnect fails closed and clears local trust',
+    'revoked trust on reconnect clears local trust and requires re-pair',
     (tester) async {
       final store = InMemorySecureStore();
-      await store.writeSecret(
-        SecureValueKey.trustedBridgeIdentity,
-        '''
+      await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
 {
   "bridge_id": "bridge-a1",
   "bridge_name": "Codex Mobile Companion",
@@ -292,9 +318,66 @@ void main() {
   "session_id": "session-reconnect",
   "paired_at_epoch_seconds": 100
 }
-''',
+''');
+      await store.writeSecret(
+        SecureValueKey.sessionToken,
+        'revoked-session-token',
       );
-      await store.writeSecret(SecureValueKey.sessionToken, 'active-session-token');
+
+      final bridgeApi = FakePairingBridgeApi(
+        handshakeResult: const PairingHandshakeResult.untrusted(
+          code: 'trust_revoked',
+          message:
+              'Trust was revoked for this session. Re-pair from the Mac pairing QR.',
+        ),
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            secureStoreProvider.overrideWithValue(store),
+            pairingBridgeApiProvider.overrideWithValue(bridgeApi),
+            nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 17, 21, 0)),
+          ],
+          child: const MaterialApp(
+            home: PairingFlowPage(enableCameraPreview: false),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Pair your phone to this Mac'), findsOneWidget);
+      expect(
+        find.text(
+          'Trust was revoked for this session. Re-pair from the Mac pairing QR.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        await store.readSecret(SecureValueKey.trustedBridgeIdentity),
+        isNull,
+      );
+      expect(await store.readSecret(SecureValueKey.sessionToken), isNull);
+    },
+  );
+
+  testWidgets(
+    'unreachable trusted bridge path on reconnect fails closed and clears local trust',
+    (tester) async {
+      final store = InMemorySecureStore();
+      await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
+{
+  "bridge_id": "bridge-a1",
+  "bridge_name": "Codex Mobile Companion",
+  "bridge_api_base_url": "https://bridge.ts.net",
+  "session_id": "session-reconnect",
+  "paired_at_epoch_seconds": 100
+}
+''');
+      await store.writeSecret(
+        SecureValueKey.sessionToken,
+        'active-session-token',
+      );
 
       final bridgeApi = FakePairingBridgeApi(
         handshakeResult: const PairingHandshakeResult.connectivityUnavailable(
@@ -324,7 +407,10 @@ void main() {
         ),
         findsOneWidget,
       );
-      expect(await store.readSecret(SecureValueKey.trustedBridgeIdentity), isNull);
+      expect(
+        await store.readSecret(SecureValueKey.trustedBridgeIdentity),
+        isNull,
+      );
       expect(await store.readSecret(SecureValueKey.sessionToken), isNull);
     },
   );
