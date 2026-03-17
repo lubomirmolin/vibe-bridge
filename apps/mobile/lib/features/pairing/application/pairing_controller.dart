@@ -146,22 +146,15 @@ class PairingController extends StateNotifier<PairingState> {
         return;
       }
 
-      if (handshake.requiresRePair) {
-        await _clearLocalTrust();
-        state = state.copyWith(
-          step: PairingStep.unpaired,
-          clearTrustedBridge: true,
-          clearPendingPayload: true,
-          errorMessage: handshake.message,
-          isPersistingTrust: false,
-        );
-        return;
-      }
-
+      await _clearLocalTrust();
       state = state.copyWith(
-        step: PairingStep.paired,
-        trustedBridge: trustedBridge,
-        errorMessage: handshake.message,
+        step: PairingStep.unpaired,
+        clearTrustedBridge: true,
+        clearPendingPayload: true,
+        errorMessage:
+            handshake.message ??
+            'Stored trust is no longer accepted by the bridge. Re-pair from your Mac.',
+        isPersistingTrust: false,
       );
     } on FormatException {
       await _clearLocalTrust();

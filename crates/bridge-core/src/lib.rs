@@ -220,7 +220,7 @@ where
         ));
     }
 
-    let pairing_base_url = pairing_base_url.unwrap_or_else(|| format!("http://{host}:{port}"));
+    let pairing_base_url = pairing_base_url.unwrap_or_else(default_pairing_base_url);
 
     Ok(Config {
         host,
@@ -234,6 +234,40 @@ where
             args: codex_args,
         },
     })
+}
+
+fn default_pairing_base_url() -> String {
+    discover_tailscale_pairing_base_url().unwrap_or_else(|| "https://bridge.ts.net".to_string())
+}
+
+fn discover_tailscale_pairing_base_url() -> Option<String> {
+    let output = std::process::Command::new("tailscale")
+        .args(["status", "--json"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let status: Value = serde_json::from_slice(&output.stdout).ok()?;
+    let dns_name = status
+        .get("Self")
+        .and_then(|self_node| self_node.get("DNSName"))
+        .and_then(Value::as_str)?
+        .trim()
+        .trim_end_matches('.');
+
+    if dns_name.is_empty() {
+        return None;
+    }
+
+    let candidate = format!("https://{dns_name}");
+    if crate::pairing::is_private_bridge_api_base_url(&candidate) {
+        Some(candidate)
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1738,19 +1772,20 @@ mod tests {
     fn parse_args_uses_defaults() {
         let config = parse_args(Vec::<String>::new()).expect("defaults should parse");
 
+        assert_eq!(config.host, "127.0.0.1");
+        assert_eq!(config.port, 3110);
+        assert_eq!(config.admin_port, 3111);
+        assert!(config.pairing_base_url.starts_with("https://"));
+        assert!(crate::pairing::is_private_bridge_api_base_url(
+            &config.pairing_base_url
+        ));
         assert_eq!(
-            config,
-            Config {
-                host: "127.0.0.1".to_string(),
-                port: 3110,
-                admin_port: 3111,
-                pairing_base_url: "http://127.0.0.1:3110".to_string(),
-                codex_runtime: CodexRuntimeConfig {
-                    mode: CodexRuntimeMode::Auto,
-                    endpoint: Some("ws://127.0.0.1:4222".to_string()),
-                    command: "codex".to_string(),
-                    args: vec!["app-server".to_string()],
-                },
+            config.codex_runtime,
+            CodexRuntimeConfig {
+                mode: CodexRuntimeMode::Auto,
+                endpoint: Some("ws://127.0.0.1:4222".to_string()),
+                command: "codex".to_string(),
+                args: vec!["app-server".to_string()],
             }
         );
     }

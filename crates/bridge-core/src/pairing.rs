@@ -23,17 +23,19 @@ impl PairingSessionService {
         pairing_base_url: impl Into<String>,
         state_directory: impl Into<PathBuf>,
     ) -> Self {
-        let bridge_id = derive_bridge_id(host, port);
+        let _ = (host, port);
         let trust_registry = TrustRegistry::load(
             state_directory.into().join("trust-registry.json"),
-            bridge_id.clone(),
+            generate_bridge_id(),
         );
+        let bridge_id = trust_registry.bridge_id().to_string();
+        let next_sequence = trust_registry.next_pairing_sequence();
 
         Self {
             bridge_id,
             bridge_name: "Codex Mobile Companion".to_string(),
             api_base_url: pairing_base_url.into(),
-            next_sequence: 1,
+            next_sequence,
             sessions: HashMap::new(),
             trust_registry,
         }
@@ -48,6 +50,11 @@ impl PairingSessionService {
         let expires_at_epoch_seconds = issued_at_epoch_seconds.saturating_add(300);
         let sequence = self.next_sequence;
         self.next_sequence = self.next_sequence.saturating_add(1);
+        self.trust_registry
+            .set_next_pairing_sequence(self.next_sequence);
+        if let Err(error) = self.trust_registry.persist() {
+            eprintln!("failed to persist pairing sequence state: {error}");
+        }
 
         let session_id = format!("pairing-session-{sequence}");
         let pairing_token = format!("ptk-{issued_at_epoch_seconds:x}-{sequence:x}");
@@ -452,15 +459,46 @@ struct TrustRegistry {
 }
 
 impl TrustRegistry {
-    fn load(path: PathBuf, bridge_id: String) -> Self {
-        let state = fs::read_to_string(&path)
+    fn load(path: PathBuf, bridge_identity_seed: String) -> Self {
+        let mut state = fs::read_to_string(&path)
             .ok()
             .and_then(|raw| serde_json::from_str::<TrustRegistryState>(&raw).ok())
             .unwrap_or_default();
 
-        let mut registry = Self { path, state };
-        registry.state.bridge_id = Some(bridge_id);
+        if state.next_pairing_sequence == 0 {
+            state.next_pairing_sequence =
+                infer_next_pairing_sequence(&state.consumed_pairing_sessions);
+        }
+
+        let bridge_id = state
+            .bridge_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or(bridge_identity_seed);
+        state.bridge_id = Some(bridge_id);
+
+        let registry = Self { path, state };
+        if let Err(error) = registry.persist() {
+            eprintln!("failed to persist trust registry on load: {error}");
+        }
         registry
+    }
+
+    fn bridge_id(&self) -> &str {
+        self.state
+            .bridge_id
+            .as_deref()
+            .expect("trust registry bridge_id should always be set")
+    }
+
+    fn next_pairing_sequence(&self) -> u64 {
+        self.state.next_pairing_sequence.max(1)
+    }
+
+    fn set_next_pairing_sequence(&mut self, next_pairing_sequence: u64) {
+        self.state.next_pairing_sequence = next_pairing_sequence.max(1);
     }
 
     fn persist(&self) -> Result<(), String> {
@@ -480,6 +518,8 @@ impl TrustRegistry {
 struct TrustRegistryState {
     #[serde(default)]
     bridge_id: Option<String>,
+    #[serde(default)]
+    next_pairing_sequence: u64,
     #[serde(default)]
     trusted_phone: Option<TrustedPhoneRecord>,
     #[serde(default)]
@@ -565,13 +605,34 @@ fn is_private_or_loopback_v4(ip: Ipv4Addr) -> bool {
     ip.is_private() || ip.is_loopback() || ip.is_link_local()
 }
 
-fn derive_bridge_id(host: &str, port: u16) -> String {
+fn infer_next_pairing_sequence(consumed_pairing_sessions: &BTreeSet<String>) -> u64 {
+    consumed_pairing_sessions
+        .iter()
+        .filter_map(|session_id| parse_pairing_session_sequence(session_id))
+        .max()
+        .map(|last| last.saturating_add(1))
+        .unwrap_or(1)
+}
+
+fn parse_pairing_session_sequence(session_id: &str) -> Option<u64> {
+    let raw = session_id.strip_prefix("pairing-session-")?;
+    raw.parse::<u64>().ok()
+}
+
+fn generate_bridge_id() -> String {
     let mut hash = 0xcbf29ce484222325_u64;
-    for byte in format!("{host}:{port}").bytes() {
+    for byte in format!("{}:{}", unix_now_epoch_nanoseconds(), std::process::id()).bytes() {
         hash ^= byte as u64;
         hash = hash.wrapping_mul(0x100000001b3_u64);
     }
     format!("bridge-{hash:016x}")
+}
+
+fn unix_now_epoch_nanoseconds() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default()
 }
 
 fn unix_now_epoch_seconds() -> u64 {
@@ -727,6 +788,74 @@ mod tests {
             .expect_err("revoked trust must fail closed");
 
         assert_eq!(error, PairingHandshakeError::TrustRevoked);
+    }
+
+    #[test]
+    fn bridge_identity_persists_across_restart_and_bind_changes() {
+        let test_dir = unique_test_state_dir("bridge-identity-persisted");
+
+        let first = PairingSessionService::new(
+            "127.0.0.1",
+            3110,
+            "https://bridge.ts.net",
+            test_dir.clone(),
+        );
+        let first_bridge_id = first.bridge_id().to_string();
+        drop(first);
+
+        let restarted =
+            PairingSessionService::new("0.0.0.0", 9999, "https://bridge.ts.net", test_dir.clone());
+
+        assert_eq!(restarted.bridge_id(), first_bridge_id);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+    }
+
+    #[test]
+    fn consumed_session_ids_do_not_collide_with_new_sessions_after_restart() {
+        let test_dir = unique_test_state_dir("session-collision-safe");
+        let mut first = PairingSessionService::new(
+            "127.0.0.1",
+            3110,
+            "https://bridge.ts.net",
+            test_dir.clone(),
+        );
+
+        let first_session = first.issue_session();
+        let first_session_id = first_session.pairing_session.session_id.clone();
+
+        first
+            .finalize_trust(PairingFinalizeRequest {
+                session_id: first_session.pairing_session.session_id,
+                pairing_token: first_session.pairing_session.pairing_token,
+                phone_id: "phone-1".to_string(),
+                phone_name: "Primary".to_string(),
+                bridge_id: first_session.bridge_identity.bridge_id,
+            })
+            .expect("first session should finalize");
+
+        drop(first);
+
+        let mut restarted = PairingSessionService::new(
+            "127.0.0.1",
+            3110,
+            "https://bridge.ts.net",
+            test_dir.clone(),
+        );
+        let second_session = restarted.issue_session();
+        assert_ne!(first_session_id, second_session.pairing_session.session_id);
+
+        let second_finalize = restarted.finalize_trust(PairingFinalizeRequest {
+            session_id: second_session.pairing_session.session_id,
+            pairing_token: second_session.pairing_session.pairing_token,
+            phone_id: "phone-1".to_string(),
+            phone_name: "Primary".to_string(),
+            bridge_id: second_session.bridge_identity.bridge_id,
+        });
+
+        assert!(second_finalize.is_ok());
+
+        let _ = std::fs::remove_dir_all(test_dir);
     }
 
     fn test_service(pairing_base_url: &str) -> PairingSessionService {

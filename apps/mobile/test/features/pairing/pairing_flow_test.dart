@@ -277,6 +277,57 @@ void main() {
     expect(await store.readSecret(SecureValueKey.trustedBridgeIdentity), isNull);
     expect(await store.readSecret(SecureValueKey.sessionToken), isNull);
   });
+
+  testWidgets(
+    'unreachable trusted bridge path on reconnect fails closed and clears local trust',
+    (tester) async {
+      final store = InMemorySecureStore();
+      await store.writeSecret(
+        SecureValueKey.trustedBridgeIdentity,
+        '''
+{
+  "bridge_id": "bridge-a1",
+  "bridge_name": "Codex Mobile Companion",
+  "bridge_api_base_url": "https://bridge.ts.net",
+  "session_id": "session-reconnect",
+  "paired_at_epoch_seconds": 100
+}
+''',
+      );
+      await store.writeSecret(SecureValueKey.sessionToken, 'active-session-token');
+
+      final bridgeApi = FakePairingBridgeApi(
+        handshakeResult: const PairingHandshakeResult.connectivityUnavailable(
+          message:
+              'Private bridge path is currently unreachable. Reconnect to Tailscale and retry.',
+        ),
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            secureStoreProvider.overrideWithValue(store),
+            pairingBridgeApiProvider.overrideWithValue(bridgeApi),
+            nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 17, 21, 0)),
+          ],
+          child: const MaterialApp(
+            home: PairingFlowPage(enableCameraPreview: false),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Pair your phone to this Mac'), findsOneWidget);
+      expect(
+        find.text(
+          'Private bridge path is currently unreachable. Reconnect to Tailscale and retry.',
+        ),
+        findsOneWidget,
+      );
+      expect(await store.readSecret(SecureValueKey.trustedBridgeIdentity), isNull);
+      expect(await store.readSecret(SecureValueKey.sessionToken), isNull);
+    },
+  );
 }
 
 String _validPayloadJson({
