@@ -493,9 +493,6 @@ fn proxy_targets_bridge_loopback(raw: &str, port: u16) -> bool {
     normalized == format!("http://127.0.0.1:{port}")
         || normalized == format!("http://localhost:{port}")
         || normalized == format!("http://[::1]:{port}")
-        || normalized == format!("https://127.0.0.1:{port}")
-        || normalized == format!("https://localhost:{port}")
-        || normalized == format!("https://[::1]:{port}")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -2368,6 +2365,43 @@ mod tests {
             pairing_base_url_from_tailscale_status(&status, &wrong_host_https_proxy, 3110)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn pairing_base_url_rejects_https_loopback_proxy_targets() {
+        let status = serde_json::json!({
+            "Self": {
+                "DNSName": "macbook-pro.taild54ede.ts.net."
+            }
+        });
+
+        for https_loopback_target in [
+            "https://127.0.0.1:3110",
+            "https://localhost:3110",
+            "https://[::1]:3110",
+        ] {
+            let serve_status = serde_json::json!({
+                "TCP": {
+                    "443": {
+                        "HTTPS": true
+                    }
+                },
+                "Web": {
+                    "macbook-pro.taild54ede.ts.net:443": {
+                        "Handlers": {
+                            "/": {
+                                "Proxy": https_loopback_target
+                            }
+                        }
+                    }
+                }
+            });
+
+            assert!(
+                pairing_base_url_from_tailscale_status(&status, &serve_status, 3110).is_none(),
+                "expected https loopback target {https_loopback_target} to be rejected"
+            );
+        }
     }
 
     #[test]
