@@ -6,6 +6,7 @@ import 'package:codex_mobile_companion/features/pairing/data/pairing_bridge_api.
 import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
 import 'package:codex_mobile_companion/features/settings/data/settings_bridge_api.dart';
 import 'package:codex_mobile_companion/features/settings/application/runtime_notification_delivery_controller.dart';
+import 'package:codex_mobile_companion/features/settings/data/runtime_platform_notifications.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
@@ -30,6 +31,13 @@ void main() {
             pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
             settingsBridgeApiProvider.overrideWithValue(
               FakeSettingsBridgeApi(),
+            ),
+            runtimePlatformNotificationsProvider.overrideWithValue(
+              FakeRuntimePlatformNotifications(
+                bootstrap: const RuntimePlatformNotificationBootstrap(
+                  systemNotificationsAvailable: false,
+                ),
+              ),
             ),
             threadLiveStreamProvider.overrideWithValue(liveStream),
             approvalBridgeApiProvider.overrideWithValue(
@@ -86,6 +94,77 @@ void main() {
   );
 
   testWidgets(
+    'platform notification open callback routes to approval detail from background path',
+    (tester) async {
+      final secureStore = await _pairedSecureStore();
+      final liveStream = FakeThreadLiveStream();
+      final platformNotifications = FakeRuntimePlatformNotifications(
+        bootstrap: const RuntimePlatformNotificationBootstrap(
+          systemNotificationsAvailable: true,
+        ),
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appSecureStoreProvider.overrideWithValue(secureStore),
+            pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
+            settingsBridgeApiProvider.overrideWithValue(
+              FakeSettingsBridgeApi(),
+            ),
+            runtimePlatformNotificationsProvider.overrideWithValue(
+              platformNotifications,
+            ),
+            threadLiveStreamProvider.overrideWithValue(liveStream),
+            approvalBridgeApiProvider.overrideWithValue(
+              FakeApprovalBridgeApi(
+                approvals: [
+                  _approvalRecord(
+                    approvalId: 'approval-platform-123',
+                    threadId: 'thread-123',
+                  ),
+                ],
+              ),
+            ),
+            threadDetailBridgeApiProvider.overrideWithValue(
+              FakeThreadDetailBridgeApi(),
+            ),
+          ],
+          child: const CodexMobileApp(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      liveStream.emit(
+        BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-platform-approval-1',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.approvalRequested,
+          occurredAt: '2026-03-18T12:00:00Z',
+          payload: {
+            'approval_id': 'approval-platform-123',
+            'thread_id': 'thread-123',
+            'reason': 'Approval required for background path.',
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(platformNotifications.shownNotifications, hasLength(1));
+      expect(find.textContaining('Approval requested:'), findsNothing);
+
+      platformNotifications.emitOpenedPayload(
+        '{"event_id":"evt-platform-approval-1","target":{"target_type":"approval_detail","thread_id":"thread-123","approval_id":"approval-platform-123"}}',
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Approval detail'), findsOneWidget);
+      expect(find.textContaining('approval-platform-123'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'live activity notification opens the matching thread detail context',
     (tester) async {
       final secureStore = await _pairedSecureStore();
@@ -98,6 +177,13 @@ void main() {
             pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
             settingsBridgeApiProvider.overrideWithValue(
               FakeSettingsBridgeApi(),
+            ),
+            runtimePlatformNotificationsProvider.overrideWithValue(
+              FakeRuntimePlatformNotifications(
+                bootstrap: const RuntimePlatformNotificationBootstrap(
+                  systemNotificationsAvailable: false,
+                ),
+              ),
             ),
             threadLiveStreamProvider.overrideWithValue(liveStream),
             approvalBridgeApiProvider.overrideWithValue(
@@ -154,6 +240,13 @@ void main() {
             pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
             settingsBridgeApiProvider.overrideWithValue(
               FakeSettingsBridgeApi(),
+            ),
+            runtimePlatformNotificationsProvider.overrideWithValue(
+              FakeRuntimePlatformNotifications(
+                bootstrap: const RuntimePlatformNotificationBootstrap(
+                  systemNotificationsAvailable: false,
+                ),
+              ),
             ),
             threadLiveStreamProvider.overrideWithValue(liveStream),
             approvalBridgeApiProvider.overrideWithValue(
@@ -214,6 +307,13 @@ void main() {
           appSecureStoreProvider.overrideWithValue(secureStore),
           pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
           settingsBridgeApiProvider.overrideWithValue(FakeSettingsBridgeApi()),
+          runtimePlatformNotificationsProvider.overrideWithValue(
+            FakeRuntimePlatformNotifications(
+              bootstrap: const RuntimePlatformNotificationBootstrap(
+                systemNotificationsAvailable: false,
+              ),
+            ),
+          ),
           threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
           approvalBridgeApiProvider.overrideWithValue(
             FakeApprovalBridgeApi(approvals: const []),
@@ -232,6 +332,47 @@ void main() {
   });
 
   testWidgets(
+    'cold-start platform launch payload opens the correct thread context without pre-seeded launch state',
+    (tester) async {
+      final secureStore = await _pairedSecureStore();
+      final platformNotifications = FakeRuntimePlatformNotifications(
+        bootstrap: const RuntimePlatformNotificationBootstrap(
+          systemNotificationsAvailable: true,
+          initialLaunchPayload:
+              '{"event_id":"evt-platform-cold-start","target":{"target_type":"thread_detail","thread_id":"thread-platform-cold-start"}}',
+        ),
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appSecureStoreProvider.overrideWithValue(secureStore),
+            pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
+            settingsBridgeApiProvider.overrideWithValue(
+              FakeSettingsBridgeApi(),
+            ),
+            runtimePlatformNotificationsProvider.overrideWithValue(
+              platformNotifications,
+            ),
+            threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+            approvalBridgeApiProvider.overrideWithValue(
+              FakeApprovalBridgeApi(approvals: const []),
+            ),
+            threadDetailBridgeApiProvider.overrideWithValue(
+              FakeThreadDetailBridgeApi(),
+            ),
+          ],
+          child: const CodexMobileApp(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Thread detail'), findsOneWidget);
+      expect(find.text('thread-platform-cold-start'), findsWidgets);
+    },
+  );
+
+  testWidgets(
     'duplicate notification event IDs are suppressed across reconnect cycles',
     (tester) async {
       final secureStore = await _pairedSecureStore();
@@ -244,6 +385,13 @@ void main() {
             pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
             settingsBridgeApiProvider.overrideWithValue(
               FakeSettingsBridgeApi(),
+            ),
+            runtimePlatformNotificationsProvider.overrideWithValue(
+              FakeRuntimePlatformNotifications(
+                bootstrap: const RuntimePlatformNotificationBootstrap(
+                  systemNotificationsAvailable: false,
+                ),
+              ),
             ),
             threadLiveStreamProvider.overrideWithValue(liveStream),
             approvalBridgeApiProvider.overrideWithValue(
@@ -651,5 +799,52 @@ class FakeThreadLiveStream implements ThreadLiveStream {
         controller.add(event);
       }
     }
+  }
+}
+
+class FakeRuntimePlatformNotifications implements RuntimePlatformNotifications {
+  FakeRuntimePlatformNotifications({
+    required RuntimePlatformNotificationBootstrap bootstrap,
+  }) : _bootstrap = bootstrap;
+
+  final RuntimePlatformNotificationBootstrap _bootstrap;
+  final List<({int notificationId, String title, String body, String payload})>
+  shownNotifications =
+      <({int notificationId, String title, String body, String payload})>[];
+
+  final StreamController<String> _openedPayloadController =
+      StreamController<String>.broadcast();
+
+  @override
+  Stream<String> get openedPayloads => _openedPayloadController.stream;
+
+  @override
+  Future<RuntimePlatformNotificationBootstrap> initialize() async {
+    return _bootstrap;
+  }
+
+  @override
+  Future<bool> showNotification({
+    required int notificationId,
+    required String title,
+    required String body,
+    required String payload,
+  }) async {
+    shownNotifications.add((
+      notificationId: notificationId,
+      title: title,
+      body: body,
+      payload: payload,
+    ));
+    return _bootstrap.systemNotificationsAvailable;
+  }
+
+  void emitOpenedPayload(String payload) {
+    _openedPayloadController.add(payload);
+  }
+
+  @override
+  Future<void> dispose() async {
+    await _openedPayloadController.close();
   }
 }

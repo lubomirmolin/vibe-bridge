@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:codex_mobile_companion/features/settings/application/notification_preferences_controller.dart';
+import 'package:codex_mobile_companion/features/settings/data/runtime_platform_notifications.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
@@ -19,6 +20,9 @@ final runtimeNotificationDeliveryControllerProvider = StateNotifierProvider
         bridgeApiBaseUrl: bridgeApiBaseUrl,
         liveStream: ref.watch(threadLiveStreamProvider),
         secureStore: ref.watch(appSecureStoreProvider),
+        runtimePlatformNotifications: ref.watch(
+          runtimePlatformNotificationsProvider,
+        ),
         initialPreferences: ref.read(notificationPreferencesControllerProvider),
       );
 
@@ -104,10 +108,7 @@ class RuntimeNotificationLaunchRequest {
   final RuntimeNotificationTarget target;
 
   Map<String, dynamic> toJson() {
-    return <String, dynamic>{
-      'event_id': eventId,
-      'target': target.toJson(),
-    };
+    return <String, dynamic>{'event_id': eventId, 'target': target.toJson()};
   }
 
   factory RuntimeNotificationLaunchRequest.fromJson(
@@ -152,7 +153,8 @@ class RuntimeNotificationDeliveryState {
     return RuntimeNotificationDeliveryState(
       pendingNotifications: pendingNotifications ?? this.pendingNotifications,
       recentNotifications: recentNotifications ?? this.recentNotifications,
-      pendingLaunchRequests: pendingLaunchRequests ?? this.pendingLaunchRequests,
+      pendingLaunchRequests:
+          pendingLaunchRequests ?? this.pendingLaunchRequests,
       approvalNotificationsEnabled:
           approvalNotificationsEnabled ?? this.approvalNotificationsEnabled,
       liveActivityNotificationsEnabled:
@@ -169,10 +171,12 @@ class RuntimeNotificationDeliveryController
     required String bridgeApiBaseUrl,
     required ThreadLiveStream liveStream,
     required SecureStore secureStore,
+    required RuntimePlatformNotifications runtimePlatformNotifications,
     required NotificationPreferencesState initialPreferences,
   }) : _bridgeApiBaseUrl = bridgeApiBaseUrl,
        _liveStream = liveStream,
        _secureStore = secureStore,
+       _runtimePlatformNotifications = runtimePlatformNotifications,
        super(
          RuntimeNotificationDeliveryState(
            approvalNotificationsEnabled:
@@ -188,27 +192,47 @@ class RuntimeNotificationDeliveryController
   final String _bridgeApiBaseUrl;
   final ThreadLiveStream _liveStream;
   final SecureStore _secureStore;
+  final RuntimePlatformNotifications _runtimePlatformNotifications;
 
   final Set<String> _seenEventIds = <String>{};
   final List<String> _seenEventOrder = <String>[];
+  final Set<String> _consumedLaunchEventIds = <String>{};
+  final List<String> _consumedLaunchEventOrder = <String>[];
 
   ThreadLiveSubscription? _liveSubscription;
   StreamSubscription<BridgeEventEnvelope<Map<String, dynamic>>>?
   _liveEventSubscription;
+  StreamSubscription<String>? _openedNotificationPayloadSubscription;
   Timer? _reconnectTimer;
   int _deliverySequence = 0;
   int _launchRequestSequence = 0;
   bool _isReconnectInProgress = false;
   bool _isDisposed = false;
+  bool _systemNotificationDeliveryAvailable = false;
 
   static const _maxRecentNotifications = 25;
   static const _maxSeenEventIds = 200;
+  static const _maxConsumedLaunchEventIds = 200;
 
   Future<void> _initialize() async {
+    final bootstrap = await _runtimePlatformNotifications.initialize();
+    _systemNotificationDeliveryAvailable =
+        bootstrap.systemNotificationsAvailable;
+
+    _openedNotificationPayloadSubscription = _runtimePlatformNotifications
+        .openedPayloads
+        .listen(_handleOpenedNotificationPayload);
+
     await Future.wait<void>([
       _restoreSeenEventIds(),
       _restorePendingLaunchRequest(),
     ]);
+
+    final initialLaunchPayload = bootstrap.initialLaunchPayload;
+    if (initialLaunchPayload != null) {
+      await _enqueueLaunchRequestFromPayload(initialLaunchPayload);
+    }
+
     await _startLiveSubscription();
   }
 
@@ -255,31 +279,26 @@ class RuntimeNotificationDeliveryController
     if (notification == null) {
       return;
     }
-    final selectedNotification = notification;
 
-    if (state.pendingLaunchRequests.any(
-      (request) => request.eventId == selectedNotification.eventId,
-    )) {
-      return;
-    }
-
-    final request = RuntimeNotificationLaunchRequest(
-      requestId: 'launch-${_launchRequestSequence++}',
-      eventId: selectedNotification.eventId,
-      target: selectedNotification.target,
+    await _enqueueLaunchRequest(
+      eventId: notification.eventId,
+      target: notification.target,
     );
-
-    state = state.copyWith(
-      pendingLaunchRequests: <RuntimeNotificationLaunchRequest>[
-        ...state.pendingLaunchRequests,
-        request,
-      ],
-    );
-
-    await _persistPendingLaunchRequest(request);
   }
 
   Future<void> acknowledgeLaunchRequest(String requestId) async {
+    RuntimeNotificationLaunchRequest? acknowledgedRequest;
+    for (final request in state.pendingLaunchRequests) {
+      if (request.requestId == requestId) {
+        acknowledgedRequest = request;
+        break;
+      }
+    }
+
+    if (acknowledgedRequest != null) {
+      _rememberConsumedLaunchEvent(acknowledgedRequest.eventId);
+    }
+
     final remaining = state.pendingLaunchRequests
         .where((request) => request.requestId != requestId)
         .toList(growable: false);
@@ -403,9 +422,11 @@ class RuntimeNotificationDeliveryController
       target: target,
     );
 
-    final nextPending = List<RuntimeNotificationEntry>.from(
-      state.pendingNotifications,
-    )..add(entry);
+    final shouldUseInAppFallback = !_systemNotificationDeliveryAvailable;
+    final nextPending = shouldUseInAppFallback
+        ? (List<RuntimeNotificationEntry>.from(state.pendingNotifications)
+            ..add(entry))
+        : state.pendingNotifications;
 
     final nextRecent = <RuntimeNotificationEntry>[
       entry,
@@ -419,6 +440,114 @@ class RuntimeNotificationDeliveryController
       pendingNotifications: nextPending,
       recentNotifications: nextRecent,
     );
+
+    if (_systemNotificationDeliveryAvailable) {
+      unawaited(_showSystemNotificationOrFallback(entry));
+    }
+  }
+
+  Future<void> _showSystemNotificationOrFallback(
+    RuntimeNotificationEntry entry,
+  ) async {
+    final payload = jsonEncode(<String, dynamic>{
+      'event_id': entry.eventId,
+      'target': entry.target.toJson(),
+    });
+
+    final didShow = await _runtimePlatformNotifications.showNotification(
+      notificationId: _notificationIdForEvent(entry.eventId),
+      title: entry.title,
+      body: entry.message,
+      payload: payload,
+    );
+
+    if (didShow || _isDisposed) {
+      return;
+    }
+
+    if (state.pendingNotifications.any(
+      (notification) => notification.deliveryId == entry.deliveryId,
+    )) {
+      return;
+    }
+
+    state = state.copyWith(
+      pendingNotifications: <RuntimeNotificationEntry>[
+        ...state.pendingNotifications,
+        entry,
+      ],
+    );
+  }
+
+  void _handleOpenedNotificationPayload(String payload) {
+    unawaited(_enqueueLaunchRequestFromPayload(payload));
+  }
+
+  Future<void> _enqueueLaunchRequestFromPayload(String payload) async {
+    try {
+      final decoded = jsonDecode(payload);
+      if (decoded is! Map<String, dynamic>) {
+        return;
+      }
+
+      final eventId = decoded['event_id'];
+      final targetJson = decoded['target'];
+      if (eventId is! String || targetJson is! Map<String, dynamic>) {
+        return;
+      }
+
+      final normalizedEventId = eventId.trim();
+      if (normalizedEventId.isEmpty) {
+        return;
+      }
+
+      await _enqueueLaunchRequest(
+        eventId: normalizedEventId,
+        target: RuntimeNotificationTarget.fromJson(targetJson),
+      );
+    } on FormatException {
+      // Ignore malformed payloads from stale notifications.
+    } on TypeError {
+      // Ignore malformed payloads from stale notifications.
+    }
+  }
+
+  Future<void> _enqueueLaunchRequest({
+    required String eventId,
+    required RuntimeNotificationTarget target,
+  }) async {
+    if (_consumedLaunchEventIds.contains(eventId) ||
+        state.pendingLaunchRequests.any(
+          (request) => request.eventId == eventId,
+        )) {
+      return;
+    }
+
+    final request = RuntimeNotificationLaunchRequest(
+      requestId: 'launch-${_launchRequestSequence++}',
+      eventId: eventId,
+      target: target,
+    );
+
+    state = state.copyWith(
+      pendingLaunchRequests: <RuntimeNotificationLaunchRequest>[
+        ...state.pendingLaunchRequests,
+        request,
+      ],
+    );
+
+    await _persistPendingLaunchRequest(request);
+  }
+
+  void _rememberConsumedLaunchEvent(String eventId) {
+    if (_consumedLaunchEventIds.add(eventId)) {
+      _consumedLaunchEventOrder.add(eventId);
+    }
+
+    while (_consumedLaunchEventOrder.length > _maxConsumedLaunchEventIds) {
+      final evicted = _consumedLaunchEventOrder.removeAt(0);
+      _consumedLaunchEventIds.remove(evicted);
+    }
   }
 
   bool _isApprovalNotificationEvent(
@@ -640,6 +769,7 @@ class RuntimeNotificationDeliveryController
   void dispose() {
     _isDisposed = true;
     _reconnectTimer?.cancel();
+    unawaited(_openedNotificationPayloadSubscription?.cancel());
     unawaited(_closeLiveSubscription());
     super.dispose();
   }
@@ -652,4 +782,8 @@ String? _optionalString(Map<String, dynamic> payload, String key) {
   }
 
   return value.trim();
+}
+
+int _notificationIdForEvent(String eventId) {
+  return eventId.hashCode & 0x7fffffff;
 }

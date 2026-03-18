@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:codex_mobile_companion/features/settings/application/notification_preferences_controller.dart';
 import 'package:codex_mobile_companion/features/settings/application/runtime_notification_delivery_controller.dart';
+import 'package:codex_mobile_companion/features/settings/data/runtime_platform_notifications.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
@@ -327,64 +328,184 @@ void main() {
     },
   );
 
-  test('restores and clears persisted launch requests for cold-start routing', () async {
-    final persistedStore = InMemorySecureStore();
-    await persistedStore.writeSecret(
-      SecureValueKey.runtimeNotificationPendingLaunchTarget,
-      jsonEncode(<String, dynamic>{
-        'event_id': 'evt-launch-1',
-        'target': <String, dynamic>{
-          'target_type': 'thread_detail',
-          'thread_id': 'thread-cold-start',
-        },
-      }),
-    );
-
-    final liveStream = FakeThreadLiveStream();
-    final container = ProviderContainer(
-      overrides: [
-        appSecureStoreProvider.overrideWithValue(persistedStore),
-        threadLiveStreamProvider.overrideWithValue(liveStream),
-      ],
-    );
-    addTearDown(container.dispose);
-
-    final subscription = container.listen(
-      runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
-      (_, _) {},
-    );
-    addTearDown(subscription.close);
-
-    await Future<void>.delayed(Duration.zero);
-
-    final state = container.read(
-      runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
-    );
-    expect(state.pendingLaunchRequests, hasLength(1));
-    expect(state.pendingLaunchRequests.single.eventId, 'evt-launch-1');
-    expect(
-      state.pendingLaunchRequests.single.target.threadId,
-      'thread-cold-start',
-    );
-
-    final controller = container.read(
-      runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl).notifier,
-    );
-    await controller.acknowledgeLaunchRequest(
-      state.pendingLaunchRequests.single.requestId,
-    );
-
-    final nextState = container.read(
-      runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
-    );
-    expect(nextState.pendingLaunchRequests, isEmpty);
-    expect(
-      await persistedStore.readSecret(
+  test(
+    'restores and clears persisted launch requests for cold-start routing',
+    () async {
+      final persistedStore = InMemorySecureStore();
+      await persistedStore.writeSecret(
         SecureValueKey.runtimeNotificationPendingLaunchTarget,
-      ),
-      isNull,
-    );
-  });
+        jsonEncode(<String, dynamic>{
+          'event_id': 'evt-launch-1',
+          'target': <String, dynamic>{
+            'target_type': 'thread_detail',
+            'thread_id': 'thread-cold-start',
+          },
+        }),
+      );
+
+      final liveStream = FakeThreadLiveStream();
+      final container = ProviderContainer(
+        overrides: [
+          appSecureStoreProvider.overrideWithValue(persistedStore),
+          threadLiveStreamProvider.overrideWithValue(liveStream),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final subscription = container.listen(
+        runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
+        (_, _) {},
+      );
+      addTearDown(subscription.close);
+
+      await Future<void>.delayed(Duration.zero);
+
+      final state = container.read(
+        runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
+      );
+      expect(state.pendingLaunchRequests, hasLength(1));
+      expect(state.pendingLaunchRequests.single.eventId, 'evt-launch-1');
+      expect(
+        state.pendingLaunchRequests.single.target.threadId,
+        'thread-cold-start',
+      );
+
+      final controller = container.read(
+        runtimeNotificationDeliveryControllerProvider(
+          _bridgeApiBaseUrl,
+        ).notifier,
+      );
+      await controller.acknowledgeLaunchRequest(
+        state.pendingLaunchRequests.single.requestId,
+      );
+
+      final nextState = container.read(
+        runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
+      );
+      expect(nextState.pendingLaunchRequests, isEmpty);
+      expect(
+        await persistedStore.readSecret(
+          SecureValueKey.runtimeNotificationPendingLaunchTarget,
+        ),
+        isNull,
+      );
+    },
+  );
+
+  test(
+    'cold-start launch payload from platform notification is restored without pre-seeded secure-store launch state',
+    () async {
+      final liveStream = FakeThreadLiveStream();
+      final platformNotifications = FakeRuntimePlatformNotifications(
+        bootstrap: const RuntimePlatformNotificationBootstrap(
+          systemNotificationsAvailable: true,
+          initialLaunchPayload:
+              '{"event_id":"evt-platform-cold-start","target":{"target_type":"thread_detail","thread_id":"thread-platform-cold-start"}}',
+        ),
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          appSecureStoreProvider.overrideWithValue(InMemorySecureStore()),
+          threadLiveStreamProvider.overrideWithValue(liveStream),
+          runtimePlatformNotificationsProvider.overrideWithValue(
+            platformNotifications,
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final subscription = container.listen(
+        runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
+        (_, _) {},
+      );
+      addTearDown(subscription.close);
+
+      await Future<void>.delayed(Duration.zero);
+
+      final state = container.read(
+        runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
+      );
+      expect(state.pendingLaunchRequests, hasLength(1));
+      expect(
+        state.pendingLaunchRequests.single.eventId,
+        'evt-platform-cold-start',
+      );
+      expect(
+        state.pendingLaunchRequests.single.target.threadId,
+        'thread-platform-cold-start',
+      );
+    },
+  );
+
+  test(
+    'system-notification delivery posts to platform and opens through platform payload callbacks',
+    () async {
+      final liveStream = FakeThreadLiveStream();
+      final platformNotifications = FakeRuntimePlatformNotifications(
+        bootstrap: const RuntimePlatformNotificationBootstrap(
+          systemNotificationsAvailable: true,
+        ),
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          appSecureStoreProvider.overrideWithValue(InMemorySecureStore()),
+          threadLiveStreamProvider.overrideWithValue(liveStream),
+          runtimePlatformNotificationsProvider.overrideWithValue(
+            platformNotifications,
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final subscription = container.listen(
+        runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
+        (_, _) {},
+      );
+      addTearDown(subscription.close);
+
+      await Future<void>.delayed(Duration.zero);
+
+      liveStream.emit(
+        _event(
+          eventId: 'evt-platform-open-1',
+          kind: BridgeEventKind.approvalRequested,
+          payload: {
+            'approval_id': 'approval-123',
+            'thread_id': 'thread-123',
+            'reason': 'Approval from platform notification path.',
+          },
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      var state = container.read(
+        runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
+      );
+      expect(state.pendingNotifications, isEmpty);
+      expect(platformNotifications.shownNotifications, hasLength(1));
+
+      platformNotifications.emitOpenedPayload(
+        '{"event_id":"evt-platform-open-1","target":{"target_type":"approval_detail","thread_id":"thread-123","approval_id":"approval-123"}}',
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      state = container.read(
+        runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
+      );
+      expect(state.pendingLaunchRequests, hasLength(1));
+      expect(state.pendingLaunchRequests.single.eventId, 'evt-platform-open-1');
+      expect(
+        state.pendingLaunchRequests.single.target.type,
+        RuntimeNotificationTargetType.approvalDetail,
+      );
+      expect(
+        state.pendingLaunchRequests.single.target.approvalId,
+        'approval-123',
+      );
+    },
+  );
 }
 
 const _bridgeApiBaseUrl = 'https://bridge.ts.net';
@@ -465,5 +586,52 @@ class DelayedReadSecureStore implements SecureStore {
   @override
   Future<void> removeSecret(SecureValueKey key) {
     return _delegate.removeSecret(key);
+  }
+}
+
+class FakeRuntimePlatformNotifications implements RuntimePlatformNotifications {
+  FakeRuntimePlatformNotifications({
+    required RuntimePlatformNotificationBootstrap bootstrap,
+  }) : _bootstrap = bootstrap;
+
+  final RuntimePlatformNotificationBootstrap _bootstrap;
+  final List<({int notificationId, String title, String body, String payload})>
+  shownNotifications =
+      <({int notificationId, String title, String body, String payload})>[];
+
+  final StreamController<String> _openedPayloadController =
+      StreamController<String>.broadcast();
+
+  @override
+  Stream<String> get openedPayloads => _openedPayloadController.stream;
+
+  @override
+  Future<RuntimePlatformNotificationBootstrap> initialize() async {
+    return _bootstrap;
+  }
+
+  @override
+  Future<bool> showNotification({
+    required int notificationId,
+    required String title,
+    required String body,
+    required String payload,
+  }) async {
+    shownNotifications.add((
+      notificationId: notificationId,
+      title: title,
+      body: body,
+      payload: payload,
+    ));
+    return _bootstrap.systemNotificationsAvailable;
+  }
+
+  void emitOpenedPayload(String payload) {
+    _openedPayloadController.add(payload);
+  }
+
+  @override
+  Future<void> dispose() async {
+    await _openedPayloadController.close();
   }
 }
