@@ -439,6 +439,60 @@ void main() {
   );
 
   test(
+    'denied system-notification permissions keep in-app fallback delivery active',
+    () async {
+      final liveStream = FakeThreadLiveStream();
+      final platformNotifications = FakeRuntimePlatformNotifications(
+        bootstrap: const RuntimePlatformNotificationBootstrap(
+          systemNotificationsAvailable: false,
+        ),
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          appSecureStoreProvider.overrideWithValue(InMemorySecureStore()),
+          threadLiveStreamProvider.overrideWithValue(liveStream),
+          runtimePlatformNotificationsProvider.overrideWithValue(
+            platformNotifications,
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final subscription = container.listen(
+        runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
+        (_, _) {},
+      );
+      addTearDown(subscription.close);
+
+      await Future<void>.delayed(Duration.zero);
+
+      liveStream.emit(
+        _event(
+          eventId: 'evt-denied-permission-fallback-1',
+          kind: BridgeEventKind.approvalRequested,
+          payload: {
+            'approval_id': 'approval-denied-fallback',
+            'reason': 'System notifications denied.',
+          },
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      final state = container.read(
+        runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
+      );
+      expect(state.pendingNotifications, hasLength(1));
+      expect(
+        state.pendingNotifications.single.eventId,
+        'evt-denied-permission-fallback-1',
+      );
+      expect(state.recentNotifications, hasLength(1));
+      expect(platformNotifications.shownNotifications, isEmpty);
+    },
+  );
+
+  test(
     'system-notification delivery posts to platform and opens through platform payload callbacks',
     () async {
       final liveStream = FakeThreadLiveStream();

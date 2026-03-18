@@ -82,21 +82,27 @@ class FlutterLocalRuntimePlatformNotifications
         macOS: darwinSettings,
       );
 
-      await _plugin.initialize(
-        settings,
-        onDidReceiveNotificationResponse: _handleNotificationResponse,
-      );
+      final initialized =
+          await _plugin.initialize(
+            settings,
+            onDidReceiveNotificationResponse: _handleNotificationResponse,
+          ) ??
+          true;
 
-      await _requestNotificationPermissions();
+      final permissionsGranted = await _requestNotificationPermissions();
+      final checkedAvailability =
+          await _resolveSystemNotificationAvailability();
+      final systemNotificationsAvailable =
+          initialized && permissionsGranted && (checkedAvailability ?? true);
 
       final launchDetails = await _plugin.getNotificationAppLaunchDetails();
       final launchPayload = launchDetails?.didNotificationLaunchApp == true
           ? launchDetails?.notificationResponse?.payload
           : null;
 
-      _systemNotificationsAvailable = true;
+      _systemNotificationsAvailable = systemNotificationsAvailable;
       return RuntimePlatformNotificationBootstrap(
-        systemNotificationsAvailable: true,
+        systemNotificationsAvailable: systemNotificationsAvailable,
         initialLaunchPayload: _normalizePayload(launchPayload),
       );
     } catch (_) {
@@ -107,24 +113,74 @@ class FlutterLocalRuntimePlatformNotifications
     }
   }
 
-  Future<void> _requestNotificationPermissions() async {
-    await _plugin
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.requestNotificationsPermission();
+  Future<bool> _requestNotificationPermissions() async {
+    final results = <bool?>[];
 
-    await _plugin
-        .resolvePlatformSpecificImplementation<
-          IOSFlutterLocalNotificationsPlugin
-        >()
-        ?.requestPermissions(alert: true, badge: false, sound: true);
+    results.add(
+      await _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >()
+          ?.requestNotificationsPermission(),
+    );
 
-    await _plugin
-        .resolvePlatformSpecificImplementation<
-          MacOSFlutterLocalNotificationsPlugin
-        >()
-        ?.requestPermissions(alert: true, badge: false, sound: true);
+    results.add(
+      await _plugin
+          .resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin
+          >()
+          ?.requestPermissions(alert: true, badge: false, sound: true),
+    );
+
+    results.add(
+      await _plugin
+          .resolvePlatformSpecificImplementation<
+            MacOSFlutterLocalNotificationsPlugin
+          >()
+          ?.requestPermissions(alert: true, badge: false, sound: true),
+    );
+
+    for (final result in results) {
+      if (result == false) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  Future<bool?> _resolveSystemNotificationAvailability() async {
+    try {
+      final androidImplementation = _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
+      if (androidImplementation != null) {
+        return androidImplementation.areNotificationsEnabled();
+      }
+
+      final iOSImplementation = _plugin
+          .resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin
+          >();
+      if (iOSImplementation != null) {
+        final permissions = await iOSImplementation.checkPermissions();
+        return permissions?.isEnabled;
+      }
+
+      final macOSImplementation = _plugin
+          .resolvePlatformSpecificImplementation<
+            MacOSFlutterLocalNotificationsPlugin
+          >();
+      if (macOSImplementation != null) {
+        final permissions = await macOSImplementation.checkPermissions();
+        return permissions?.isEnabled;
+      }
+    } catch (_) {
+      return null;
+    }
+
+    return null;
   }
 
   @override
@@ -135,6 +191,12 @@ class FlutterLocalRuntimePlatformNotifications
     required String payload,
   }) async {
     await initialize();
+
+    final checkedAvailability = await _resolveSystemNotificationAvailability();
+    if (checkedAvailability != null) {
+      _systemNotificationsAvailable = checkedAvailability;
+    }
+
     if (!_systemNotificationsAvailable) {
       return false;
     }
