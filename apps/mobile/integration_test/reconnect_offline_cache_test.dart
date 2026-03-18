@@ -96,104 +96,111 @@ void main() {
     },
   );
 
-  testWidgets('disconnect keeps thread readable and deduplicated with reconnect controls', (
-    tester,
-  ) async {
-    final detailApi = FakeThreadDetailBridgeApi(
-      detailScriptByThreadId: {
-        'thread-123': [
-          _threadDetail(
-            threadId: 'thread-123',
-            title: 'Implement shared contracts',
-            status: ThreadStatus.running,
-          ),
-          _threadDetail(
-            threadId: 'thread-123',
-            title: 'Implement shared contracts',
-            status: ThreadStatus.completed,
-          ),
-        ],
-      },
-      timelineScriptByThreadId: {
-        'thread-123': [
-          [
-            _timelineEvent(
-              id: 'evt-1',
-              summary: 'Initial event',
-              payload: {'delta': 'Initial event'},
-              occurredAt: '2026-03-18T10:00:00Z',
+  testWidgets(
+    'disconnect keeps thread readable and deduplicated with reconnect controls',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            _threadDetail(
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.running,
+            ),
+            _threadDetail(
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.completed,
             ),
           ],
-          [
-            _timelineEvent(
-              id: 'evt-1',
-              summary: 'Initial event',
-              payload: {'delta': 'Initial event'},
-              occurredAt: '2026-03-18T10:00:00Z',
-            ),
-            _timelineEvent(
-              id: 'evt-live-1',
-              summary: 'Streaming chunk from live output.',
-              payload: {'delta': 'Streaming chunk from live output.'},
-              occurredAt: '2026-03-18T10:01:00Z',
-            ),
-            _timelineEvent(
-              id: 'evt-catchup-2',
-              summary: 'Missed while disconnected',
-              payload: {'delta': 'Missed while disconnected'},
-              occurredAt: '2026-03-18T10:02:00Z',
-            ),
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            [
+              _timelineEvent(
+                id: 'evt-1',
+                summary: 'Initial event',
+                payload: {'delta': 'Initial event'},
+                occurredAt: '2026-03-18T10:00:00Z',
+              ),
+            ],
+            [
+              _timelineEvent(
+                id: 'evt-1',
+                summary: 'Initial event',
+                payload: {'delta': 'Initial event'},
+                occurredAt: '2026-03-18T10:00:00Z',
+              ),
+              _timelineEvent(
+                id: 'evt-live-1',
+                summary: 'Streaming chunk from live output.',
+                payload: {'delta': 'Streaming chunk from live output.'},
+                occurredAt: '2026-03-18T10:01:00Z',
+              ),
+              _timelineEvent(
+                id: 'evt-catchup-2',
+                summary: 'Missed while disconnected',
+                payload: {'delta': 'Missed while disconnected'},
+                occurredAt: '2026-03-18T10:02:00Z',
+              ),
+            ],
           ],
-        ],
-      },
-    );
-    final liveStream = FakeThreadLiveStream();
+        },
+      );
+      final liveStream = FakeThreadLiveStream();
 
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          threadCacheRepositoryProvider.overrideWithValue(
-            _newCacheRepository(),
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            threadCacheRepositoryProvider.overrideWithValue(
+              _newCacheRepository(),
+            ),
+            threadListBridgeApiProvider.overrideWithValue(
+              FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]),
+            ),
+            threadDetailBridgeApiProvider.overrideWithValue(detailApi),
+            threadLiveStreamProvider.overrideWithValue(liveStream),
+          ],
+          child: const MaterialApp(
+            home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
           ),
-          threadListBridgeApiProvider.overrideWithValue(
-            FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]),
-          ),
-          threadDetailBridgeApiProvider.overrideWithValue(detailApi),
-          threadLiveStreamProvider.overrideWithValue(liveStream),
-        ],
-        child: const MaterialApp(
-          home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+      await tester.pumpAndSettle();
 
-    liveStream.emit(
-      BridgeEventEnvelope<Map<String, dynamic>>(
-        contractVersion: contractVersion,
-        eventId: 'evt-live-1',
-        threadId: 'thread-123',
-        kind: BridgeEventKind.messageDelta,
-        occurredAt: '2026-03-18T10:01:00Z',
-        payload: {'delta': 'Streaming chunk from live output.'},
-      ),
-    );
-    await tester.pumpAndSettle();
+      liveStream.emit(
+        BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-live-1',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:01:00Z',
+          payload: {'delta': 'Streaming chunk from live output.'},
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('thread-activity-evt-live-1')), findsOneWidget);
+      expect(
+        find.byKey(const Key('thread-activity-evt-live-1')),
+        findsOneWidget,
+      );
 
-    liveStream.emitError('thread-123');
-    await tester.pumpAndSettle();
+      liveStream.emitError('thread-123');
+      await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('retry-reconnect-catchup')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('retry-reconnect-catchup')));
-    await tester.pumpAndSettle();
+      expect(find.byKey(const Key('retry-reconnect-catchup')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('retry-reconnect-catchup')));
+      await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('thread-activity-evt-live-1')), findsOneWidget);
-  });
+      expect(
+        find.byKey(const Key('thread-activity-evt-live-1')),
+        findsOneWidget,
+      );
+    },
+  );
 }
 
 ThreadCacheRepository _newCacheRepository() {
@@ -304,6 +311,53 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     }
 
     throw StateError('Unsupported timeline scripted result: $scriptedResult');
+  }
+
+  @override
+  Future<TurnMutationResult> startTurn({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String prompt,
+  }) async {
+    return TurnMutationResult(
+      contractVersion: contractVersion,
+      threadId: threadId,
+      operation: 'turn_start',
+      outcome: 'success',
+      message: 'Turn started and streaming is active',
+      threadStatus: ThreadStatus.running,
+    );
+  }
+
+  @override
+  Future<TurnMutationResult> steerTurn({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String instruction,
+  }) async {
+    return TurnMutationResult(
+      contractVersion: contractVersion,
+      threadId: threadId,
+      operation: 'turn_steer',
+      outcome: 'success',
+      message: 'Steer instruction applied to active turn',
+      threadStatus: ThreadStatus.running,
+    );
+  }
+
+  @override
+  Future<TurnMutationResult> interruptTurn({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    return TurnMutationResult(
+      contractVersion: contractVersion,
+      threadId: threadId,
+      operation: 'turn_interrupt',
+      outcome: 'success',
+      message: 'Interrupt signal sent to active turn',
+      threadStatus: ThreadStatus.interrupted,
+    );
   }
 
   Object _nextResult(

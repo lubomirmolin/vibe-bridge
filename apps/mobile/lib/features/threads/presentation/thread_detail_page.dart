@@ -4,7 +4,7 @@ import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dar
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-class ThreadDetailPage extends ConsumerWidget {
+class ThreadDetailPage extends ConsumerStatefulWidget {
   const ThreadDetailPage({
     super.key,
     required this.bridgeApiBaseUrl,
@@ -17,11 +17,30 @@ class ThreadDetailPage extends ConsumerWidget {
   final int initialVisibleTimelineEntries;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ThreadDetailPage> createState() => _ThreadDetailPageState();
+}
+
+class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
+  late final TextEditingController _composerController;
+
+  @override
+  void initState() {
+    super.initState();
+    _composerController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _composerController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final args = ThreadDetailControllerArgs(
-      bridgeApiBaseUrl: bridgeApiBaseUrl,
-      threadId: threadId,
-      initialVisibleTimelineEntries: initialVisibleTimelineEntries,
+      bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+      threadId: widget.threadId,
+      initialVisibleTimelineEntries: widget.initialVisibleTimelineEntries,
     );
     final state = ref.watch(threadDetailControllerProvider(args));
     final controller = ref.read(threadDetailControllerProvider(args).notifier);
@@ -35,6 +54,9 @@ class ThreadDetailPage extends ConsumerWidget {
           onRetry: controller.loadThread,
           onLoadEarlier: controller.loadEarlierHistory,
           onRetryReconnect: controller.retryReconnectCatchUp,
+          composerController: _composerController,
+          onSubmitComposer: controller.submitComposerInput,
+          onInterruptActiveTurn: controller.interruptActiveTurn,
         ),
       ),
     );
@@ -47,6 +69,9 @@ Widget _buildBody(
   required Future<void> Function() onRetry,
   required VoidCallback onLoadEarlier,
   required Future<void> Function() onRetryReconnect,
+  required TextEditingController composerController,
+  required Future<bool> Function(String rawInput) onSubmitComposer,
+  required Future<bool> Function() onInterruptActiveTurn,
 }) {
   if (state.isLoading && !state.hasThread) {
     return const _ThreadDetailLoadingState();
@@ -87,6 +112,20 @@ Widget _buildBody(
         if (state.streamErrorMessage != null) ...[
           const SizedBox(height: 12),
           _InlineWarning(message: state.streamErrorMessage!),
+        ],
+        const SizedBox(height: 12),
+        _TurnControlsCard(
+          composerController: composerController,
+          isTurnActive: state.isTurnActive,
+          controlsEnabled: state.canRunMutatingActions,
+          isComposerMutationInFlight: state.isComposerMutationInFlight,
+          isInterruptMutationInFlight: state.isInterruptMutationInFlight,
+          onSubmitComposer: onSubmitComposer,
+          onInterruptActiveTurn: onInterruptActiveTurn,
+        ),
+        if (state.turnControlErrorMessage != null) ...[
+          const SizedBox(height: 12),
+          _InlineWarning(message: state.turnControlErrorMessage!),
         ],
         const SizedBox(height: 16),
         if (state.canLoadEarlierHistory) ...[
@@ -208,6 +247,125 @@ class _ThreadDetailHeader extends StatelessWidget {
               style: Theme.of(
                 context,
               ).textTheme.labelSmall?.copyWith(fontFamily: 'monospace'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TurnControlsCard extends StatelessWidget {
+  const _TurnControlsCard({
+    required this.composerController,
+    required this.isTurnActive,
+    required this.controlsEnabled,
+    required this.isComposerMutationInFlight,
+    required this.isInterruptMutationInFlight,
+    required this.onSubmitComposer,
+    required this.onInterruptActiveTurn,
+  });
+
+  final TextEditingController composerController;
+  final bool isTurnActive;
+  final bool controlsEnabled;
+  final bool isComposerMutationInFlight;
+  final bool isInterruptMutationInFlight;
+  final Future<bool> Function(String rawInput) onSubmitComposer;
+  final Future<bool> Function() onInterruptActiveTurn;
+
+  @override
+  Widget build(BuildContext context) {
+    final canSubmitComposer =
+        controlsEnabled &&
+        !isComposerMutationInFlight &&
+        !isInterruptMutationInFlight;
+    final canInterrupt =
+        controlsEnabled &&
+        isTurnActive &&
+        !isInterruptMutationInFlight &&
+        !isComposerMutationInFlight;
+
+    final composerLabel = isTurnActive ? 'Steer turn' : 'Start turn';
+    final helperMessage = isTurnActive
+        ? 'Thread is active. Steer the current turn or interrupt it.'
+        : 'Thread is idle. Start a new turn from this composer.';
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              helperMessage,
+              key: const Key('turn-control-mode-message'),
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              key: const Key('turn-composer-input'),
+              controller: composerController,
+              enabled: canSubmitComposer,
+              minLines: 1,
+              maxLines: 4,
+              textInputAction: TextInputAction.newline,
+              decoration: InputDecoration(
+                labelText: isTurnActive ? 'Steering instruction' : 'Prompt',
+                hintText: isTurnActive
+                    ? 'Guide the running turn...'
+                    : 'Describe what to do next...',
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    key: const Key('turn-composer-submit'),
+                    onPressed: canSubmitComposer
+                        ? () async {
+                            final success = await onSubmitComposer(
+                              composerController.text,
+                            );
+                            if (success) {
+                              composerController.clear();
+                            }
+                          }
+                        : null,
+                    icon: isComposerMutationInFlight
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(
+                            isTurnActive
+                                ? Icons.alt_route_rounded
+                                : Icons.play_arrow_rounded,
+                          ),
+                    label: Text(composerLabel),
+                  ),
+                ),
+                if (isTurnActive) ...[
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    key: const Key('turn-interrupt-button'),
+                    onPressed: canInterrupt
+                        ? () async {
+                            await onInterruptActiveTurn();
+                          }
+                        : null,
+                    icon: isInterruptMutationInFlight
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.stop_circle_outlined),
+                    label: const Text('Interrupt'),
+                  ),
+                ],
+              ],
             ),
           ],
         ),

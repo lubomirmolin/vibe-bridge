@@ -45,13 +45,220 @@ void main() {
       expect(find.text('thread-123'), findsOneWidget);
       expect(find.text('User prompt'), findsOneWidget);
       expect(find.text('Assistant output'), findsOneWidget);
+      await _scrollUntilVisible(tester, find.text('Plan update'));
       expect(find.text('Plan update'), findsOneWidget);
+      await _scrollUntilVisible(tester, find.text('Terminal output'));
       expect(find.text('Terminal output'), findsOneWidget);
+      await _scrollUntilVisible(tester, find.text('File change'));
       expect(find.text('File change'), findsOneWidget);
+      await _scrollUntilVisible(
+        tester,
+        find.textContaining('tail -n 100 app.log'),
+      );
       expect(find.textContaining('tail -n 100 app.log'), findsOneWidget);
+      await _scrollUntilVisible(tester, find.textContaining('lib/main.dart'));
       expect(find.textContaining('lib/main.dart'), findsOneWidget);
     },
   );
+
+  testWidgets('idle composer starts turn and transitions to active controls', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-456': [_thread456Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-456': [<ThreadTimelineEntryDto>[]],
+      },
+      startTurnScriptByThreadId: {
+        'thread-456': [
+          _turnMutationResult(
+            threadId: 'thread-456',
+            operation: 'turn_start',
+            status: ThreadStatus.running,
+            message: 'Turn started and streaming is active',
+          ),
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-456',
+    );
+
+    expect(find.text('Start turn'), findsOneWidget);
+    expect(find.byKey(const Key('turn-interrupt-button')), findsNothing);
+
+    await tester.enterText(
+      find.byKey(const Key('turn-composer-input')),
+      'Draft release notes for today\'s bridge changes.',
+    );
+    await tester.tap(find.byKey(const Key('turn-composer-submit')));
+    await tester.pumpAndSettle();
+
+    expect(detailApi.startTurnPromptsByThreadId['thread-456'], [
+      'Draft release notes for today\'s bridge changes.',
+    ]);
+    expect(find.text('Steer turn'), findsOneWidget);
+    expect(find.byKey(const Key('turn-interrupt-button')), findsOneWidget);
+    expect(find.text('Running'), findsOneWidget);
+  });
+
+  testWidgets('active composer steers and interrupt stops the active turn', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+      steerTurnScriptByThreadId: {
+        'thread-123': [
+          _turnMutationResult(
+            threadId: 'thread-123',
+            operation: 'turn_steer',
+            status: ThreadStatus.running,
+            message: 'Steer instruction applied to active turn',
+          ),
+        ],
+      },
+      interruptTurnScriptByThreadId: {
+        'thread-123': [
+          _turnMutationResult(
+            threadId: 'thread-123',
+            operation: 'turn_interrupt',
+            status: ThreadStatus.interrupted,
+            message: 'Interrupt signal sent to active turn',
+          ),
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+
+    expect(find.text('Steer turn'), findsOneWidget);
+    expect(find.byKey(const Key('turn-interrupt-button')), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('turn-composer-input')),
+      'Focus on reconnect deduplication details.',
+    );
+    await tester.tap(find.byKey(const Key('turn-composer-submit')));
+    await tester.pumpAndSettle();
+
+    expect(detailApi.steerTurnInstructionsByThreadId['thread-123'], [
+      'Focus on reconnect deduplication details.',
+    ]);
+
+    await tester.tap(find.byKey(const Key('turn-interrupt-button')));
+    await tester.pumpAndSettle();
+
+    expect(detailApi.interruptTurnCallsByThreadId['thread-123'], 1);
+    expect(find.text('Interrupted'), findsOneWidget);
+    expect(find.text('Start turn'), findsOneWidget);
+    expect(find.byKey(const Key('turn-interrupt-button')), findsNothing);
+  });
+
+  testWidgets('start failure surfaces clear error and keeps thread usable', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-456': [_thread456Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-456': [<ThreadTimelineEntryDto>[]],
+      },
+      startTurnScriptByThreadId: {
+        'thread-456': [
+          const ThreadTurnBridgeException(
+            message: 'Turn start failed: bridge rejected prompt payload.',
+          ),
+          _turnMutationResult(
+            threadId: 'thread-456',
+            operation: 'turn_start',
+            status: ThreadStatus.running,
+            message: 'Turn started and streaming is active',
+          ),
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-456',
+    );
+
+    await tester.enterText(
+      find.byKey(const Key('turn-composer-input')),
+      'Start a new turn with this prompt.',
+    );
+    await tester.tap(find.byKey(const Key('turn-composer-submit')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Turn start failed: bridge rejected prompt payload.'),
+      findsOneWidget,
+    );
+    expect(find.text('Start turn'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('turn-composer-submit')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Turn start failed: bridge rejected prompt payload.'),
+      findsNothing,
+    );
+    expect(find.text('Running'), findsOneWidget);
+    expect(find.text('Steer turn'), findsOneWidget);
+  });
+
+  testWidgets('interrupt failure keeps active status and reports clear error', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+      interruptTurnScriptByThreadId: {
+        'thread-123': [
+          const ThreadTurnBridgeException(
+            message: 'Bridge could not deliver interrupt signal.',
+          ),
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+
+    await tester.tap(find.byKey(const Key('turn-interrupt-button')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Interrupt failed: Bridge could not deliver interrupt signal.'),
+      findsOneWidget,
+    );
+    expect(find.text('Running'), findsOneWidget);
+    expect(find.text('Steer turn'), findsOneWidget);
+    expect(find.byKey(const Key('turn-interrupt-button')), findsOneWidget);
+  });
 
   testWidgets(
     'live stream updates detail and syncs lifecycle status back to list',
@@ -189,16 +396,16 @@ void main() {
     await tester.tap(find.byKey(const Key('load-earlier-history')));
     await tester.pumpAndSettle();
 
+    await _scrollUntilVisible(tester, find.text('Oldest event'));
     expect(find.text('Oldest event'), findsOneWidget);
     expect(find.text('Older event'), findsOneWidget);
-
     final oldestY = tester.getTopLeft(find.text('Oldest event')).dy;
     final olderY = tester.getTopLeft(find.text('Older event')).dy;
+    expect(oldestY, lessThan(olderY));
+
+    await _scrollUntilVisible(tester, find.text('Recent event B'));
     final recentAY = tester.getTopLeft(find.text('Recent event A')).dy;
     final recentBY = tester.getTopLeft(find.text('Recent event B')).dy;
-
-    expect(oldestY, lessThan(olderY));
-    expect(olderY, lessThan(recentAY));
     expect(recentAY, lessThan(recentBY));
   });
 
@@ -498,6 +705,11 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      await _scrollUntilVisible(
+        tester,
+        find.byKey(const Key('thread-activity-evt-live-1')),
+      );
+
       expect(
         find.byKey(const Key('thread-activity-evt-live-1')),
         findsOneWidget,
@@ -509,6 +721,11 @@ void main() {
       expect(find.byKey(const Key('retry-reconnect-catchup')), findsOneWidget);
       await tester.tap(find.byKey(const Key('retry-reconnect-catchup')));
       await tester.pumpAndSettle();
+
+      await _scrollUntilVisible(
+        tester,
+        find.byKey(const Key('thread-activity-evt-live-1')),
+      );
 
       expect(
         find.byKey(const Key('thread-activity-evt-live-1')),
@@ -547,6 +764,50 @@ Future<void> _pumpThreadListApp(
     ),
   );
 
+  await tester.pumpAndSettle();
+}
+
+Future<void> _pumpThreadDetailApp(
+  WidgetTester tester, {
+  required ThreadDetailBridgeApi detailApi,
+  required String threadId,
+  ThreadListBridgeApi? listApi,
+  ThreadLiveStream? liveStream,
+  ThreadCacheRepository? cacheRepository,
+}) async {
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        threadListBridgeApiProvider.overrideWithValue(
+          listApi ??
+              FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]),
+        ),
+        threadDetailBridgeApiProvider.overrideWithValue(detailApi),
+        threadLiveStreamProvider.overrideWithValue(
+          liveStream ?? FakeThreadLiveStream(),
+        ),
+        threadCacheRepositoryProvider.overrideWithValue(
+          cacheRepository ?? _newCacheRepository(),
+        ),
+      ],
+      child: MaterialApp(
+        home: ThreadDetailPage(
+          bridgeApiBaseUrl: _bridgeApiBaseUrl,
+          threadId: threadId,
+        ),
+      ),
+    ),
+  );
+
+  await tester.pumpAndSettle();
+}
+
+Future<void> _scrollUntilVisible(WidgetTester tester, Finder finder) async {
+  await tester.scrollUntilVisible(
+    finder,
+    240,
+    scrollable: find.byType(Scrollable).first,
+  );
   await tester.pumpAndSettle();
 }
 
@@ -685,17 +946,47 @@ ThreadTimelineEntryDto _timelineEvent({
   );
 }
 
+TurnMutationResult _turnMutationResult({
+  required String threadId,
+  required String operation,
+  required ThreadStatus status,
+  required String message,
+}) {
+  return TurnMutationResult(
+    contractVersion: contractVersion,
+    threadId: threadId,
+    operation: operation,
+    outcome: 'success',
+    message: message,
+    threadStatus: status,
+  );
+}
+
 class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   FakeThreadDetailBridgeApi({
     required Map<String, List<Object>> detailScriptByThreadId,
     required Map<String, List<Object>> timelineScriptByThreadId,
+    Map<String, List<Object>>? startTurnScriptByThreadId,
+    Map<String, List<Object>>? steerTurnScriptByThreadId,
+    Map<String, List<Object>>? interruptTurnScriptByThreadId,
   }) : _detailScriptByThreadId = detailScriptByThreadId,
-       _timelineScriptByThreadId = timelineScriptByThreadId;
+       _timelineScriptByThreadId = timelineScriptByThreadId,
+       _startTurnScriptByThreadId = startTurnScriptByThreadId ?? {},
+       _steerTurnScriptByThreadId = steerTurnScriptByThreadId ?? {},
+       _interruptTurnScriptByThreadId = interruptTurnScriptByThreadId ?? {};
 
   final Map<String, List<Object>> _detailScriptByThreadId;
   final Map<String, List<Object>> _timelineScriptByThreadId;
+  final Map<String, List<Object>> _startTurnScriptByThreadId;
+  final Map<String, List<Object>> _steerTurnScriptByThreadId;
+  final Map<String, List<Object>> _interruptTurnScriptByThreadId;
   int detailFetchCount = 0;
   int timelineFetchCount = 0;
+  final Map<String, List<String>> startTurnPromptsByThreadId =
+      <String, List<String>>{};
+  final Map<String, List<String>> steerTurnInstructionsByThreadId =
+      <String, List<String>>{};
+  final Map<String, int> interruptTurnCallsByThreadId = <String, int>{};
 
   @override
   Future<ThreadDetailDto> fetchThreadDetail({
@@ -729,6 +1020,105 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     }
 
     throw StateError('Unsupported timeline scripted result: $scriptedResult');
+  }
+
+  @override
+  Future<TurnMutationResult> startTurn({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String prompt,
+  }) async {
+    startTurnPromptsByThreadId
+        .putIfAbsent(threadId, () => <String>[])
+        .add(prompt);
+
+    final script = _startTurnScriptByThreadId[threadId];
+    if (script == null || script.isEmpty) {
+      return _turnMutationResult(
+        threadId: threadId,
+        operation: 'turn_start',
+        status: ThreadStatus.running,
+        message: 'Turn started and streaming is active',
+      );
+    }
+
+    final scriptedResult = _nextResult(_startTurnScriptByThreadId, threadId);
+    if (scriptedResult is TurnMutationResult) {
+      return scriptedResult;
+    }
+    if (scriptedResult is ThreadTurnBridgeException) {
+      throw scriptedResult;
+    }
+
+    throw StateError('Unsupported start-turn scripted result: $scriptedResult');
+  }
+
+  @override
+  Future<TurnMutationResult> steerTurn({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String instruction,
+  }) async {
+    steerTurnInstructionsByThreadId
+        .putIfAbsent(threadId, () => <String>[])
+        .add(instruction);
+
+    final script = _steerTurnScriptByThreadId[threadId];
+    if (script == null || script.isEmpty) {
+      return _turnMutationResult(
+        threadId: threadId,
+        operation: 'turn_steer',
+        status: ThreadStatus.running,
+        message: 'Steer instruction applied to active turn',
+      );
+    }
+
+    final scriptedResult = _nextResult(_steerTurnScriptByThreadId, threadId);
+    if (scriptedResult is TurnMutationResult) {
+      return scriptedResult;
+    }
+    if (scriptedResult is ThreadTurnBridgeException) {
+      throw scriptedResult;
+    }
+
+    throw StateError('Unsupported steer-turn scripted result: $scriptedResult');
+  }
+
+  @override
+  Future<TurnMutationResult> interruptTurn({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    interruptTurnCallsByThreadId.update(
+      threadId,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+
+    final script = _interruptTurnScriptByThreadId[threadId];
+    if (script == null || script.isEmpty) {
+      return _turnMutationResult(
+        threadId: threadId,
+        operation: 'turn_interrupt',
+        status: ThreadStatus.interrupted,
+        message: 'Interrupt signal sent to active turn',
+      );
+    }
+
+    final scriptedResult = _nextResult(
+      _interruptTurnScriptByThreadId,
+      threadId,
+    );
+    if (scriptedResult is TurnMutationResult) {
+      return scriptedResult;
+    }
+    if (scriptedResult is ThreadTurnBridgeException) {
+      throw scriptedResult;
+    }
+
+    throw StateError(
+      'Unsupported interrupt-turn scripted result: $scriptedResult',
+    );
   }
 
   Object _nextResult(

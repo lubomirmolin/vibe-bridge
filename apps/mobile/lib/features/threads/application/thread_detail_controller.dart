@@ -66,6 +66,9 @@ class ThreadDetailState {
     this.isShowingCachedData = false,
     this.isConnectivityUnavailable = false,
     this.visibleItemCount = 0,
+    this.isComposerMutationInFlight = false,
+    this.isInterruptMutationInFlight = false,
+    this.turnControlErrorMessage,
   });
 
   final String threadId;
@@ -79,12 +82,17 @@ class ThreadDetailState {
   final bool isShowingCachedData;
   final bool isConnectivityUnavailable;
   final int visibleItemCount;
+  final bool isComposerMutationInFlight;
+  final bool isInterruptMutationInFlight;
+  final String? turnControlErrorMessage;
 
   bool get hasThread => thread != null;
 
   bool get hasError => errorMessage != null;
 
   bool get canRunMutatingActions => !isConnectivityUnavailable;
+
+  bool get isTurnActive => thread?.status == ThreadStatus.running;
 
   int get hiddenHistoryCount {
     if (items.length <= visibleItemCount) {
@@ -125,6 +133,10 @@ class ThreadDetailState {
     bool? isShowingCachedData,
     bool? isConnectivityUnavailable,
     int? visibleItemCount,
+    bool? isComposerMutationInFlight,
+    bool? isInterruptMutationInFlight,
+    String? turnControlErrorMessage,
+    bool clearTurnControlError = false,
   }) {
     return ThreadDetailState(
       threadId: threadId,
@@ -145,6 +157,13 @@ class ThreadDetailState {
       isConnectivityUnavailable:
           isConnectivityUnavailable ?? this.isConnectivityUnavailable,
       visibleItemCount: visibleItemCount ?? this.visibleItemCount,
+      isComposerMutationInFlight:
+          isComposerMutationInFlight ?? this.isComposerMutationInFlight,
+      isInterruptMutationInFlight:
+          isInterruptMutationInFlight ?? this.isInterruptMutationInFlight,
+      turnControlErrorMessage: clearTurnControlError
+          ? null
+          : (turnControlErrorMessage ?? this.turnControlErrorMessage),
     );
   }
 }
@@ -191,6 +210,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       clearErrorMessage: true,
       clearStreamErrorMessage: true,
       clearStaleMessage: true,
+      clearTurnControlError: true,
       isShowingCachedData: false,
       isConnectivityUnavailable: false,
     );
@@ -229,6 +249,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearErrorMessage: true,
         clearStreamErrorMessage: true,
         clearStaleMessage: true,
+        clearTurnControlError: true,
         isShowingCachedData: false,
         isConnectivityUnavailable: false,
       );
@@ -299,6 +320,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       state = state.copyWith(
         clearStreamErrorMessage: true,
         clearStaleMessage: true,
+        clearTurnControlError: true,
         isShowingCachedData: false,
         isConnectivityUnavailable: false,
       );
@@ -371,6 +393,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearErrorMessage: true,
         clearStreamErrorMessage: true,
         clearStaleMessage: true,
+        clearTurnControlError: true,
         isLoading: false,
         isUnavailable: false,
         isShowingCachedData: false,
@@ -531,26 +554,171 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       return;
     }
 
-    final updatedThread = ThreadDetailDto(
-      contractVersion: thread.contractVersion,
-      threadId: thread.threadId,
-      title: thread.title,
+    _updateThreadStatus(
       status: status,
-      workspace: thread.workspace,
-      repository: thread.repository,
-      branch: thread.branch,
-      createdAt: thread.createdAt,
       updatedAt: event.occurredAt,
-      source: thread.source,
-      accessMode: thread.accessMode,
       lastTurnSummary: thread.lastTurnSummary,
     );
-
-    state = state.copyWith(thread: updatedThread);
     _threadListController.applyThreadStatusUpdate(
-      threadId: updatedThread.threadId,
+      threadId: thread.threadId,
       status: status,
       updatedAt: event.occurredAt,
+    );
+  }
+
+  Future<bool> submitComposerInput(String rawInput) async {
+    final thread = state.thread;
+    if (thread == null) {
+      return false;
+    }
+
+    if (!state.canRunMutatingActions) {
+      state = state.copyWith(
+        turnControlErrorMessage:
+            'Turn controls are unavailable while the bridge is offline.',
+      );
+      return false;
+    }
+
+    final input = rawInput.trim();
+    if (input.isEmpty) {
+      state = state.copyWith(
+        turnControlErrorMessage: state.isTurnActive
+            ? 'Enter steering instructions before sending.'
+            : 'Enter a prompt to start a turn.',
+      );
+      return false;
+    }
+
+    state = state.copyWith(
+      isComposerMutationInFlight: true,
+      clearTurnControlError: true,
+    );
+
+    try {
+      final mutationResult = state.isTurnActive
+          ? await _bridgeApi.steerTurn(
+              bridgeApiBaseUrl: _bridgeApiBaseUrl,
+              threadId: state.threadId,
+              instruction: input,
+            )
+          : await _bridgeApi.startTurn(
+              bridgeApiBaseUrl: _bridgeApiBaseUrl,
+              threadId: state.threadId,
+              prompt: input,
+            );
+
+      _applyTurnMutationResult(mutationResult);
+      state = state.copyWith(
+        isComposerMutationInFlight: false,
+        clearTurnControlError: true,
+      );
+      return true;
+    } on ThreadTurnBridgeException catch (error) {
+      state = state.copyWith(
+        isComposerMutationInFlight: false,
+        turnControlErrorMessage: error.message,
+      );
+      return false;
+    } catch (_) {
+      state = state.copyWith(
+        isComposerMutationInFlight: false,
+        turnControlErrorMessage:
+            'Couldn’t update the turn right now. Please try again.',
+      );
+      return false;
+    }
+  }
+
+  Future<bool> interruptActiveTurn() async {
+    if (!state.isTurnActive) {
+      return false;
+    }
+
+    if (!state.canRunMutatingActions) {
+      state = state.copyWith(
+        turnControlErrorMessage:
+            'Turn controls are unavailable while the bridge is offline.',
+      );
+      return false;
+    }
+
+    state = state.copyWith(
+      isInterruptMutationInFlight: true,
+      clearTurnControlError: true,
+    );
+
+    try {
+      final mutationResult = await _bridgeApi.interruptTurn(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: state.threadId,
+      );
+      _applyTurnMutationResult(mutationResult);
+      state = state.copyWith(
+        isInterruptMutationInFlight: false,
+        clearTurnControlError: true,
+      );
+      return true;
+    } on ThreadTurnBridgeException catch (error) {
+      state = state.copyWith(
+        isInterruptMutationInFlight: false,
+        turnControlErrorMessage: 'Interrupt failed: ${error.message}',
+      );
+      return false;
+    } catch (_) {
+      state = state.copyWith(
+        isInterruptMutationInFlight: false,
+        turnControlErrorMessage:
+            'Interrupt failed. The turn is still active. Please try again.',
+      );
+      return false;
+    }
+  }
+
+  void _applyTurnMutationResult(TurnMutationResult mutationResult) {
+    final thread = state.thread;
+    if (thread == null) {
+      return;
+    }
+
+    final updatedAt = DateTime.now().toUtc().toIso8601String();
+    _updateThreadStatus(
+      status: mutationResult.threadStatus,
+      updatedAt: updatedAt,
+      lastTurnSummary: mutationResult.message,
+    );
+    _threadListController.applyThreadStatusUpdate(
+      threadId: thread.threadId,
+      status: mutationResult.threadStatus,
+      updatedAt: updatedAt,
+    );
+  }
+
+  void _updateThreadStatus({
+    required ThreadStatus status,
+    required String updatedAt,
+    required String lastTurnSummary,
+  }) {
+    final thread = state.thread;
+    if (thread == null) {
+      return;
+    }
+
+    state = state.copyWith(
+      thread: ThreadDetailDto(
+        contractVersion: thread.contractVersion,
+        threadId: thread.threadId,
+        title: thread.title,
+        status: status,
+        workspace: thread.workspace,
+        repository: thread.repository,
+        branch: thread.branch,
+        createdAt: thread.createdAt,
+        updatedAt: updatedAt,
+        source: thread.source,
+        accessMode: thread.accessMode,
+        lastTurnSummary: lastTurnSummary,
+      ),
     );
   }
 
