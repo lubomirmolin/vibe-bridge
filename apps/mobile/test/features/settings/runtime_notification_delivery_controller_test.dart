@@ -269,6 +269,122 @@ void main() {
       expect(state.pendingNotifications.single.eventId, 'evt-cold-start-3');
     },
   );
+
+  test(
+    'restored seen event IDs suppress duplicate notification delivery after cold start',
+    () async {
+      final persistedStore = InMemorySecureStore();
+      await persistedStore.writeSecret(
+        SecureValueKey.runtimeNotificationSeenEventIds,
+        jsonEncode(<String>['evt-seen-1']),
+      );
+
+      final liveStream = FakeThreadLiveStream();
+      final container = ProviderContainer(
+        overrides: [
+          appSecureStoreProvider.overrideWithValue(persistedStore),
+          threadLiveStreamProvider.overrideWithValue(liveStream),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final subscription = container.listen(
+        runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
+        (_, _) {},
+      );
+      addTearDown(subscription.close);
+
+      await Future<void>.delayed(Duration.zero);
+
+      liveStream.emit(
+        _event(
+          eventId: 'evt-seen-1',
+          kind: BridgeEventKind.approvalRequested,
+          payload: {'reason': 'Already seen before restart'},
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      var state = container.read(
+        runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
+      );
+      expect(state.pendingNotifications, isEmpty);
+
+      liveStream.emit(
+        _event(
+          eventId: 'evt-seen-2',
+          kind: BridgeEventKind.approvalRequested,
+          payload: {'reason': 'New notification after restart'},
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      state = container.read(
+        runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
+      );
+      expect(state.pendingNotifications, hasLength(1));
+      expect(state.pendingNotifications.single.eventId, 'evt-seen-2');
+    },
+  );
+
+  test('restores and clears persisted launch requests for cold-start routing', () async {
+    final persistedStore = InMemorySecureStore();
+    await persistedStore.writeSecret(
+      SecureValueKey.runtimeNotificationPendingLaunchTarget,
+      jsonEncode(<String, dynamic>{
+        'event_id': 'evt-launch-1',
+        'target': <String, dynamic>{
+          'target_type': 'thread_detail',
+          'thread_id': 'thread-cold-start',
+        },
+      }),
+    );
+
+    final liveStream = FakeThreadLiveStream();
+    final container = ProviderContainer(
+      overrides: [
+        appSecureStoreProvider.overrideWithValue(persistedStore),
+        threadLiveStreamProvider.overrideWithValue(liveStream),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final subscription = container.listen(
+      runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
+      (_, _) {},
+    );
+    addTearDown(subscription.close);
+
+    await Future<void>.delayed(Duration.zero);
+
+    final state = container.read(
+      runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
+    );
+    expect(state.pendingLaunchRequests, hasLength(1));
+    expect(state.pendingLaunchRequests.single.eventId, 'evt-launch-1');
+    expect(
+      state.pendingLaunchRequests.single.target.threadId,
+      'thread-cold-start',
+    );
+
+    final controller = container.read(
+      runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl).notifier,
+    );
+    await controller.acknowledgeLaunchRequest(
+      state.pendingLaunchRequests.single.requestId,
+    );
+
+    final nextState = container.read(
+      runtimeNotificationDeliveryControllerProvider(_bridgeApiBaseUrl),
+    );
+    expect(nextState.pendingLaunchRequests, isEmpty);
+    expect(
+      await persistedStore.readSecret(
+        SecureValueKey.runtimeNotificationPendingLaunchTarget,
+      ),
+      isNull,
+    );
+  });
 }
 
 const _bridgeApiBaseUrl = 'https://bridge.ts.net';

@@ -9,6 +9,8 @@ enum SecureValueKey {
   threadDetailsCache,
   selectedThreadId,
   notificationPreferences,
+  runtimeNotificationSeenEventIds,
+  runtimeNotificationPendingLaunchTarget,
 }
 
 extension SecureValueKeyMetadata on SecureValueKey {
@@ -28,6 +30,10 @@ extension SecureValueKeyMetadata on SecureValueKey {
         return 'selected_thread_id';
       case SecureValueKey.notificationPreferences:
         return 'notification_preferences';
+      case SecureValueKey.runtimeNotificationSeenEventIds:
+        return 'runtime_notification_seen_event_ids';
+      case SecureValueKey.runtimeNotificationPendingLaunchTarget:
+        return 'runtime_notification_pending_launch_target';
     }
   }
 }

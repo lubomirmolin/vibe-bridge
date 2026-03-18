@@ -57,6 +57,14 @@ void main() {
       SecureValueKey.notificationPreferences.wireValue,
       'notification_preferences',
     );
+    expect(
+      SecureValueKey.runtimeNotificationSeenEventIds.wireValue,
+      'runtime_notification_seen_event_ids',
+    );
+    expect(
+      SecureValueKey.runtimeNotificationPendingLaunchTarget.wireValue,
+      'runtime_notification_pending_launch_target',
+    );
   });
 
   test('persistence boundary routes sqlite scopes and excludes secrets', () {
