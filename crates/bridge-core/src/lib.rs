@@ -577,11 +577,11 @@ impl PendingApprovalAction {
         }
     }
 
-    fn target_name(&self) -> &'static str {
+    fn target_name(&self) -> String {
         match self {
-            Self::BranchSwitch { .. } => "git.branch_switch",
-            Self::Pull { .. } => "git.pull",
-            Self::Push { .. } => "git.push",
+            Self::BranchSwitch { branch, .. } => branch.clone(),
+            Self::Pull { .. } => "git.pull".to_string(),
+            Self::Push { .. } => "git.push".to_string(),
         }
     }
 }
@@ -660,7 +660,7 @@ impl SecurityState {
             approval_id: format!("approval-{sequence}"),
             thread_id: action.thread_id().to_string(),
             action: action.operation_name().to_string(),
-            target: action.target_name().to_string(),
+            target: action.target_name(),
             reason: reason.to_string(),
             status: ApprovalStatus::Pending,
             requested_at: timestamp_from_sequence(sequence),
@@ -2651,6 +2651,39 @@ mod tests {
             &app,
         ));
         assert_eq!(status_after_resolve["status"]["behind_by"], 0);
+    }
+
+    #[test]
+    fn control_with_approvals_branch_switch_approval_carries_exact_target_branch() {
+        let app = test_application();
+        let trusted_session_query = trusted_session_query(&app);
+
+        let mode = route_request(
+            &format!(
+                "POST /policy/access-mode?mode=control_with_approvals&{trusted_session_query} HTTP/1.1"
+            ),
+            &app,
+        );
+        assert!(mode.starts_with("HTTP/1.1 200 OK"));
+
+        let gated = route_request(
+            "POST /threads/thread-456/git/branch-switch?branch=release%2F2026 HTTP/1.1",
+            &app,
+        );
+        assert!(gated.starts_with("HTTP/1.1 202 Accepted"));
+        let gated_body = parse_json_body(&gated);
+        assert_eq!(gated_body["outcome"], "approval_required");
+        assert_eq!(gated_body["approval"]["action"], "git_branch_switch");
+        assert_eq!(gated_body["approval"]["target"], "release/2026");
+        assert_eq!(gated_body["approval"]["repository"]["branch"], "develop");
+
+        let approvals = parse_json_body(&route_request("GET /approvals HTTP/1.1", &app));
+        let records = approvals["approvals"]
+            .as_array()
+            .expect("approvals should be an array");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["action"], "git_branch_switch");
+        assert_eq!(records[0]["target"], "release/2026");
     }
 
     #[test]

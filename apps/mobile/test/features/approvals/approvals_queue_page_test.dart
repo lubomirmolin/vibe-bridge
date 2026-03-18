@@ -63,7 +63,7 @@ void main() {
   ) async {
     final approvalApi = FakeApprovalBridgeApi(
       accessMode: AccessMode.fullControl,
-      approvals: [_branchSwitchApproval()],
+      approvals: [_branchSwitchApprovalFromBridgeContract()],
     );
 
     await _pumpApprovalsApp(
@@ -406,25 +406,25 @@ ApprovalRecordDto _pendingApproval() {
   );
 }
 
-ApprovalRecordDto _branchSwitchApproval() {
-  return const ApprovalRecordDto(
-    contractVersion: contractVersion,
-    approvalId: 'approval-branch',
-    threadId: 'thread-123',
-    action: 'git_branch_switch',
-    target: 'release/hotfix-42',
-    reason: 'full_control_required',
-    status: ApprovalStatus.pending,
-    requestedAt: '2026-03-18T10:11:00Z',
-    resolvedAt: null,
-    repository: RepositoryContextDto(
-      workspace: '/workspace/codex-mobile-companion',
-      repository: 'codex-mobile-companion',
-      branch: 'master',
-      remote: 'origin',
-    ),
-    gitStatus: GitStatusDto(dirty: true, aheadBy: 2, behindBy: 1),
-  );
+ApprovalRecordDto _branchSwitchApprovalFromBridgeContract() {
+  return ApprovalRecordDto.fromJson(<String, dynamic>{
+    'contract_version': contractVersion,
+    'approval_id': 'approval-branch',
+    'thread_id': 'thread-123',
+    'action': 'git_branch_switch',
+    'target': 'release/hotfix-42',
+    'reason': 'full_control_required',
+    'status': 'pending',
+    'requested_at': '2026-03-18T10:11:00Z',
+    'resolved_at': null,
+    'repository': <String, dynamic>{
+      'workspace': '/workspace/codex-mobile-companion',
+      'repository': 'codex-mobile-companion',
+      'branch': 'master',
+      'remote': 'origin',
+    },
+    'git_status': <String, dynamic>{'dirty': true, 'ahead_by': 2, 'behind_by': 1},
+  });
 }
 
 ThreadSummaryDto _threadSummary() {
