@@ -48,6 +48,7 @@ struct Config {
     pairing_base_url: String,
     pairing_route_reachable: bool,
     pairing_route_message: Option<String>,
+    pairing_route_requires_runtime_serve_check: bool,
     codex_runtime: CodexRuntimeConfig,
 }
 
@@ -58,6 +59,7 @@ struct PairingRouteContract {
     pairing_base_url: String,
     reachable: bool,
     message: Option<String>,
+    requires_runtime_serve_check: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,10 +67,26 @@ struct PairingRouteState {
     pairing_base_url: String,
     reachable: bool,
     message: Option<String>,
+    bridge_port: u16,
+    requires_runtime_serve_check: bool,
 }
 
 impl PairingRouteState {
     fn health(&self) -> PairingRouteHealth {
+        if self.reachable && self.requires_runtime_serve_check {
+            let verified_base_url = discover_verified_tailscale_pairing_base_url(self.bridge_port);
+            if verified_base_url.as_deref() != Some(self.pairing_base_url.as_str()) {
+                return PairingRouteHealth {
+                    reachable: false,
+                    advertised_base_url: None,
+                    message: Some(format!(
+                        "Private pairing route is unavailable: verified tailscale serve mapping for localhost port {} is no longer active.",
+                        self.bridge_port
+                    )),
+                };
+            }
+        }
+
         PairingRouteHealth {
             reachable: self.reachable,
             advertised_base_url: self.reachable.then(|| self.pairing_base_url.clone()),
@@ -83,6 +101,16 @@ impl PairingRouteContract {
             pairing_base_url,
             reachable: true,
             message: None,
+            requires_runtime_serve_check: true,
+        }
+    }
+
+    fn explicit(pairing_base_url: String) -> Self {
+        Self {
+            pairing_base_url,
+            reachable: true,
+            message: None,
+            requires_runtime_serve_check: false,
         }
     }
 
@@ -91,6 +119,7 @@ impl PairingRouteContract {
             pairing_base_url: FALLBACK_PRIVATE_PAIRING_BASE_URL.to_string(),
             reachable: false,
             message: Some(message),
+            requires_runtime_serve_check: true,
         }
     }
 }
@@ -147,6 +176,8 @@ where
             pairing_base_url: config.pairing_base_url,
             reachable: config.pairing_route_reachable,
             message: config.pairing_route_message,
+            bridge_port: config.port,
+            requires_runtime_serve_check: config.pairing_route_requires_runtime_serve_check,
         },
         foundations.logger,
     ));
@@ -289,7 +320,7 @@ where
             ));
         }
 
-        PairingRouteContract::verified(explicit_pairing_base_url)
+        PairingRouteContract::explicit(explicit_pairing_base_url)
     } else {
         default_pairing_route_resolver(port)
     };
@@ -301,6 +332,7 @@ where
         pairing_base_url: pairing_route.pairing_base_url,
         pairing_route_reachable: pairing_route.reachable,
         pairing_route_message: pairing_route.message,
+        pairing_route_requires_runtime_serve_check: pairing_route.requires_runtime_serve_check,
         codex_runtime: CodexRuntimeConfig {
             mode: codex_mode,
             endpoint: codex_endpoint,
@@ -311,10 +343,36 @@ where
 }
 
 fn resolve_default_pairing_route_contract(port: u16) -> PairingRouteContract {
-    match discover_verified_tailscale_pairing_base_url(port) {
+    resolve_default_pairing_route_contract_with(
+        port,
+        discover_verified_tailscale_pairing_base_url,
+        ensure_tailscale_serve_mapping,
+    )
+}
+
+fn resolve_default_pairing_route_contract_with<FDiscover, FEnsure>(
+    port: u16,
+    mut discover_route: FDiscover,
+    mut ensure_route: FEnsure,
+) -> PairingRouteContract
+where
+    FDiscover: FnMut(u16) -> Option<String>,
+    FEnsure: FnMut(u16) -> Result<(), String>,
+{
+    if let Some(pairing_base_url) = discover_route(port) {
+        return PairingRouteContract::verified(pairing_base_url);
+    }
+
+    if let Err(error) = ensure_route(port) {
+        return PairingRouteContract::degraded(format!(
+            "Private pairing route is unavailable: failed to launch `tailscale serve --bg {port}`: {error}"
+        ));
+    }
+
+    match discover_route(port) {
         Some(pairing_base_url) => PairingRouteContract::verified(pairing_base_url),
         None => PairingRouteContract::degraded(format!(
-            "Private pairing route is unavailable: no verified tailscale serve mapping was found for localhost port {port}. Start `tailscale serve --bg {port}` (if enabled on your tailnet) or pass a verified private --pairing-base-url."
+            "Private pairing route is unavailable: `tailscale serve --bg {port}` ran, but no verified mapping to localhost:{port} was found in `tailscale serve status --json`."
         )),
     }
 }
@@ -323,6 +381,30 @@ fn discover_verified_tailscale_pairing_base_url(port: u16) -> Option<String> {
     let status = read_tailscale_json(["status", "--json"])?;
     let serve_status = read_tailscale_json(["serve", "status", "--json"])?;
     pairing_base_url_from_tailscale_status(&status, &serve_status, port)
+}
+
+fn ensure_tailscale_serve_mapping(port: u16) -> Result<(), String> {
+    let port_value = port.to_string();
+    let output = std::process::Command::new("tailscale")
+        .args(["serve", "--bg", port_value.as_str()])
+        .output()
+        .map_err(|error| format!("tailscale CLI unavailable: {error}"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let details = if !stderr.is_empty() {
+        stderr
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        format!("exit status {}", output.status)
+    };
+
+    Err(details)
 }
 
 fn read_tailscale_json<const N: usize>(args: [&str; N]) -> Option<Value> {
@@ -1151,9 +1233,9 @@ fn route_pairing_request(
 ) -> Option<String> {
     match (method, path) {
         ("POST", "/pairing/session") | ("GET", "/pairing/session") => {
-            if !app.pairing_route.reachable {
-                let message = app
-                    .pairing_route
+            let pairing_route = app.pairing_route_health();
+            if !pairing_route.reachable {
+                let message = pairing_route
                     .message
                     .as_deref()
                     .unwrap_or("Private pairing route is unavailable.");
@@ -2043,7 +2125,8 @@ mod tests {
         InMemoryLogSink, PairingRouteContract, PairingRouteState, PairingSessionService,
         PendingApprovalAction, RepositoryContextDto, StreamRouter, StructuredLogger,
         build_foundations, pairing_base_url_from_tailscale_status, parse_args,
-        parse_args_with_pairing_route_resolver, route_request,
+        parse_args_with_pairing_route_resolver, resolve_default_pairing_route_contract_with,
+        route_request,
     };
     use crate::thread_api::ThreadApiService;
 
@@ -2063,6 +2146,7 @@ mod tests {
         );
         assert!(config.pairing_route_reachable);
         assert!(config.pairing_route_message.is_none());
+        assert!(config.pairing_route_requires_runtime_serve_check);
         assert_eq!(
             config.codex_runtime,
             CodexRuntimeConfig {
@@ -2087,6 +2171,7 @@ mod tests {
             config.pairing_route_message.as_deref(),
             Some("route for 3110 is unavailable")
         );
+        assert!(config.pairing_route_requires_runtime_serve_check);
     }
 
     #[test]
@@ -2121,6 +2206,7 @@ mod tests {
                 pairing_base_url: "https://bridge.ts.net".to_string(),
                 pairing_route_reachable: true,
                 pairing_route_message: None,
+                pairing_route_requires_runtime_serve_check: false,
                 codex_runtime: CodexRuntimeConfig {
                     mode: CodexRuntimeMode::Spawn,
                     endpoint: Some("ws://127.0.0.1:4222".to_string()),
@@ -2165,12 +2251,15 @@ mod tests {
 
     #[test]
     fn parse_args_supports_codex_runtime_modes() {
-        let config = parse_args(vec![
-            "--codex-mode".to_string(),
-            "attach".to_string(),
-            "--codex-endpoint".to_string(),
-            "ws://127.0.0.1:4222".to_string(),
-        ])
+        let config = parse_args_with_pairing_route_resolver(
+            vec![
+                "--codex-mode".to_string(),
+                "attach".to_string(),
+                "--codex-endpoint".to_string(),
+                "ws://127.0.0.1:4222".to_string(),
+            ],
+            |_port| PairingRouteContract::verified("https://bridge.ts.net".to_string()),
+        )
         .expect("codex runtime flags should parse");
 
         assert_eq!(config.codex_runtime.mode, CodexRuntimeMode::Attach);
@@ -2211,6 +2300,68 @@ mod tests {
         assert_eq!(
             pairing_base_url_from_tailscale_status(&status, &verified_route, 3110),
             Some("https://macbook-pro.taild54ede.ts.net".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_default_route_provisions_serve_when_mapping_is_missing() {
+        let mut discover_attempts = 0;
+        let mut provision_calls = 0;
+
+        let contract = resolve_default_pairing_route_contract_with(
+            3110,
+            |_port| {
+                discover_attempts += 1;
+                if discover_attempts == 2 {
+                    Some("https://macbook-pro.taild54ede.ts.net".to_string())
+                } else {
+                    None
+                }
+            },
+            |_port| {
+                provision_calls += 1;
+                Ok(())
+            },
+        );
+
+        assert!(contract.reachable);
+        assert_eq!(
+            contract.pairing_base_url,
+            "https://macbook-pro.taild54ede.ts.net"
+        );
+        assert_eq!(provision_calls, 1);
+    }
+
+    #[test]
+    fn resolve_default_route_degrades_when_serve_launch_fails() {
+        let contract = resolve_default_pairing_route_contract_with(
+            3110,
+            |_port| None,
+            |_port| Err("permission denied".to_string()),
+        );
+
+        assert!(!contract.reachable);
+        assert_eq!(contract.pairing_base_url, "https://bridge.ts.net");
+        assert_eq!(
+            contract.message.as_deref(),
+            Some(
+                "Private pairing route is unavailable: failed to launch `tailscale serve --bg 3110`: permission denied"
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_default_route_degrades_when_mapping_still_unverified_after_launch() {
+        let contract =
+            resolve_default_pairing_route_contract_with(3110, |_port| None, |_port| Ok(()));
+
+        assert!(!contract.reachable);
+        assert_eq!(contract.pairing_base_url, "https://bridge.ts.net");
+        assert_eq!(
+            contract.message.as_deref(),
+            Some(
+                "Private pairing route is unavailable: `tailscale serve --bg 3110` ran, but no verified mapping to localhost:3110 was found in `tailscale serve status --json`."
+            )
         );
     }
 
@@ -2690,6 +2841,8 @@ mod tests {
                 pairing_base_url: "https://bridge.ts.net".to_string(),
                 reachable: pairing_route_reachable,
                 message: pairing_route_message.map(ToString::to_string),
+                bridge_port: 3110,
+                requires_runtime_serve_check: false,
             },
             StructuredLogger::new(InMemoryLogSink::default()),
         )
