@@ -56,18 +56,21 @@ class RuntimeNotificationDeliveryState {
     this.recentNotifications = const <RuntimeNotificationEntry>[],
     this.approvalNotificationsEnabled = true,
     this.liveActivityNotificationsEnabled = true,
+    this.preferencesRestored = false,
   });
 
   final List<RuntimeNotificationEntry> pendingNotifications;
   final List<RuntimeNotificationEntry> recentNotifications;
   final bool approvalNotificationsEnabled;
   final bool liveActivityNotificationsEnabled;
+  final bool preferencesRestored;
 
   RuntimeNotificationDeliveryState copyWith({
     List<RuntimeNotificationEntry>? pendingNotifications,
     List<RuntimeNotificationEntry>? recentNotifications,
     bool? approvalNotificationsEnabled,
     bool? liveActivityNotificationsEnabled,
+    bool? preferencesRestored,
   }) {
     return RuntimeNotificationDeliveryState(
       pendingNotifications: pendingNotifications ?? this.pendingNotifications,
@@ -77,6 +80,7 @@ class RuntimeNotificationDeliveryState {
       liveActivityNotificationsEnabled:
           liveActivityNotificationsEnabled ??
           this.liveActivityNotificationsEnabled,
+      preferencesRestored: preferencesRestored ?? this.preferencesRestored,
     );
   }
 }
@@ -95,6 +99,7 @@ class RuntimeNotificationDeliveryController
                initialPreferences.approvalNotificationsEnabled,
            liveActivityNotificationsEnabled:
                initialPreferences.liveActivityNotificationsEnabled,
+           preferencesRestored: !initialPreferences.isLoading,
          ),
        ) {
     unawaited(_startLiveSubscription());
@@ -121,6 +126,7 @@ class RuntimeNotificationDeliveryController
       approvalNotificationsEnabled: preferences.approvalNotificationsEnabled,
       liveActivityNotificationsEnabled:
           preferences.liveActivityNotificationsEnabled,
+      preferencesRestored: !preferences.isLoading,
     );
   }
 
@@ -166,6 +172,10 @@ class RuntimeNotificationDeliveryController
       return;
     }
     _seenEventIds.add(event.eventId);
+
+    if (!state.preferencesRestored) {
+      return;
+    }
 
     if (_isApprovalNotificationEvent(event)) {
       if (!state.approvalNotificationsEnabled) {
