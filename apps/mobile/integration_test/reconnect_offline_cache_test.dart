@@ -123,6 +123,118 @@ void main() {
   });
 
   testWidgets(
+    'revoked trust reconnect fails closed with explicit re-pair-required security state',
+    (tester) async {
+      final secureStore = InMemorySecureStore();
+      await secureStore.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
+{
+  "bridge_id": "bridge-a1",
+  "bridge_name": "Codex Mobile Companion",
+  "bridge_api_base_url": "https://bridge.ts.net",
+  "session_id": "session-reconnect",
+  "paired_at_epoch_seconds": 100
+}
+''');
+      await secureStore.writeSecret(
+        SecureValueKey.sessionToken,
+        'revoked-session-token',
+      );
+
+      final pairingBridgeApi = FakePairingBridgeApi(
+        handshakeResult: const PairingHandshakeResult.untrusted(
+          code: 'trust_revoked',
+          message:
+              'Trust was revoked for this session. Re-pair from the Mac pairing QR.',
+        ),
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            secureStoreProvider.overrideWithValue(secureStore),
+            pairingBridgeApiProvider.overrideWithValue(pairingBridgeApi),
+            nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 18, 10, 0)),
+          ],
+          child: const MaterialApp(
+            home: PairingFlowPage(enableCameraPreview: false),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Pair your phone to this Mac'), findsOneWidget);
+      expect(find.text('Re-pair required for security'), findsOneWidget);
+      expect(
+        find.text(
+          'Trust was revoked for this session. Re-pair from the Mac pairing QR.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        await secureStore.readSecret(SecureValueKey.trustedBridgeIdentity),
+        isNull,
+      );
+      expect(await secureStore.readSecret(SecureValueKey.sessionToken), isNull);
+    },
+  );
+
+  testWidgets(
+    'bridge identity mismatch reconnect fails closed with explicit re-pair-required security state',
+    (tester) async {
+      final secureStore = InMemorySecureStore();
+      await secureStore.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
+{
+  "bridge_id": "bridge-a1",
+  "bridge_name": "Codex Mobile Companion",
+  "bridge_api_base_url": "https://bridge.ts.net",
+  "session_id": "session-reconnect",
+  "paired_at_epoch_seconds": 100
+}
+''');
+      await secureStore.writeSecret(
+        SecureValueKey.sessionToken,
+        'identity-mismatch-session-token',
+      );
+
+      final pairingBridgeApi = FakePairingBridgeApi(
+        handshakeResult: const PairingHandshakeResult.untrusted(
+          code: 'bridge_identity_mismatch',
+          message:
+              'Stored bridge identity did not match the active bridge. Re-pair is required.',
+        ),
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            secureStoreProvider.overrideWithValue(secureStore),
+            pairingBridgeApiProvider.overrideWithValue(pairingBridgeApi),
+            nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 18, 10, 0)),
+          ],
+          child: const MaterialApp(
+            home: PairingFlowPage(enableCameraPreview: false),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Pair your phone to this Mac'), findsOneWidget);
+      expect(find.text('Re-pair required for security'), findsOneWidget);
+      expect(
+        find.text(
+          'Stored bridge identity did not match the active bridge. Re-pair is required.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        await secureStore.readSecret(SecureValueKey.trustedBridgeIdentity),
+        isNull,
+      );
+      expect(await secureStore.readSecret(SecureValueKey.sessionToken), isNull);
+    },
+  );
+
+  testWidgets(
     'offline relaunch restores selected thread from cache and blocks mutating actions',
     (tester) async {
       final cacheRepository = _newCacheRepository();

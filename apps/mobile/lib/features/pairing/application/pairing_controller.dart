@@ -41,6 +41,7 @@ class PairingState {
     required this.step,
     required this.consumedSessionIds,
     required this.bridgeConnectionState,
+    required this.rePairRequiredForSecurity,
     this.pendingPayload,
     this.trustedBridge,
     this.errorMessage,
@@ -53,6 +54,7 @@ class PairingState {
   final String? errorMessage;
   final Set<String> consumedSessionIds;
   final BridgeConnectionState bridgeConnectionState;
+  final bool rePairRequiredForSecurity;
   final bool isPersistingTrust;
 
   bool get canRunMutatingActions =>
@@ -64,6 +66,7 @@ class PairingState {
       step: PairingStep.unpaired,
       consumedSessionIds: <String>{},
       bridgeConnectionState: BridgeConnectionState.connected,
+      rePairRequiredForSecurity: false,
     );
   }
 
@@ -77,6 +80,7 @@ class PairingState {
     bool clearErrorMessage = false,
     Set<String>? consumedSessionIds,
     BridgeConnectionState? bridgeConnectionState,
+    bool? rePairRequiredForSecurity,
     bool? isPersistingTrust,
   }) {
     return PairingState(
@@ -95,6 +99,8 @@ class PairingState {
       ),
       bridgeConnectionState:
           bridgeConnectionState ?? this.bridgeConnectionState,
+      rePairRequiredForSecurity:
+          rePairRequiredForSecurity ?? this.rePairRequiredForSecurity,
       isPersistingTrust: isPersistingTrust ?? this.isPersistingTrust,
     );
   }
@@ -162,6 +168,7 @@ class PairingController extends StateNotifier<PairingState> {
       clearPendingPayload: true,
       clearErrorMessage: true,
       bridgeConnectionState: BridgeConnectionState.connected,
+      rePairRequiredForSecurity: false,
     );
   }
 
@@ -185,6 +192,7 @@ class PairingController extends StateNotifier<PairingState> {
       step: PairingStep.review,
       pendingPayload: result.payload,
       clearErrorMessage: true,
+      rePairRequiredForSecurity: false,
     );
   }
 
@@ -196,6 +204,7 @@ class PairingController extends StateNotifier<PairingState> {
       step: destinationStep,
       clearPendingPayload: true,
       clearErrorMessage: true,
+      rePairRequiredForSecurity: false,
       isPersistingTrust: false,
     );
   }
@@ -258,6 +267,7 @@ class PairingController extends StateNotifier<PairingState> {
       clearPendingPayload: true,
       clearErrorMessage: true,
       bridgeConnectionState: BridgeConnectionState.connected,
+      rePairRequiredForSecurity: false,
       isPersistingTrust: false,
       consumedSessionIds: consumedSessionIds,
     );
@@ -282,6 +292,7 @@ class PairingController extends StateNotifier<PairingState> {
         clearTrustedBridge: true,
         clearPendingPayload: true,
         bridgeConnectionState: BridgeConnectionState.connected,
+        rePairRequiredForSecurity: true,
         errorMessage: 'Stored trust is incomplete. Re-pair from your Mac.',
       );
       return;
@@ -310,6 +321,7 @@ class PairingController extends StateNotifier<PairingState> {
         step: PairingStep.paired,
         trustedBridge: trustedBridge,
         bridgeConnectionState: BridgeConnectionState.connected,
+        rePairRequiredForSecurity: false,
         clearErrorMessage: true,
       );
       return;
@@ -320,6 +332,7 @@ class PairingController extends StateNotifier<PairingState> {
         step: PairingStep.paired,
         trustedBridge: trustedBridge,
         bridgeConnectionState: BridgeConnectionState.disconnected,
+        rePairRequiredForSecurity: false,
         errorMessage:
             handshake.message ??
             'Private bridge path is currently unreachable. Reconnect to Tailscale and retry.',
@@ -328,6 +341,7 @@ class PairingController extends StateNotifier<PairingState> {
       return;
     }
 
+    final requiresRePairForSecurity = handshake.requiresRePair;
     _cancelReconnectTimer();
     await _clearLocalTrust();
     state = state.copyWith(
@@ -335,10 +349,19 @@ class PairingController extends StateNotifier<PairingState> {
       clearTrustedBridge: true,
       clearPendingPayload: true,
       bridgeConnectionState: BridgeConnectionState.connected,
-      errorMessage:
-          handshake.message ??
-          'Stored trust is no longer accepted by the bridge. Re-pair from your Mac.',
+      rePairRequiredForSecurity: requiresRePairForSecurity,
+      errorMessage: _resolveUntrustedHandshakeMessage(handshake),
     );
+  }
+
+  String _resolveUntrustedHandshakeMessage(PairingHandshakeResult handshake) {
+    if (handshake.requiresRePair) {
+      return handshake.message ??
+          'Security check failed. Stored trust no longer matches the active bridge, so re-pairing is required.';
+    }
+
+    return handshake.message ??
+        'Stored trust is no longer accepted by the bridge. Re-pair from your Mac.';
   }
 
   void _scheduleReconnect() {
@@ -376,6 +399,7 @@ class PairingController extends StateNotifier<PairingState> {
         clearTrustedBridge: true,
         clearPendingPayload: true,
         bridgeConnectionState: BridgeConnectionState.connected,
+        rePairRequiredForSecurity: true,
         errorMessage: 'Stored trust is incomplete. Re-pair from your Mac.',
       );
       return;
@@ -423,6 +447,7 @@ class PairingController extends StateNotifier<PairingState> {
       clearTrustedBridge: true,
       clearPendingPayload: true,
       bridgeConnectionState: BridgeConnectionState.connected,
+      rePairRequiredForSecurity: false,
       consumedSessionIds: const <String>{},
       isPersistingTrust: false,
       errorMessage:

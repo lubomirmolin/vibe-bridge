@@ -147,6 +147,7 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
       PairingStep.unpaired => _buildUnpairedView(
         pairingController,
         errorMessage: pairingState.errorMessage,
+        rePairRequiredForSecurity: pairingState.rePairRequiredForSecurity,
       ),
       PairingStep.scanning => _buildScannerView(
         pairingState,
@@ -202,6 +203,7 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
   Widget _buildUnpairedView(
     PairingController pairingController, {
     String? errorMessage,
+    required bool rePairRequiredForSecurity,
   }) {
     return Padding(
       padding: const EdgeInsets.all(24),
@@ -221,12 +223,17 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
             onPressed: () => _openScanner(pairingController),
             child: const Text('Scan pairing QR'),
           ),
+          if (rePairRequiredForSecurity) ...[
+            const SizedBox(height: 12),
+            _SecurityRePairRequiredBanner(message: errorMessage),
+          ],
           if (errorMessage != null) ...[
             const SizedBox(height: 12),
-            Text(
-              errorMessage,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
+            if (!rePairRequiredForSecurity)
+              Text(
+                errorMessage,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
           ],
         ],
       ),
@@ -410,6 +417,7 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
       return _buildUnpairedView(
         pairingController,
         errorMessage: pairingState.errorMessage,
+        rePairRequiredForSecurity: pairingState.rePairRequiredForSecurity,
       );
     }
 
@@ -517,6 +525,41 @@ class _ConnectionWarningBanner extends StatelessWidget {
           FilledButton(
             onPressed: onRetry,
             child: const Text('Retry connection'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SecurityRePairRequiredBanner extends StatelessWidget {
+  const _SecurityRePairRequiredBanner({this.message});
+
+  final String? message;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: colorScheme.errorContainer.withValues(alpha: 0.28),
+        border: Border.all(color: colorScheme.error),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Re-pair required for security',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            message ??
+                'Stored trust no longer matches the active bridge identity. Scan a fresh pairing QR from your Mac before reconnecting.',
           ),
         ],
       ),

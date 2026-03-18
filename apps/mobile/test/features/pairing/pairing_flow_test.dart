@@ -362,6 +362,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Pair your phone to this Mac'), findsOneWidget);
+    expect(find.text('Re-pair required for security'), findsOneWidget);
     expect(
       find.text(
         'Trust was revoked for this session. Re-pair from the Mac pairing QR.',
@@ -384,6 +385,62 @@ void main() {
       isNull,
     );
   });
+
+  testWidgets(
+    'bridge identity mismatch on reconnect clears local trust and requires re-pair',
+    (tester) async {
+      final store = InMemorySecureStore();
+      await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
+{
+  "bridge_id": "bridge-a1",
+  "bridge_name": "Codex Mobile Companion",
+  "bridge_api_base_url": "https://bridge.ts.net",
+  "session_id": "session-reconnect",
+  "paired_at_epoch_seconds": 100
+}
+''');
+      await store.writeSecret(
+        SecureValueKey.sessionToken,
+        'mismatched-session-token',
+      );
+
+      final bridgeApi = FakePairingBridgeApi(
+        handshakeResult: const PairingHandshakeResult.untrusted(
+          code: 'bridge_identity_mismatch',
+          message:
+              'Stored bridge identity did not match the active bridge. Re-pair is required.',
+        ),
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            secureStoreProvider.overrideWithValue(store),
+            pairingBridgeApiProvider.overrideWithValue(bridgeApi),
+            nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 17, 21, 0)),
+          ],
+          child: const MaterialApp(
+            home: PairingFlowPage(enableCameraPreview: false),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Pair your phone to this Mac'), findsOneWidget);
+      expect(find.text('Re-pair required for security'), findsOneWidget);
+      expect(
+        find.text(
+          'Stored bridge identity did not match the active bridge. Re-pair is required.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        await store.readSecret(SecureValueKey.trustedBridgeIdentity),
+        isNull,
+      );
+      expect(await store.readSecret(SecureValueKey.sessionToken), isNull);
+    },
+  );
 
   testWidgets(
     'unreachable trusted bridge path on reconnect preserves trust with explicit disconnected state',
