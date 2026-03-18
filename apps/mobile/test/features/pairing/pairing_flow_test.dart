@@ -483,6 +483,70 @@ void main() {
   );
 
   testWidgets(
+    'disconnected trusted bridge keeps retrying automatically across repeated failures',
+    (tester) async {
+      final store = InMemorySecureStore();
+      await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
+{
+  "bridge_id": "bridge-a1",
+  "bridge_name": "Codex Mobile Companion",
+  "bridge_api_base_url": "https://bridge.ts.net",
+  "session_id": "session-reconnect",
+  "paired_at_epoch_seconds": 100
+}
+''');
+      await store.writeSecret(
+        SecureValueKey.sessionToken,
+        'active-session-token',
+      );
+
+      final bridgeApi = FakePairingBridgeApi(
+        handshakeScript: const [
+          PairingHandshakeResult.connectivityUnavailable(
+            message:
+                'Private bridge path is currently unreachable. Reconnect to Tailscale and retry.',
+          ),
+          PairingHandshakeResult.connectivityUnavailable(
+            message:
+                'Private bridge path is currently unreachable. Reconnect to Tailscale and retry.',
+          ),
+          PairingHandshakeResult.trusted(),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            secureStoreProvider.overrideWithValue(store),
+            pairingBridgeApiProvider.overrideWithValue(bridgeApi),
+            nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 17, 21, 0)),
+          ],
+          child: const MaterialApp(
+            home: PairingFlowPage(enableCameraPreview: false),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Bridge disconnected'), findsOneWidget);
+      expect(bridgeApi.handshakeCalls, 1);
+
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Bridge disconnected'), findsOneWidget);
+      expect(bridgeApi.handshakeCalls, greaterThanOrEqualTo(2));
+
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Paired with Codex Mobile Companion'), findsOneWidget);
+      expect(find.text('Bridge disconnected'), findsNothing);
+      expect(bridgeApi.handshakeCalls, greaterThanOrEqualTo(3));
+    },
+  );
+
+  testWidgets(
     'unpairing from settings clears local trust and returns to unpaired UI',
     (tester) async {
       final store = InMemorySecureStore();

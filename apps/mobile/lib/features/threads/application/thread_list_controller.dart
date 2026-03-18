@@ -388,9 +388,7 @@ class ThreadListController extends StateNotifier<ThreadListState> {
   }
 
   void _scheduleReconnect() {
-    if (_isDisposed ||
-        _isReconnectInProgress ||
-        _reconnectTimer?.isActive == true) {
+    if (_isDisposed || _reconnectTimer?.isActive == true) {
       return;
     }
 

@@ -342,9 +342,7 @@ class PairingController extends StateNotifier<PairingState> {
   }
 
   void _scheduleReconnect() {
-    if (_isDisposed ||
-        _isReconnectInProgress ||
-        _reconnectTimer?.isActive == true) {
+    if (_isDisposed || _reconnectTimer?.isActive == true) {
       return;
     }
 

@@ -406,9 +406,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   }
 
   void _scheduleReconnectCatchUp() {
-    if (_isDisposed ||
-        _isReconnectInProgress ||
-        _reconnectTimer?.isActive == true) {
+    if (_isDisposed || _reconnectTimer?.isActive == true) {
       return;
     }
 
