@@ -432,7 +432,9 @@ fn pairing_base_url_from_tailscale_status(
         .trim()
         .trim_end_matches('.');
 
-    if dns_name.is_empty() || !serve_status_mentions_port(serve_status, port) {
+    if dns_name.is_empty()
+        || !serve_status_has_exact_https_bridge_proxy(serve_status, dns_name, port)
+    {
         return None;
     }
 
@@ -444,30 +446,56 @@ fn pairing_base_url_from_tailscale_status(
     }
 }
 
-fn serve_status_mentions_port(value: &Value, port: u16) -> bool {
-    match value {
-        Value::Null | Value::Bool(_) => false,
-        Value::Number(number) => number.as_u64() == Some(port as u64),
-        Value::String(text) => string_mentions_serve_port(text, port),
-        Value::Array(values) => values
-            .iter()
-            .any(|entry| serve_status_mentions_port(entry, port)),
-        Value::Object(entries) => entries.iter().any(|(key, entry)| {
-            string_mentions_serve_port(key, port) || serve_status_mentions_port(entry, port)
-        }),
-    }
-}
-
-fn string_mentions_serve_port(raw: &str, port: u16) -> bool {
-    let value = raw.trim().to_ascii_lowercase();
-    if value.is_empty() {
+fn serve_status_has_exact_https_bridge_proxy(
+    serve_status: &Value,
+    dns_name: &str,
+    port: u16,
+) -> bool {
+    if !serve_status
+        .get("TCP")
+        .and_then(|tcp| tcp.get("443"))
+        .and_then(|https_route| https_route.get("HTTPS"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         return false;
     }
 
-    value.contains(&format!("127.0.0.1:{port}"))
-        || value.contains(&format!("localhost:{port}"))
-        || value.contains(&format!("[::1]:{port}"))
-        || value == port.to_string()
+    let expected_web_key = format!("{}:443", dns_name.to_ascii_lowercase());
+    let web_entry = serve_status
+        .get("Web")
+        .and_then(Value::as_object)
+        .and_then(|web_routes| {
+            web_routes.iter().find_map(|(key, route)| {
+                (key.trim().trim_end_matches('.').to_ascii_lowercase() == expected_web_key)
+                    .then_some(route)
+            })
+        });
+
+    let root_handler = web_entry
+        .and_then(|route| route.get("Handlers"))
+        .and_then(|handlers| handlers.get("/"));
+
+    match root_handler {
+        Some(Value::String(proxy)) => proxy_targets_bridge_loopback(proxy, port),
+        Some(Value::Object(handler)) => handler
+            .get("Proxy")
+            .and_then(Value::as_str)
+            .map(|proxy| proxy_targets_bridge_loopback(proxy, port))
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn proxy_targets_bridge_loopback(raw: &str, port: u16) -> bool {
+    let normalized = raw.trim().trim_end_matches('/').to_ascii_lowercase();
+
+    normalized == format!("http://127.0.0.1:{port}")
+        || normalized == format!("http://localhost:{port}")
+        || normalized == format!("http://[::1]:{port}")
+        || normalized == format!("https://127.0.0.1:{port}")
+        || normalized == format!("https://localhost:{port}")
+        || normalized == format!("https://[::1]:{port}")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -2301,6 +2329,73 @@ mod tests {
             pairing_base_url_from_tailscale_status(&status, &verified_route, 3110),
             Some("https://macbook-pro.taild54ede.ts.net".to_string())
         );
+    }
+
+    #[test]
+    fn pairing_base_url_rejects_unrelated_serve_entries_that_only_mention_port() {
+        let status = serde_json::json!({
+            "Self": {
+                "DNSName": "macbook-pro.taild54ede.ts.net."
+            }
+        });
+
+        let stale_port_reference = serde_json::json!({
+            "stale": "3110"
+        });
+
+        assert!(
+            pairing_base_url_from_tailscale_status(&status, &stale_port_reference, 3110).is_none()
+        );
+
+        let wrong_host_https_proxy = serde_json::json!({
+            "TCP": {
+                "443": {
+                    "HTTPS": true
+                }
+            },
+            "Web": {
+                "other-mac.taild54ede.ts.net:443": {
+                    "Handlers": {
+                        "/": {
+                            "Proxy": "http://127.0.0.1:3110"
+                        }
+                    }
+                }
+            }
+        });
+
+        assert!(
+            pairing_base_url_from_tailscale_status(&status, &wrong_host_https_proxy, 3110)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn pairing_base_url_rejects_non_root_handler_proxy_for_bridge_port() {
+        let status = serde_json::json!({
+            "Self": {
+                "DNSName": "macbook-pro.taild54ede.ts.net."
+            }
+        });
+
+        let non_root_handler = serde_json::json!({
+            "TCP": {
+                "443": {
+                    "HTTPS": true
+                }
+            },
+            "Web": {
+                "macbook-pro.taild54ede.ts.net:443": {
+                    "Handlers": {
+                        "/stale": {
+                            "Proxy": "http://127.0.0.1:3110"
+                        }
+                    }
+                }
+            }
+        });
+
+        assert!(pairing_base_url_from_tailscale_status(&status, &non_root_handler, 3110).is_none());
     }
 
     #[test]
