@@ -24,16 +24,19 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
 
 class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   late final TextEditingController _composerController;
+  late final TextEditingController _gitBranchController;
 
   @override
   void initState() {
     super.initState();
     _composerController = TextEditingController();
+    _gitBranchController = TextEditingController();
   }
 
   @override
   void dispose() {
     _composerController.dispose();
+    _gitBranchController.dispose();
     super.dispose();
   }
 
@@ -63,11 +66,22 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
           onLoadEarlier: controller.loadEarlierHistory,
           onRetryReconnect: controller.retryReconnectCatchUp,
           composerController: _composerController,
+          gitBranchController: _gitBranchController,
           onSubmitComposer: controller.submitComposerInput,
           onInterruptActiveTurn: controller.interruptActiveTurn,
+          onRefreshGitStatus: controller.refreshGitStatus,
+          onSwitchBranch: controller.switchBranch,
+          onPullRepository: controller.pullRepository,
+          onPushRepository: controller.pushRepository,
           threadApprovals: approvalsState.forThread(widget.threadId),
           approvalsErrorMessage: approvalsState.errorMessage,
           canResolveApprovals: approvalsState.canResolveApprovals,
+          gitStatus: state.gitStatus,
+          isGitStatusLoading: state.isGitStatusLoading,
+          isGitMutationInFlight: state.isGitMutationInFlight,
+          gitErrorMessage: state.gitErrorMessage,
+          gitMutationMessage: state.gitMutationMessage,
+          gitControlsUnavailableReason: state.gitControlsUnavailableReason,
           onRefreshApprovals: () {
             approvalsController.loadApprovals(showLoading: false);
           },
@@ -84,11 +98,22 @@ Widget _buildBody(
   required VoidCallback onLoadEarlier,
   required Future<void> Function() onRetryReconnect,
   required TextEditingController composerController,
+  required TextEditingController gitBranchController,
   required Future<bool> Function(String rawInput) onSubmitComposer,
   required Future<bool> Function() onInterruptActiveTurn,
+  required Future<void> Function({bool showLoading}) onRefreshGitStatus,
+  required Future<bool> Function(String rawBranch) onSwitchBranch,
+  required Future<bool> Function() onPullRepository,
+  required Future<bool> Function() onPushRepository,
   required List<ApprovalItemState> threadApprovals,
   required String? approvalsErrorMessage,
   required bool canResolveApprovals,
+  required GitStatusResponseDto? gitStatus,
+  required bool isGitStatusLoading,
+  required bool isGitMutationInFlight,
+  required String? gitErrorMessage,
+  required String? gitMutationMessage,
+  required String? gitControlsUnavailableReason,
   required VoidCallback onRefreshApprovals,
 }) {
   if (state.isLoading && !state.hasThread) {
@@ -145,6 +170,22 @@ Widget _buildBody(
           const SizedBox(height: 12),
           _InlineWarning(message: state.turnControlErrorMessage!),
         ],
+        const SizedBox(height: 12),
+        _GitControlsCard(
+          thread: thread,
+          gitStatus: gitStatus,
+          gitBranchController: gitBranchController,
+          controlsEnabled: state.canRunMutatingActions,
+          isGitStatusLoading: isGitStatusLoading,
+          isGitMutationInFlight: isGitMutationInFlight,
+          gitErrorMessage: gitErrorMessage,
+          gitMutationMessage: gitMutationMessage,
+          gitControlsUnavailableReason: gitControlsUnavailableReason,
+          onRefreshGitStatus: onRefreshGitStatus,
+          onSwitchBranch: onSwitchBranch,
+          onPullRepository: onPullRepository,
+          onPushRepository: onPushRepository,
+        ),
         const SizedBox(height: 12),
         _ThreadApprovalsCard(
           approvals: threadApprovals,
@@ -399,6 +440,211 @@ class _TurnControlsCard extends StatelessWidget {
   }
 }
 
+class _GitControlsCard extends StatelessWidget {
+  const _GitControlsCard({
+    required this.thread,
+    required this.gitStatus,
+    required this.gitBranchController,
+    required this.controlsEnabled,
+    required this.isGitStatusLoading,
+    required this.isGitMutationInFlight,
+    required this.gitErrorMessage,
+    required this.gitMutationMessage,
+    required this.gitControlsUnavailableReason,
+    required this.onRefreshGitStatus,
+    required this.onSwitchBranch,
+    required this.onPullRepository,
+    required this.onPushRepository,
+  });
+
+  final ThreadDetailDto thread;
+  final GitStatusResponseDto? gitStatus;
+  final TextEditingController gitBranchController;
+  final bool controlsEnabled;
+  final bool isGitStatusLoading;
+  final bool isGitMutationInFlight;
+  final String? gitErrorMessage;
+  final String? gitMutationMessage;
+  final String? gitControlsUnavailableReason;
+  final Future<void> Function({bool showLoading}) onRefreshGitStatus;
+  final Future<bool> Function(String rawBranch) onSwitchBranch;
+  final Future<bool> Function() onPullRepository;
+  final Future<bool> Function() onPushRepository;
+
+  @override
+  Widget build(BuildContext context) {
+    final repositoryContext =
+        gitStatus?.repository ??
+        RepositoryContextDto(
+          workspace: thread.workspace,
+          repository: thread.repository,
+          branch: thread.branch,
+          remote: 'unknown',
+        );
+    final status = gitStatus?.status;
+    final hasRepositoryContext = _hasRepositoryContext(repositoryContext);
+    final canRunGitMutations =
+        controlsEnabled &&
+        hasRepositoryContext &&
+        !isGitStatusLoading &&
+        !isGitMutationInFlight;
+
+    final unavailableMessage = !controlsEnabled
+        ? 'Git controls are unavailable while the bridge is offline.'
+        : gitControlsUnavailableReason ??
+              (hasRepositoryContext
+                  ? null
+                  : 'Git controls are unavailable because this thread has no repository context.');
+
+    return Card(
+      key: const Key('git-controls-card'),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Git controls',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                IconButton(
+                  key: const Key('git-refresh-status'),
+                  onPressed: isGitMutationInFlight
+                      ? null
+                      : () async {
+                          await onRefreshGitStatus(showLoading: true);
+                        },
+                  icon: const Icon(Icons.refresh),
+                  tooltip: 'Refresh git status',
+                ),
+              ],
+            ),
+            if (isGitStatusLoading) ...[
+              const SizedBox(height: 6),
+              const LinearProgressIndicator(),
+            ],
+            const SizedBox(height: 8),
+            Text(
+              'Repository: ${repositoryContext.repository}',
+              key: const Key('git-context-repository'),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              'Branch: ${repositoryContext.branch}',
+              key: const Key('git-context-branch'),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              'Remote: ${repositoryContext.remote}',
+              key: const Key('git-context-remote'),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              'Workspace: ${repositoryContext.workspace}',
+              key: const Key('git-context-workspace'),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              status == null
+                  ? 'Status unavailable'
+                  : 'Status: ${status.dirty ? 'Dirty' : 'Clean'} • Ahead ${status.aheadBy} • Behind ${status.behindBy}',
+              key: const Key('git-status-summary'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              key: const Key('git-branch-input'),
+              controller: gitBranchController,
+              enabled: canRunGitMutations,
+              decoration: const InputDecoration(
+                labelText: 'Switch branch',
+                hintText: 'feature/my-branch',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    key: const Key('git-branch-switch-button'),
+                    onPressed: canRunGitMutations
+                        ? () async {
+                            final success = await onSwitchBranch(
+                              gitBranchController.text,
+                            );
+                            if (success) {
+                              gitBranchController.clear();
+                            }
+                          }
+                        : null,
+                    icon: isGitMutationInFlight
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.swap_horiz_rounded),
+                    label: const Text('Switch branch'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    key: const Key('git-pull-button'),
+                    onPressed: canRunGitMutations
+                        ? () async {
+                            await onPullRepository();
+                          }
+                        : null,
+                    icon: const Icon(Icons.download_rounded),
+                    label: const Text('Pull'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    key: const Key('git-push-button'),
+                    onPressed: canRunGitMutations
+                        ? () async {
+                            await onPushRepository();
+                          }
+                        : null,
+                    icon: const Icon(Icons.upload_rounded),
+                    label: const Text('Push'),
+                  ),
+                ),
+              ],
+            ),
+            if (unavailableMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                unavailableMessage,
+                key: const Key('git-controls-unavailable-message'),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+            if (gitErrorMessage != null) ...[
+              const SizedBox(height: 8),
+              _InlineWarning(message: gitErrorMessage!),
+            ],
+            if (gitMutationMessage != null) ...[
+              const SizedBox(height: 8),
+              _InlineInfo(message: gitMutationMessage!),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ThreadApprovalsCard extends StatelessWidget {
   const _ThreadApprovalsCard({
     required this.approvals,
@@ -594,6 +840,28 @@ class _InlineWarning extends StatelessWidget {
   }
 }
 
+class _InlineInfo extends StatelessWidget {
+  const _InlineInfo({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: colorScheme.primaryContainer.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: colorScheme.primary),
+      ),
+      child: Text(message),
+    );
+  }
+}
+
 class _MutatingActionsBlockedNotice extends StatelessWidget {
   const _MutatingActionsBlockedNotice({required this.onRetryReconnect});
 
@@ -756,4 +1024,21 @@ _ActivityStyle _activityStyle(
         foreground: colorScheme.onSurface,
       );
   }
+}
+
+bool _hasRepositoryContext(RepositoryContextDto context) {
+  final repository = context.repository.trim().toLowerCase();
+  final branch = context.branch.trim().toLowerCase();
+
+  if (repository.isEmpty ||
+      repository == 'unknown' ||
+      repository == 'unknown-repository') {
+    return false;
+  }
+
+  if (branch.isEmpty || branch == 'unknown') {
+    return false;
+  }
+
+  return true;
 }

@@ -263,6 +263,378 @@ void main() {
     expect(find.byKey(const Key('turn-interrupt-button')), findsOneWidget);
   });
 
+  testWidgets('git status and mutations show context and refresh state', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+      gitStatusScriptByThreadId: {
+        'thread-123': [
+          _gitStatus(
+            threadId: 'thread-123',
+            repository: 'codex-mobile-companion',
+            branch: 'master',
+            remote: 'origin',
+            dirty: true,
+            aheadBy: 2,
+            behindBy: 3,
+          ),
+          _gitStatus(
+            threadId: 'thread-123',
+            repository: 'codex-mobile-companion',
+            branch: 'release/2026',
+            remote: 'origin',
+            dirty: false,
+            aheadBy: 2,
+            behindBy: 3,
+          ),
+          _gitStatus(
+            threadId: 'thread-123',
+            repository: 'codex-mobile-companion',
+            branch: 'release/2026',
+            remote: 'origin',
+            dirty: false,
+            aheadBy: 2,
+            behindBy: 0,
+          ),
+          _gitStatus(
+            threadId: 'thread-123',
+            repository: 'codex-mobile-companion',
+            branch: 'release/2026',
+            remote: 'origin',
+            dirty: false,
+            aheadBy: 0,
+            behindBy: 0,
+          ),
+        ],
+      },
+      branchSwitchScriptByThreadId: {
+        'thread-123': [
+          _gitMutationResult(
+            threadId: 'thread-123',
+            operation: 'git_branch_switch',
+            message: 'Switched branch to release/2026',
+            repository: 'codex-mobile-companion',
+            branch: 'release/2026',
+            remote: 'origin',
+            dirty: false,
+            aheadBy: 2,
+            behindBy: 3,
+          ),
+        ],
+      },
+      pullScriptByThreadId: {
+        'thread-123': [
+          _gitMutationResult(
+            threadId: 'thread-123',
+            operation: 'git_pull',
+            message: 'Pulled latest changes from origin for release/2026',
+            repository: 'codex-mobile-companion',
+            branch: 'release/2026',
+            remote: 'origin',
+            dirty: false,
+            aheadBy: 2,
+            behindBy: 0,
+          ),
+        ],
+      },
+      pushScriptByThreadId: {
+        'thread-123': [
+          _gitMutationResult(
+            threadId: 'thread-123',
+            operation: 'git_push',
+            message: 'Pushed local commits to origin for release/2026',
+            repository: 'codex-mobile-companion',
+            branch: 'release/2026',
+            remote: 'origin',
+            dirty: false,
+            aheadBy: 0,
+            behindBy: 0,
+          ),
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('git-controls-card')),
+    );
+    expect(find.text('Repository: codex-mobile-companion'), findsOneWidget);
+    expect(find.text('Branch: master'), findsOneWidget);
+    expect(find.text('Remote: origin'), findsOneWidget);
+    expect(find.text('Status: Dirty • Ahead 2 • Behind 3'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('git-branch-input')),
+      '  release/2026  ',
+    );
+    await tester.tap(find.byKey(const Key('git-branch-switch-button')));
+    await tester.pumpAndSettle();
+
+    expect(detailApi.branchSwitchRequestsByThreadId['thread-123'], [
+      'release/2026',
+    ]);
+    expect(find.text('Branch: release/2026'), findsOneWidget);
+    expect(find.text('Switched branch to release/2026'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('git-pull-button')));
+    await tester.pumpAndSettle();
+    expect(detailApi.pullCallsByThreadId['thread-123'], 1);
+    expect(
+      find.text('Pulled latest changes from origin for release/2026'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('git-push-button')));
+    await tester.pumpAndSettle();
+    expect(detailApi.pushCallsByThreadId['thread-123'], 1);
+    expect(find.text('Status: Clean • Ahead 0 • Behind 0'), findsOneWidget);
+    expect(detailApi.gitStatusFetchCountByThreadId['thread-123'], 4);
+  });
+
+  testWidgets('blank branch switch is rejected client-side', (tester) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+      gitStatusScriptByThreadId: {
+        'thread-123': [_gitStatus(threadId: 'thread-123')],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('git-controls-card')),
+    );
+    await tester.enterText(find.byKey(const Key('git-branch-input')), '   ');
+    await tester.tap(find.byKey(const Key('git-branch-switch-button')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'Bad request (client validation): branch name cannot be blank.',
+      ),
+      findsOneWidget,
+    );
+    expect(detailApi.branchSwitchRequestsByThreadId['thread-123'], isNull);
+  });
+
+  testWidgets('non-repository context disables git mutations safely', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-no-repo': [
+          const ThreadDetailDto(
+            contractVersion: contractVersion,
+            threadId: 'thread-no-repo',
+            title: 'Thread without git context',
+            status: ThreadStatus.idle,
+            workspace: '/workspace/non-repo',
+            repository: 'unknown-repository',
+            branch: 'unknown',
+            createdAt: '2026-03-18T09:45:00Z',
+            updatedAt: '2026-03-18T10:00:00Z',
+            source: 'cli',
+            accessMode: AccessMode.controlWithApprovals,
+            lastTurnSummary: 'Idle',
+          ),
+        ],
+      },
+      timelineScriptByThreadId: {
+        'thread-no-repo': [<ThreadTimelineEntryDto>[]],
+      },
+      gitStatusScriptByThreadId: {
+        'thread-no-repo': [
+          _gitStatus(
+            threadId: 'thread-no-repo',
+            workspace: '/workspace/non-repo',
+            repository: 'unknown-repository',
+            branch: 'unknown',
+            remote: 'local',
+          ),
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-no-repo',
+    );
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('git-controls-card')),
+    );
+    expect(
+      find.byKey(const Key('git-controls-unavailable-message')),
+      findsOneWidget,
+    );
+
+    final switchButton = tester.widget<FilledButton>(
+      find.byKey(const Key('git-branch-switch-button')),
+    );
+    final pullButton = tester.widget<OutlinedButton>(
+      find.byKey(const Key('git-pull-button')),
+    );
+    final pushButton = tester.widget<OutlinedButton>(
+      find.byKey(const Key('git-push-button')),
+    );
+
+    expect(switchButton.onPressed, isNull);
+    expect(pullButton.onPressed, isNull);
+    expect(pushButton.onPressed, isNull);
+  });
+
+  testWidgets('switching threads retargets git actions to new context', (
+    tester,
+  ) async {
+    final listApi = FakeThreadListBridgeApi(
+      scriptedResults: [_threadSummaries()],
+    );
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+        'thread-456': [_thread456Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+        'thread-456': [<ThreadTimelineEntryDto>[]],
+      },
+      gitStatusScriptByThreadId: {
+        'thread-123': [
+          _gitStatus(
+            threadId: 'thread-123',
+            repository: 'codex-mobile-companion',
+            branch: 'master',
+            remote: 'origin',
+          ),
+        ],
+        'thread-456': [
+          _gitStatus(
+            threadId: 'thread-456',
+            repository: 'codex-runtime-tools',
+            branch: 'develop',
+            remote: 'upstream',
+          ),
+          _gitStatus(
+            threadId: 'thread-456',
+            repository: 'codex-runtime-tools',
+            branch: 'develop',
+            remote: 'upstream',
+          ),
+        ],
+      },
+    );
+
+    await _pumpThreadListApp(
+      tester,
+      listApi: listApi,
+      detailApi: detailApi,
+      liveStream: FakeThreadLiveStream(),
+    );
+
+    await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+    await tester.pumpAndSettle();
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('git-controls-card')),
+    );
+    expect(find.text('Repository: codex-mobile-companion'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('thread-summary-card-thread-456')));
+    await tester.pumpAndSettle();
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('git-controls-card')),
+    );
+    expect(find.text('Repository: codex-runtime-tools'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('git-pull-button')));
+    await tester.pumpAndSettle();
+
+    expect(detailApi.pullCallsByThreadId['thread-123'], isNull);
+    expect(detailApi.pullCallsByThreadId['thread-456'], 1);
+  });
+
+  testWidgets('failed git mutation still refreshes git state', (tester) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+      gitStatusScriptByThreadId: {
+        'thread-123': [
+          _gitStatus(
+            threadId: 'thread-123',
+            dirty: false,
+            aheadBy: 0,
+            behindBy: 2,
+          ),
+          _gitStatus(
+            threadId: 'thread-123',
+            dirty: false,
+            aheadBy: 0,
+            behindBy: 1,
+          ),
+        ],
+      },
+      pullScriptByThreadId: {
+        'thread-123': [
+          const ThreadGitMutationBridgeException(
+            message: 'Pull failed: remote rejected fetch request.',
+          ),
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('git-controls-card')),
+    );
+    await tester.tap(find.byKey(const Key('git-pull-button')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Pull failed: remote rejected fetch request.'),
+      findsOneWidget,
+    );
+    expect(find.text('Status: Clean • Ahead 0 • Behind 1'), findsOneWidget);
+    expect(detailApi.gitStatusFetchCountByThreadId['thread-123'], 2);
+  });
+
   testWidgets(
     'live stream updates detail and syncs lifecycle status back to list',
     (tester) async {
@@ -301,6 +673,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      await _scrollUntilVisible(
+        tester,
+        find.text('Streaming chunk from live output.'),
+      );
       expect(find.text('Streaming chunk from live output.'), findsOneWidget);
 
       liveStream.emit(
@@ -315,6 +691,12 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      await tester.fling(
+        find.byType(Scrollable).first,
+        const Offset(0, 600),
+        1000,
+      );
+      await tester.pumpAndSettle();
       expect(find.text('Completed'), findsOneWidget);
 
       await tester.pageBack();
@@ -467,6 +849,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await _scrollUntilVisible(tester, find.text('Visible on thread 123'));
       expect(find.text('Visible on thread 123'), findsOneWidget);
 
       await tester.pageBack();
@@ -498,6 +881,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await _scrollUntilVisible(tester, find.text('Visible on thread 456'));
       expect(find.text('Visible on thread 456'), findsOneWidget);
     },
   );
@@ -723,6 +1107,13 @@ void main() {
         find.byKey(const Key('thread-activity-evt-live-1')),
         findsOneWidget,
       );
+
+      await tester.fling(
+        find.byType(Scrollable).first,
+        const Offset(0, 600),
+        1000,
+      );
+      await tester.pumpAndSettle();
 
       liveStream.emitError('thread-123');
       await tester.pumpAndSettle();
@@ -967,6 +1358,60 @@ TurnMutationResult _turnMutationResult({
   );
 }
 
+GitStatusResponseDto _gitStatus({
+  required String threadId,
+  String workspace = '/workspace/codex-mobile-companion',
+  String repository = 'codex-mobile-companion',
+  String branch = 'master',
+  String remote = 'origin',
+  bool dirty = false,
+  int aheadBy = 0,
+  int behindBy = 0,
+}) {
+  return GitStatusResponseDto(
+    contractVersion: contractVersion,
+    threadId: threadId,
+    repository: RepositoryContextDto(
+      workspace: workspace,
+      repository: repository,
+      branch: branch,
+      remote: remote,
+    ),
+    status: GitStatusDto(dirty: dirty, aheadBy: aheadBy, behindBy: behindBy),
+  );
+}
+
+MutationResultResponseDto _gitMutationResult({
+  required String threadId,
+  required String operation,
+  required String message,
+  required String repository,
+  required String branch,
+  required String remote,
+  String workspace = '/workspace/codex-mobile-companion',
+  bool dirty = false,
+  int aheadBy = 0,
+  int behindBy = 0,
+  ThreadStatus threadStatus = ThreadStatus.running,
+  String outcome = 'success',
+}) {
+  return MutationResultResponseDto(
+    contractVersion: contractVersion,
+    threadId: threadId,
+    operation: operation,
+    outcome: outcome,
+    message: message,
+    threadStatus: threadStatus,
+    repository: RepositoryContextDto(
+      workspace: workspace,
+      repository: repository,
+      branch: branch,
+      remote: remote,
+    ),
+    status: GitStatusDto(dirty: dirty, aheadBy: aheadBy, behindBy: behindBy),
+  );
+}
+
 class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   FakeThreadDetailBridgeApi({
     required Map<String, List<Object>> detailScriptByThreadId,
@@ -974,17 +1419,29 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     Map<String, List<Object>>? startTurnScriptByThreadId,
     Map<String, List<Object>>? steerTurnScriptByThreadId,
     Map<String, List<Object>>? interruptTurnScriptByThreadId,
+    Map<String, List<Object>>? gitStatusScriptByThreadId,
+    Map<String, List<Object>>? branchSwitchScriptByThreadId,
+    Map<String, List<Object>>? pullScriptByThreadId,
+    Map<String, List<Object>>? pushScriptByThreadId,
   }) : _detailScriptByThreadId = detailScriptByThreadId,
        _timelineScriptByThreadId = timelineScriptByThreadId,
        _startTurnScriptByThreadId = startTurnScriptByThreadId ?? {},
        _steerTurnScriptByThreadId = steerTurnScriptByThreadId ?? {},
-       _interruptTurnScriptByThreadId = interruptTurnScriptByThreadId ?? {};
+       _interruptTurnScriptByThreadId = interruptTurnScriptByThreadId ?? {},
+       _gitStatusScriptByThreadId = gitStatusScriptByThreadId ?? {},
+       _branchSwitchScriptByThreadId = branchSwitchScriptByThreadId ?? {},
+       _pullScriptByThreadId = pullScriptByThreadId ?? {},
+       _pushScriptByThreadId = pushScriptByThreadId ?? {};
 
   final Map<String, List<Object>> _detailScriptByThreadId;
   final Map<String, List<Object>> _timelineScriptByThreadId;
   final Map<String, List<Object>> _startTurnScriptByThreadId;
   final Map<String, List<Object>> _steerTurnScriptByThreadId;
   final Map<String, List<Object>> _interruptTurnScriptByThreadId;
+  final Map<String, List<Object>> _gitStatusScriptByThreadId;
+  final Map<String, List<Object>> _branchSwitchScriptByThreadId;
+  final Map<String, List<Object>> _pullScriptByThreadId;
+  final Map<String, List<Object>> _pushScriptByThreadId;
   int detailFetchCount = 0;
   int timelineFetchCount = 0;
   final Map<String, List<String>> startTurnPromptsByThreadId =
@@ -992,6 +1449,11 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   final Map<String, List<String>> steerTurnInstructionsByThreadId =
       <String, List<String>>{};
   final Map<String, int> interruptTurnCallsByThreadId = <String, int>{};
+  final Map<String, int> gitStatusFetchCountByThreadId = <String, int>{};
+  final Map<String, List<String>> branchSwitchRequestsByThreadId =
+      <String, List<String>>{};
+  final Map<String, int> pullCallsByThreadId = <String, int>{};
+  final Map<String, int> pushCallsByThreadId = <String, int>{};
 
   @override
   Future<ThreadDetailDto> fetchThreadDetail({
@@ -1124,6 +1586,203 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     throw StateError(
       'Unsupported interrupt-turn scripted result: $scriptedResult',
     );
+  }
+
+  @override
+  Future<GitStatusResponseDto> fetchGitStatus({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    gitStatusFetchCountByThreadId.update(
+      threadId,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+
+    final scriptedResult = _nextOptionalResult(
+      _gitStatusScriptByThreadId,
+      threadId,
+    );
+    if (scriptedResult == null) {
+      return _defaultGitStatusForThread(threadId);
+    }
+    if (scriptedResult is GitStatusResponseDto) {
+      return scriptedResult;
+    }
+    if (scriptedResult is ThreadGitBridgeException) {
+      throw scriptedResult;
+    }
+
+    throw StateError('Unsupported git-status scripted result: $scriptedResult');
+  }
+
+  @override
+  Future<MutationResultResponseDto> switchBranch({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String branch,
+  }) async {
+    branchSwitchRequestsByThreadId
+        .putIfAbsent(threadId, () => <String>[])
+        .add(branch);
+
+    final scriptedResult = _nextOptionalResult(
+      _branchSwitchScriptByThreadId,
+      threadId,
+    );
+    if (scriptedResult is MutationResultResponseDto) {
+      return scriptedResult;
+    }
+    if (scriptedResult is ThreadGitMutationBridgeException) {
+      throw scriptedResult;
+    }
+    if (scriptedResult != null) {
+      throw StateError(
+        'Unsupported branch-switch scripted result: $scriptedResult',
+      );
+    }
+
+    final context = _defaultGitStatusForThread(threadId).repository;
+    return _gitMutationResult(
+      threadId: threadId,
+      operation: 'git_branch_switch',
+      message: 'Switched branch to $branch',
+      repository: context.repository,
+      branch: branch,
+      remote: context.remote,
+      workspace: context.workspace,
+      dirty: false,
+      aheadBy: 0,
+      behindBy: 0,
+    );
+  }
+
+  @override
+  Future<MutationResultResponseDto> pullRepository({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? remote,
+  }) async {
+    pullCallsByThreadId.update(
+      threadId,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+
+    final scriptedResult = _nextOptionalResult(_pullScriptByThreadId, threadId);
+    if (scriptedResult is MutationResultResponseDto) {
+      return scriptedResult;
+    }
+    if (scriptedResult is ThreadGitMutationBridgeException) {
+      throw scriptedResult;
+    }
+    if (scriptedResult != null) {
+      throw StateError('Unsupported pull scripted result: $scriptedResult');
+    }
+
+    final status = _defaultGitStatusForThread(threadId);
+    final repository = status.repository;
+    final resolvedRemote = remote == null || remote.trim().isEmpty
+        ? repository.remote
+        : remote.trim();
+    return _gitMutationResult(
+      threadId: threadId,
+      operation: 'git_pull',
+      message:
+          'Pulled latest changes from $resolvedRemote for ${repository.branch}',
+      repository: repository.repository,
+      branch: repository.branch,
+      remote: resolvedRemote,
+      workspace: repository.workspace,
+      dirty: status.status.dirty,
+      aheadBy: status.status.aheadBy,
+      behindBy: 0,
+    );
+  }
+
+  @override
+  Future<MutationResultResponseDto> pushRepository({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? remote,
+  }) async {
+    pushCallsByThreadId.update(
+      threadId,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+
+    final scriptedResult = _nextOptionalResult(_pushScriptByThreadId, threadId);
+    if (scriptedResult is MutationResultResponseDto) {
+      return scriptedResult;
+    }
+    if (scriptedResult is ThreadGitMutationBridgeException) {
+      throw scriptedResult;
+    }
+    if (scriptedResult != null) {
+      throw StateError('Unsupported push scripted result: $scriptedResult');
+    }
+
+    final status = _defaultGitStatusForThread(threadId);
+    final repository = status.repository;
+    final resolvedRemote = remote == null || remote.trim().isEmpty
+        ? repository.remote
+        : remote.trim();
+    return _gitMutationResult(
+      threadId: threadId,
+      operation: 'git_push',
+      message:
+          'Pushed local commits to $resolvedRemote for ${repository.branch}',
+      repository: repository.repository,
+      branch: repository.branch,
+      remote: resolvedRemote,
+      workspace: repository.workspace,
+      dirty: status.status.dirty,
+      aheadBy: 0,
+      behindBy: status.status.behindBy,
+    );
+  }
+
+  GitStatusResponseDto _defaultGitStatusForThread(String threadId) {
+    final detail = _peekThreadDetail(threadId);
+    if (detail == null) {
+      return _gitStatus(threadId: threadId);
+    }
+
+    return _gitStatus(
+      threadId: threadId,
+      workspace: detail.workspace,
+      repository: detail.repository,
+      branch: detail.branch,
+      remote: 'origin',
+    );
+  }
+
+  ThreadDetailDto? _peekThreadDetail(String threadId) {
+    final script = _detailScriptByThreadId[threadId];
+    if (script == null) {
+      return null;
+    }
+
+    for (final entry in script) {
+      if (entry is ThreadDetailDto) {
+        return entry;
+      }
+    }
+
+    return null;
+  }
+
+  Object? _nextOptionalResult(
+    Map<String, List<Object>> scriptByThreadId,
+    String threadId,
+  ) {
+    final script = scriptByThreadId[threadId];
+    if (script == null || script.isEmpty) {
+      return null;
+    }
+
+    return _nextResult(scriptByThreadId, threadId);
   }
 
   Object _nextResult(

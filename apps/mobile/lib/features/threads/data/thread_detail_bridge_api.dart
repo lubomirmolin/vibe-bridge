@@ -36,10 +36,140 @@ abstract class ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
   });
+
+  Future<GitStatusResponseDto> fetchGitStatus({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  });
+
+  Future<MutationResultResponseDto> switchBranch({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String branch,
+  });
+
+  Future<MutationResultResponseDto> pullRepository({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? remote,
+  });
+
+  Future<MutationResultResponseDto> pushRepository({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? remote,
+  });
 }
 
 class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   const HttpThreadDetailBridgeApi();
+
+  @override
+  Future<GitStatusResponseDto> fetchGitStatus({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+
+    try {
+      final request = await client.getUrl(
+        _buildThreadGitStatusUri(bridgeApiBaseUrl, threadId),
+      );
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      final response = await request.close();
+      final bodyText = await utf8.decodeStream(response);
+      final decoded = _decodeJsonObject(bodyText);
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        try {
+          return GitStatusResponseDto.fromJson(decoded);
+        } on FormatException {
+          throw const ThreadGitBridgeException(
+            message: 'Bridge returned an invalid git status response.',
+          );
+        }
+      }
+
+      throw ThreadGitBridgeException(
+        message:
+            _readOptionalString(decoded, 'message') ??
+            'Couldn’t load git status right now.',
+        statusCode: response.statusCode,
+        code: _readOptionalString(decoded, 'code'),
+      );
+    } on SocketException {
+      throw const ThreadGitBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on HandshakeException {
+      throw const ThreadGitBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on HttpException {
+      throw const ThreadGitBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on TimeoutException {
+      throw const ThreadGitBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on FormatException {
+      throw const ThreadGitBridgeException(
+        message: 'Bridge returned an invalid git status response.',
+      );
+    } finally {
+      client.close();
+    }
+  }
+
+  @override
+  Future<MutationResultResponseDto> switchBranch({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String branch,
+  }) {
+    return _postGitMutation(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+      action: 'branch-switch',
+      queryParamName: 'branch',
+      queryParamValue: branch,
+    );
+  }
+
+  @override
+  Future<MutationResultResponseDto> pullRepository({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? remote,
+  }) {
+    return _postGitMutation(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+      action: 'pull',
+      queryParamName: remote == null ? null : 'remote',
+      queryParamValue: remote,
+    );
+  }
+
+  @override
+  Future<MutationResultResponseDto> pushRepository({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? remote,
+  }) {
+    return _postGitMutation(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+      action: 'push',
+      queryParamName: remote == null ? null : 'remote',
+      queryParamValue: remote,
+    );
+  }
 
   @override
   Future<TurnMutationResult> startTurn({
@@ -286,6 +416,78 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       client.close();
     }
   }
+
+  Future<MutationResultResponseDto> _postGitMutation({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String action,
+    String? queryParamName,
+    String? queryParamValue,
+  }) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+
+    try {
+      final request = await client.postUrl(
+        _buildThreadGitMutationUri(
+          bridgeApiBaseUrl,
+          threadId,
+          action,
+          queryParamName: queryParamName,
+          queryParamValue: queryParamValue,
+        ),
+      );
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      final response = await request.close();
+      final bodyText = await utf8.decodeStream(response);
+      final decoded = _decodeJsonObject(bodyText);
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        try {
+          return MutationResultResponseDto.fromJson(decoded);
+        } on FormatException {
+          throw ThreadGitMutationBridgeException(
+            message:
+                _readOptionalString(decoded, 'message') ??
+                'Git action did not return a valid repository state.',
+          );
+        }
+      }
+
+      throw ThreadGitMutationBridgeException(
+        message:
+            _readOptionalString(decoded, 'message') ??
+            'Couldn’t run the git action right now.',
+        statusCode: response.statusCode,
+        code: _readOptionalString(decoded, 'code'),
+      );
+    } on SocketException {
+      throw const ThreadGitMutationBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on HandshakeException {
+      throw const ThreadGitMutationBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on HttpException {
+      throw const ThreadGitMutationBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on TimeoutException {
+      throw const ThreadGitMutationBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on FormatException {
+      throw const ThreadGitMutationBridgeException(
+        message: 'Bridge returned an invalid git mutation response.',
+      );
+    } finally {
+      client.close();
+    }
+  }
 }
 
 class ThreadDetailBridgeException implements Exception {
@@ -310,6 +512,40 @@ class ThreadTurnBridgeException implements Exception {
   });
 
   final String message;
+  final bool isConnectivityError;
+
+  @override
+  String toString() => message;
+}
+
+class ThreadGitBridgeException implements Exception {
+  const ThreadGitBridgeException({
+    required this.message,
+    this.statusCode,
+    this.code,
+    this.isConnectivityError = false,
+  });
+
+  final String message;
+  final int? statusCode;
+  final String? code;
+  final bool isConnectivityError;
+
+  @override
+  String toString() => message;
+}
+
+class ThreadGitMutationBridgeException implements Exception {
+  const ThreadGitMutationBridgeException({
+    required this.message,
+    this.statusCode,
+    this.code,
+    this.isConnectivityError = false,
+  });
+
+  final String message;
+  final int? statusCode;
+  final String? code;
   final bool isConnectivityError;
 
   @override
@@ -368,6 +604,41 @@ Uri _buildThreadTimelineUri(String baseUrl, String threadId) {
   final fullPath =
       '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/timeline';
   return baseUri.replace(path: fullPath, queryParameters: null);
+}
+
+Uri _buildThreadGitStatusUri(String baseUrl, String threadId) {
+  final baseUri = Uri.parse(baseUrl);
+  final normalizedBasePath = baseUri.path.endsWith('/')
+      ? baseUri.path.substring(0, baseUri.path.length - 1)
+      : baseUri.path;
+  final fullPath =
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/git/status';
+  return baseUri.replace(path: fullPath, queryParameters: null);
+}
+
+Uri _buildThreadGitMutationUri(
+  String baseUrl,
+  String threadId,
+  String action, {
+  String? queryParamName,
+  String? queryParamValue,
+}) {
+  final baseUri = Uri.parse(baseUrl);
+  final normalizedBasePath = baseUri.path.endsWith('/')
+      ? baseUri.path.substring(0, baseUri.path.length - 1)
+      : baseUri.path;
+  final fullPath =
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/git/${Uri.encodeComponent(action)}';
+
+  final queryParameters = <String, String>{};
+  if (queryParamName != null && queryParamValue != null) {
+    queryParameters[queryParamName] = queryParamValue;
+  }
+
+  return baseUri.replace(
+    path: fullPath,
+    queryParameters: queryParameters.isEmpty ? null : queryParameters,
+  );
 }
 
 Uri _buildThreadTurnMutationUri(

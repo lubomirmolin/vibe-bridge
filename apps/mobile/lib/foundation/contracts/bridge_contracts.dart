@@ -152,6 +152,52 @@ class GitStatusDto {
   }
 }
 
+class GitStatusResponseDto {
+  const GitStatusResponseDto({
+    required this.contractVersion,
+    required this.threadId,
+    required this.repository,
+    required this.status,
+  });
+
+  final String contractVersion;
+  final String threadId;
+  final RepositoryContextDto repository;
+  final GitStatusDto status;
+
+  factory GitStatusResponseDto.fromJson(Map<String, dynamic> json) {
+    final repository = json['repository'];
+    if (repository is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "repository" object in git status response.',
+      );
+    }
+
+    final status = json['status'];
+    if (status is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "status" object in git status response.',
+      );
+    }
+
+    return GitStatusResponseDto(
+      contractVersion: json['contract_version'] as String,
+      threadId: json['thread_id'] as String,
+      repository: RepositoryContextDto.fromJson(repository),
+      status: GitStatusDto.fromJson(status),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'contract_version': contractVersion,
+      'thread_id': threadId,
+      'repository': repository.toJson(),
+      'status': status.toJson(),
+    };
+  }
+}
+
 class ApprovalRecordDto {
   const ApprovalRecordDto({
     required this.contractVersion,

@@ -69,6 +69,12 @@ class ThreadDetailState {
     this.isComposerMutationInFlight = false,
     this.isInterruptMutationInFlight = false,
     this.turnControlErrorMessage,
+    this.gitStatus,
+    this.isGitStatusLoading = false,
+    this.isGitMutationInFlight = false,
+    this.gitErrorMessage,
+    this.gitMutationMessage,
+    this.gitControlsUnavailableReason,
   });
 
   final String threadId;
@@ -85,12 +91,28 @@ class ThreadDetailState {
   final bool isComposerMutationInFlight;
   final bool isInterruptMutationInFlight;
   final String? turnControlErrorMessage;
+  final GitStatusResponseDto? gitStatus;
+  final bool isGitStatusLoading;
+  final bool isGitMutationInFlight;
+  final String? gitErrorMessage;
+  final String? gitMutationMessage;
+  final String? gitControlsUnavailableReason;
 
   bool get hasThread => thread != null;
 
   bool get hasError => errorMessage != null;
 
   bool get canRunMutatingActions => !isConnectivityUnavailable;
+
+  bool get hasGitRepositoryContext =>
+      gitStatus != null &&
+      _isRepositoryContextResolvable(gitStatus!.repository);
+
+  bool get canRunGitMutations =>
+      canRunMutatingActions &&
+      hasGitRepositoryContext &&
+      !isGitStatusLoading &&
+      !isGitMutationInFlight;
 
   bool get isTurnActive => thread?.status == ThreadStatus.running;
 
@@ -137,6 +159,16 @@ class ThreadDetailState {
     bool? isInterruptMutationInFlight,
     String? turnControlErrorMessage,
     bool clearTurnControlError = false,
+    GitStatusResponseDto? gitStatus,
+    bool clearGitStatus = false,
+    bool? isGitStatusLoading,
+    bool? isGitMutationInFlight,
+    String? gitErrorMessage,
+    bool clearGitErrorMessage = false,
+    String? gitMutationMessage,
+    bool clearGitMutationMessage = false,
+    String? gitControlsUnavailableReason,
+    bool clearGitControlsUnavailableReason = false,
   }) {
     return ThreadDetailState(
       threadId: threadId,
@@ -164,6 +196,19 @@ class ThreadDetailState {
       turnControlErrorMessage: clearTurnControlError
           ? null
           : (turnControlErrorMessage ?? this.turnControlErrorMessage),
+      gitStatus: clearGitStatus ? null : (gitStatus ?? this.gitStatus),
+      isGitStatusLoading: isGitStatusLoading ?? this.isGitStatusLoading,
+      isGitMutationInFlight:
+          isGitMutationInFlight ?? this.isGitMutationInFlight,
+      gitErrorMessage: clearGitErrorMessage
+          ? null
+          : (gitErrorMessage ?? this.gitErrorMessage),
+      gitMutationMessage: clearGitMutationMessage
+          ? null
+          : (gitMutationMessage ?? this.gitMutationMessage),
+      gitControlsUnavailableReason: clearGitControlsUnavailableReason
+          ? null
+          : (gitControlsUnavailableReason ?? this.gitControlsUnavailableReason),
     );
   }
 }
@@ -213,6 +258,12 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       clearTurnControlError: true,
       isShowingCachedData: false,
       isConnectivityUnavailable: false,
+      clearGitStatus: true,
+      isGitStatusLoading: false,
+      isGitMutationInFlight: false,
+      clearGitErrorMessage: true,
+      clearGitMutationMessage: true,
+      clearGitControlsUnavailableReason: true,
     );
 
     try {
@@ -252,9 +303,16 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearTurnControlError: true,
         isShowingCachedData: false,
         isConnectivityUnavailable: false,
+        clearGitStatus: true,
+        isGitStatusLoading: false,
+        isGitMutationInFlight: false,
+        clearGitErrorMessage: true,
+        clearGitMutationMessage: true,
+        clearGitControlsUnavailableReason: true,
       );
 
       _threadListController.syncThreadDetail(detail);
+      await refreshGitStatus(showLoading: true);
       await _startLiveSubscription();
     } on ThreadDetailBridgeException catch (error) {
       if (error.isConnectivityError) {
@@ -341,6 +399,8 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
           'Bridge is offline. Showing cached thread content. Mutating actions are blocked until reconnect.',
       isShowingCachedData: true,
       isConnectivityUnavailable: true,
+      gitControlsUnavailableReason:
+          'Git controls are unavailable while reconnecting to the private route.',
     );
   }
 
@@ -401,6 +461,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       );
 
       _threadListController.syncThreadDetail(detail);
+      await refreshGitStatus(showLoading: false);
       await _startLiveSubscription();
     } on ThreadDetailBridgeException catch (error) {
       if (!error.isConnectivityError) {
@@ -450,6 +511,13 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       isUnavailable: false,
       isShowingCachedData: true,
       isConnectivityUnavailable: true,
+      clearGitStatus: true,
+      isGitStatusLoading: false,
+      isGitMutationInFlight: false,
+      clearGitErrorMessage: true,
+      clearGitMutationMessage: true,
+      gitControlsUnavailableReason:
+          'Git controls are unavailable while reconnecting to the private route.',
     );
 
     _threadListController.syncThreadDetail(cachedSnapshot.detail);
@@ -675,6 +743,260 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     }
   }
 
+  Future<void> refreshGitStatus({bool showLoading = true}) async {
+    if (state.thread == null || state.isConnectivityUnavailable) {
+      state = state.copyWith(
+        clearGitStatus: true,
+        isGitStatusLoading: false,
+        isGitMutationInFlight: false,
+        clearGitErrorMessage: true,
+        clearGitMutationMessage: showLoading,
+        gitControlsUnavailableReason: state.isConnectivityUnavailable
+            ? 'Git controls are unavailable while reconnecting to the private route.'
+            : 'Git status is unavailable until thread context loads.',
+      );
+      return;
+    }
+
+    if (showLoading) {
+      state = state.copyWith(
+        isGitStatusLoading: true,
+        clearGitErrorMessage: true,
+        clearGitControlsUnavailableReason: true,
+      );
+    }
+
+    try {
+      final gitStatus = await _bridgeApi.fetchGitStatus(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: state.threadId,
+      );
+
+      _syncThreadWithRepositoryContext(gitStatus.repository);
+
+      state = state.copyWith(
+        gitStatus: gitStatus,
+        isGitStatusLoading: false,
+        clearGitErrorMessage: showLoading,
+        clearGitControlsUnavailableReason: true,
+      );
+
+      if (!_isRepositoryContextResolvable(gitStatus.repository)) {
+        state = state.copyWith(
+          gitControlsUnavailableReason:
+              'Git controls are unavailable because this thread has no repository context.',
+        );
+      }
+    } on ThreadGitBridgeException catch (error) {
+      state = state.copyWith(
+        clearGitStatus: true,
+        isGitStatusLoading: false,
+        gitErrorMessage: error.message,
+        gitControlsUnavailableReason:
+            error.statusCode == 404 || error.code == 'not_found'
+            ? 'Git controls are unavailable because this thread is not in a repository context.'
+            : null,
+      );
+    } catch (_) {
+      state = state.copyWith(
+        clearGitStatus: true,
+        isGitStatusLoading: false,
+        gitErrorMessage: 'Couldn’t load git status right now.',
+      );
+    }
+  }
+
+  Future<bool> switchBranch(String rawBranch) async {
+    final thread = state.thread;
+    if (thread == null) {
+      return false;
+    }
+
+    if (!state.canRunMutatingActions) {
+      state = state.copyWith(
+        gitErrorMessage:
+            'Git controls are unavailable while the bridge is offline.',
+      );
+      return false;
+    }
+
+    final branch = rawBranch.trim();
+    if (branch.isEmpty) {
+      state = state.copyWith(
+        gitErrorMessage:
+            'Bad request (client validation): branch name cannot be blank.',
+        clearGitMutationMessage: true,
+      );
+      return false;
+    }
+
+    if (!state.hasGitRepositoryContext) {
+      state = state.copyWith(
+        gitErrorMessage:
+            'Git controls are unavailable because this thread has no repository context.',
+        clearGitMutationMessage: true,
+      );
+      return false;
+    }
+
+    state = state.copyWith(
+      isGitMutationInFlight: true,
+      clearGitErrorMessage: true,
+      clearGitMutationMessage: true,
+    );
+
+    try {
+      final mutationResult = await _bridgeApi.switchBranch(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: state.threadId,
+        branch: branch,
+      );
+
+      _applyGitMutationResult(mutationResult);
+      state = state.copyWith(
+        isGitMutationInFlight: false,
+        gitMutationMessage: mutationResult.message,
+        clearGitErrorMessage: true,
+      );
+      await refreshGitStatus(showLoading: false);
+      return true;
+    } on ThreadGitMutationBridgeException catch (error) {
+      state = state.copyWith(
+        isGitMutationInFlight: false,
+        gitErrorMessage: error.message,
+        clearGitMutationMessage: true,
+      );
+      await refreshGitStatus(showLoading: false);
+      return false;
+    } catch (_) {
+      state = state.copyWith(
+        isGitMutationInFlight: false,
+        gitErrorMessage: 'Couldn’t switch branch right now.',
+        clearGitMutationMessage: true,
+      );
+      await refreshGitStatus(showLoading: false);
+      return false;
+    }
+  }
+
+  Future<bool> pullRepository() async {
+    if (!state.canRunMutatingActions) {
+      state = state.copyWith(
+        gitErrorMessage:
+            'Git controls are unavailable while the bridge is offline.',
+      );
+      return false;
+    }
+
+    final repository = state.gitStatus?.repository;
+    if (repository == null || !_isRepositoryContextResolvable(repository)) {
+      state = state.copyWith(
+        gitErrorMessage:
+            'Git controls are unavailable because this thread has no repository context.',
+        clearGitMutationMessage: true,
+      );
+      return false;
+    }
+
+    state = state.copyWith(
+      isGitMutationInFlight: true,
+      clearGitErrorMessage: true,
+      clearGitMutationMessage: true,
+    );
+
+    try {
+      final mutationResult = await _bridgeApi.pullRepository(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: state.threadId,
+        remote: repository.remote,
+      );
+
+      _applyGitMutationResult(mutationResult);
+      state = state.copyWith(
+        isGitMutationInFlight: false,
+        gitMutationMessage: mutationResult.message,
+        clearGitErrorMessage: true,
+      );
+      await refreshGitStatus(showLoading: false);
+      return true;
+    } on ThreadGitMutationBridgeException catch (error) {
+      state = state.copyWith(
+        isGitMutationInFlight: false,
+        gitErrorMessage: error.message,
+        clearGitMutationMessage: true,
+      );
+      await refreshGitStatus(showLoading: false);
+      return false;
+    } catch (_) {
+      state = state.copyWith(
+        isGitMutationInFlight: false,
+        gitErrorMessage: 'Couldn’t run pull right now.',
+        clearGitMutationMessage: true,
+      );
+      await refreshGitStatus(showLoading: false);
+      return false;
+    }
+  }
+
+  Future<bool> pushRepository() async {
+    if (!state.canRunMutatingActions) {
+      state = state.copyWith(
+        gitErrorMessage:
+            'Git controls are unavailable while the bridge is offline.',
+      );
+      return false;
+    }
+
+    final repository = state.gitStatus?.repository;
+    if (repository == null || !_isRepositoryContextResolvable(repository)) {
+      state = state.copyWith(
+        gitErrorMessage:
+            'Git controls are unavailable because this thread has no repository context.',
+        clearGitMutationMessage: true,
+      );
+      return false;
+    }
+
+    state = state.copyWith(
+      isGitMutationInFlight: true,
+      clearGitErrorMessage: true,
+      clearGitMutationMessage: true,
+    );
+
+    try {
+      final mutationResult = await _bridgeApi.pushRepository(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: state.threadId,
+        remote: repository.remote,
+      );
+
+      _applyGitMutationResult(mutationResult);
+      state = state.copyWith(
+        isGitMutationInFlight: false,
+        gitMutationMessage: mutationResult.message,
+        clearGitErrorMessage: true,
+      );
+      await refreshGitStatus(showLoading: false);
+      return true;
+    } on ThreadGitMutationBridgeException catch (error) {
+      state = state.copyWith(
+        isGitMutationInFlight: false,
+        gitErrorMessage: error.message,
+        clearGitMutationMessage: true,
+      );
+      await refreshGitStatus(showLoading: false);
+      return false;
+    } catch (_) {
+      state = state.copyWith(
+        isGitMutationInFlight: false,
+        gitErrorMessage: 'Couldn’t run push right now.',
+        clearGitMutationMessage: true,
+      );
+      await refreshGitStatus(showLoading: false);
+      return false;
+    }
+  }
+
   void _applyTurnMutationResult(TurnMutationResult mutationResult) {
     final thread = state.thread;
     if (thread == null) {
@@ -692,6 +1014,59 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       status: mutationResult.threadStatus,
       updatedAt: updatedAt,
     );
+  }
+
+  void _applyGitMutationResult(MutationResultResponseDto mutationResult) {
+    state = state.copyWith(
+      gitStatus: GitStatusResponseDto(
+        contractVersion: mutationResult.contractVersion,
+        threadId: mutationResult.threadId,
+        repository: mutationResult.repository,
+        status: mutationResult.status,
+      ),
+      clearGitControlsUnavailableReason: true,
+    );
+
+    _syncThreadWithRepositoryContext(
+      mutationResult.repository,
+      status: mutationResult.threadStatus,
+      updatedAt: DateTime.now().toUtc().toIso8601String(),
+      lastTurnSummary: mutationResult.message,
+    );
+  }
+
+  void _syncThreadWithRepositoryContext(
+    RepositoryContextDto repositoryContext, {
+    ThreadStatus? status,
+    String? updatedAt,
+    String? lastTurnSummary,
+  }) {
+    final thread = state.thread;
+    if (thread == null) {
+      return;
+    }
+
+    final resolvedStatus = status ?? thread.status;
+    final resolvedUpdatedAt = updatedAt ?? thread.updatedAt;
+    final resolvedLastTurnSummary = lastTurnSummary ?? thread.lastTurnSummary;
+
+    final updatedThread = ThreadDetailDto(
+      contractVersion: thread.contractVersion,
+      threadId: thread.threadId,
+      title: thread.title,
+      status: resolvedStatus,
+      workspace: repositoryContext.workspace,
+      repository: repositoryContext.repository,
+      branch: repositoryContext.branch,
+      createdAt: thread.createdAt,
+      updatedAt: resolvedUpdatedAt,
+      source: thread.source,
+      accessMode: thread.accessMode,
+      lastTurnSummary: resolvedLastTurnSummary,
+    );
+
+    state = state.copyWith(thread: updatedThread);
+    _threadListController.syncThreadDetail(updatedThread);
   }
 
   void _updateThreadStatus({
@@ -746,4 +1121,21 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     unawaited(_closeLiveSubscription());
     super.dispose();
   }
+}
+
+bool _isRepositoryContextResolvable(RepositoryContextDto context) {
+  final repository = context.repository.trim().toLowerCase();
+  final branch = context.branch.trim().toLowerCase();
+
+  if (repository.isEmpty ||
+      repository == 'unknown' ||
+      repository == 'unknown-repository') {
+    return false;
+  }
+
+  if (branch.isEmpty || branch == 'unknown') {
+    return false;
+  }
+
+  return true;
 }

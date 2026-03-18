@@ -360,6 +360,109 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     );
   }
 
+  @override
+  Future<GitStatusResponseDto> fetchGitStatus({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    final detail = await fetchThreadDetail(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+    );
+    return GitStatusResponseDto(
+      contractVersion: contractVersion,
+      threadId: threadId,
+      repository: RepositoryContextDto(
+        workspace: detail.workspace,
+        repository: detail.repository,
+        branch: detail.branch,
+        remote: 'origin',
+      ),
+      status: const GitStatusDto(dirty: false, aheadBy: 0, behindBy: 0),
+    );
+  }
+
+  @override
+  Future<MutationResultResponseDto> switchBranch({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String branch,
+  }) async {
+    final detail = await fetchThreadDetail(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+    );
+    return MutationResultResponseDto(
+      contractVersion: contractVersion,
+      threadId: threadId,
+      operation: 'git_branch_switch',
+      outcome: 'success',
+      message: 'Switched branch to $branch',
+      threadStatus: detail.status,
+      repository: RepositoryContextDto(
+        workspace: detail.workspace,
+        repository: detail.repository,
+        branch: branch,
+        remote: 'origin',
+      ),
+      status: const GitStatusDto(dirty: false, aheadBy: 0, behindBy: 0),
+    );
+  }
+
+  @override
+  Future<MutationResultResponseDto> pullRepository({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? remote,
+  }) async {
+    final detail = await fetchThreadDetail(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+    );
+    return MutationResultResponseDto(
+      contractVersion: contractVersion,
+      threadId: threadId,
+      operation: 'git_pull',
+      outcome: 'success',
+      message: 'Pull complete',
+      threadStatus: detail.status,
+      repository: RepositoryContextDto(
+        workspace: detail.workspace,
+        repository: detail.repository,
+        branch: detail.branch,
+        remote: remote ?? 'origin',
+      ),
+      status: const GitStatusDto(dirty: false, aheadBy: 0, behindBy: 0),
+    );
+  }
+
+  @override
+  Future<MutationResultResponseDto> pushRepository({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? remote,
+  }) async {
+    final detail = await fetchThreadDetail(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+    );
+    return MutationResultResponseDto(
+      contractVersion: contractVersion,
+      threadId: threadId,
+      operation: 'git_push',
+      outcome: 'success',
+      message: 'Push complete',
+      threadStatus: detail.status,
+      repository: RepositoryContextDto(
+        workspace: detail.workspace,
+        repository: detail.repository,
+        branch: detail.branch,
+        remote: remote ?? 'origin',
+      ),
+      status: const GitStatusDto(dirty: false, aheadBy: 0, behindBy: 0),
+    );
+  }
+
   Object _nextResult(
     Map<String, List<Object>> scriptByThreadId,
     String threadId,
