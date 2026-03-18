@@ -1,5 +1,6 @@
 import 'package:codex_mobile_companion/foundation/storage/persistence_boundary.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -11,6 +12,35 @@ void main() {
 
     await store.removeSecret(SecureValueKey.sessionToken);
     expect(await store.readSecret(SecureValueKey.sessionToken), isNull);
+  });
+
+  test('persisted secure store survives re-instantiation', () async {
+    FlutterSecureStorage.setMockInitialValues(<String, String>{});
+
+    final firstStore = PersistedSecureStore(
+      storage: const FlutterSecureStorage(),
+    );
+    await firstStore.writeSecret(SecureValueKey.sessionToken, 'session-1');
+    await firstStore.writeSecret(
+      SecureValueKey.selectedThreadId,
+      'thread-123',
+    );
+
+    final secondStore = PersistedSecureStore(
+      storage: const FlutterSecureStorage(),
+    );
+    expect(await secondStore.readSecret(SecureValueKey.sessionToken), 'session-1');
+    expect(
+      await secondStore.readSecret(SecureValueKey.selectedThreadId),
+      'thread-123',
+    );
+
+    await secondStore.removeSecret(SecureValueKey.sessionToken);
+
+    final thirdStore = PersistedSecureStore(
+      storage: const FlutterSecureStorage(),
+    );
+    expect(await thirdStore.readSecret(SecureValueKey.sessionToken), isNull);
   });
 
   test('secure key names align to shared contract metadata', () {

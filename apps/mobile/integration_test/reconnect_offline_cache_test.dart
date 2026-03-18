@@ -183,6 +183,11 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      await _scrollUntilVisible(
+        tester,
+        find.byKey(const Key('thread-activity-evt-live-1')),
+      );
+
       expect(
         find.byKey(const Key('thread-activity-evt-live-1')),
         findsOneWidget,
@@ -191,9 +196,13 @@ void main() {
       liveStream.emitError('thread-123');
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('retry-reconnect-catchup')), findsOneWidget);
-      await tester.tap(find.byKey(const Key('retry-reconnect-catchup')));
+      await tester.pump(const Duration(seconds: 3));
       await tester.pumpAndSettle();
+
+      await _scrollUntilVisible(
+        tester,
+        find.byKey(const Key('thread-activity-evt-live-1')),
+      );
 
       expect(
         find.byKey(const Key('thread-activity-evt-live-1')),
@@ -201,6 +210,15 @@ void main() {
       );
     },
   );
+}
+
+Future<void> _scrollUntilVisible(WidgetTester tester, Finder finder) async {
+  await tester.scrollUntilVisible(
+    finder,
+    240,
+    scrollable: find.byType(Scrollable).first,
+  );
+  await tester.pumpAndSettle();
 }
 
 ThreadCacheRepository _newCacheRepository() {

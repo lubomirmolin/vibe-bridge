@@ -7,9 +7,14 @@ import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dar
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  setUp(() {
+    FlutterSecureStorage.setMockInitialValues(<String, String>{});
+  });
+
   testWidgets(
     'valid scan is reviewed and requires explicit trust confirmation',
     (tester) async {
@@ -419,6 +424,65 @@ void main() {
   );
 
   testWidgets(
+    'disconnected trusted bridge reconnects automatically without manual retry',
+    (tester) async {
+      final store = InMemorySecureStore();
+      await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
+{
+  "bridge_id": "bridge-a1",
+  "bridge_name": "Codex Mobile Companion",
+  "bridge_api_base_url": "https://bridge.ts.net",
+  "session_id": "session-reconnect",
+  "paired_at_epoch_seconds": 100
+}
+''');
+      await store.writeSecret(
+        SecureValueKey.sessionToken,
+        'active-session-token',
+      );
+
+      final bridgeApi = FakePairingBridgeApi(
+        handshakeScript: const [
+          PairingHandshakeResult.connectivityUnavailable(
+            message:
+                'Private bridge path is currently unreachable. Reconnect to Tailscale and retry.',
+          ),
+          PairingHandshakeResult.trusted(),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            secureStoreProvider.overrideWithValue(store),
+            pairingBridgeApiProvider.overrideWithValue(bridgeApi),
+            nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 17, 21, 0)),
+          ],
+          child: const MaterialApp(
+            home: PairingFlowPage(enableCameraPreview: false),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Bridge disconnected'), findsOneWidget);
+      expect(
+        find.text(
+          'Private bridge path is currently unreachable. Reconnect to Tailscale and retry.',
+        ),
+        findsOneWidget,
+      );
+
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Paired with Codex Mobile Companion'), findsOneWidget);
+      expect(find.text('Bridge disconnected'), findsNothing);
+      expect(bridgeApi.handshakeCalls, greaterThanOrEqualTo(2));
+    },
+  );
+
+  testWidgets(
     'unpairing from settings clears local trust and returns to unpaired UI',
     (tester) async {
       final store = InMemorySecureStore();
@@ -506,13 +570,16 @@ String _validPayloadJson({
 class FakePairingBridgeApi implements PairingBridgeApi {
   FakePairingBridgeApi({
     this.handshakeResult = const PairingHandshakeResult.trusted(),
+    List<PairingHandshakeResult>? handshakeScript,
     this.revokeResult = const PairingRevokeResult.success(),
-  });
+  }) : _handshakeScript = handshakeScript;
 
   final PairingHandshakeResult handshakeResult;
+  final List<PairingHandshakeResult>? _handshakeScript;
   final PairingRevokeResult revokeResult;
   final Set<String> _consumedSessions = <String>{};
   int revokeTrustCalls = 0;
+  int handshakeCalls = 0;
 
   @override
   Future<PairingFinalizeResult> finalizeTrust({
@@ -540,6 +607,17 @@ class FakePairingBridgeApi implements PairingBridgeApi {
     required String phoneId,
     required String sessionToken,
   }) async {
+    handshakeCalls += 1;
+
+    final handshakeScript = _handshakeScript;
+    if (handshakeScript != null && handshakeScript.isNotEmpty) {
+      final scriptIndex = handshakeCalls - 1;
+      if (scriptIndex < handshakeScript.length) {
+        return handshakeScript[scriptIndex];
+      }
+      return handshakeScript.last;
+    }
+
     return handshakeResult;
   }
 

@@ -402,6 +402,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       gitControlsUnavailableReason:
           'Git controls are unavailable while reconnecting to the private route.',
     );
+    _scheduleReconnectCatchUp();
   }
 
   void _scheduleReconnectCatchUp() {

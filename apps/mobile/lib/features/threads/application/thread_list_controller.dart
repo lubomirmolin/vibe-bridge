@@ -408,10 +408,58 @@ class ThreadListController extends StateNotifier<ThreadListState> {
     try {
       await _closeLiveSubscription();
       await _startLiveSubscription();
+      final didCatchUp = await _catchUpThreadListAfterReconnect();
+      if (!didCatchUp) {
+        _scheduleReconnect();
+      }
     } catch (_) {
       _scheduleReconnect();
     } finally {
       _isReconnectInProgress = false;
+    }
+  }
+
+  Future<bool> _catchUpThreadListAfterReconnect() async {
+    try {
+      final threads = await _bridgeApi.fetchThreads(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+      );
+      await _cacheRepository.saveThreadList(threads);
+
+      state = state.copyWith(
+        threads: threads,
+        clearErrorMessage: true,
+        clearStaleMessage: true,
+        isLoading: false,
+        isShowingCachedData: false,
+      );
+
+      return true;
+    } on ThreadListBridgeException catch (error) {
+      if (error.isConnectivityError) {
+        if (state.threads.isNotEmpty) {
+          state = state.copyWith(
+            staleMessage:
+                'Bridge is offline. Showing cached threads. Mutating actions stay blocked until reconnect.',
+            clearErrorMessage: true,
+            isLoading: false,
+            isShowingCachedData: true,
+          );
+        } else {
+          state = state.copyWith(
+            errorMessage: error.message,
+            isLoading: false,
+            isShowingCachedData: false,
+          );
+        }
+
+        return false;
+      }
+
+      state = state.copyWith(errorMessage: error.message, isLoading: false);
+      return true;
+    } catch (_) {
+      return false;
     }
   }
 

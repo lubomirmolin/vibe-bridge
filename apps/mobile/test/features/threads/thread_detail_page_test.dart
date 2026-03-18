@@ -1136,7 +1136,7 @@ void main() {
   );
 
   testWidgets(
-    'disconnect keeps existing items deduplicated and exposes reconnect controls',
+    'disconnect reconnects and keeps items deduplicated',
     (tester) async {
       final listApi = FakeThreadListBridgeApi(
         scriptedResults: [_threadSummaries()],
