@@ -358,9 +358,47 @@ class PairingController extends StateNotifier<PairingState> {
     );
   }
 
-  Future<void> _clearLocalTrust() async {
+  Future<void> unpairFromMobileSettings() async {
+    final trustedBridge = state.trustedBridge;
+    String? warningMessage;
+
+    if (trustedBridge != null) {
+      final phoneId = await _secureStore.readSecret(
+        SecureValueKey.pairingPrivateKey,
+      );
+      final revokeResult = await _bridgeApi.revokeTrust(
+        trustedBridge: trustedBridge,
+        phoneId: phoneId,
+      );
+
+      if (!revokeResult.isSuccess) {
+        warningMessage = revokeResult.message;
+      }
+    }
+
+    await _clearLocalTrust(clearCachedThreadState: true);
+    state = state.copyWith(
+      step: PairingStep.unpaired,
+      clearTrustedBridge: true,
+      clearPendingPayload: true,
+      bridgeConnectionState: BridgeConnectionState.connected,
+      consumedSessionIds: const <String>{},
+      isPersistingTrust: false,
+      errorMessage:
+          warningMessage ??
+          'This phone was unpaired. Scan a fresh pairing QR to reconnect.',
+    );
+  }
+
+  Future<void> _clearLocalTrust({bool clearCachedThreadState = false}) async {
     await _secureStore.removeSecret(SecureValueKey.trustedBridgeIdentity);
     await _secureStore.removeSecret(SecureValueKey.sessionToken);
+
+    if (clearCachedThreadState) {
+      await _secureStore.removeSecret(SecureValueKey.threadListCache);
+      await _secureStore.removeSecret(SecureValueKey.threadDetailsCache);
+      await _secureStore.removeSecret(SecureValueKey.selectedThreadId);
+    }
   }
 
   Future<String> _readOrCreatePhoneId() async {

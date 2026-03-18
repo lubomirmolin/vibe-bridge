@@ -15,6 +15,11 @@ abstract class PairingBridgeApi {
     required String phoneId,
     required String sessionToken,
   });
+
+  Future<PairingRevokeResult> revokeTrust({
+    required TrustedBridgeIdentity trustedBridge,
+    required String? phoneId,
+  });
 }
 
 class HttpPairingBridgeApi implements PairingBridgeApi {
@@ -41,7 +46,10 @@ class HttpPairingBridgeApi implements PairingBridgeApi {
 
       final response = await _post(uri);
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        final sessionToken = _readRequiredString(response.jsonBody, 'session_token');
+        final sessionToken = _readRequiredString(
+          response.jsonBody,
+          'session_token',
+        );
         return PairingFinalizeResult.success(sessionToken: sessionToken);
       }
 
@@ -122,6 +130,57 @@ class HttpPairingBridgeApi implements PairingBridgeApi {
     }
   }
 
+  @override
+  Future<PairingRevokeResult> revokeTrust({
+    required TrustedBridgeIdentity trustedBridge,
+    required String? phoneId,
+  }) async {
+    try {
+      final query = <String, String>{};
+      final normalizedPhoneId = phoneId?.trim();
+      if (normalizedPhoneId != null && normalizedPhoneId.isNotEmpty) {
+        query['phone_id'] = normalizedPhoneId;
+      }
+
+      final uri = _buildPairingUri(
+        trustedBridge.bridgeApiBaseUrl,
+        '/pairing/trust/revoke',
+        query,
+      );
+
+      final response = await _post(uri);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return const PairingRevokeResult.success();
+      }
+
+      return PairingRevokeResult.failure(
+        message:
+            _readOptionalString(response.jsonBody, 'message') ??
+            'Couldn’t revoke bridge trust from mobile right now.',
+      );
+    } on SocketException {
+      return const PairingRevokeResult.failure(
+        message:
+            'Could not reach the bridge to revoke trust. Local trust will still be cleared.',
+      );
+    } on HandshakeException {
+      return const PairingRevokeResult.failure(
+        message:
+            'Could not reach the bridge to revoke trust. Local trust will still be cleared.',
+      );
+    } on HttpException {
+      return const PairingRevokeResult.failure(
+        message:
+            'Could not reach the bridge to revoke trust. Local trust will still be cleared.',
+      );
+    } on FormatException {
+      return const PairingRevokeResult.failure(
+        message:
+            'Bridge returned an invalid unpair response. Local trust will still be cleared.',
+      );
+    }
+  }
+
   Future<_HttpJsonResponse> _post(Uri uri) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
 
@@ -169,7 +228,7 @@ class _PairingFinalizeSuccess extends PairingFinalizeResult {
 
 class _PairingFinalizeFailure extends PairingFinalizeResult {
   const _PairingFinalizeFailure({required super.code, required super.message})
-      : super._();
+    : super._();
 }
 
 class PairingHandshakeResult {
@@ -208,19 +267,42 @@ class PairingHandshakeResult {
   }) = _PairingHandshakeConnectivityUnavailable;
 }
 
+class PairingRevokeResult {
+  const PairingRevokeResult._({required this.isSuccess, this.message});
+
+  final bool isSuccess;
+  final String? message;
+
+  const factory PairingRevokeResult.success() = _PairingRevokeSuccess;
+
+  const factory PairingRevokeResult.failure({required String message}) =
+      _PairingRevokeFailure;
+}
+
+class _PairingRevokeSuccess extends PairingRevokeResult {
+  const _PairingRevokeSuccess() : super._(isSuccess: true);
+}
+
+class _PairingRevokeFailure extends PairingRevokeResult {
+  const _PairingRevokeFailure({required super.message})
+    : super._(isSuccess: false);
+}
+
 class _PairingHandshakeTrusted extends PairingHandshakeResult {
   const _PairingHandshakeTrusted()
-      : super._(isTrusted: true, connectivityUnavailable: false);
+    : super._(isTrusted: true, connectivityUnavailable: false);
 }
 
 class _PairingHandshakeUntrusted extends PairingHandshakeResult {
-  const _PairingHandshakeUntrusted({required super.code, required super.message})
-      : super._(isTrusted: false, connectivityUnavailable: false);
+  const _PairingHandshakeUntrusted({
+    required super.code,
+    required super.message,
+  }) : super._(isTrusted: false, connectivityUnavailable: false);
 }
 
 class _PairingHandshakeConnectivityUnavailable extends PairingHandshakeResult {
   const _PairingHandshakeConnectivityUnavailable({required super.message})
-      : super._(isTrusted: false, connectivityUnavailable: true);
+    : super._(isTrusted: false, connectivityUnavailable: true);
 }
 
 Uri _buildPairingUri(
@@ -232,11 +314,10 @@ Uri _buildPairingUri(
   final normalizedBasePath = baseUri.path.endsWith('/')
       ? baseUri.path.substring(0, baseUri.path.length - 1)
       : baseUri.path;
-  final normalizedRoute = routePath.startsWith('/')
-      ? routePath
-      : '/$routePath';
+  final normalizedRoute = routePath.startsWith('/') ? routePath : '/$routePath';
 
-  final fullPath = '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}$normalizedRoute';
+  final fullPath =
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}$normalizedRoute';
   return baseUri.replace(path: fullPath, queryParameters: query);
 }
 

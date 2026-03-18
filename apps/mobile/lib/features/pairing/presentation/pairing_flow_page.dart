@@ -1,4 +1,5 @@
 import 'package:codex_mobile_companion/features/pairing/application/pairing_controller.dart';
+import 'package:codex_mobile_companion/features/settings/presentation/settings_page.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -405,6 +406,20 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
             },
             icon: const Icon(Icons.forum_outlined),
             label: const Text('Open threads'),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            key: const Key('open-device-settings'),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) =>
+                      SettingsPage(bridgeApiBaseUrl: bridge.bridgeApiBaseUrl),
+                ),
+              );
+            },
+            icon: const Icon(Icons.settings_outlined),
+            label: const Text('Device settings'),
           ),
           const SizedBox(height: 12),
           FilledButton(

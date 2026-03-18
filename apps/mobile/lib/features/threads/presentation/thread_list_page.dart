@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:codex_mobile_companion/features/approvals/application/approvals_queue_controller.dart';
 import 'package:codex_mobile_companion/features/approvals/presentation/approvals_queue_page.dart';
+import 'package:codex_mobile_companion/features/settings/application/notification_preferences_controller.dart';
+import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
+import 'package:codex_mobile_companion/features/settings/presentation/settings_page.dart';
 import 'package:codex_mobile_companion/features/threads/application/thread_list_controller.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_detail_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
@@ -38,6 +41,12 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
     final approvalsState = ref.watch(
       approvalsQueueControllerProvider(widget.bridgeApiBaseUrl),
     );
+    final notificationPreferences = ref.watch(
+      notificationPreferencesControllerProvider,
+    );
+    final runtimeAccessMode = ref.watch(
+      runtimeAccessModeProvider(widget.bridgeApiBaseUrl),
+    );
     final state = ref.watch(
       threadListControllerProvider(widget.bridgeApiBaseUrl),
     );
@@ -65,9 +74,24 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
             },
             icon: Badge.count(
               count: approvalsState.pendingCount,
-              isLabelVisible: approvalsState.pendingCount > 0,
+              isLabelVisible:
+                  approvalsState.pendingCount > 0 &&
+                  notificationPreferences.approvalNotificationsEnabled,
               child: const Icon(Icons.fact_check_outlined),
             ),
+          ),
+          IconButton(
+            key: const Key('open-device-settings-from-threads'),
+            tooltip: 'Open device settings',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) =>
+                      SettingsPage(bridgeApiBaseUrl: widget.bridgeApiBaseUrl),
+                ),
+              );
+            },
+            icon: const Icon(Icons.settings_outlined),
           ),
         ],
       ),
@@ -103,6 +127,11 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                 child: _StaleDataBanner(message: state.staleMessage!),
+              ),
+            if (runtimeAccessMode != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: _AccessModeBanner(accessMode: runtimeAccessMode),
               ),
             Expanded(child: _buildBody(state, controller)),
           ],
@@ -194,6 +223,35 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
           );
         },
       ),
+    );
+  }
+}
+
+class _AccessModeBanner extends StatelessWidget {
+  const _AccessModeBanner({required this.accessMode});
+
+  final AccessMode accessMode;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = switch (accessMode) {
+      AccessMode.readOnly =>
+        'Read-only mode is active: mutating turn and git controls are blocked.',
+      AccessMode.controlWithApprovals =>
+        'Control-with-approvals mode is active: dangerous actions require approvals.',
+      AccessMode.fullControl =>
+        'Full-control mode is active: approval resolution and git mutations are enabled.',
+    };
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+      child: Text(label),
     );
   }
 }

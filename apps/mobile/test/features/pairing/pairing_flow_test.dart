@@ -2,6 +2,8 @@ import 'package:codex_mobile_companion/features/pairing/application/pairing_cont
 import 'package:codex_mobile_companion/features/pairing/data/pairing_bridge_api.dart';
 import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
 import 'package:codex_mobile_companion/features/pairing/presentation/pairing_flow_page.dart';
+import 'package:codex_mobile_companion/features/settings/data/settings_bridge_api.dart';
+import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -415,6 +417,72 @@ void main() {
       expect(await store.readSecret(SecureValueKey.sessionToken), isNotNull);
     },
   );
+
+  testWidgets(
+    'unpairing from settings clears local trust and returns to unpaired UI',
+    (tester) async {
+      final store = InMemorySecureStore();
+      await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
+{
+  "bridge_id": "bridge-a1",
+  "bridge_name": "Codex Mobile Companion",
+  "bridge_api_base_url": "https://bridge.ts.net",
+  "session_id": "session-reconnect",
+  "paired_at_epoch_seconds": 100
+}
+''');
+      await store.writeSecret(
+        SecureValueKey.sessionToken,
+        'active-session-token',
+      );
+      await store.writeSecret(
+        SecureValueKey.pairingPrivateKey,
+        'phone-test-id',
+      );
+
+      final bridgeApi = FakePairingBridgeApi();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            secureStoreProvider.overrideWithValue(store),
+            pairingBridgeApiProvider.overrideWithValue(bridgeApi),
+            settingsBridgeApiProvider.overrideWithValue(
+              FakeSettingsBridgeApi(),
+            ),
+            nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 17, 21, 0)),
+          ],
+          child: const MaterialApp(
+            home: PairingFlowPage(enableCameraPreview: false),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Paired with Codex Mobile Companion'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('open-device-settings')));
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('unpair-device-button')),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('unpair-device-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Pair your phone to this Mac'), findsOneWidget);
+      expect(
+        await store.readSecret(SecureValueKey.trustedBridgeIdentity),
+        isNull,
+      );
+      expect(await store.readSecret(SecureValueKey.sessionToken), isNull);
+      expect(bridgeApi.revokeTrustCalls, 1);
+    },
+  );
 }
 
 String _validPayloadJson({
@@ -438,10 +506,13 @@ String _validPayloadJson({
 class FakePairingBridgeApi implements PairingBridgeApi {
   FakePairingBridgeApi({
     this.handshakeResult = const PairingHandshakeResult.trusted(),
+    this.revokeResult = const PairingRevokeResult.success(),
   });
 
   final PairingHandshakeResult handshakeResult;
+  final PairingRevokeResult revokeResult;
   final Set<String> _consumedSessions = <String>{};
+  int revokeTrustCalls = 0;
 
   @override
   Future<PairingFinalizeResult> finalizeTrust({
@@ -470,5 +541,48 @@ class FakePairingBridgeApi implements PairingBridgeApi {
     required String sessionToken,
   }) async {
     return handshakeResult;
+  }
+
+  @override
+  Future<PairingRevokeResult> revokeTrust({
+    required TrustedBridgeIdentity trustedBridge,
+    required String? phoneId,
+  }) async {
+    revokeTrustCalls += 1;
+    return revokeResult;
+  }
+}
+
+class FakeSettingsBridgeApi implements SettingsBridgeApi {
+  FakeSettingsBridgeApi({
+    this.accessMode = AccessMode.fullControl,
+    this.events = const <SecurityEventRecordDto>[],
+  });
+
+  final AccessMode accessMode;
+  final List<SecurityEventRecordDto> events;
+
+  @override
+  Future<AccessMode> fetchAccessMode({required String bridgeApiBaseUrl}) async {
+    return accessMode;
+  }
+
+  @override
+  Future<List<SecurityEventRecordDto>> fetchSecurityEvents({
+    required String bridgeApiBaseUrl,
+  }) async {
+    return events;
+  }
+
+  @override
+  Future<AccessMode> setAccessMode({
+    required String bridgeApiBaseUrl,
+    required AccessMode accessMode,
+    required String phoneId,
+    required String bridgeId,
+    required String sessionToken,
+    String actor = 'mobile-device',
+  }) async {
+    return accessMode;
   }
 }

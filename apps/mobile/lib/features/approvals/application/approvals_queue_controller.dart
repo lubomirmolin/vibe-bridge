@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
 import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,10 +11,26 @@ final approvalsQueueControllerProvider =
       ApprovalsQueueState,
       String
     >((ref, bridgeApiBaseUrl) {
-      return ApprovalsQueueController(
+      final controller = ApprovalsQueueController(
         bridgeApiBaseUrl: bridgeApiBaseUrl,
         bridgeApi: ref.watch(approvalBridgeApiProvider),
+        initialAccessMode: ref.read(
+          runtimeAccessModeProvider(bridgeApiBaseUrl),
+        ),
+        onAccessModeObserved: (accessMode) {
+          ref.read(runtimeAccessModeProvider(bridgeApiBaseUrl).notifier).state =
+              accessMode;
+        },
       );
+
+      ref.listen<AccessMode?>(runtimeAccessModeProvider(bridgeApiBaseUrl), (
+        previous,
+        next,
+      ) {
+        controller.overrideAccessMode(next);
+      });
+
+      return controller;
     });
 
 class ApprovalItemState {
@@ -111,14 +128,30 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
   ApprovalsQueueController({
     required String bridgeApiBaseUrl,
     required ApprovalBridgeApi bridgeApi,
+    required void Function(AccessMode accessMode) onAccessModeObserved,
+    AccessMode? initialAccessMode,
   }) : _bridgeApiBaseUrl = bridgeApiBaseUrl,
        _bridgeApi = bridgeApi,
-       super(const ApprovalsQueueState()) {
+       _onAccessModeObserved = onAccessModeObserved,
+       super(ApprovalsQueueState(accessMode: initialAccessMode)) {
     unawaited(loadApprovals());
   }
 
   final String _bridgeApiBaseUrl;
   final ApprovalBridgeApi _bridgeApi;
+  final void Function(AccessMode accessMode) _onAccessModeObserved;
+
+  void overrideAccessMode(AccessMode? accessMode) {
+    if (accessMode == null) {
+      return;
+    }
+
+    if (state.accessMode == accessMode) {
+      return;
+    }
+
+    state = state.copyWith(accessMode: accessMode);
+  }
 
   Future<void> loadApprovals({bool showLoading = true}) async {
     if (showLoading) {
@@ -133,6 +166,7 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
 
       final accessMode = values[0] as AccessMode;
       final approvals = values[1] as List<ApprovalRecordDto>;
+      _onAccessModeObserved(accessMode);
 
       final previousItemsById = {
         for (final item in state.items) item.approval.approvalId: item,

@@ -1,5 +1,8 @@
 import 'package:codex_mobile_companion/features/approvals/application/approvals_queue_controller.dart';
 import 'package:codex_mobile_companion/features/approvals/presentation/approval_presenter.dart';
+import 'package:codex_mobile_companion/features/settings/application/notification_preferences_controller.dart';
+import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
+import 'package:codex_mobile_companion/features/settings/presentation/settings_page.dart';
 import 'package:codex_mobile_companion/features/threads/application/thread_detail_controller.dart';
 import 'package:codex_mobile_companion/features/threads/domain/thread_activity_item.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
@@ -52,16 +55,50 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     final approvalsState = ref.watch(
       approvalsQueueControllerProvider(widget.bridgeApiBaseUrl),
     );
+    final runtimeAccessMode = ref.watch(
+      runtimeAccessModeProvider(widget.bridgeApiBaseUrl),
+    );
+    final notificationPreferences = ref.watch(
+      notificationPreferencesControllerProvider,
+    );
     final approvalsController = ref.read(
       approvalsQueueControllerProvider(widget.bridgeApiBaseUrl).notifier,
     );
 
+    final effectiveAccessMode =
+        runtimeAccessMode ??
+        state.thread?.accessMode ??
+        AccessMode.controlWithApprovals;
+    final isReadOnlyMode = effectiveAccessMode == AccessMode.readOnly;
+    final controlsEnabled = state.canRunMutatingActions && !isReadOnlyMode;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Thread detail')),
+      appBar: AppBar(
+        title: const Text('Thread detail'),
+        actions: [
+          IconButton(
+            key: const Key('open-device-settings-from-thread-detail'),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) =>
+                      SettingsPage(bridgeApiBaseUrl: widget.bridgeApiBaseUrl),
+                ),
+              );
+            },
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Open device settings',
+          ),
+        ],
+      ),
       body: SafeArea(
         child: _buildBody(
           context,
           state: state,
+          accessMode: effectiveAccessMode,
+          controlsEnabled: controlsEnabled,
+          showLiveNotificationSuppressedBanner:
+              !notificationPreferences.liveActivityNotificationsEnabled,
           onRetry: controller.loadThread,
           onLoadEarlier: controller.loadEarlierHistory,
           onRetryReconnect: controller.retryReconnectCatchUp,
@@ -94,6 +131,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
 Widget _buildBody(
   BuildContext context, {
   required ThreadDetailState state,
+  required AccessMode accessMode,
+  required bool controlsEnabled,
+  required bool showLiveNotificationSuppressedBanner,
   required Future<void> Function() onRetry,
   required VoidCallback onLoadEarlier,
   required Future<void> Function() onRetryReconnect,
@@ -137,6 +177,8 @@ Widget _buildBody(
     );
   }
 
+  final isReadOnlyMode = accessMode == AccessMode.readOnly;
+
   return RefreshIndicator(
     onRefresh: onRetry,
     child: ListView(
@@ -144,13 +186,27 @@ Widget _buildBody(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
         _ThreadDetailHeader(thread: thread),
+        const SizedBox(height: 12),
+        _AccessModeBanner(accessMode: accessMode),
         if (state.staleMessage != null) ...[
           const SizedBox(height: 12),
           _InlineWarning(message: state.staleMessage!),
         ],
-        if (!state.canRunMutatingActions) ...[
+        if (!controlsEnabled) ...[
           const SizedBox(height: 12),
-          _MutatingActionsBlockedNotice(onRetryReconnect: onRetryReconnect),
+          _MutatingActionsBlockedNotice(
+            message: isReadOnlyMode
+                ? 'Read-only mode blocks turn and git mutations. Change access mode in settings to continue.'
+                : 'Mutating actions are blocked while the bridge or private route is unavailable.',
+            onRetryReconnect: isReadOnlyMode ? null : onRetryReconnect,
+          ),
+        ],
+        if (showLiveNotificationSuppressedBanner) ...[
+          const SizedBox(height: 12),
+          const _InlineInfo(
+            message:
+                'Live activity notifications are disabled in settings. In-app thread updates continue normally.',
+          ),
         ],
         if (state.streamErrorMessage != null) ...[
           const SizedBox(height: 12),
@@ -160,7 +216,8 @@ Widget _buildBody(
         _TurnControlsCard(
           composerController: composerController,
           isTurnActive: state.isTurnActive,
-          controlsEnabled: state.canRunMutatingActions,
+          controlsEnabled: controlsEnabled,
+          isReadOnlyMode: isReadOnlyMode,
           isComposerMutationInFlight: state.isComposerMutationInFlight,
           isInterruptMutationInFlight: state.isInterruptMutationInFlight,
           onSubmitComposer: onSubmitComposer,
@@ -175,7 +232,8 @@ Widget _buildBody(
           thread: thread,
           gitStatus: gitStatus,
           gitBranchController: gitBranchController,
-          controlsEnabled: state.canRunMutatingActions,
+          controlsEnabled: controlsEnabled,
+          isReadOnlyMode: isReadOnlyMode,
           isGitStatusLoading: isGitStatusLoading,
           isGitMutationInFlight: isGitMutationInFlight,
           gitErrorMessage: gitErrorMessage,
@@ -321,11 +379,41 @@ class _ThreadDetailHeader extends StatelessWidget {
   }
 }
 
+class _AccessModeBanner extends StatelessWidget {
+  const _AccessModeBanner({required this.accessMode});
+
+  final AccessMode accessMode;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = switch (accessMode) {
+      AccessMode.readOnly =>
+        'Read-only mode: viewing is allowed, but turn and git mutations are blocked.',
+      AccessMode.controlWithApprovals =>
+        'Control-with-approvals mode: turn controls are enabled and dangerous actions are approval-gated.',
+      AccessMode.fullControl =>
+        'Full-control mode: turn, approval resolution, and git controls are fully actionable.',
+    };
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+      child: Text(label),
+    );
+  }
+}
+
 class _TurnControlsCard extends StatelessWidget {
   const _TurnControlsCard({
     required this.composerController,
     required this.isTurnActive,
     required this.controlsEnabled,
+    required this.isReadOnlyMode,
     required this.isComposerMutationInFlight,
     required this.isInterruptMutationInFlight,
     required this.onSubmitComposer,
@@ -335,6 +423,7 @@ class _TurnControlsCard extends StatelessWidget {
   final TextEditingController composerController;
   final bool isTurnActive;
   final bool controlsEnabled;
+  final bool isReadOnlyMode;
   final bool isComposerMutationInFlight;
   final bool isInterruptMutationInFlight;
   final Future<bool> Function(String rawInput) onSubmitComposer;
@@ -353,7 +442,9 @@ class _TurnControlsCard extends StatelessWidget {
         !isComposerMutationInFlight;
 
     final composerLabel = isTurnActive ? 'Steer turn' : 'Start turn';
-    final helperMessage = isTurnActive
+    final helperMessage = isReadOnlyMode
+        ? 'Read-only mode is active. Turn start, steer, and interrupt are blocked.'
+        : isTurnActive
         ? 'Thread is active. Steer the current turn or interrupt it.'
         : 'Thread is idle. Start a new turn from this composer.';
 
@@ -446,6 +537,7 @@ class _GitControlsCard extends StatelessWidget {
     required this.gitStatus,
     required this.gitBranchController,
     required this.controlsEnabled,
+    required this.isReadOnlyMode,
     required this.isGitStatusLoading,
     required this.isGitMutationInFlight,
     required this.gitErrorMessage,
@@ -461,6 +553,7 @@ class _GitControlsCard extends StatelessWidget {
   final GitStatusResponseDto? gitStatus;
   final TextEditingController gitBranchController;
   final bool controlsEnabled;
+  final bool isReadOnlyMode;
   final bool isGitStatusLoading;
   final bool isGitMutationInFlight;
   final String? gitErrorMessage;
@@ -489,7 +582,9 @@ class _GitControlsCard extends StatelessWidget {
         !isGitStatusLoading &&
         !isGitMutationInFlight;
 
-    final unavailableMessage = !controlsEnabled
+    final unavailableMessage = isReadOnlyMode
+        ? 'Read-only mode blocks git mutations. Change access mode in settings to continue.'
+        : !controlsEnabled
         ? 'Git controls are unavailable while the bridge is offline.'
         : gitControlsUnavailableReason ??
               (hasRepositoryContext
@@ -863,9 +958,13 @@ class _InlineInfo extends StatelessWidget {
 }
 
 class _MutatingActionsBlockedNotice extends StatelessWidget {
-  const _MutatingActionsBlockedNotice({required this.onRetryReconnect});
+  const _MutatingActionsBlockedNotice({
+    required this.message,
+    required this.onRetryReconnect,
+  });
 
-  final Future<void> Function() onRetryReconnect;
+  final String message;
+  final Future<void> Function()? onRetryReconnect;
 
   @override
   Widget build(BuildContext context) {
@@ -882,15 +981,15 @@ class _MutatingActionsBlockedNotice extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Mutating actions are blocked while the bridge or private route is unavailable.',
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton(
-            key: const Key('retry-reconnect-catchup'),
-            onPressed: onRetryReconnect,
-            child: const Text('Retry reconnect'),
-          ),
+          Text(message),
+          if (onRetryReconnect != null) ...[
+            const SizedBox(height: 8),
+            OutlinedButton(
+              key: const Key('retry-reconnect-catchup'),
+              onPressed: onRetryReconnect,
+              child: const Text('Retry reconnect'),
+            ),
+          ],
         ],
       ),
     );

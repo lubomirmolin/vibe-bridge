@@ -554,6 +554,46 @@ class SecurityAuditEventDto {
   }
 }
 
+class SecurityEventRecordDto {
+  const SecurityEventRecordDto({
+    required this.severity,
+    required this.category,
+    required this.event,
+  });
+
+  final String severity;
+  final String category;
+  final BridgeEventEnvelope<Map<String, dynamic>> event;
+
+  SecurityAuditEventDto? get auditEvent {
+    try {
+      return SecurityAuditEventDto.fromJson(event.payload);
+    } on FormatException {
+      return null;
+    } on TypeError {
+      return null;
+    }
+  }
+
+  factory SecurityEventRecordDto.fromJson(Map<String, dynamic> json) {
+    final eventJson = json['event'];
+    if (eventJson is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "event" in security event record.',
+      );
+    }
+
+    return SecurityEventRecordDto(
+      severity: json['severity'] as String,
+      category: json['category'] as String,
+      event: BridgeEventEnvelope<Map<String, dynamic>>.fromJson(
+        eventJson,
+        (payload) => payload,
+      ),
+    );
+  }
+}
+
 class BridgeEventEnvelope<TPayload> {
   const BridgeEventEnvelope({
     required this.contractVersion,

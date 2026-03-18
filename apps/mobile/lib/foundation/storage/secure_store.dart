@@ -5,6 +5,7 @@ enum SecureValueKey {
   threadListCache,
   threadDetailsCache,
   selectedThreadId,
+  notificationPreferences,
 }
 
 extension SecureValueKeyMetadata on SecureValueKey {
@@ -22,6 +23,8 @@ extension SecureValueKeyMetadata on SecureValueKey {
         return 'thread_details_cache';
       case SecureValueKey.selectedThreadId:
         return 'selected_thread_id';
+      case SecureValueKey.notificationPreferences:
+        return 'notification_preferences';
     }
   }
 }

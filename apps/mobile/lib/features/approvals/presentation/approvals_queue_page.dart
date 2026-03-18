@@ -1,6 +1,7 @@
 import 'package:codex_mobile_companion/features/approvals/application/approvals_queue_controller.dart';
 import 'package:codex_mobile_companion/features/approvals/presentation/approval_detail_page.dart';
 import 'package:codex_mobile_companion/features/approvals/presentation/approval_presenter.dart';
+import 'package:codex_mobile_companion/features/settings/presentation/settings_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -27,6 +28,19 @@ class ApprovalsQueuePage extends ConsumerWidget {
             },
             icon: const Icon(Icons.refresh),
             tooltip: 'Refresh approvals',
+          ),
+          IconButton(
+            key: const Key('open-device-settings-from-approvals'),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) =>
+                      SettingsPage(bridgeApiBaseUrl: bridgeApiBaseUrl),
+                ),
+              );
+            },
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Open device settings',
           ),
         ],
       ),

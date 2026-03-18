@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
+import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
+import 'package:codex_mobile_companion/features/settings/data/settings_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
@@ -402,6 +404,66 @@ void main() {
     expect(find.text('Status: Clean • Ahead 0 • Behind 0'), findsOneWidget);
     expect(detailApi.gitStatusFetchCountByThreadId['thread-123'], 4);
   });
+
+  testWidgets(
+    'changing access mode from settings immediately gates turn and git controls',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+        gitStatusScriptByThreadId: {
+          'thread-123': [_gitStatus(threadId: 'thread-123')],
+        },
+      );
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+      );
+
+      await _scrollUntilVisible(
+        tester,
+        find.byKey(const Key('git-controls-card')),
+      );
+
+      final pullBefore = tester.widget<OutlinedButton>(
+        find.byKey(const Key('git-pull-button')),
+      );
+      expect(pullBefore.onPressed, isNotNull);
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ThreadDetailPage)),
+      );
+      container
+              .read(runtimeAccessModeProvider(_bridgeApiBaseUrl).notifier)
+              .state =
+          AccessMode.readOnly;
+      await tester.pumpAndSettle();
+
+      await _scrollUntilVisible(
+        tester,
+        find.byKey(const Key('turn-composer-submit')),
+      );
+
+      final submitAfter = tester.widget<FilledButton>(
+        find.byKey(const Key('turn-composer-submit')),
+      );
+
+      await _scrollUntilVisible(
+        tester,
+        find.byKey(const Key('git-pull-button')),
+      );
+      final pullAfter = tester.widget<OutlinedButton>(
+        find.byKey(const Key('git-pull-button')),
+      );
+      expect(submitAfter.onPressed, isNull);
+      expect(pullAfter.onPressed, isNull);
+    },
+  );
 
   testWidgets('blank branch switch is rejected client-side', (tester) async {
     final detailApi = FakeThreadDetailBridgeApi(
@@ -1141,6 +1203,7 @@ Future<void> _pumpThreadListApp(
   required ThreadDetailBridgeApi detailApi,
   required ThreadLiveStream liveStream,
   ThreadCacheRepository? cacheRepository,
+  SettingsBridgeApi? settingsApi,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -1148,6 +1211,9 @@ Future<void> _pumpThreadListApp(
         threadListBridgeApiProvider.overrideWithValue(listApi),
         approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
         threadDetailBridgeApiProvider.overrideWithValue(detailApi),
+        settingsBridgeApiProvider.overrideWithValue(
+          settingsApi ?? FakeSettingsBridgeApi(),
+        ),
         threadLiveStreamProvider.overrideWithValue(liveStream),
         threadCacheRepositoryProvider.overrideWithValue(
           cacheRepository ?? _newCacheRepository(),
@@ -1169,6 +1235,7 @@ Future<void> _pumpThreadDetailApp(
   ThreadListBridgeApi? listApi,
   ThreadLiveStream? liveStream,
   ThreadCacheRepository? cacheRepository,
+  SettingsBridgeApi? settingsApi,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -1179,6 +1246,9 @@ Future<void> _pumpThreadDetailApp(
         ),
         approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
         threadDetailBridgeApiProvider.overrideWithValue(detailApi),
+        settingsBridgeApiProvider.overrideWithValue(
+          settingsApi ?? FakeSettingsBridgeApi(),
+        ),
         threadLiveStreamProvider.overrideWithValue(
           liveStream ?? FakeThreadLiveStream(),
         ),
@@ -1920,7 +1990,7 @@ class FakeThreadListBridgeApi implements ThreadListBridgeApi {
 class EmptyApprovalBridgeApi implements ApprovalBridgeApi {
   @override
   Future<AccessMode> fetchAccessMode({required String bridgeApiBaseUrl}) async {
-    return AccessMode.readOnly;
+    return AccessMode.fullControl;
   }
 
   @override
@@ -1944,5 +2014,40 @@ class EmptyApprovalBridgeApi implements ApprovalBridgeApi {
     required String approvalId,
   }) {
     throw UnimplementedError();
+  }
+}
+
+class FakeSettingsBridgeApi implements SettingsBridgeApi {
+  FakeSettingsBridgeApi({
+    this.accessMode = AccessMode.controlWithApprovals,
+    this.securityEvents = const <SecurityEventRecordDto>[],
+  });
+
+  AccessMode accessMode;
+  final List<SecurityEventRecordDto> securityEvents;
+
+  @override
+  Future<AccessMode> fetchAccessMode({required String bridgeApiBaseUrl}) async {
+    return accessMode;
+  }
+
+  @override
+  Future<List<SecurityEventRecordDto>> fetchSecurityEvents({
+    required String bridgeApiBaseUrl,
+  }) async {
+    return securityEvents;
+  }
+
+  @override
+  Future<AccessMode> setAccessMode({
+    required String bridgeApiBaseUrl,
+    required AccessMode accessMode,
+    required String phoneId,
+    required String bridgeId,
+    required String sessionToken,
+    String actor = 'mobile-device',
+  }) async {
+    this.accessMode = accessMode;
+    return accessMode;
   }
 }
