@@ -80,6 +80,91 @@ void main() {
       );
     },
   );
+
+  testWidgets(
+    'approval notification toggle suppresses then re-enables runtime delivery from settings',
+    (tester) async {
+      final secureStore = InMemorySecureStore();
+      await secureStore.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
+{
+  "bridge_id": "bridge-a1",
+  "bridge_name": "Codex Mobile Companion",
+  "bridge_api_base_url": "https://bridge.ts.net",
+  "session_id": "session-abc",
+  "paired_at_epoch_seconds": 100
+}
+''');
+      await secureStore.writeSecret(SecureValueKey.sessionToken, 'token-a1');
+      await secureStore.writeSecret(
+        SecureValueKey.pairingPrivateKey,
+        'phone-a1',
+      );
+
+      final liveStream = FakeThreadLiveStream();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appSecureStoreProvider.overrideWithValue(secureStore),
+            pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
+            settingsBridgeApiProvider.overrideWithValue(
+              FakeSettingsBridgeApi(),
+            ),
+            threadLiveStreamProvider.overrideWithValue(liveStream),
+          ],
+          child: const CodexMobileApp(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('open-device-settings')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('approval-notification-toggle')));
+      await tester.pumpAndSettle();
+
+      liveStream.emit(
+        BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-global-suppressed',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.approvalRequested,
+          occurredAt: '2026-03-18T12:01:00Z',
+          payload: {'reason': 'Suppressed while notifications are disabled.'},
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(
+        find.textContaining(
+          'Approval requested: Suppressed while notifications are disabled.',
+        ),
+        findsNothing,
+      );
+
+      await tester.tap(find.byKey(const Key('approval-notification-toggle')));
+      await tester.pumpAndSettle();
+
+      liveStream.emit(
+        BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-global-delivered',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.approvalRequested,
+          occurredAt: '2026-03-18T12:02:00Z',
+          payload: {'reason': 'Delivered after re-enable.'},
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(
+        find.textContaining('Approval requested: Delivered after re-enable.'),
+        findsOneWidget,
+      );
+    },
+  );
 }
 
 class FakePairingBridgeApi implements PairingBridgeApi {

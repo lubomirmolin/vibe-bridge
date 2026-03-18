@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
+import 'package:codex_mobile_companion/features/approvals/presentation/approval_detail_page.dart';
 import 'package:codex_mobile_companion/features/approvals/presentation/approvals_queue_page.dart';
+import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
@@ -117,6 +119,65 @@ void main() {
     );
   });
 
+  testWidgets(
+    'full-control mode can reject pending approvals and sync queue/thread status',
+    (tester) async {
+      final approvalApi = FakeApprovalBridgeApi(
+        accessMode: AccessMode.fullControl,
+        approvals: [_pendingApproval()],
+      );
+
+      await _pumpThreadListApp(
+        tester,
+        approvalApi: approvalApi,
+        detailApi: FakeThreadDetailBridgeApi(
+          detailByThreadId: {'thread-123': _threadDetail()},
+          timelineByThreadId: {'thread-123': _threadTimeline()},
+        ),
+        listApi: FakeThreadListBridgeApi(threads: [_threadSummary()]),
+      );
+
+      await tester.tap(find.byKey(const Key('open-approvals-queue')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('approval-card-approval-1')));
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('reject-approval-button')),
+        300,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('reject-approval-button')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('already resolved as rejected'),
+        findsAtLeastNWidgets(1),
+      );
+      expect(find.textContaining('resumed after approval'), findsNothing);
+
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('Rejected'), findsAtLeastNWidgets(1));
+
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('thread-approval-status-approval-1')),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Rejected'), findsAtLeastNWidgets(1));
+    },
+  );
+
   testWidgets('lower-permission mode keeps approve/reject disabled', (
     tester,
   ) async {
@@ -154,6 +215,208 @@ void main() {
     expect(rejectButton.onPressed, isNull);
     expect(find.textContaining('only in full-control mode'), findsOneWidget);
   });
+
+  testWidgets(
+    'read-only mode keeps approve/reject disabled while approval detail stays visible',
+    (tester) async {
+      final approvalApi = FakeApprovalBridgeApi(
+        accessMode: AccessMode.readOnly,
+        approvals: [_pendingApproval()],
+      );
+
+      await _pumpApprovalsApp(
+        tester,
+        approvalApi: approvalApi,
+        detailApi: FakeThreadDetailBridgeApi(
+          detailByThreadId: {'thread-123': _threadDetail()},
+          timelineByThreadId: {'thread-123': _threadTimeline()},
+        ),
+      );
+
+      await tester.tap(find.byKey(const Key('approval-card-approval-1')));
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('approve-approval-button')),
+        300,
+      );
+      await tester.pumpAndSettle();
+
+      final approveButton = tester.widget<FilledButton>(
+        find.byKey(const Key('approve-approval-button')),
+      );
+      final rejectButton = tester.widget<OutlinedButton>(
+        find.byKey(const Key('reject-approval-button')),
+      );
+
+      expect(approveButton.onPressed, isNull);
+      expect(rejectButton.onPressed, isNull);
+      expect(find.textContaining('only in full-control mode'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'read-only mode allows viewing while blocking steer, interrupt, approve, reject, switch, pull, and push',
+    (tester) async {
+      final approvalApi = FakeApprovalBridgeApi(
+        accessMode: AccessMode.readOnly,
+        approvals: [_pendingApproval()],
+      );
+
+      await _pumpThreadListApp(
+        tester,
+        approvalApi: approvalApi,
+        detailApi: FakeThreadDetailBridgeApi(
+          detailByThreadId: {'thread-123': _threadDetail()},
+          timelineByThreadId: {'thread-123': _threadTimeline()},
+        ),
+        listApi: FakeThreadListBridgeApi(threads: [_threadSummary()]),
+      );
+
+      await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Implement shared contracts'), findsOneWidget);
+
+      final steerButton = tester.widget<FilledButton>(
+        find.byKey(const Key('turn-composer-submit')),
+      );
+      final interruptButton = tester.widget<OutlinedButton>(
+        find.byKey(const Key('turn-interrupt-button')),
+      );
+      expect(steerButton.onPressed, isNull);
+      expect(interruptButton.onPressed, isNull);
+
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('git-controls-card')),
+        260,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+
+      final switchButton = tester.widget<FilledButton>(
+        find.byKey(const Key('git-branch-switch-button')),
+      );
+      final pullButton = tester.widget<OutlinedButton>(
+        find.byKey(const Key('git-pull-button')),
+      );
+      final pushButton = tester.widget<OutlinedButton>(
+        find.byKey(const Key('git-push-button')),
+      );
+      expect(switchButton.onPressed, isNull);
+      expect(pullButton.onPressed, isNull);
+      expect(pushButton.onPressed, isNull);
+
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('open-approvals-queue')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('approval-card-approval-1')));
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('approve-approval-button')),
+        300,
+      );
+      await tester.pumpAndSettle();
+
+      final approveButton = tester.widget<FilledButton>(
+        find.byKey(const Key('approve-approval-button')),
+      );
+      final rejectButton = tester.widget<OutlinedButton>(
+        find.byKey(const Key('reject-approval-button')),
+      );
+      expect(approveButton.onPressed, isNull);
+      expect(rejectButton.onPressed, isNull);
+    },
+  );
+
+  testWidgets(
+    'approval detail mode changes update approve/reject actionability in place',
+    (tester) async {
+      final approvalApi = FakeApprovalBridgeApi(
+        accessMode: AccessMode.fullControl,
+        approvals: [_pendingApproval()],
+      );
+
+      await _pumpApprovalsApp(
+        tester,
+        approvalApi: approvalApi,
+        detailApi: FakeThreadDetailBridgeApi(
+          detailByThreadId: {'thread-123': _threadDetail()},
+          timelineByThreadId: {'thread-123': _threadTimeline()},
+        ),
+      );
+
+      await tester.tap(find.byKey(const Key('approval-card-approval-1')));
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('approve-approval-button')),
+        300,
+      );
+      await tester.pumpAndSettle();
+
+      var approveButton = tester.widget<FilledButton>(
+        find.byKey(const Key('approve-approval-button')),
+      );
+      var rejectButton = tester.widget<OutlinedButton>(
+        find.byKey(const Key('reject-approval-button')),
+      );
+
+      expect(approveButton.onPressed, isNotNull);
+      expect(rejectButton.onPressed, isNotNull);
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ApprovalDetailPage)),
+      );
+      container
+              .read(runtimeAccessModeProvider(_bridgeApiBaseUrl).notifier)
+              .state =
+          AccessMode.readOnly;
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('approve-approval-button')),
+        300,
+      );
+      await tester.pumpAndSettle();
+
+      approveButton = tester.widget<FilledButton>(
+        find.byKey(const Key('approve-approval-button')),
+      );
+      rejectButton = tester.widget<OutlinedButton>(
+        find.byKey(const Key('reject-approval-button')),
+      );
+
+      expect(approveButton.onPressed, isNull);
+      expect(rejectButton.onPressed, isNull);
+      expect(find.textContaining('only in full-control mode'), findsOneWidget);
+
+      container
+              .read(runtimeAccessModeProvider(_bridgeApiBaseUrl).notifier)
+              .state =
+          AccessMode.fullControl;
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('approve-approval-button')),
+        300,
+      );
+      await tester.pumpAndSettle();
+
+      approveButton = tester.widget<FilledButton>(
+        find.byKey(const Key('approve-approval-button')),
+      );
+      rejectButton = tester.widget<OutlinedButton>(
+        find.byKey(const Key('reject-approval-button')),
+      );
+
+      expect(approveButton.onPressed, isNotNull);
+      expect(rejectButton.onPressed, isNotNull);
+    },
+  );
 
   testWidgets(
     'stale approvals become non-actionable after late resolve attempt',
@@ -423,7 +686,11 @@ ApprovalRecordDto _branchSwitchApprovalFromBridgeContract() {
       'branch': 'master',
       'remote': 'origin',
     },
-    'git_status': <String, dynamic>{'dirty': true, 'ahead_by': 2, 'behind_by': 1},
+    'git_status': <String, dynamic>{
+      'dirty': true,
+      'ahead_by': 2,
+      'behind_by': 1,
+    },
   });
 }
 

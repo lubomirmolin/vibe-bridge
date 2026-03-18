@@ -228,6 +228,71 @@ void main() {
     expect(find.text('Steer turn'), findsOneWidget);
   });
 
+  testWidgets(
+    'steer failure surfaces clear error and keeps active thread usable',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+        steerTurnScriptByThreadId: {
+          'thread-123': [
+            const ThreadTurnBridgeException(
+              message: 'Steer failed: bridge rejected steering payload.',
+            ),
+            _turnMutationResult(
+              threadId: 'thread-123',
+              operation: 'turn_steer',
+              status: ThreadStatus.running,
+              message: 'Steer instruction applied to active turn',
+            ),
+          ],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+      );
+
+      await tester.enterText(
+        find.byKey(const Key('turn-composer-input')),
+        'Keep summarizing reconnect state transitions.',
+      );
+      await tester.tap(find.byKey(const Key('turn-composer-submit')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Steer failed: bridge rejected steering payload.'),
+        findsOneWidget,
+      );
+      expect(find.text('Running'), findsOneWidget);
+      expect(find.text('Steer turn'), findsOneWidget);
+      expect(find.byKey(const Key('turn-interrupt-button')), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const Key('turn-composer-input')),
+        'Retry steer after failure with a shorter instruction.',
+      );
+      await tester.tap(find.byKey(const Key('turn-composer-submit')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Steer failed: bridge rejected steering payload.'),
+        findsNothing,
+      );
+      expect(find.text('Running'), findsOneWidget);
+      expect(
+        detailApi.steerTurnInstructionsByThreadId['thread-123'],
+        hasLength(2),
+      );
+    },
+  );
+
   testWidgets('interrupt failure keeps active status and reports clear error', (
     tester,
   ) async {
