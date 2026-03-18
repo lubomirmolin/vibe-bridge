@@ -1,4 +1,5 @@
 import 'package:codex_mobile_companion/features/pairing/application/pairing_controller.dart';
+import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -383,6 +384,19 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
           _IdentityRow(label: 'Bridge URL', value: bridge.bridgeApiBaseUrl),
           _IdentityRow(label: 'Trusted session', value: bridge.sessionId),
           const SizedBox(height: 24),
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) =>
+                      ThreadListPage(bridgeApiBaseUrl: bridge.bridgeApiBaseUrl),
+                ),
+              );
+            },
+            icon: const Icon(Icons.forum_outlined),
+            label: const Text('Open threads'),
+          ),
+          const SizedBox(height: 12),
           FilledButton(
             onPressed: () => _openScanner(pairingController),
             child: const Text('Scan another QR'),
