@@ -466,11 +466,11 @@ struct BridgeShellAPIClient: ShellBridgeClient {
 
     func revokeTrust(phoneID: String?) async throws -> PairingRevokeResponseDTO {
         var components = URLComponents(url: apiBaseURL.appending(path: "/pairing/trust/revoke"), resolvingAgainstBaseURL: false)
+        var queryItems: [URLQueryItem] = [URLQueryItem(name: "actor", value: "desktop-shell")]
         if let phoneID, !phoneID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            components?.queryItems = [
-                URLQueryItem(name: "phone_id", value: phoneID),
-            ]
+            queryItems.append(URLQueryItem(name: "phone_id", value: phoneID))
         }
+        components?.queryItems = queryItems
 
         guard let endpoint = components?.url else {
             throw BridgeShellAPIClientError.invalidResponse

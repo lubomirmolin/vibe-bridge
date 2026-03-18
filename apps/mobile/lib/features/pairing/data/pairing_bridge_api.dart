@@ -136,7 +136,7 @@ class HttpPairingBridgeApi implements PairingBridgeApi {
     required String? phoneId,
   }) async {
     try {
-      final query = <String, String>{};
+      final query = <String, String>{'actor': 'mobile-device'};
       final normalizedPhoneId = phoneId?.trim();
       if (normalizedPhoneId != null && normalizedPhoneId.isNotEmpty) {
         query['phone_id'] = normalizedPhoneId;

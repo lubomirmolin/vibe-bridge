@@ -1381,6 +1381,13 @@ fn route_pairing_request(
                         Some(value.to_string())
                     }
                 });
+            let actor = query.get("actor").cloned().unwrap_or_else(|| {
+                if phone_id.is_some() {
+                    "mobile-device".to_string()
+                } else {
+                    "desktop-shell".to_string()
+                }
+            });
 
             let result = app
                 .pairing_sessions
@@ -1389,13 +1396,51 @@ fn route_pairing_request(
                 .revoke_trust(PairingRevokeRequest { phone_id });
 
             Some(match result {
-                Ok(response) => json_response("200 OK", &response),
-                Err(error) => json_error_response(
-                    "500 Internal Server Error",
-                    "pairing_revoke_failed",
-                    "storage_error",
-                    &error,
-                ),
+                Ok(response) => {
+                    app.record_security_audit(
+                        if response.revoked {
+                            LogSeverity::Info
+                        } else {
+                            LogSeverity::Warn
+                        },
+                        "pairing",
+                        SecurityAuditEventDto {
+                            actor,
+                            action: "revoke_trust".to_string(),
+                            target: "pairing.trust".to_string(),
+                            outcome: if response.revoked {
+                                "allowed".to_string()
+                            } else {
+                                "denied".to_string()
+                            },
+                            reason: if response.revoked {
+                                "trust_revoked".to_string()
+                            } else {
+                                "no_matching_trusted_phone_or_session".to_string()
+                            },
+                        },
+                    );
+                    json_response("200 OK", &response)
+                }
+                Err(error) => {
+                    app.record_security_audit(
+                        LogSeverity::Warn,
+                        "pairing",
+                        SecurityAuditEventDto {
+                            actor,
+                            action: "revoke_trust".to_string(),
+                            target: "pairing.trust".to_string(),
+                            outcome: "denied".to_string(),
+                            reason: "storage_error".to_string(),
+                        },
+                    );
+                    json_error_response(
+                        "500 Internal Server Error",
+                        "pairing_revoke_failed",
+                        "storage_error",
+                        &error,
+                    )
+                }
             })
         }
         _ => None,
@@ -2897,6 +2942,54 @@ mod tests {
         assert!(outcomes.contains(&"denied"));
         assert!(outcomes.contains(&"gated"));
         assert!(outcomes.contains(&"allowed"));
+    }
+
+    #[test]
+    fn trust_revocation_records_mobile_and_desktop_security_audit_events() {
+        let app = test_application();
+
+        let _ = trusted_session_query(&app);
+        let mobile_revoke = route_request(
+            "POST /pairing/trust/revoke?phone_id=phone-1&actor=mobile-device HTTP/1.1",
+            &app,
+        );
+        assert!(mobile_revoke.starts_with("HTTP/1.1 200 OK"));
+        assert!(mobile_revoke.contains("\"revoked\":true"));
+
+        let _ = trusted_session_query(&app);
+        let desktop_revoke = route_request(
+            "POST /pairing/trust/revoke?actor=desktop-shell HTTP/1.1",
+            &app,
+        );
+        assert!(desktop_revoke.starts_with("HTTP/1.1 200 OK"));
+        assert!(desktop_revoke.contains("\"revoked\":true"));
+
+        let events = parse_json_body(&route_request("GET /security/events HTTP/1.1", &app));
+        let records = events["events"]
+            .as_array()
+            .expect("security events list should be present");
+
+        let has_mobile_revoke = records.iter().any(|record| {
+            record["event"]["payload"]["action"] == "revoke_trust"
+                && record["event"]["payload"]["target"] == "pairing.trust"
+                && record["event"]["payload"]["outcome"] == "allowed"
+                && record["event"]["payload"]["actor"] == "mobile-device"
+        });
+        let has_desktop_revoke = records.iter().any(|record| {
+            record["event"]["payload"]["action"] == "revoke_trust"
+                && record["event"]["payload"]["target"] == "pairing.trust"
+                && record["event"]["payload"]["outcome"] == "allowed"
+                && record["event"]["payload"]["actor"] == "desktop-shell"
+        });
+
+        assert!(
+            has_mobile_revoke,
+            "expected revoke_trust event for mobile unpair"
+        );
+        assert!(
+            has_desktop_revoke,
+            "expected revoke_trust event for desktop unpair"
+        );
     }
 
     #[test]

@@ -72,6 +72,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         AccessMode.controlWithApprovals;
     final isReadOnlyMode = effectiveAccessMode == AccessMode.readOnly;
     final controlsEnabled = state.canRunMutatingActions && !isReadOnlyMode;
+    final desktopIntegrationControlsEnabled = state.canRunMutatingActions;
 
     return Scaffold(
       appBar: AppBar(
@@ -98,6 +99,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
           state: state,
           accessMode: effectiveAccessMode,
           controlsEnabled: controlsEnabled,
+          desktopIntegrationControlsEnabled: desktopIntegrationControlsEnabled,
           desktopIntegrationEnabled:
               notificationPreferences.desktopIntegrationEnabled,
           showLiveNotificationSuppressedBanner:
@@ -152,6 +154,7 @@ Widget _buildBody(
   required ThreadDetailState state,
   required AccessMode accessMode,
   required bool controlsEnabled,
+  required bool desktopIntegrationControlsEnabled,
   required bool desktopIntegrationEnabled,
   required bool showLiveNotificationSuppressedBanner,
   required Future<void> Function() onRetry,
@@ -278,7 +281,7 @@ Widget _buildBody(
         const SizedBox(height: 12),
         _DesktopIntegrationCard(
           desktopIntegrationEnabled: desktopIntegrationEnabled,
-          controlsEnabled: controlsEnabled,
+          openOnMacEnabled: desktopIntegrationControlsEnabled,
           isOpeningOnMac: isOpenOnMacInFlight,
           openOnMacMessage: openOnMacMessage,
           openOnMacErrorMessage: openOnMacErrorMessage,
@@ -311,7 +314,7 @@ Widget _buildBody(
 class _DesktopIntegrationCard extends StatelessWidget {
   const _DesktopIntegrationCard({
     required this.desktopIntegrationEnabled,
-    required this.controlsEnabled,
+    required this.openOnMacEnabled,
     required this.isOpeningOnMac,
     required this.openOnMacMessage,
     required this.openOnMacErrorMessage,
@@ -319,7 +322,7 @@ class _DesktopIntegrationCard extends StatelessWidget {
   });
 
   final bool desktopIntegrationEnabled;
-  final bool controlsEnabled;
+  final bool openOnMacEnabled;
   final bool isOpeningOnMac;
   final String? openOnMacMessage;
   final String? openOnMacErrorMessage;
@@ -328,7 +331,7 @@ class _DesktopIntegrationCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final canOpenOnMac =
-        desktopIntegrationEnabled && controlsEnabled && !isOpeningOnMac;
+        desktopIntegrationEnabled && openOnMacEnabled && !isOpeningOnMac;
 
     return Card(
       key: const Key('desktop-integration-card'),

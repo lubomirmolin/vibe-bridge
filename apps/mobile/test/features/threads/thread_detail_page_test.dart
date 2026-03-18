@@ -809,8 +809,16 @@ void main() {
       final pullAfter = tester.widget<OutlinedButton>(
         find.byKey(const Key('git-pull-button')),
       );
+      await _scrollUntilVisible(
+        tester,
+        find.byKey(const Key('open-on-mac-button')),
+      );
+      final openOnMacAfter = tester.widget<FilledButton>(
+        find.byKey(const Key('open-on-mac-button')),
+      );
       expect(submitAfter.onPressed, isNull);
       expect(pullAfter.onPressed, isNull);
+      expect(openOnMacAfter.onPressed, isNotNull);
     },
   );
 
