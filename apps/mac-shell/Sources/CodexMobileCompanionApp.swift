@@ -15,6 +15,26 @@ struct CodexMobileCompanionApp: App {
     }
 }
 
+enum ShellRuntimeState: Equatable {
+    case unpaired
+    case pairedIdle
+    case pairedActive
+    case degraded
+
+    var displayName: String {
+        switch self {
+        case .unpaired:
+            return "Unpaired"
+        case .pairedIdle:
+            return "Paired (Idle)"
+        case .pairedActive:
+            return "Paired (Active)"
+        case .degraded:
+            return "Degraded"
+        }
+    }
+}
+
 private struct PairingEntryView: View {
     @ObservedObject var viewModel: PairingEntryViewModel
 
@@ -24,27 +44,41 @@ private struct PairingEntryView: View {
                 .font(.title2)
                 .fontWeight(.semibold)
 
-            Text("Desktop pairing entrypoint")
+            Text("Desktop shell runtime supervision")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
             Group {
-                metadataRow(label: "Shell state", value: "Unpaired")
-                metadataRow(label: "Bridge", value: viewModel.bridgeStatus)
+                metadataRow(label: "Shell state", value: viewModel.shellState.displayName)
+                metadataRow(label: "Bridge", value: viewModel.bridgeRuntimeLabel)
+                metadataRow(label: "Paired phone", value: viewModel.pairedDeviceLabel)
+                metadataRow(label: "Active session", value: viewModel.activeSessionLabel)
+                metadataRow(label: "Active threads", value: "\(viewModel.runningThreadCount)")
             }
+
+            Text(viewModel.runtimeDetail)
+                .font(.footnote)
+                .foregroundStyle(viewModel.shellState == .degraded ? .red : .secondary)
 
             qrSection
 
             HStack(spacing: 12) {
-                Button(viewModel.isLoading ? "Generating…" : "Generate Pairing QR") {
+                Button(viewModel.isLoadingPairing ? "Generating…" : "Refresh Pairing QR") {
                     Task {
                         await viewModel.refreshPairingSession()
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(viewModel.isLoading)
+                .disabled(viewModel.isLoadingPairing || !viewModel.shouldShowPairingQR)
 
-                if viewModel.isLoading {
+                Button("Retry Bridge Now") {
+                    Task {
+                        await viewModel.refreshRuntimeState()
+                    }
+                }
+                .disabled(viewModel.isRefreshingRuntime)
+
+                if viewModel.isLoadingPairing || viewModel.isRefreshingRuntime {
                     ProgressView()
                         .controlSize(.small)
                 }
@@ -57,39 +91,54 @@ private struct PairingEntryView: View {
             }
         }
         .padding(20)
-        .frame(minWidth: 420, minHeight: 500)
+        .frame(minWidth: 420, minHeight: 520)
         .task {
-            await viewModel.refreshPairingSessionIfNeeded()
+            viewModel.startRuntimeSupervision()
         }
     }
 
     @ViewBuilder
     private var qrSection: some View {
-        if let qrImage = viewModel.qrImage,
-           let response = viewModel.pairingSession
-        {
-            VStack(alignment: .leading, spacing: 12) {
-                Image(nsImage: qrImage)
-                    .resizable()
-                    .interpolation(.none)
-                    .scaledToFit()
-                    .frame(width: 240, height: 240)
-                    .padding(8)
-                    .background(.background)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.secondary.opacity(0.35), lineWidth: 1)
-                    )
+        switch viewModel.shellState {
+        case .unpaired:
+            if let qrImage = viewModel.qrImage,
+               let response = viewModel.pairingSession
+            {
+                VStack(alignment: .leading, spacing: 12) {
+                    Image(nsImage: qrImage)
+                        .resizable()
+                        .interpolation(.none)
+                        .scaledToFit()
+                        .frame(width: 240, height: 240)
+                        .padding(8)
+                        .background(.background)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.secondary.opacity(0.35), lineWidth: 1)
+                        )
 
-                metadataRow(label: "Session ID", value: response.pairingSession.sessionID)
-                metadataRow(label: "Bridge ID", value: response.bridgeIdentity.bridgeID)
-                metadataRow(
-                    label: "Expires",
-                    value: DateFormatter.pairingExpiry.string(from: Date(timeIntervalSince1970: TimeInterval(response.pairingSession.expiresAtEpochSeconds)))
-                )
+                    metadataRow(label: "Session ID", value: response.pairingSession.sessionID)
+                    metadataRow(label: "Bridge ID", value: response.bridgeIdentity.bridgeID)
+                    metadataRow(
+                        label: "Expires",
+                        value: DateFormatter.pairingExpiry.string(from: Date(timeIntervalSince1970: TimeInterval(response.pairingSession.expiresAtEpochSeconds)))
+                    )
+                }
+            } else {
+                Text("Bridge is reachable but no pairing QR is cached yet. Use “Refresh Pairing QR”.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 24)
             }
-        } else {
-            Text("Generate a pairing session to display a scannable QR code.")
+
+        case .pairedIdle, .pairedActive:
+            Text("This Mac is already paired. Existing trusted phone sessions stay active without rescanning.")
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 24)
+
+        case .degraded:
+            Text("Bridge is degraded or restarting. Supervision is retrying automatically and will recover when bridge health returns.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .padding(.vertical, 24)
@@ -101,7 +150,7 @@ private struct PairingEntryView: View {
             Text("\(label):")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-                .frame(width: 80, alignment: .leading)
+                .frame(width: 100, alignment: .leading)
             Text(value)
                 .font(.footnote.monospaced())
                 .textSelection(.enabled)
@@ -111,41 +160,161 @@ private struct PairingEntryView: View {
 
 @MainActor
 final class PairingEntryViewModel: ObservableObject {
-    @Published private(set) var isLoading = false
+    @Published private(set) var shellState: ShellRuntimeState = .degraded
+    @Published private(set) var bridgeRuntimeLabel = "Unavailable"
+    @Published private(set) var pairedDeviceLabel = "Not paired"
+    @Published private(set) var activeSessionLabel = "No active session"
+    @Published private(set) var runningThreadCount = 0
+    @Published private(set) var runtimeDetail = "Waiting for bridge supervision…"
+
+    @Published private(set) var isLoadingPairing = false
+    @Published private(set) var isRefreshingRuntime = false
     @Published private(set) var pairingSession: PairingSessionResponseDTO?
     @Published private(set) var qrImage: NSImage?
     @Published private(set) var errorMessage: String?
 
-    private let pairingClient: PairingSessionClient
+    private let bridgeClient: ShellBridgeClient
+    private var supervisionTask: Task<Void, Never>?
 
     var bridgeStatus: String {
-        if pairingSession != nil {
-            return "Connected"
-        }
-        return "Unavailable"
+        shellState == .degraded ? "Unavailable" : "Connected"
     }
 
-    init(pairingClient: PairingSessionClient = BridgePairingClient()) {
-        self.pairingClient = pairingClient
+    var shouldShowPairingQR: Bool {
+        shellState == .unpaired
+    }
+
+    init(bridgeClient: ShellBridgeClient = BridgeShellAPIClient()) {
+        self.bridgeClient = bridgeClient
+    }
+
+    deinit {
+        supervisionTask?.cancel()
+    }
+
+    func startRuntimeSupervision() {
+        guard supervisionTask == nil else {
+            return
+        }
+
+        supervisionTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            await self.refreshRuntimeState()
+
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: self.pollIntervalNanoseconds)
+                await self.refreshRuntimeState()
+            }
+        }
+    }
+
+    func stopRuntimeSupervision() {
+        supervisionTask?.cancel()
+        supervisionTask = nil
+    }
+
+    func refreshRuntimeState() async {
+        guard !isRefreshingRuntime else {
+            return
+        }
+
+        isRefreshingRuntime = true
+        defer { isRefreshingRuntime = false }
+
+        do {
+            let health = try await bridgeClient.fetchHealth()
+            bridgeRuntimeLabel = "\(health.runtime.state) (\(health.runtime.mode))"
+            runtimeDetail = health.runtime.detail
+
+            switch ShellStateResolver.resolveRuntimeHealth(health) {
+            case let .degraded(message):
+                applyDegradedState(message)
+                return
+
+            case let .healthy(trustStatus):
+                let threadsResponse = try await bridgeClient.fetchThreads()
+                let runningCount = threadsResponse.threads.filter { $0.status == .running }.count
+                runningThreadCount = runningCount
+                applyHealthyState(trustStatus: trustStatus, runningThreadCount: runningCount)
+
+                if shellState == .unpaired {
+                    await refreshPairingSessionIfNeeded()
+                }
+            }
+        } catch {
+            applyDegradedState("Bridge supervision retrying: \(error.localizedDescription)")
+        }
+    }
+
+    private var pollIntervalNanoseconds: UInt64 {
+        shellState == .degraded ? 2_000_000_000 : 5_000_000_000
+    }
+
+    private func applyHealthyState(
+        trustStatus: BridgeTrustStatusDTO?,
+        runningThreadCount: Int
+    ) {
+        shellState = ShellStateResolver.resolveShellState(
+            trustStatus: trustStatus,
+            runningThreadCount: runningThreadCount
+        )
+
+        if let trustedPhone = trustStatus?.trustedPhone {
+            pairedDeviceLabel = "\(trustedPhone.phoneName) (\(trustedPhone.phoneID))"
+        } else {
+            pairedDeviceLabel = "Not paired"
+        }
+
+        if let activeSession = trustStatus?.activeSession {
+            activeSessionLabel = activeSession.sessionID
+        } else {
+            activeSessionLabel = "No active session"
+        }
+
+        errorMessage = nil
+
+        if shellState != .unpaired {
+            pairingSession = nil
+            qrImage = nil
+        }
+    }
+
+    private func applyDegradedState(_ message: String) {
+        shellState = .degraded
+        runningThreadCount = 0
+        pairedDeviceLabel = "Unavailable"
+        activeSessionLabel = "Unavailable"
+        runtimeDetail = message
+        pairingSession = nil
+        qrImage = nil
+        errorMessage = message
     }
 
     func refreshPairingSessionIfNeeded() async {
-        guard pairingSession == nil, !isLoading else {
+        guard shouldShowPairingQR, !isLoadingPairing else {
             return
         }
+
+        if hasFreshPairingSession {
+            return
+        }
+
         await refreshPairingSession()
     }
 
     func refreshPairingSession() async {
-        guard !isLoading else {
+        guard shouldShowPairingQR, !isLoadingPairing else {
             return
         }
 
-        isLoading = true
-        defer { isLoading = false }
+        isLoadingPairing = true
+        defer { isLoadingPairing = false }
 
         do {
-            let response = try await pairingClient.fetchPairingSession()
+            let response = try await bridgeClient.fetchPairingSession()
             guard let generatedQR = PairingQRCodeRenderer.makeImage(from: response.qrPayload) else {
                 throw PairingViewModelError.invalidPayload
             }
@@ -159,43 +328,103 @@ final class PairingEntryViewModel: ObservableObject {
             errorMessage = "Failed to generate pairing QR from bridge data: \(error.localizedDescription)"
         }
     }
+
+    private var hasFreshPairingSession: Bool {
+        guard let pairingSession else {
+            return false
+        }
+
+        let now = UInt64(Date().timeIntervalSince1970)
+        return pairingSession.pairingSession.expiresAtEpochSeconds > now + 15
+    }
 }
 
-protocol PairingSessionClient {
+enum RuntimeHealthResolution {
+    case healthy(BridgeTrustStatusDTO?)
+    case degraded(String)
+}
+
+struct ShellStateResolver {
+    static func resolveRuntimeHealth(_ health: BridgeHealthResponseDTO) -> RuntimeHealthResolution {
+        guard health.status == "ok" else {
+            return .degraded("Bridge health endpoint reported status \(health.status).")
+        }
+
+        if !health.pairingRoute.reachable {
+            return .degraded(
+                health.pairingRoute.message ?? "Private pairing route is unavailable."
+            )
+        }
+
+        if health.runtime.state == "degraded" {
+            return .degraded(health.runtime.detail)
+        }
+
+        return .healthy(health.trust)
+    }
+
+    static func resolveShellState(
+        trustStatus: BridgeTrustStatusDTO?,
+        runningThreadCount: Int
+    ) -> ShellRuntimeState {
+        guard trustStatus?.trustedPhone != nil else {
+            return .unpaired
+        }
+
+        return runningThreadCount > 0 ? .pairedActive : .pairedIdle
+    }
+}
+
+protocol ShellBridgeClient {
+    func fetchHealth() async throws -> BridgeHealthResponseDTO
+    func fetchThreads() async throws -> ThreadListResponseDTO
     func fetchPairingSession() async throws -> PairingSessionResponseDTO
 }
 
-struct BridgePairingClient: PairingSessionClient {
-    let endpoint: URL
+struct BridgeShellAPIClient: ShellBridgeClient {
+    let apiBaseURL: URL
 
-    init(endpoint: URL = URL(string: "http://127.0.0.1:3110/pairing/session")!) {
-        self.endpoint = endpoint
+    init(apiBaseURL: URL = URL(string: "http://127.0.0.1:3110")!) {
+        self.apiBaseURL = apiBaseURL
+    }
+
+    func fetchHealth() async throws -> BridgeHealthResponseDTO {
+        try await fetch(path: "/health", method: "GET")
+    }
+
+    func fetchThreads() async throws -> ThreadListResponseDTO {
+        try await fetch(path: "/threads", method: "GET")
     }
 
     func fetchPairingSession() async throws -> PairingSessionResponseDTO {
+        try await fetch(path: "/pairing/session", method: "POST")
+    }
+
+    private func fetch<T: Decodable>(path: String, method: String) async throws -> T {
+        let endpoint = apiBaseURL.appending(path: path)
         var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
+        request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw BridgePairingClientError.invalidResponse
+            throw BridgeShellAPIClientError.invalidResponse
         }
 
-        guard (200..<300).contains(httpResponse.statusCode) else {
+        guard (200 ..< 300).contains(httpResponse.statusCode) else {
             let bodyText = String(data: data, encoding: .utf8) ?? "<no body>"
-            throw BridgePairingClientError.unexpectedStatus(httpResponse.statusCode, bodyText)
+            throw BridgeShellAPIClientError.unexpectedStatus(httpResponse.statusCode, bodyText)
         }
 
         do {
-            return try JSONDecoder().decode(PairingSessionResponseDTO.self, from: data)
+            return try JSONDecoder().decode(T.self, from: data)
         } catch {
-            throw BridgePairingClientError.decodingFailure(error)
+            throw BridgeShellAPIClientError.decodingFailure(error)
         }
     }
 }
 
-enum BridgePairingClientError: LocalizedError {
+enum BridgeShellAPIClientError: LocalizedError {
     case invalidResponse
     case unexpectedStatus(Int, String)
     case decodingFailure(Error)
@@ -207,7 +436,7 @@ enum BridgePairingClientError: LocalizedError {
         case let .unexpectedStatus(statusCode, body):
             return "bridge returned HTTP \(statusCode): \(body)"
         case let .decodingFailure(error):
-            return "failed to decode pairing payload: \(error.localizedDescription)"
+            return "failed to decode bridge payload: \(error.localizedDescription)"
         }
     }
 }

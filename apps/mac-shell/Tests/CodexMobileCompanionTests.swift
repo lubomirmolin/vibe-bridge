@@ -84,31 +84,173 @@ final class CodexMobileCompanionTests: XCTestCase {
         XCTAssertEqual(decoded.bridgeIdentity.apiBaseURL, "http://127.0.0.1:3110")
     }
 
-    @MainActor
-    func testPairingViewModelLoadsSessionAndCreatesQRCode() async {
-        let viewModel = PairingEntryViewModel(
-            pairingClient: StubPairingSessionClient(result: .success(Self.samplePairingResponse))
+    func testShellStateResolverMapsUnpairedPairedIdleAndPairedActive() {
+        XCTAssertEqual(
+            ShellStateResolver.resolveShellState(trustStatus: nil, runningThreadCount: 0),
+            .unpaired
         )
 
-        await viewModel.refreshPairingSession()
+        XCTAssertEqual(
+            ShellStateResolver.resolveShellState(
+                trustStatus: Self.trustStatus(),
+                runningThreadCount: 0
+            ),
+            .pairedIdle
+        )
 
+        XCTAssertEqual(
+            ShellStateResolver.resolveShellState(
+                trustStatus: Self.trustStatus(),
+                runningThreadCount: 2
+            ),
+            .pairedActive
+        )
+    }
+
+    func testShellStateResolverTreatsOfflineRuntimeAsDegraded() {
+        let health = Self.healthResponse(
+            runtimeState: "degraded",
+            trustStatus: nil,
+            pairingRouteReachable: false,
+            pairingRouteMessage: "route unavailable"
+        )
+
+        switch ShellStateResolver.resolveRuntimeHealth(health) {
+        case .healthy:
+            XCTFail("Expected degraded resolution")
+        case let .degraded(message):
+            XCTAssertEqual(message, "route unavailable")
+        }
+    }
+
+    @MainActor
+    func testPairingViewModelLoadsSessionAndCreatesQRCodeWhenUnpaired() async {
+        let client = StubShellBridgeClient(
+            healthResults: [.success(Self.healthResponse(runtimeState: "managed", trustStatus: nil))],
+            threadResults: [.success(Self.threadListResponse(statuses: []))],
+            pairingResults: [.success(Self.samplePairingResponse)]
+        )
+        let viewModel = PairingEntryViewModel(bridgeClient: client)
+
+        await viewModel.refreshRuntimeState()
+
+        XCTAssertEqual(viewModel.shellState, .unpaired)
         XCTAssertEqual(viewModel.pairingSession?.pairingSession.sessionID, "pairing-session-42")
         XCTAssertNotNil(viewModel.qrImage)
         XCTAssertNil(viewModel.errorMessage)
     }
 
     @MainActor
-    func testPairingViewModelReportsBridgeFailure() async {
-        let viewModel = PairingEntryViewModel(
-            pairingClient: StubPairingSessionClient(result: .failure(StubError.bridgeUnavailable))
+    func testPairingViewModelReportsBridgeFailureForUnpairedQRCodeFetch() async {
+        let client = StubShellBridgeClient(
+            healthResults: [.success(Self.healthResponse(runtimeState: "managed", trustStatus: nil))],
+            threadResults: [.success(Self.threadListResponse(statuses: []))],
+            pairingResults: [.failure(StubError.bridgeUnavailable)]
         )
+        let viewModel = PairingEntryViewModel(bridgeClient: client)
 
-        await viewModel.refreshPairingSession()
+        await viewModel.refreshRuntimeState()
 
+        XCTAssertEqual(viewModel.shellState, .unpaired)
         XCTAssertNil(viewModel.pairingSession)
         XCTAssertNil(viewModel.qrImage)
         XCTAssertNotNil(viewModel.errorMessage)
-        XCTAssertEqual(viewModel.bridgeStatus, "Unavailable")
+    }
+
+    @MainActor
+    func testPairingViewModelTransitionsFromDegradedToPairedIdleAfterRecovery() async {
+        let client = StubShellBridgeClient(
+            healthResults: [
+                .failure(StubError.bridgeUnavailable),
+                .success(Self.healthResponse(runtimeState: "managed", trustStatus: Self.trustStatus()))
+            ],
+            threadResults: [.success(Self.threadListResponse(statuses: []))],
+            pairingResults: []
+        )
+        let viewModel = PairingEntryViewModel(bridgeClient: client)
+
+        await viewModel.refreshRuntimeState()
+        XCTAssertEqual(viewModel.shellState, .degraded)
+
+        await viewModel.refreshRuntimeState()
+        XCTAssertEqual(viewModel.shellState, .pairedIdle)
+        XCTAssertEqual(viewModel.pairedDeviceLabel, "Primary Phone (phone-1)")
+        XCTAssertEqual(viewModel.activeSessionLabel, "pairing-session-42")
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    @MainActor
+    func testPairingViewModelShowsPairedActiveWhenRunningThreadsExist() async {
+        let client = StubShellBridgeClient(
+            healthResults: [.success(Self.healthResponse(runtimeState: "managed", trustStatus: Self.trustStatus()))],
+            threadResults: [.success(Self.threadListResponse(statuses: [.running, .completed]))],
+            pairingResults: []
+        )
+        let viewModel = PairingEntryViewModel(bridgeClient: client)
+
+        await viewModel.refreshRuntimeState()
+
+        XCTAssertEqual(viewModel.shellState, .pairedActive)
+        XCTAssertEqual(viewModel.runningThreadCount, 1)
+        XCTAssertNil(viewModel.pairingSession)
+    }
+
+    private static func healthResponse(
+        runtimeState: String,
+        trustStatus: BridgeTrustStatusDTO?,
+        pairingRouteReachable: Bool = true,
+        pairingRouteMessage: String? = nil
+    ) -> BridgeHealthResponseDTO {
+        BridgeHealthResponseDTO(
+            status: "ok",
+            runtime: BridgeRuntimeSnapshotDTO(
+                mode: "auto",
+                state: runtimeState,
+                endpoint: "ws://127.0.0.1:4222",
+                pid: 123,
+                detail: runtimeState == "degraded" ? "runtime degraded" : "runtime healthy"
+            ),
+            pairingRoute: BridgePairingRouteHealthDTO(
+                reachable: pairingRouteReachable,
+                advertisedBaseURL: pairingRouteReachable ? "https://bridge.ts.net" : nil,
+                message: pairingRouteMessage
+            ),
+            trust: trustStatus,
+            api: BridgeAPISurfaceDTO(endpoints: ["GET /health"], seededThreadCount: 0)
+        )
+    }
+
+    private static func trustStatus() -> BridgeTrustStatusDTO {
+        BridgeTrustStatusDTO(
+            trustedPhone: BridgeTrustedPhoneDTO(
+                phoneID: "phone-1",
+                phoneName: "Primary Phone",
+                pairedAtEpochSeconds: 100
+            ),
+            activeSession: BridgeActiveSessionDTO(
+                phoneID: "phone-1",
+                sessionID: "pairing-session-42",
+                finalizedAtEpochSeconds: 120
+            )
+        )
+    }
+
+    private static func threadListResponse(statuses: [ThreadStatus]) -> ThreadListResponseDTO {
+        ThreadListResponseDTO(
+            contractVersion: SharedContract.version,
+            threads: statuses.enumerated().map { index, status in
+                ThreadSummaryDTO(
+                    contractVersion: SharedContract.version,
+                    threadID: "thread-\(index)",
+                    title: "Thread \(index)",
+                    status: status,
+                    workspace: "/workspace/codex-mobile-companion",
+                    repository: "codex-mobile-companion",
+                    branch: "master",
+                    updatedAt: "2026-03-18T12:00:00Z"
+                )
+            }
+        )
     }
 
     private static let samplePairingResponse = PairingSessionResponseDTO(
@@ -122,27 +264,93 @@ final class CodexMobileCompanionTests: XCTestCase {
             sessionID: "pairing-session-42",
             pairingToken: "ptk-42",
             issuedAtEpochSeconds: 100,
-            expiresAtEpochSeconds: 400
+            expiresAtEpochSeconds: UInt64(Date().timeIntervalSince1970) + 400
         ),
         qrPayload: "bridge-sample|pairing-session-42|ptk-42"
     )
 }
 
-private struct StubPairingSessionClient: PairingSessionClient {
-    let result: Result<PairingSessionResponseDTO, Error>
+private struct StubShellBridgeClient: ShellBridgeClient {
+    private let store: StubShellBridgeResponseStore
+
+    init(
+        healthResults: [Result<BridgeHealthResponseDTO, Error>],
+        threadResults: [Result<ThreadListResponseDTO, Error>],
+        pairingResults: [Result<PairingSessionResponseDTO, Error>]
+    ) {
+        self.store = StubShellBridgeResponseStore(
+            healthResults: healthResults,
+            threadResults: threadResults,
+            pairingResults: pairingResults
+        )
+    }
+
+    func fetchHealth() async throws -> BridgeHealthResponseDTO {
+        try await store.nextHealth()
+    }
+
+    func fetchThreads() async throws -> ThreadListResponseDTO {
+        try await store.nextThreadList()
+    }
 
     func fetchPairingSession() async throws -> PairingSessionResponseDTO {
-        try result.get()
+        try await store.nextPairing()
+    }
+}
+
+private actor StubShellBridgeResponseStore {
+    private var healthResults: [Result<BridgeHealthResponseDTO, Error>]
+    private var threadResults: [Result<ThreadListResponseDTO, Error>]
+    private var pairingResults: [Result<PairingSessionResponseDTO, Error>]
+
+    init(
+        healthResults: [Result<BridgeHealthResponseDTO, Error>],
+        threadResults: [Result<ThreadListResponseDTO, Error>],
+        pairingResults: [Result<PairingSessionResponseDTO, Error>]
+    ) {
+        self.healthResults = healthResults
+        self.threadResults = threadResults
+        self.pairingResults = pairingResults
+    }
+
+    func nextHealth() throws -> BridgeHealthResponseDTO {
+        guard !healthResults.isEmpty else {
+            throw StubError.missingHealthResult
+        }
+        return try healthResults.removeFirst().get()
+    }
+
+    func nextThreadList() throws -> ThreadListResponseDTO {
+        guard !threadResults.isEmpty else {
+            throw StubError.missingThreadResult
+        }
+        return try threadResults.removeFirst().get()
+    }
+
+    func nextPairing() throws -> PairingSessionResponseDTO {
+        guard !pairingResults.isEmpty else {
+            throw StubError.missingPairingResult
+        }
+        return try pairingResults.removeFirst().get()
     }
 }
 
 private enum StubError: LocalizedError {
     case bridgeUnavailable
+    case missingHealthResult
+    case missingThreadResult
+    case missingPairingResult
 
     var errorDescription: String? {
         switch self {
         case .bridgeUnavailable:
             return "bridge unavailable"
+        case .missingHealthResult:
+            return "missing stub health result"
+        case .missingThreadResult:
+            return "missing stub thread result"
+        case .missingPairingResult:
+            return "missing stub pairing result"
         }
     }
 }

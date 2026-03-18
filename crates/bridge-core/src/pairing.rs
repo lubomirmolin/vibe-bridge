@@ -264,6 +264,35 @@ impl PairingSessionService {
             revoked,
         })
     }
+
+    pub fn trust_snapshot(&self) -> PairingTrustSnapshot {
+        let trusted_phone = self
+            .trust_registry
+            .state
+            .trusted_phone
+            .as_ref()
+            .map(|record| PairingTrustedPhoneSnapshot {
+                phone_id: record.phone_id.clone(),
+                phone_name: record.phone_name.clone(),
+                paired_at_epoch_seconds: record.paired_at_epoch_seconds,
+            });
+
+        let active_session = self
+            .trust_registry
+            .state
+            .active_session
+            .as_ref()
+            .map(|record| PairingActiveSessionSnapshot {
+                phone_id: record.phone_id.clone(),
+                session_id: record.session_id.clone(),
+                finalized_at_epoch_seconds: record.finalized_at_epoch_seconds,
+            });
+
+        PairingTrustSnapshot {
+            trusted_phone,
+            active_session,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -438,6 +467,26 @@ pub struct PairingSession {
     pub pairing_token: String,
     pub issued_at_epoch_seconds: u64,
     pub expires_at_epoch_seconds: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PairingTrustSnapshot {
+    pub trusted_phone: Option<PairingTrustedPhoneSnapshot>,
+    pub active_session: Option<PairingActiveSessionSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PairingTrustedPhoneSnapshot {
+    pub phone_id: String,
+    pub phone_name: String,
+    pub paired_at_epoch_seconds: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PairingActiveSessionSnapshot {
+    pub phone_id: String,
+    pub session_id: String,
+    pub finalized_at_epoch_seconds: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

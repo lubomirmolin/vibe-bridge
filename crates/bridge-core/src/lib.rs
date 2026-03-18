@@ -20,7 +20,7 @@ use codex_runtime::{
 use logging::{InMemoryLogSink, LogSeverity, LogSink, StructuredLogger};
 use pairing::{
     PairingFinalizeError, PairingFinalizeRequest, PairingHandshakeError, PairingHandshakeRequest,
-    PairingRevokeRequest, PairingSessionService,
+    PairingRevokeRequest, PairingSessionService, PairingTrustSnapshot,
 };
 use persistence::PersistenceBoundary;
 use policy::{PolicyAction, PolicyDecision, PolicyEngine};
@@ -834,6 +834,13 @@ impl BridgeApplication {
         self.pairing_route.health()
     }
 
+    fn trust_snapshot(&self) -> PairingTrustSnapshot {
+        self.pairing_sessions
+            .lock()
+            .expect("pairing sessions mutex should not be poisoned")
+            .trust_snapshot()
+    }
+
     fn runtime_snapshot(&self) -> RuntimeSnapshot {
         self.runtime
             .lock()
@@ -1108,6 +1115,7 @@ fn route_request(request_line: &str, app: &BridgeApplication) -> String {
                 status: "ok",
                 runtime: app.runtime_snapshot(),
                 pairing_route: app.pairing_route_health(),
+                trust: app.trust_snapshot(),
                 api: ApiSurface {
                     endpoints: vec![
                         "POST /pairing/session",
@@ -2122,6 +2130,7 @@ struct HealthResponse {
     status: &'static str,
     runtime: RuntimeSnapshot,
     pairing_route: PairingRouteHealth,
+    trust: PairingTrustSnapshot,
     api: ApiSurface,
 }
 
