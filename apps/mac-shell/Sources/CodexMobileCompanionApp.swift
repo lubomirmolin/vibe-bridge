@@ -6,7 +6,13 @@ import SwiftUI
 
 @main
 struct CodexMobileCompanionApp: App {
-    @StateObject private var pairingViewModel = PairingEntryViewModel()
+    @StateObject private var pairingViewModel: PairingEntryViewModel
+
+    init() {
+        _pairingViewModel = StateObject(
+            wrappedValue: PairingEntryViewModel(startSupervisionOnInit: true)
+        )
+    }
 
     var body: some Scene {
         MenuBarExtra("Codex Mobile Companion", systemImage: "iphone.gen3") {
@@ -101,9 +107,6 @@ private struct PairingEntryView: View {
         }
         .padding(20)
         .frame(minWidth: 420, minHeight: 520)
-        .task {
-            viewModel.startRuntimeSupervision()
-        }
     }
 
     @ViewBuilder
@@ -187,6 +190,8 @@ final class PairingEntryViewModel: ObservableObject {
 
     private let bridgeClient: ShellBridgeClient
     private var supervisionTask: Task<Void, Never>?
+    private let degradedPollIntervalNanoseconds: UInt64
+    private let healthyPollIntervalNanoseconds: UInt64
 
     var bridgeStatus: String {
         shellState == .degraded ? "Unavailable" : "Connected"
@@ -200,8 +205,19 @@ final class PairingEntryViewModel: ObservableObject {
         shellState == .pairedIdle || shellState == .pairedActive
     }
 
-    init(bridgeClient: ShellBridgeClient = BridgeShellAPIClient()) {
+    init(
+        bridgeClient: ShellBridgeClient = BridgeShellAPIClient(),
+        startSupervisionOnInit: Bool = false,
+        degradedPollIntervalNanoseconds: UInt64 = 2_000_000_000,
+        healthyPollIntervalNanoseconds: UInt64 = 5_000_000_000
+    ) {
         self.bridgeClient = bridgeClient
+        self.degradedPollIntervalNanoseconds = degradedPollIntervalNanoseconds
+        self.healthyPollIntervalNanoseconds = healthyPollIntervalNanoseconds
+
+        if startSupervisionOnInit {
+            startRuntimeSupervision()
+        }
     }
 
     deinit {
@@ -266,7 +282,9 @@ final class PairingEntryViewModel: ObservableObject {
     }
 
     private var pollIntervalNanoseconds: UInt64 {
-        shellState == .degraded ? 2_000_000_000 : 5_000_000_000
+        shellState == .degraded
+            ? degradedPollIntervalNanoseconds
+            : healthyPollIntervalNanoseconds
     }
 
     private func applyHealthyState(

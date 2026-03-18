@@ -180,6 +180,34 @@ final class CodexMobileCompanionTests: XCTestCase {
     }
 
     @MainActor
+    func testPairingViewModelAutoStartsSupervisionAndRecoversWithoutManualRefresh() async {
+        let client = StubShellBridgeClient(
+            healthResults: [
+                .failure(StubError.bridgeUnavailable),
+                .success(Self.healthResponse(runtimeState: "managed", trustStatus: Self.trustStatus())),
+            ],
+            threadResults: [.success(Self.threadListResponse(statuses: []))],
+            pairingResults: []
+        )
+        let viewModel = PairingEntryViewModel(
+            bridgeClient: client,
+            startSupervisionOnInit: true,
+            degradedPollIntervalNanoseconds: 10_000_000,
+            healthyPollIntervalNanoseconds: 5_000_000_000
+        )
+        defer { viewModel.stopRuntimeSupervision() }
+
+        let recovered = await waitUntil {
+            viewModel.shellState == .pairedIdle
+        }
+
+        XCTAssertTrue(recovered)
+        XCTAssertEqual(viewModel.pairedDeviceLabel, "Primary Phone (phone-1)")
+        XCTAssertEqual(viewModel.activeSessionLabel, "pairing-session-42")
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    @MainActor
     func testPairingViewModelShowsPairedActiveWhenRunningThreadsExist() async {
         let client = StubShellBridgeClient(
             healthResults: [.success(Self.healthResponse(runtimeState: "managed", trustStatus: Self.trustStatus()))],
@@ -319,6 +347,24 @@ final class CodexMobileCompanionTests: XCTestCase {
         contractVersion: SharedContract.version,
         revoked: true
     )
+
+    @MainActor
+    private func waitUntil(
+        timeoutSeconds: TimeInterval = 1.0,
+        pollNanoseconds: UInt64 = 5_000_000,
+        condition: () -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            if condition() {
+                return true
+            }
+
+            try? await Task.sleep(nanoseconds: pollNanoseconds)
+        }
+
+        return condition()
+    }
 }
 
 private struct StubShellBridgeClient: ShellBridgeClient {
