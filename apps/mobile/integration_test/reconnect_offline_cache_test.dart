@@ -19,6 +19,109 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('first-run pairing lands directly in a live usable thread list', (
+    tester,
+  ) async {
+    final secureStore = InMemorySecureStore();
+    final liveStream = FakeThreadLiveStream();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          secureStoreProvider.overrideWithValue(secureStore),
+          pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
+          nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 18, 10, 0)),
+          threadCacheRepositoryProvider.overrideWithValue(
+            _newCacheRepository(),
+          ),
+          threadListBridgeApiProvider.overrideWithValue(
+            FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]),
+          ),
+          threadDetailBridgeApiProvider.overrideWithValue(
+            FakeThreadDetailBridgeApi(
+              detailScriptByThreadId: {
+                'thread-123': [
+                  _threadDetail(
+                    threadId: 'thread-123',
+                    title: 'Implement shared contracts',
+                    status: ThreadStatus.running,
+                  ),
+                ],
+              },
+              timelineScriptByThreadId: {
+                'thread-123': [
+                  [
+                    _timelineEvent(
+                      id: 'evt-first-run-base',
+                      summary: 'Initial timeline event',
+                      payload: {'delta': 'Initial timeline event'},
+                      occurredAt: '2026-03-18T10:00:00Z',
+                    ),
+                  ],
+                ],
+              },
+            ),
+          ),
+          threadLiveStreamProvider.overrideWithValue(liveStream),
+          approvalBridgeApiProvider.overrideWithValue(
+            FakeApprovalBridgeApi(fetchApprovalsScript: [const []]),
+          ),
+        ],
+        child: const MaterialApp(
+          home: PairingFlowPage(
+            enableCameraPreview: false,
+            autoOpenThreadsOnPairing: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Pair your phone to this Mac'), findsOneWidget);
+
+    await tester.tap(find.text('Scan pairing QR'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('manual-payload-input')),
+      _validPairingPayloadJson(),
+    );
+    await tester.tap(find.text('Submit scanned payload'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Confirm trust'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Threads'), findsOneWidget);
+    await _pumpUntilFound(
+      tester,
+      find.byKey(const Key('thread-summary-card-thread-123')),
+    );
+    expect(
+      find.byKey(const Key('thread-summary-card-thread-123')),
+      findsOneWidget,
+    );
+
+    liveStream.emit(
+      const BridgeEventEnvelope<Map<String, dynamic>>(
+        contractVersion: contractVersion,
+        eventId: 'evt-first-run-status',
+        threadId: 'thread-123',
+        kind: BridgeEventKind.threadStatusChanged,
+        occurredAt: '2026-03-18T10:01:00Z',
+        payload: {'status': 'completed'},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _pumpUntilFound(tester, find.text('Completed'));
+    expect(find.text('Completed'), findsOneWidget);
+    expect(
+      await secureStore.readSecret(SecureValueKey.sessionToken),
+      isNotNull,
+    );
+  });
+
   testWidgets(
     'offline relaunch restores selected thread from cache and blocks mutating actions',
     (tester) async {
@@ -476,6 +579,38 @@ void main() {
       expect(approvalApi.fetchApprovalsCallCount, greaterThanOrEqualTo(2));
     },
   );
+}
+
+String _validPairingPayloadJson({
+  String bridgeId = 'bridge-a1',
+  String sessionId = 'session-first-run',
+}) {
+  return '''
+{
+  "contract_version": "2026-03-17",
+  "bridge_id": "$bridgeId",
+  "bridge_name": "Codex Mobile Companion",
+  "bridge_api_base_url": "https://bridge.ts.net",
+  "session_id": "$sessionId",
+  "pairing_token": "ptk-abc",
+  "issued_at_epoch_seconds": 170,
+  "expires_at_epoch_seconds": 10000000000
+}
+''';
+}
+
+Future<void> _pumpUntilFound(
+  WidgetTester tester,
+  Finder finder, {
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  final end = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(end)) {
+    if (finder.evaluate().isNotEmpty) {
+      return;
+    }
+    await tester.pump(const Duration(milliseconds: 100));
+  }
 }
 
 Future<void> _scrollUntilVisible(WidgetTester tester, Finder finder) async {

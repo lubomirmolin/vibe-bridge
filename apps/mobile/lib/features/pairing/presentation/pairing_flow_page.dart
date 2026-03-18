@@ -51,10 +51,12 @@ class PairingFlowPage extends ConsumerStatefulWidget {
     super.key,
     this.enableCameraPreview = true,
     this.initialScannerIssue,
+    this.autoOpenThreadsOnPairing = false,
   });
 
   final bool enableCameraPreview;
   final PairingScannerIssue? initialScannerIssue;
+  final bool autoOpenThreadsOnPairing;
 
   @override
   ConsumerState<PairingFlowPage> createState() => _PairingFlowPageState();
@@ -64,7 +66,9 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
   late final TextEditingController _manualPayloadController;
   late final FocusNode _manualPayloadFocusNode;
   late final MobileScannerController _cameraController;
+  final Set<String> _autoOpenedThreadSessionIds = <String>{};
   PairingScannerIssue? _scannerIssue;
+  bool _isAutoOpeningThreadList = false;
 
   @override
   void initState() {
@@ -137,6 +141,7 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
   Widget build(BuildContext context) {
     final pairingState = ref.watch(pairingControllerProvider);
     final pairingController = ref.read(pairingControllerProvider.notifier);
+    _maybeAutoOpenThreadList(pairingState);
 
     final body = switch (pairingState.step) {
       PairingStep.unpaired => _buildUnpairedView(
@@ -155,6 +160,43 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
       appBar: AppBar(title: const Text('Codex Mobile Companion')),
       body: SafeArea(child: body),
     );
+  }
+
+  void _maybeAutoOpenThreadList(PairingState pairingState) {
+    if (!widget.autoOpenThreadsOnPairing ||
+        pairingState.step != PairingStep.paired) {
+      return;
+    }
+
+    final bridge = pairingState.trustedBridge;
+    if (bridge == null || _isAutoOpeningThreadList) {
+      return;
+    }
+
+    final sessionId = bridge.sessionId.trim();
+    if (sessionId.isEmpty || _autoOpenedThreadSessionIds.contains(sessionId)) {
+      return;
+    }
+
+    _isAutoOpeningThreadList = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) {
+        _isAutoOpeningThreadList = false;
+        return;
+      }
+
+      _autoOpenedThreadSessionIds.add(sessionId);
+      try {
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (context) =>
+                ThreadListPage(bridgeApiBaseUrl: bridge.bridgeApiBaseUrl),
+          ),
+        );
+      } finally {
+        _isAutoOpeningThreadList = false;
+      }
+    });
   }
 
   Widget _buildUnpairedView(

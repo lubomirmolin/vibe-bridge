@@ -28,7 +28,9 @@ void main() {
           overrides: [
             appSecureStoreProvider.overrideWithValue(secureStore),
             pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
-            settingsBridgeApiProvider.overrideWithValue(FakeSettingsBridgeApi()),
+            settingsBridgeApiProvider.overrideWithValue(
+              FakeSettingsBridgeApi(),
+            ),
             threadLiveStreamProvider.overrideWithValue(liveStream),
             approvalBridgeApiProvider.overrideWithValue(
               FakeApprovalBridgeApi(
@@ -49,7 +51,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const Key('open-device-settings')));
+      await tester.tap(
+        find.byKey(const Key('open-device-settings-from-threads')),
+      );
       await tester.pumpAndSettle();
       expect(find.text('Device settings'), findsOneWidget);
 
@@ -92,7 +96,9 @@ void main() {
           overrides: [
             appSecureStoreProvider.overrideWithValue(secureStore),
             pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
-            settingsBridgeApiProvider.overrideWithValue(FakeSettingsBridgeApi()),
+            settingsBridgeApiProvider.overrideWithValue(
+              FakeSettingsBridgeApi(),
+            ),
             threadLiveStreamProvider.overrideWithValue(liveStream),
             approvalBridgeApiProvider.overrideWithValue(
               FakeApprovalBridgeApi(approvals: const []),
@@ -106,7 +112,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const Key('open-device-settings')));
+      await tester.tap(
+        find.byKey(const Key('open-device-settings-from-threads')),
+      );
       await tester.pumpAndSettle();
 
       liveStream.emit(
@@ -144,7 +152,9 @@ void main() {
           overrides: [
             appSecureStoreProvider.overrideWithValue(secureStore),
             pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
-            settingsBridgeApiProvider.overrideWithValue(FakeSettingsBridgeApi()),
+            settingsBridgeApiProvider.overrideWithValue(
+              FakeSettingsBridgeApi(),
+            ),
             threadLiveStreamProvider.overrideWithValue(liveStream),
             approvalBridgeApiProvider.overrideWithValue(
               FakeApprovalBridgeApi(approvals: const []),
@@ -158,7 +168,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const Key('open-device-settings')));
+      await tester.tap(
+        find.byKey(const Key('open-device-settings-from-threads')),
+      );
       await tester.pumpAndSettle();
 
       liveStream.emit(
@@ -187,38 +199,37 @@ void main() {
     },
   );
 
-  testWidgets(
-    'cold-start launch target opens the correct thread context',
-    (tester) async {
-      final secureStore = await _pairedSecureStore();
-      await secureStore.writeSecret(
-        SecureValueKey.runtimeNotificationPendingLaunchTarget,
-        '{"event_id":"evt-cold-start-thread","target":{"target_type":"thread_detail","thread_id":"thread-cold-start"}}',
-      );
+  testWidgets('cold-start launch target opens the correct thread context', (
+    tester,
+  ) async {
+    final secureStore = await _pairedSecureStore();
+    await secureStore.writeSecret(
+      SecureValueKey.runtimeNotificationPendingLaunchTarget,
+      '{"event_id":"evt-cold-start-thread","target":{"target_type":"thread_detail","thread_id":"thread-cold-start"}}',
+    );
 
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            appSecureStoreProvider.overrideWithValue(secureStore),
-            pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
-            settingsBridgeApiProvider.overrideWithValue(FakeSettingsBridgeApi()),
-            threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
-            approvalBridgeApiProvider.overrideWithValue(
-              FakeApprovalBridgeApi(approvals: const []),
-            ),
-            threadDetailBridgeApiProvider.overrideWithValue(
-              FakeThreadDetailBridgeApi(),
-            ),
-          ],
-          child: const CodexMobileApp(),
-        ),
-      );
-      await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          appSecureStoreProvider.overrideWithValue(secureStore),
+          pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
+          settingsBridgeApiProvider.overrideWithValue(FakeSettingsBridgeApi()),
+          threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+          approvalBridgeApiProvider.overrideWithValue(
+            FakeApprovalBridgeApi(approvals: const []),
+          ),
+          threadDetailBridgeApiProvider.overrideWithValue(
+            FakeThreadDetailBridgeApi(),
+          ),
+        ],
+        child: const CodexMobileApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(find.text('Thread detail'), findsOneWidget);
-      expect(find.text('thread-cold-start'), findsWidgets);
-    },
-  );
+    expect(find.text('Thread detail'), findsOneWidget);
+    expect(find.text('thread-cold-start'), findsWidgets);
+  });
 
   testWidgets(
     'duplicate notification event IDs are suppressed across reconnect cycles',
@@ -231,7 +242,9 @@ void main() {
           overrides: [
             appSecureStoreProvider.overrideWithValue(secureStore),
             pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
-            settingsBridgeApiProvider.overrideWithValue(FakeSettingsBridgeApi()),
+            settingsBridgeApiProvider.overrideWithValue(
+              FakeSettingsBridgeApi(),
+            ),
             threadLiveStreamProvider.overrideWithValue(liveStream),
             approvalBridgeApiProvider.overrideWithValue(
               FakeApprovalBridgeApi(approvals: const []),

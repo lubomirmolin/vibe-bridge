@@ -1,9 +1,11 @@
 import 'dart:async';
 
+import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
 import 'package:codex_mobile_companion/features/pairing/application/pairing_controller.dart';
 import 'package:codex_mobile_companion/features/pairing/data/pairing_bridge_api.dart';
 import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
 import 'package:codex_mobile_companion/features/settings/data/settings_bridge_api.dart';
+import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
@@ -43,6 +45,12 @@ void main() {
             settingsBridgeApiProvider.overrideWithValue(
               FakeSettingsBridgeApi(),
             ),
+            threadListBridgeApiProvider.overrideWithValue(
+              FakeThreadListBridgeApi(),
+            ),
+            approvalBridgeApiProvider.overrideWithValue(
+              FakeApprovalBridgeApi(),
+            ),
             threadLiveStreamProvider.overrideWithValue(liveStream),
           ],
           child: const CodexMobileApp(),
@@ -50,12 +58,11 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(
-        find.textContaining('Paired with Codex Mobile Companion'),
-        findsOneWidget,
-      );
+      expect(find.text('Threads'), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('open-device-settings')));
+      await tester.tap(
+        find.byKey(const Key('open-device-settings-from-threads')),
+      );
       await tester.pumpAndSettle();
       expect(find.text('Device settings'), findsOneWidget);
 
@@ -110,6 +117,12 @@ void main() {
             settingsBridgeApiProvider.overrideWithValue(
               FakeSettingsBridgeApi(),
             ),
+            threadListBridgeApiProvider.overrideWithValue(
+              FakeThreadListBridgeApi(),
+            ),
+            approvalBridgeApiProvider.overrideWithValue(
+              FakeApprovalBridgeApi(),
+            ),
             threadLiveStreamProvider.overrideWithValue(liveStream),
           ],
           child: const CodexMobileApp(),
@@ -117,7 +130,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const Key('open-device-settings')));
+      await tester.tap(
+        find.byKey(const Key('open-device-settings-from-threads')),
+      );
       await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const Key('approval-notification-toggle')));
@@ -255,5 +270,59 @@ class FakeThreadLiveStream implements ThreadLiveStream {
         controller.add(event);
       }
     }
+  }
+}
+
+class FakeThreadListBridgeApi implements ThreadListBridgeApi {
+  @override
+  Future<List<ThreadSummaryDto>> fetchThreads({
+    required String bridgeApiBaseUrl,
+  }) async {
+    return const [
+      ThreadSummaryDto(
+        contractVersion: contractVersion,
+        threadId: 'thread-123',
+        title: 'Thread thread-123',
+        status: ThreadStatus.running,
+        workspace: '/workspace/codex-mobile-companion',
+        repository: 'codex-mobile-companion',
+        branch: 'master',
+        updatedAt: '2026-03-18T12:00:00Z',
+      ),
+    ];
+  }
+}
+
+class FakeApprovalBridgeApi implements ApprovalBridgeApi {
+  @override
+  Future<AccessMode> fetchAccessMode({required String bridgeApiBaseUrl}) async {
+    return AccessMode.controlWithApprovals;
+  }
+
+  @override
+  Future<List<ApprovalRecordDto>> fetchApprovals({
+    required String bridgeApiBaseUrl,
+  }) async {
+    return const <ApprovalRecordDto>[];
+  }
+
+  @override
+  Future<ApprovalResolutionResponseDto> approve({
+    required String bridgeApiBaseUrl,
+    required String approvalId,
+  }) async {
+    throw const ApprovalResolutionBridgeException(
+      message: 'Approve is not used in this test.',
+    );
+  }
+
+  @override
+  Future<ApprovalResolutionResponseDto> reject({
+    required String bridgeApiBaseUrl,
+    required String approvalId,
+  }) async {
+    throw const ApprovalResolutionBridgeException(
+      message: 'Reject is not used in this test.',
+    );
   }
 }

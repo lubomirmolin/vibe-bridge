@@ -24,7 +24,7 @@ class CodexMobileApp extends StatelessWidget {
           child: child ?? const SizedBox.shrink(),
         );
       },
-      home: const PairingFlowPage(),
+      home: const PairingFlowPage(autoOpenThreadsOnPairing: true),
     );
   }
 }
