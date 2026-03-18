@@ -1,5 +1,12 @@
 import 'dart:async';
 
+import 'package:codex_mobile_companion/features/approvals/application/approvals_queue_controller.dart';
+import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
+import 'package:codex_mobile_companion/features/pairing/application/pairing_controller.dart';
+import 'package:codex_mobile_companion/features/pairing/data/pairing_bridge_api.dart';
+import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
+import 'package:codex_mobile_companion/features/pairing/presentation/pairing_flow_page.dart';
+import 'package:codex_mobile_companion/features/threads/application/thread_detail_controller.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
@@ -210,14 +217,275 @@ void main() {
       );
     },
   );
+
+  testWidgets(
+    'reconnect restores trusted session, selected thread, approvals, and repo context without duplication',
+    (tester) async {
+      final secureStore = InMemorySecureStore();
+      await secureStore.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
+{
+  "bridge_id": "bridge-a1",
+  "bridge_name": "Codex Mobile Companion",
+  "bridge_api_base_url": "https://bridge.ts.net",
+  "session_id": "session-reconnect",
+  "paired_at_epoch_seconds": 100
+}
+''');
+      await secureStore.writeSecret(
+        SecureValueKey.sessionToken,
+        'active-session-token',
+      );
+
+      final cacheRepository = SecureStoreThreadCacheRepository(
+        secureStore: secureStore,
+        nowUtc: () => DateTime.utc(2026, 3, 18, 10, 0),
+      );
+      await cacheRepository.saveThreadList(_threadSummaries());
+      await cacheRepository.saveSelectedThreadId('thread-123');
+      await cacheRepository.saveThreadDetail(
+        detail: _threadDetail(
+          threadId: 'thread-123',
+          title: 'Implement shared contracts',
+          status: ThreadStatus.running,
+        ),
+        timeline: [
+          _timelineEvent(
+            id: 'evt-base-restore',
+            summary: 'Cached base timeline event',
+            payload: {'delta': 'Cached base timeline event'},
+            occurredAt: '2026-03-18T10:00:00Z',
+          ),
+        ],
+      );
+
+      final pairingBridgeApi = FakePairingBridgeApi(
+        handshakeScript: const [
+          PairingHandshakeResult.connectivityUnavailable(
+            message:
+                'Private bridge path is currently unreachable. Reconnect to Tailscale and retry.',
+          ),
+          PairingHandshakeResult.trusted(),
+        ],
+      );
+
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            _threadDetail(
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.running,
+            ),
+            _threadDetail(
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.running,
+            ),
+            _threadDetail(
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.running,
+            ),
+            _threadDetail(
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.running,
+            ),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            [
+              _timelineEvent(
+                id: 'evt-base-restore',
+                summary: 'Cached base timeline event',
+                payload: {'delta': 'Cached base timeline event'},
+                occurredAt: '2026-03-18T10:00:00Z',
+              ),
+            ],
+            [
+              _timelineEvent(
+                id: 'evt-base-restore',
+                summary: 'Cached base timeline event',
+                payload: {'delta': 'Cached base timeline event'},
+                occurredAt: '2026-03-18T10:00:00Z',
+              ),
+              _timelineEvent(
+                id: 'evt-live-restore',
+                summary: 'Live output emitted before disconnect',
+                payload: {'delta': 'Live output emitted before disconnect'},
+                occurredAt: '2026-03-18T10:01:00Z',
+              ),
+              _timelineEvent(
+                id: 'evt-catchup-restore',
+                summary: 'Missed while reconnecting',
+                payload: {'delta': 'Missed while reconnecting'},
+                occurredAt: '2026-03-18T10:02:00Z',
+              ),
+            ],
+          ],
+        },
+      );
+
+      final approvalApi = FakeApprovalBridgeApi(
+        fetchApprovalsScript: [
+          const ApprovalBridgeException(
+            message: 'Cannot reach the bridge. Check your private route.',
+            isConnectivityError: true,
+          ),
+          [_pendingApprovalRecord(threadId: 'thread-123')],
+        ],
+      );
+
+      final liveStream = FakeThreadLiveStream();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            secureStoreProvider.overrideWithValue(secureStore),
+            pairingBridgeApiProvider.overrideWithValue(pairingBridgeApi),
+            nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 18, 10, 0)),
+            threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
+            threadListBridgeApiProvider.overrideWithValue(
+              FakeThreadListBridgeApi(
+                scriptedResults: [_threadSummaries(), _threadSummaries()],
+              ),
+            ),
+            threadDetailBridgeApiProvider.overrideWithValue(detailApi),
+            threadLiveStreamProvider.overrideWithValue(liveStream),
+            approvalBridgeApiProvider.overrideWithValue(approvalApi),
+          ],
+          child: const MaterialApp(
+            home: PairingFlowPage(enableCameraPreview: false),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Bridge disconnected'), findsOneWidget);
+      expect(
+        find.text(
+          'Private bridge path is currently unreachable. Reconnect to Tailscale and retry.',
+        ),
+        findsOneWidget,
+      );
+
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Paired with Codex Mobile Companion'), findsOneWidget);
+      expect(pairingBridgeApi.handshakeCalls, greaterThanOrEqualTo(2));
+
+      await tester.tap(find.text('Open threads'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
+      expect(find.text('Implement shared contracts'), findsOneWidget);
+      expect(find.text('thread-123'), findsOneWidget);
+
+      const liveEvent = BridgeEventEnvelope<Map<String, dynamic>>(
+        contractVersion: contractVersion,
+        eventId: 'evt-live-restore',
+        threadId: 'thread-123',
+        kind: BridgeEventKind.messageDelta,
+        occurredAt: '2026-03-18T10:01:00Z',
+        payload: {'delta': 'Live output emitted before disconnect'},
+      );
+
+      liveStream.emit(liveEvent);
+      liveStream.emit(liveEvent);
+      await tester.pumpAndSettle();
+
+      await _scrollUntilVisible(
+        tester,
+        find.byKey(const Key('thread-activity-evt-live-restore')),
+      );
+      expect(
+        find.byKey(const Key('thread-activity-evt-live-restore')),
+        findsOneWidget,
+      );
+
+      liveStream.emitError('thread-123');
+      await tester.pumpAndSettle();
+
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+
+      liveStream.emit(
+        BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-approval-restore',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.approvalRequested,
+          occurredAt: '2026-03-18T10:03:00Z',
+          payload: _pendingApprovalRecord(threadId: 'thread-123').toJson(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(MaterialApp).first),
+      );
+
+      final detailState = container.read(
+        threadDetailControllerProvider(
+          const ThreadDetailControllerArgs(
+            bridgeApiBaseUrl: 'https://bridge.ts.net',
+            threadId: 'thread-123',
+          ),
+        ),
+      );
+
+      expect(
+        detailState.items
+            .where((item) => item.eventId == 'evt-live-restore')
+            .length,
+        1,
+      );
+      expect(
+        detailState.items
+            .where((item) => item.eventId == 'evt-catchup-restore')
+            .length,
+        1,
+      );
+      expect(
+        detailState.gitStatus?.repository.repository,
+        'codex-mobile-companion',
+      );
+      expect(detailState.gitStatus?.repository.branch, 'master');
+      expect(detailState.gitStatus?.repository.remote, 'origin');
+      expect(
+        detailState.gitStatus?.repository.workspace,
+        '/workspace/codex-mobile-companion',
+      );
+
+      final approvalsState = container.read(
+        approvalsQueueControllerProvider('https://bridge.ts.net'),
+      );
+      final restoredApprovalCount = approvalsState
+          .forThread('thread-123')
+          .where((item) => item.approval.approvalId == 'approval-restore')
+          .length;
+      expect(restoredApprovalCount, 1);
+      expect(approvalsState.pendingCount, 1);
+
+      expect(
+        liveStream.subscribeCountFor('thread-123'),
+        greaterThanOrEqualTo(2),
+      );
+      expect(approvalApi.fetchApprovalsCallCount, greaterThanOrEqualTo(2));
+    },
+  );
 }
 
 Future<void> _scrollUntilVisible(WidgetTester tester, Finder finder) async {
-  await tester.scrollUntilVisible(
-    finder,
-    240,
-    scrollable: find.byType(Scrollable).first,
-  );
+  final scrollables = find.byType(Scrollable);
+  if (scrollables.evaluate().isEmpty) {
+    await tester.pumpAndSettle();
+    return;
+  }
+
+  await tester.scrollUntilVisible(finder, 240, scrollable: scrollables.first);
   await tester.pumpAndSettle();
 }
 
@@ -287,6 +555,144 @@ ThreadTimelineEntryDto _timelineEvent({
     summary: summary,
     payload: payload,
   );
+}
+
+ApprovalRecordDto _pendingApprovalRecord({required String threadId}) {
+  return ApprovalRecordDto(
+    contractVersion: contractVersion,
+    approvalId: 'approval-restore',
+    threadId: threadId,
+    action: 'git_pull',
+    target: 'git.pull',
+    reason: 'full_control_required',
+    status: ApprovalStatus.pending,
+    requestedAt: '2026-03-18T10:03:00Z',
+    resolvedAt: null,
+    repository: const RepositoryContextDto(
+      workspace: '/workspace/codex-mobile-companion',
+      repository: 'codex-mobile-companion',
+      branch: 'master',
+      remote: 'origin',
+    ),
+    gitStatus: const GitStatusDto(dirty: false, aheadBy: 0, behindBy: 0),
+  );
+}
+
+class FakePairingBridgeApi implements PairingBridgeApi {
+  FakePairingBridgeApi({
+    this.handshakeResult = const PairingHandshakeResult.trusted(),
+    List<PairingHandshakeResult>? handshakeScript,
+    this.revokeResult = const PairingRevokeResult.success(),
+  }) : _handshakeScript = handshakeScript;
+
+  final PairingHandshakeResult handshakeResult;
+  final List<PairingHandshakeResult>? _handshakeScript;
+  final PairingRevokeResult revokeResult;
+  int handshakeCalls = 0;
+
+  @override
+  Future<PairingFinalizeResult> finalizeTrust({
+    required PairingQrPayload payload,
+    required String phoneId,
+    required String phoneName,
+  }) async {
+    return const PairingFinalizeResult.success(sessionToken: 'session-token');
+  }
+
+  @override
+  Future<PairingHandshakeResult> handshake({
+    required TrustedBridgeIdentity trustedBridge,
+    required String phoneId,
+    required String sessionToken,
+  }) async {
+    handshakeCalls += 1;
+    final handshakeScript = _handshakeScript;
+    if (handshakeScript != null && handshakeScript.isNotEmpty) {
+      final scriptIndex = handshakeCalls - 1;
+      if (scriptIndex < handshakeScript.length) {
+        return handshakeScript[scriptIndex];
+      }
+      return handshakeScript.last;
+    }
+
+    return handshakeResult;
+  }
+
+  @override
+  Future<PairingRevokeResult> revokeTrust({
+    required TrustedBridgeIdentity trustedBridge,
+    required String? phoneId,
+  }) async {
+    return revokeResult;
+  }
+}
+
+class FakeApprovalBridgeApi implements ApprovalBridgeApi {
+  FakeApprovalBridgeApi({
+    this.accessMode = AccessMode.fullControl,
+    required List<Object> fetchApprovalsScript,
+  }) : _fetchApprovalsScript = fetchApprovalsScript;
+
+  final AccessMode accessMode;
+  final List<Object> _fetchApprovalsScript;
+  int fetchAccessModeCallCount = 0;
+  int fetchApprovalsCallCount = 0;
+
+  @override
+  Future<AccessMode> fetchAccessMode({required String bridgeApiBaseUrl}) async {
+    fetchAccessModeCallCount += 1;
+    return accessMode;
+  }
+
+  @override
+  Future<List<ApprovalRecordDto>> fetchApprovals({
+    required String bridgeApiBaseUrl,
+  }) async {
+    fetchApprovalsCallCount += 1;
+    final scriptedResult = _nextFetchApprovalsResult();
+    if (scriptedResult is List<ApprovalRecordDto>) {
+      return scriptedResult;
+    }
+    if (scriptedResult is ApprovalBridgeException) {
+      throw scriptedResult;
+    }
+
+    throw StateError(
+      'Unsupported approvals scripted result type: $scriptedResult',
+    );
+  }
+
+  @override
+  Future<ApprovalResolutionResponseDto> approve({
+    required String bridgeApiBaseUrl,
+    required String approvalId,
+  }) async {
+    throw const ApprovalResolutionBridgeException(
+      message: 'Approvals are read-only in this integration harness.',
+    );
+  }
+
+  @override
+  Future<ApprovalResolutionResponseDto> reject({
+    required String bridgeApiBaseUrl,
+    required String approvalId,
+  }) async {
+    throw const ApprovalResolutionBridgeException(
+      message: 'Approvals are read-only in this integration harness.',
+    );
+  }
+
+  Object _nextFetchApprovalsResult() {
+    if (_fetchApprovalsScript.isEmpty) {
+      return const <ApprovalRecordDto>[];
+    }
+
+    final scriptedResult = _fetchApprovalsScript.first;
+    if (_fetchApprovalsScript.length > 1) {
+      _fetchApprovalsScript.removeAt(0);
+    }
+    return scriptedResult;
+  }
 }
 
 class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
@@ -502,6 +908,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
 class FakeThreadLiveStream implements ThreadLiveStream {
   static const _allThreadsKey = '__all__';
 
+  final Map<String, int> _subscribeCountsByThreadId = <String, int>{};
   final Map<
     String,
     List<StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>
@@ -518,6 +925,8 @@ class FakeThreadLiveStream implements ThreadLiveStream {
     String? threadId,
   }) async {
     final normalizedThreadId = threadId ?? _allThreadsKey;
+    _subscribeCountsByThreadId[normalizedThreadId] =
+        (_subscribeCountsByThreadId[normalizedThreadId] ?? 0) + 1;
     final controller =
         StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();
     _controllersByThreadId
@@ -536,6 +945,11 @@ class FakeThreadLiveStream implements ThreadLiveStream {
         }
       },
     );
+  }
+
+  int subscribeCountFor(String? threadId) {
+    final normalizedThreadId = threadId ?? _allThreadsKey;
+    return _subscribeCountsByThreadId[normalizedThreadId] ?? 0;
   }
 
   void emit(BridgeEventEnvelope<Map<String, dynamic>> event) {
