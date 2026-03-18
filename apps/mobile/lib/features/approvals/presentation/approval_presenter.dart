@@ -27,7 +27,11 @@ String approvalStatusLabel(ApprovalStatus status) {
 String approvalTargetLabel(ApprovalRecordDto approval) {
   switch (approval.action) {
     case 'git_branch_switch':
-      return 'Target branch context: ${approval.repository.branch}';
+      final targetBranch = approval.target.trim();
+      if (targetBranch.isNotEmpty) {
+        return 'Target branch: $targetBranch';
+      }
+      return 'Target branch: ${approval.repository.branch}';
     case 'git_pull':
     case 'git_push':
       return 'Target remote: ${approval.repository.remote}';

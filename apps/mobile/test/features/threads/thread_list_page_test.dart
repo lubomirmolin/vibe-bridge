@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
+import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
@@ -27,6 +28,7 @@ void main() {
             approvalBridgeApiProvider.overrideWithValue(
               EmptyApprovalBridgeApi(),
             ),
+            threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
             threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
           ],
           child: const MaterialApp(
@@ -69,6 +71,7 @@ void main() {
         overrides: [
           threadListBridgeApiProvider.overrideWithValue(bridgeApi),
           approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
+          threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
           threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
         ],
         child: const MaterialApp(
@@ -103,6 +106,7 @@ void main() {
         overrides: [
           threadListBridgeApiProvider.overrideWithValue(bridgeApi),
           approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
+          threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
           threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
         ],
         child: const MaterialApp(
@@ -140,6 +144,7 @@ void main() {
         overrides: [
           threadListBridgeApiProvider.overrideWithValue(bridgeApi),
           approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
+          threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
           threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
         ],
         child: const MaterialApp(
@@ -190,6 +195,7 @@ void main() {
             approvalBridgeApiProvider.overrideWithValue(
               EmptyApprovalBridgeApi(),
             ),
+            threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
             threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
           ],
           child: const MaterialApp(
@@ -208,6 +214,59 @@ void main() {
       expect(find.text('Couldn’t load threads'), findsNothing);
     },
   );
+
+  testWidgets('off-screen live status updates sync into thread list', (
+    tester,
+  ) async {
+    final cacheRepository = _newCacheRepository();
+    final bridgeApi = FakeThreadListBridgeApi(
+      scriptedResults: [_sampleThreads()],
+    );
+    final liveStream = FakeThreadLiveStream();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+          approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
+          threadLiveStreamProvider.overrideWithValue(liveStream),
+          threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
+        ],
+        child: const MaterialApp(
+          home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('thread-summary-card-thread-456')),
+        matching: find.text('Completed'),
+      ),
+      findsOneWidget,
+    );
+
+    liveStream.emit(
+      BridgeEventEnvelope<Map<String, dynamic>>(
+        contractVersion: contractVersion,
+        eventId: 'evt-list-live-1',
+        threadId: 'thread-456',
+        kind: BridgeEventKind.threadStatusChanged,
+        occurredAt: '2026-03-18T11:01:00Z',
+        payload: {'status': 'running', 'reason': 'turn_started'},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('thread-summary-card-thread-456')),
+        matching: find.text('Running'),
+      ),
+      findsOneWidget,
+    );
+  });
 }
 
 ThreadCacheRepository _newCacheRepository() {
@@ -301,5 +360,42 @@ class EmptyApprovalBridgeApi implements ApprovalBridgeApi {
     required String approvalId,
   }) {
     throw UnimplementedError();
+  }
+}
+
+class FakeThreadLiveStream implements ThreadLiveStream {
+  final List<StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>
+  _controllers =
+      <StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>[];
+
+  @override
+  Future<ThreadLiveSubscription> subscribe({
+    required String bridgeApiBaseUrl,
+    String? threadId,
+  }) async {
+    final controller =
+        StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();
+    _controllers.add(controller);
+
+    return ThreadLiveSubscription(
+      events: controller.stream,
+      close: () async {
+        _controllers.remove(controller);
+        if (!controller.isClosed) {
+          await controller.close();
+        }
+      },
+    );
+  }
+
+  void emit(BridgeEventEnvelope<Map<String, dynamic>> event) {
+    for (final controller
+        in List<
+          StreamController<BridgeEventEnvelope<Map<String, dynamic>>>
+        >.from(_controllers)) {
+      if (!controller.isClosed) {
+        controller.add(event);
+      }
+    }
   }
 }

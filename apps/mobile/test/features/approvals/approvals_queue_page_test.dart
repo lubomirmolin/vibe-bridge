@@ -58,6 +58,29 @@ void main() {
     },
   );
 
+  testWidgets('branch-switch approvals show the exact target branch', (
+    tester,
+  ) async {
+    final approvalApi = FakeApprovalBridgeApi(
+      accessMode: AccessMode.fullControl,
+      approvals: [_branchSwitchApproval()],
+    );
+
+    await _pumpApprovalsApp(
+      tester,
+      approvalApi: approvalApi,
+      detailApi: FakeThreadDetailBridgeApi(
+        detailByThreadId: {'thread-123': _threadDetail()},
+        timelineByThreadId: {'thread-123': _threadTimeline()},
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('approval-card-approval-branch')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Target branch: release/hotfix-42'), findsOneWidget);
+  });
+
   testWidgets('full-control mode can approve pending approvals', (
     tester,
   ) async {
@@ -145,6 +168,9 @@ void main() {
             code: 'approval_not_pending',
           ),
         },
+        approveFailureResolvedStatusById: {
+          'approval-1': ApprovalStatus.approved,
+        },
       );
 
       await _pumpApprovalsApp(
@@ -172,6 +198,71 @@ void main() {
         find.text('Approval is no longer actionable.'),
         findsAtLeastNWidgets(1),
       );
+      expect(
+        find.textContaining('already resolved as approved'),
+        findsAtLeastNWidgets(1),
+      );
+      expect(approvalApi.fetchApprovalsCallCount, greaterThan(1));
+    },
+  );
+
+  testWidgets(
+    'live approval events refresh queue and originating thread surfaces',
+    (tester) async {
+      final approvalApi = FakeApprovalBridgeApi(
+        accessMode: AccessMode.fullControl,
+        approvals: const <ApprovalRecordDto>[],
+      );
+      final liveStream = FakeThreadLiveStream();
+
+      await _pumpThreadListApp(
+        tester,
+        approvalApi: approvalApi,
+        detailApi: FakeThreadDetailBridgeApi(
+          detailByThreadId: {'thread-123': _threadDetail()},
+          timelineByThreadId: {'thread-123': _threadTimeline()},
+        ),
+        listApi: FakeThreadListBridgeApi(threads: [_threadSummary()]),
+        liveStream: liveStream,
+      );
+
+      expect(find.text('No approvals yet'), findsNothing);
+
+      await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.text('No approvals currently linked to this thread.'),
+        240,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+
+      approvalApi.upsertApproval(_pendingApproval());
+      liveStream.emit(
+        BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-approval-live-1',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.approvalRequested,
+          occurredAt: '2026-03-18T10:15:00Z',
+          payload: _pendingApproval().toJson(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('thread-approval-status-approval-1')),
+        findsOneWidget,
+      );
+      expect(find.text('Pending'), findsAtLeastNWidgets(1));
+
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('open-approvals-queue')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('approval-card-approval-1')), findsOneWidget);
     },
   );
 
@@ -234,6 +325,7 @@ Future<void> _pumpApprovalsApp(
   WidgetTester tester, {
   required FakeApprovalBridgeApi approvalApi,
   required ThreadDetailBridgeApi detailApi,
+  ThreadLiveStream? liveStream,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -243,7 +335,9 @@ Future<void> _pumpApprovalsApp(
         threadListBridgeApiProvider.overrideWithValue(
           FakeThreadListBridgeApi(threads: [_threadSummary()]),
         ),
-        threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+        threadLiveStreamProvider.overrideWithValue(
+          liveStream ?? FakeThreadLiveStream(),
+        ),
         threadCacheRepositoryProvider.overrideWithValue(_newCacheRepository()),
       ],
       child: const MaterialApp(
@@ -260,6 +354,7 @@ Future<void> _pumpThreadListApp(
   required FakeApprovalBridgeApi approvalApi,
   required ThreadDetailBridgeApi detailApi,
   required ThreadListBridgeApi listApi,
+  ThreadLiveStream? liveStream,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -267,7 +362,9 @@ Future<void> _pumpThreadListApp(
         approvalBridgeApiProvider.overrideWithValue(approvalApi),
         threadDetailBridgeApiProvider.overrideWithValue(detailApi),
         threadListBridgeApiProvider.overrideWithValue(listApi),
-        threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+        threadLiveStreamProvider.overrideWithValue(
+          liveStream ?? FakeThreadLiveStream(),
+        ),
         threadCacheRepositoryProvider.overrideWithValue(_newCacheRepository()),
       ],
       child: const MaterialApp(
@@ -298,6 +395,27 @@ ApprovalRecordDto _pendingApproval() {
     reason: 'full_control_required',
     status: ApprovalStatus.pending,
     requestedAt: '2026-03-18T10:10:00Z',
+    resolvedAt: null,
+    repository: RepositoryContextDto(
+      workspace: '/workspace/codex-mobile-companion',
+      repository: 'codex-mobile-companion',
+      branch: 'master',
+      remote: 'origin',
+    ),
+    gitStatus: GitStatusDto(dirty: true, aheadBy: 2, behindBy: 1),
+  );
+}
+
+ApprovalRecordDto _branchSwitchApproval() {
+  return const ApprovalRecordDto(
+    contractVersion: contractVersion,
+    approvalId: 'approval-branch',
+    threadId: 'thread-123',
+    action: 'git_branch_switch',
+    target: 'release/hotfix-42',
+    reason: 'full_control_required',
+    status: ApprovalStatus.pending,
+    requestedAt: '2026-03-18T10:11:00Z',
     resolvedAt: null,
     repository: RepositoryContextDto(
       workspace: '/workspace/codex-mobile-companion',
@@ -369,6 +487,7 @@ class FakeApprovalBridgeApi implements ApprovalBridgeApi {
         const <String, ApprovalResolutionBridgeException>{},
     this.rejectFailureById =
         const <String, ApprovalResolutionBridgeException>{},
+    this.approveFailureResolvedStatusById = const <String, ApprovalStatus>{},
   }) : _accessMode = accessMode,
        _approvalsById = {
          for (final approval in approvals) approval.approvalId: approval,
@@ -378,6 +497,8 @@ class FakeApprovalBridgeApi implements ApprovalBridgeApi {
   final Map<String, ApprovalRecordDto> _approvalsById;
   final Map<String, ApprovalResolutionBridgeException> approveFailureById;
   final Map<String, ApprovalResolutionBridgeException> rejectFailureById;
+  final Map<String, ApprovalStatus> approveFailureResolvedStatusById;
+  int fetchApprovalsCallCount = 0;
 
   @override
   Future<AccessMode> fetchAccessMode({required String bridgeApiBaseUrl}) async {
@@ -388,6 +509,7 @@ class FakeApprovalBridgeApi implements ApprovalBridgeApi {
   Future<List<ApprovalRecordDto>> fetchApprovals({
     required String bridgeApiBaseUrl,
   }) async {
+    fetchApprovalsCallCount += 1;
     final approvals = _approvalsById.values.toList(growable: false)
       ..sort((left, right) => right.requestedAt.compareTo(left.requestedAt));
     return approvals;
@@ -400,10 +522,33 @@ class FakeApprovalBridgeApi implements ApprovalBridgeApi {
   }) async {
     final failure = approveFailureById[approvalId];
     if (failure != null) {
+      final updatedStatus = approveFailureResolvedStatusById[approvalId];
+      if (updatedStatus != null) {
+        final current = _approvalsById[approvalId];
+        if (current != null) {
+          _approvalsById[approvalId] = ApprovalRecordDto(
+            contractVersion: current.contractVersion,
+            approvalId: current.approvalId,
+            threadId: current.threadId,
+            action: current.action,
+            target: current.target,
+            reason: current.reason,
+            status: updatedStatus,
+            requestedAt: current.requestedAt,
+            resolvedAt: '2026-03-18T10:12:30Z',
+            repository: current.repository,
+            gitStatus: current.gitStatus,
+          );
+        }
+      }
       throw failure;
     }
 
     return _resolve(approvalId: approvalId, approved: true);
+  }
+
+  void upsertApproval(ApprovalRecordDto approval) {
+    _approvalsById[approval.approvalId] = approval;
   }
 
   @override
@@ -664,18 +809,37 @@ class FakeThreadListBridgeApi implements ThreadListBridgeApi {
 }
 
 class FakeThreadLiveStream implements ThreadLiveStream {
+  final List<StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>
+  _controllers =
+      <StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>[];
+
   @override
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
-    required String threadId,
+    String? threadId,
   }) async {
     final controller =
         StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();
+    _controllers.add(controller);
     return ThreadLiveSubscription(
       events: controller.stream,
       close: () async {
-        await controller.close();
+        _controllers.remove(controller);
+        if (!controller.isClosed) {
+          await controller.close();
+        }
       },
     );
+  }
+
+  void emit(BridgeEventEnvelope<Map<String, dynamic>> event) {
+    for (final controller
+        in List<
+          StreamController<BridgeEventEnvelope<Map<String, dynamic>>>
+        >.from(_controllers)) {
+      if (!controller.isClosed) {
+        controller.add(event);
+      }
+    }
   }
 }

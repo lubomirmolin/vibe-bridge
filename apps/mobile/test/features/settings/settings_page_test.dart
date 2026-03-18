@@ -93,6 +93,77 @@ void main() {
     },
   );
 
+  testWidgets('security events render newest-first before truncation', (
+    tester,
+  ) async {
+    final store = InMemorySecureStore();
+    await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
+{
+  "bridge_id": "bridge-a1",
+  "bridge_name": "Codex Mobile Companion",
+  "bridge_api_base_url": "https://bridge.ts.net",
+  "session_id": "session-abc",
+  "paired_at_epoch_seconds": 100
+}
+''');
+    await store.writeSecret(SecureValueKey.sessionToken, 'session-token');
+    await store.writeSecret(SecureValueKey.pairingPrivateKey, 'phone-a1');
+
+    final events = List<SecurityEventRecordDto>.generate(10, (index) {
+      final itemNumber = index + 1;
+      return SecurityEventRecordDto(
+        severity: 'info',
+        category: 'policy',
+        event: BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-security-$itemNumber',
+          threadId: 'security',
+          kind: BridgeEventKind.securityAudit,
+          occurredAt:
+              '2026-03-18T10:${itemNumber.toString().padLeft(2, '0')}:00Z',
+          payload: {
+            'actor': 'mobile-settings',
+            'action': 'set_access_mode',
+            'target': 'policy.access_mode',
+            'outcome': 'allowed',
+            'reason': 'mode=control_with_approvals',
+          },
+        ),
+      );
+    });
+
+    final settingsApi = FakeSettingsBridgeApi(
+      accessMode: AccessMode.controlWithApprovals,
+      events: events,
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          secureStoreProvider.overrideWithValue(store),
+          pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
+          settingsBridgeApiProvider.overrideWithValue(settingsApi),
+        ],
+        child: const MaterialApp(
+          home: SettingsPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('Event id: evt-security-10'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Event id: evt-security-10'), findsOneWidget);
+    expect(find.text('Event id: evt-security-9'), findsOneWidget);
+    expect(find.text('Event id: evt-security-2'), findsNothing);
+    expect(find.text('Event id: evt-security-1'), findsNothing);
+  });
+
   testWidgets('settings access mode switch updates bridge policy', (
     tester,
   ) async {

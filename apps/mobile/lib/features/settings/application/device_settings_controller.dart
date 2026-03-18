@@ -204,9 +204,11 @@ class DeviceSettingsController extends StateNotifier<DeviceSettingsState> {
       final events = await _bridgeApi.fetchSecurityEvents(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
       );
+      final sortedEvents = events.toList(growable: false)
+        ..sort(_compareSecurityEventsNewestFirst);
 
       state = state.copyWith(
-        securityEvents: events,
+        securityEvents: sortedEvents,
         isSecurityEventsLoading: false,
         clearSecurityEventsErrorMessage: true,
       );
@@ -223,4 +225,25 @@ class DeviceSettingsController extends StateNotifier<DeviceSettingsState> {
       );
     }
   }
+}
+
+int _compareSecurityEventsNewestFirst(
+  SecurityEventRecordDto left,
+  SecurityEventRecordDto right,
+) {
+  final leftTimestamp = DateTime.tryParse(left.event.occurredAt)?.toUtc();
+  final rightTimestamp = DateTime.tryParse(right.event.occurredAt)?.toUtc();
+
+  if (leftTimestamp != null && rightTimestamp != null) {
+    final byTimestamp = rightTimestamp.compareTo(leftTimestamp);
+    if (byTimestamp != 0) {
+      return byTimestamp;
+    }
+  } else if (leftTimestamp != null) {
+    return -1;
+  } else if (rightTimestamp != null) {
+    return 1;
+  }
+
+  return right.event.occurredAt.compareTo(left.event.occurredAt);
 }

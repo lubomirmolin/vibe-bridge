@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
 import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
+import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -14,6 +15,7 @@ final approvalsQueueControllerProvider =
       final controller = ApprovalsQueueController(
         bridgeApiBaseUrl: bridgeApiBaseUrl,
         bridgeApi: ref.watch(approvalBridgeApiProvider),
+        liveStream: ref.watch(threadLiveStreamProvider),
         initialAccessMode: ref.read(
           runtimeAccessModeProvider(bridgeApiBaseUrl),
         ),
@@ -128,18 +130,30 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
   ApprovalsQueueController({
     required String bridgeApiBaseUrl,
     required ApprovalBridgeApi bridgeApi,
+    required ThreadLiveStream liveStream,
     required void Function(AccessMode accessMode) onAccessModeObserved,
     AccessMode? initialAccessMode,
   }) : _bridgeApiBaseUrl = bridgeApiBaseUrl,
        _bridgeApi = bridgeApi,
+       _liveStream = liveStream,
        _onAccessModeObserved = onAccessModeObserved,
        super(ApprovalsQueueState(accessMode: initialAccessMode)) {
     unawaited(loadApprovals());
+    unawaited(_startLiveSubscription());
   }
 
   final String _bridgeApiBaseUrl;
   final ApprovalBridgeApi _bridgeApi;
+  final ThreadLiveStream _liveStream;
   final void Function(AccessMode accessMode) _onAccessModeObserved;
+  final Set<String> _seenLiveEventIds = <String>{};
+
+  ThreadLiveSubscription? _liveSubscription;
+  StreamSubscription<BridgeEventEnvelope<Map<String, dynamic>>>?
+  _liveEventSubscription;
+  Timer? _reconnectTimer;
+  bool _isDisposed = false;
+  bool _isReconnectInProgress = false;
 
   void overrideAccessMode(AccessMode? accessMode) {
     if (accessMode == null) {
@@ -279,6 +293,10 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
         ),
       );
 
+      if (error.isNonActionable) {
+        await loadApprovals(showLoading: false);
+      }
+
       state = state.copyWith(errorMessage: error.message);
       return false;
     } catch (_) {
@@ -307,6 +325,96 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
     final nextItems = List<ApprovalItemState>.from(state.items);
     nextItems[index] = transform(nextItems[index]);
     state = state.copyWith(items: nextItems..sort(_compareApprovalItems));
+  }
+
+  Future<void> _startLiveSubscription() async {
+    try {
+      final subscription = await _liveStream.subscribe(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+      );
+      _liveSubscription = subscription;
+
+      _liveEventSubscription = subscription.events.listen(
+        _handleLiveEvent,
+        onError: (_) {
+          _handleLiveStreamDisconnected();
+        },
+        onDone: _handleLiveStreamDisconnected,
+      );
+    } catch (_) {
+      _handleLiveStreamDisconnected();
+    }
+  }
+
+  void _handleLiveEvent(BridgeEventEnvelope<Map<String, dynamic>> event) {
+    if (_seenLiveEventIds.contains(event.eventId)) {
+      return;
+    }
+    _seenLiveEventIds.add(event.eventId);
+
+    if (event.kind == BridgeEventKind.approvalRequested) {
+      unawaited(loadApprovals(showLoading: false));
+    }
+  }
+
+  void _handleLiveStreamDisconnected() {
+    if (_isDisposed) {
+      return;
+    }
+    _scheduleReconnect();
+  }
+
+  void _scheduleReconnect() {
+    if (_isDisposed ||
+        _isReconnectInProgress ||
+        _reconnectTimer?.isActive == true) {
+      return;
+    }
+
+    _reconnectTimer = Timer(const Duration(seconds: 2), () {
+      unawaited(_runReconnect());
+    });
+  }
+
+  Future<void> _runReconnect() async {
+    if (_isDisposed || _isReconnectInProgress) {
+      return;
+    }
+
+    _isReconnectInProgress = true;
+    try {
+      await _closeLiveSubscription();
+      await _startLiveSubscription();
+    } catch (_) {
+      _scheduleReconnect();
+    } finally {
+      _isReconnectInProgress = false;
+    }
+  }
+
+  Future<void> _closeLiveSubscription() async {
+    await _liveEventSubscription?.cancel();
+    _liveEventSubscription = null;
+
+    final subscription = _liveSubscription;
+    _liveSubscription = null;
+    if (subscription == null) {
+      return;
+    }
+
+    try {
+      await subscription.close();
+    } catch (_) {
+      // Ignore already-closed websocket teardown failures.
+    }
+  }
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    _reconnectTimer?.cancel();
+    unawaited(_closeLiveSubscription());
+    super.dispose();
   }
 }
 

@@ -501,6 +501,52 @@ void main() {
     expect(detailApi.branchSwitchRequestsByThreadId['thread-123'], isNull);
   });
 
+  testWidgets('git mutation buttons stay disabled until git status resolves', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+      gitStatusScriptByThreadId: {
+        'thread-123': [
+          const ThreadGitBridgeException(
+            message: 'Couldn’t load git status right now.',
+          ),
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('git-controls-card')),
+    );
+
+    final switchButton = tester.widget<FilledButton>(
+      find.byKey(const Key('git-branch-switch-button')),
+    );
+    final pullButton = tester.widget<OutlinedButton>(
+      find.byKey(const Key('git-pull-button')),
+    );
+    final pushButton = tester.widget<OutlinedButton>(
+      find.byKey(const Key('git-push-button')),
+    );
+
+    expect(find.text('Couldn’t load git status right now.'), findsOneWidget);
+    expect(switchButton.onPressed, isNull);
+    expect(pullButton.onPressed, isNull);
+    expect(pushButton.onPressed, isNull);
+  });
+
   testWidgets('non-repository context disables git mutations safely', (
     tester,
   ) async {
@@ -1874,6 +1920,8 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
 }
 
 class FakeThreadLiveStream implements ThreadLiveStream {
+  static const _allThreadsKey = '__all__';
+
   final Map<
     String,
     List<StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>
@@ -1887,13 +1935,14 @@ class FakeThreadLiveStream implements ThreadLiveStream {
   @override
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
-    required String threadId,
+    String? threadId,
   }) async {
+    final normalizedThreadId = threadId ?? _allThreadsKey;
     final controller =
         StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();
     _controllersByThreadId
         .putIfAbsent(
-          threadId,
+          normalizedThreadId,
           () => <StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>[],
         )
         .add(controller);
@@ -1901,7 +1950,7 @@ class FakeThreadLiveStream implements ThreadLiveStream {
     return ThreadLiveSubscription(
       events: controller.stream,
       close: () async {
-        _controllersByThreadId[threadId]?.remove(controller);
+        _controllersByThreadId[normalizedThreadId]?.remove(controller);
         if (!controller.isClosed) {
           await controller.close();
         }
@@ -1910,10 +1959,11 @@ class FakeThreadLiveStream implements ThreadLiveStream {
   }
 
   void emit(BridgeEventEnvelope<Map<String, dynamic>> event) {
-    final controllers = _controllersByThreadId[event.threadId];
-    if (controllers == null) {
-      return;
-    }
+    final controllers =
+        <StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>[
+          ...?_controllersByThreadId[event.threadId],
+          ...?_controllersByThreadId[_allThreadsKey],
+        ];
 
     for (final controller
         in List<
@@ -1926,10 +1976,11 @@ class FakeThreadLiveStream implements ThreadLiveStream {
   }
 
   void emitError(String threadId) {
-    final controllers = _controllersByThreadId[threadId];
-    if (controllers == null) {
-      return;
-    }
+    final controllers =
+        <StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>[
+          ...?_controllersByThreadId[threadId],
+          ...?_controllersByThreadId[_allThreadsKey],
+        ];
 
     for (final controller
         in List<
@@ -1942,10 +1993,11 @@ class FakeThreadLiveStream implements ThreadLiveStream {
   }
 
   Future<void> closeThread(String threadId) async {
-    final controllers = _controllersByThreadId[threadId];
-    if (controllers == null) {
-      return;
-    }
+    final controllers =
+        <StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>[
+          ...?_controllersByThreadId[threadId],
+          ...?_controllersByThreadId[_allThreadsKey],
+        ];
 
     for (final controller
         in List<

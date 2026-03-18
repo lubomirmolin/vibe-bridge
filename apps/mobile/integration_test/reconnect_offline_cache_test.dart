@@ -482,6 +482,8 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
 }
 
 class FakeThreadLiveStream implements ThreadLiveStream {
+  static const _allThreadsKey = '__all__';
+
   final Map<
     String,
     List<StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>
@@ -495,13 +497,14 @@ class FakeThreadLiveStream implements ThreadLiveStream {
   @override
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
-    required String threadId,
+    String? threadId,
   }) async {
+    final normalizedThreadId = threadId ?? _allThreadsKey;
     final controller =
         StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();
     _controllersByThreadId
         .putIfAbsent(
-          threadId,
+          normalizedThreadId,
           () => <StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>[],
         )
         .add(controller);
@@ -509,7 +512,7 @@ class FakeThreadLiveStream implements ThreadLiveStream {
     return ThreadLiveSubscription(
       events: controller.stream,
       close: () async {
-        _controllersByThreadId[threadId]?.remove(controller);
+        _controllersByThreadId[normalizedThreadId]?.remove(controller);
         if (!controller.isClosed) {
           await controller.close();
         }
@@ -518,10 +521,11 @@ class FakeThreadLiveStream implements ThreadLiveStream {
   }
 
   void emit(BridgeEventEnvelope<Map<String, dynamic>> event) {
-    final controllers = _controllersByThreadId[event.threadId];
-    if (controllers == null) {
-      return;
-    }
+    final controllers =
+        <StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>[
+          ...?_controllersByThreadId[event.threadId],
+          ...?_controllersByThreadId[_allThreadsKey],
+        ];
 
     for (final controller
         in List<
@@ -534,10 +538,11 @@ class FakeThreadLiveStream implements ThreadLiveStream {
   }
 
   void emitError(String threadId) {
-    final controllers = _controllersByThreadId[threadId];
-    if (controllers == null) {
-      return;
-    }
+    final controllers =
+        <StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>[
+          ...?_controllersByThreadId[threadId],
+          ...?_controllersByThreadId[_allThreadsKey],
+        ];
 
     for (final controller
         in List<
@@ -550,10 +555,11 @@ class FakeThreadLiveStream implements ThreadLiveStream {
   }
 
   Future<void> closeThread(String threadId) async {
-    final controllers = _controllersByThreadId[threadId];
-    if (controllers == null) {
-      return;
-    }
+    final controllers =
+        <StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>[
+          ...?_controllersByThreadId[threadId],
+          ...?_controllersByThreadId[_allThreadsKey],
+        ];
 
     for (final controller
         in List<

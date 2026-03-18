@@ -575,9 +575,12 @@ class _GitControlsCard extends StatelessWidget {
           remote: 'unknown',
         );
     final status = gitStatus?.status;
-    final hasRepositoryContext = _hasRepositoryContext(repositoryContext);
+    final hasResolvedGitStatus = gitStatus != null;
+    final hasRepositoryContext =
+        hasResolvedGitStatus && _hasRepositoryContext(repositoryContext);
     final canRunGitMutations =
         controlsEnabled &&
+        hasResolvedGitStatus &&
         hasRepositoryContext &&
         !isGitStatusLoading &&
         !isGitMutationInFlight;
@@ -586,6 +589,8 @@ class _GitControlsCard extends StatelessWidget {
         ? 'Read-only mode blocks git mutations. Change access mode in settings to continue.'
         : !controlsEnabled
         ? 'Git controls are unavailable while the bridge is offline.'
+        : !hasResolvedGitStatus
+        ? 'Git mutations stay disabled until git status resolves.'
         : gitControlsUnavailableReason ??
               (hasRepositoryContext
                   ? null

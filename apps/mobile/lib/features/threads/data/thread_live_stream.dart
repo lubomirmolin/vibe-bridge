@@ -12,7 +12,7 @@ final threadLiveStreamProvider = Provider<ThreadLiveStream>((ref) {
 abstract class ThreadLiveStream {
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
-    required String threadId,
+    String? threadId,
   });
 }
 
@@ -34,14 +34,15 @@ class HttpThreadLiveStream implements ThreadLiveStream {
   @override
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
-    required String threadId,
+    String? threadId,
   }) async {
     final uri = _buildStreamUri(bridgeApiBaseUrl, threadId);
     final socket = await WebSocket.connect(
       uri.toString(),
     ).timeout(const Duration(seconds: 5));
 
-    final controller = StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();
+    final controller =
+        StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();
 
     late final StreamSubscription<dynamic> socketSubscription;
     socketSubscription = socket.listen(
@@ -91,7 +92,7 @@ class HttpThreadLiveStream implements ThreadLiveStream {
   }
 }
 
-Uri _buildStreamUri(String baseUrl, String threadId) {
+Uri _buildStreamUri(String baseUrl, String? threadId) {
   final baseUri = Uri.parse(baseUrl);
   final normalizedBasePath = baseUri.path.endsWith('/')
       ? baseUri.path.substring(0, baseUri.path.length - 1)
@@ -100,9 +101,13 @@ Uri _buildStreamUri(String baseUrl, String threadId) {
   final fullPath =
       '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/stream';
 
+  final normalizedThreadId = threadId?.trim();
+
   return baseUri.replace(
     scheme: wsScheme,
     path: fullPath,
-    queryParameters: <String, String>{'thread_id': threadId},
+    queryParameters: normalizedThreadId == null || normalizedThreadId.isEmpty
+        ? null
+        : <String, String>{'thread_id': normalizedThreadId},
   );
 }

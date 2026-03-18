@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
+import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -11,6 +12,7 @@ final threadListControllerProvider =
         return ThreadListController(
           bridgeApi: ref.watch(threadListBridgeApiProvider),
           cacheRepository: ref.watch(threadCacheRepositoryProvider),
+          liveStream: ref.watch(threadLiveStreamProvider),
           bridgeApiBaseUrl: bridgeApiBaseUrl,
         );
       },
@@ -112,9 +114,11 @@ class ThreadListController extends StateNotifier<ThreadListState> {
   ThreadListController({
     required ThreadListBridgeApi bridgeApi,
     required ThreadCacheRepository cacheRepository,
+    required ThreadLiveStream liveStream,
     required String bridgeApiBaseUrl,
   }) : _bridgeApi = bridgeApi,
        _cacheRepository = cacheRepository,
+       _liveStream = liveStream,
        _bridgeApiBaseUrl = bridgeApiBaseUrl,
        super(ThreadListState.initial()) {
     unawaited(_initialize());
@@ -122,12 +126,22 @@ class ThreadListController extends StateNotifier<ThreadListState> {
 
   final ThreadListBridgeApi _bridgeApi;
   final ThreadCacheRepository _cacheRepository;
+  final ThreadLiveStream _liveStream;
   final String _bridgeApiBaseUrl;
+  final Set<String> _knownLiveEventIds = <String>{};
+
+  ThreadLiveSubscription? _liveSubscription;
+  StreamSubscription<BridgeEventEnvelope<Map<String, dynamic>>>?
+  _liveEventSubscription;
+  Timer? _reconnectTimer;
+  bool _isReconnectInProgress = false;
+  bool _isDisposed = false;
 
   Future<void> _initialize() async {
     await _restoreSelectedThreadId();
     await _restoreCachedThreadList();
     await loadThreads();
+    await _startLiveSubscription();
   }
 
   Future<void> _restoreSelectedThreadId() async {
@@ -283,5 +297,146 @@ class ThreadListController extends StateNotifier<ThreadListState> {
     final nextThreads = List<ThreadSummaryDto>.from(state.threads);
     nextThreads[index] = updatedThread;
     state = state.copyWith(threads: nextThreads);
+    unawaited(_cacheRepository.saveThreadList(nextThreads));
+  }
+
+  Future<void> _startLiveSubscription() async {
+    try {
+      final subscription = await _liveStream.subscribe(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+      );
+      _liveSubscription = subscription;
+      _liveEventSubscription = subscription.events.listen(
+        _handleLiveEvent,
+        onError: (_) {
+          _handleLiveStreamDisconnected();
+        },
+        onDone: _handleLiveStreamDisconnected,
+      );
+    } catch (_) {
+      _handleLiveStreamDisconnected();
+    }
+  }
+
+  void _handleLiveEvent(BridgeEventEnvelope<Map<String, dynamic>> event) {
+    if (_knownLiveEventIds.contains(event.eventId)) {
+      return;
+    }
+    _knownLiveEventIds.add(event.eventId);
+
+    if (!_containsThread(event.threadId)) {
+      unawaited(loadThreads());
+      return;
+    }
+
+    if (event.kind == BridgeEventKind.threadStatusChanged) {
+      final rawStatus = event.payload['status'];
+      if (rawStatus is String && rawStatus.trim().isNotEmpty) {
+        try {
+          final status = threadStatusFromWire(rawStatus.trim());
+          applyThreadStatusUpdate(
+            threadId: event.threadId,
+            status: status,
+            updatedAt: event.occurredAt,
+          );
+          return;
+        } on FormatException {
+          // Fall through to timestamp-only activity update.
+        }
+      }
+    }
+
+    _touchThreadActivity(threadId: event.threadId, updatedAt: event.occurredAt);
+  }
+
+  void _touchThreadActivity({
+    required String threadId,
+    required String updatedAt,
+  }) {
+    _updateThreadSummary(
+      threadId: threadId,
+      transform: (thread) {
+        return ThreadSummaryDto(
+          contractVersion: thread.contractVersion,
+          threadId: thread.threadId,
+          title: thread.title,
+          status: thread.status,
+          workspace: thread.workspace,
+          repository: thread.repository,
+          branch: thread.branch,
+          updatedAt: updatedAt,
+        );
+      },
+    );
+  }
+
+  bool _containsThread(String threadId) {
+    return state.threads.any((thread) => thread.threadId == threadId);
+  }
+
+  void _handleLiveStreamDisconnected() {
+    if (_isDisposed) {
+      return;
+    }
+
+    state = state.copyWith(
+      staleMessage:
+          'Live thread updates are reconnecting. Pull to refresh if statuses look stale.',
+      isShowingCachedData: true,
+    );
+    _scheduleReconnect();
+  }
+
+  void _scheduleReconnect() {
+    if (_isDisposed ||
+        _isReconnectInProgress ||
+        _reconnectTimer?.isActive == true) {
+      return;
+    }
+
+    _reconnectTimer = Timer(const Duration(seconds: 2), () {
+      unawaited(_runReconnect());
+    });
+  }
+
+  Future<void> _runReconnect() async {
+    if (_isDisposed || _isReconnectInProgress) {
+      return;
+    }
+
+    _isReconnectInProgress = true;
+    try {
+      await _closeLiveSubscription();
+      await _startLiveSubscription();
+    } catch (_) {
+      _scheduleReconnect();
+    } finally {
+      _isReconnectInProgress = false;
+    }
+  }
+
+  Future<void> _closeLiveSubscription() async {
+    await _liveEventSubscription?.cancel();
+    _liveEventSubscription = null;
+
+    final subscription = _liveSubscription;
+    _liveSubscription = null;
+    if (subscription == null) {
+      return;
+    }
+
+    try {
+      await subscription.close();
+    } catch (_) {
+      // Ignore already-closed websocket teardown failures.
+    }
+  }
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    _reconnectTimer?.cancel();
+    unawaited(_closeLiveSubscription());
+    super.dispose();
   }
 }
