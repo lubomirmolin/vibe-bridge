@@ -1,16 +1,38 @@
-# codex_mobile_companion
+# Mobile App
 
-A new Flutter project.
+Flutter companion app for Codex on iOS simulators and Android emulators.
 
-## Getting Started
+## Features
 
-This project is a starting point for a Flutter application.
+- QR/manual pairing with trusted Mac bridge
+- Thread list/detail, live updates, offline cache, and reconnect recovery
+- Turn controls, approvals, git actions, and settings
+- Foreground notification routing and deduplication
+- Open on Mac compatibility flow
 
-A few resources to get you started if this is your first Flutter project:
+## Run
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+From this directory:
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```bash
+flutter pub get
+flutter devices
+flutter run -d <simulator-or-emulator-id>
+```
+
+## Test
+
+```bash
+flutter test --concurrency=5
+```
+
+Integration tests should be pinned to an explicit simulator or emulator:
+
+```bash
+flutter test integration_test -d <simulator-or-emulator-id>
+```
+
+## Notes
+
+- Use simulators/emulators only for this mission.
+- Notifications are foreground-only in this build.
