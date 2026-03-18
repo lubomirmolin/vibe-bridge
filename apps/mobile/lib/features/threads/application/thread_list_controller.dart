@@ -1,30 +1,39 @@
+import 'dart:async';
+
+import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final threadListControllerProvider =
-    StateNotifierProvider.family<ThreadListController, ThreadListState, String>((
-      ref,
-      bridgeApiBaseUrl,
-    ) {
-      return ThreadListController(
-        bridgeApi: ref.watch(threadListBridgeApiProvider),
-        bridgeApiBaseUrl: bridgeApiBaseUrl,
-      );
-    });
+    StateNotifierProvider.family<ThreadListController, ThreadListState, String>(
+      (ref, bridgeApiBaseUrl) {
+        return ThreadListController(
+          bridgeApi: ref.watch(threadListBridgeApiProvider),
+          cacheRepository: ref.watch(threadCacheRepositoryProvider),
+          bridgeApiBaseUrl: bridgeApiBaseUrl,
+        );
+      },
+    );
 
 class ThreadListState {
   const ThreadListState({
     required this.threads,
     required this.searchQuery,
+    this.selectedThreadId,
     this.errorMessage,
+    this.staleMessage,
     this.isLoading = false,
+    this.isShowingCachedData = false,
   });
 
   final List<ThreadSummaryDto> threads;
   final String searchQuery;
+  final String? selectedThreadId;
   final String? errorMessage;
+  final String? staleMessage;
   final bool isLoading;
+  final bool isShowingCachedData;
 
   factory ThreadListState.initial() {
     return const ThreadListState(
@@ -55,6 +64,11 @@ class ThreadListState {
 
   bool get hasQuery => searchQuery.trim().isNotEmpty;
 
+  bool get hasSelectedThread =>
+      selectedThreadId != null && selectedThreadId!.trim().isNotEmpty;
+
+  bool get hasStaleMessage => staleMessage != null && staleMessage!.isNotEmpty;
+
   bool get isEmptyState =>
       !isLoading && errorMessage == null && threads.isEmpty;
 
@@ -67,17 +81,29 @@ class ThreadListState {
   ThreadListState copyWith({
     List<ThreadSummaryDto>? threads,
     String? searchQuery,
+    String? selectedThreadId,
+    bool clearSelectedThreadId = false,
     String? errorMessage,
     bool clearErrorMessage = false,
+    String? staleMessage,
+    bool clearStaleMessage = false,
     bool? isLoading,
+    bool? isShowingCachedData,
   }) {
     return ThreadListState(
       threads: threads ?? this.threads,
       searchQuery: searchQuery ?? this.searchQuery,
+      selectedThreadId: clearSelectedThreadId
+          ? null
+          : (selectedThreadId ?? this.selectedThreadId),
       errorMessage: clearErrorMessage
           ? null
           : (errorMessage ?? this.errorMessage),
+      staleMessage: clearStaleMessage
+          ? null
+          : (staleMessage ?? this.staleMessage),
       isLoading: isLoading ?? this.isLoading,
+      isShowingCachedData: isShowingCachedData ?? this.isShowingCachedData,
     );
   }
 }
@@ -85,29 +111,96 @@ class ThreadListState {
 class ThreadListController extends StateNotifier<ThreadListState> {
   ThreadListController({
     required ThreadListBridgeApi bridgeApi,
+    required ThreadCacheRepository cacheRepository,
     required String bridgeApiBaseUrl,
   }) : _bridgeApi = bridgeApi,
+       _cacheRepository = cacheRepository,
        _bridgeApiBaseUrl = bridgeApiBaseUrl,
        super(ThreadListState.initial()) {
-    loadThreads();
+    unawaited(_initialize());
   }
 
   final ThreadListBridgeApi _bridgeApi;
+  final ThreadCacheRepository _cacheRepository;
   final String _bridgeApiBaseUrl;
 
+  Future<void> _initialize() async {
+    await _restoreSelectedThreadId();
+    await _restoreCachedThreadList();
+    await loadThreads();
+  }
+
+  Future<void> _restoreSelectedThreadId() async {
+    final selectedThreadId = await _cacheRepository.readSelectedThreadId();
+    if (selectedThreadId == null) {
+      return;
+    }
+
+    state = state.copyWith(selectedThreadId: selectedThreadId);
+  }
+
+  Future<void> _restoreCachedThreadList() async {
+    final cached = await _cacheRepository.readThreadList();
+    if (cached == null || cached.threads.isEmpty) {
+      return;
+    }
+
+    state = state.copyWith(
+      threads: cached.threads,
+      staleMessage:
+          'Showing cached threads while reconnecting to the private bridge path.',
+      isShowingCachedData: true,
+    );
+  }
+
   Future<void> loadThreads() async {
-    state = state.copyWith(isLoading: true, clearErrorMessage: true);
+    state = state.copyWith(
+      isLoading: true,
+      clearErrorMessage: true,
+      clearStaleMessage: true,
+      isShowingCachedData: false,
+    );
 
     try {
       final threads = await _bridgeApi.fetchThreads(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
       );
+      await _cacheRepository.saveThreadList(threads);
+
       state = state.copyWith(
         threads: threads,
         clearErrorMessage: true,
+        clearStaleMessage: true,
         isLoading: false,
+        isShowingCachedData: false,
       );
     } on ThreadListBridgeException catch (error) {
+      if (error.isConnectivityError) {
+        final cachedList = await _cacheRepository.readThreadList();
+        if (cachedList != null && cachedList.threads.isNotEmpty) {
+          state = state.copyWith(
+            threads: cachedList.threads,
+            staleMessage:
+                'Bridge is offline. Showing cached threads. Mutating actions stay blocked until reconnect.',
+            clearErrorMessage: true,
+            isLoading: false,
+            isShowingCachedData: true,
+          );
+          return;
+        }
+
+        if (state.threads.isNotEmpty) {
+          state = state.copyWith(
+            staleMessage:
+                'Bridge is offline. Showing cached threads. Mutating actions stay blocked until reconnect.',
+            clearErrorMessage: true,
+            isLoading: false,
+            isShowingCachedData: true,
+          );
+          return;
+        }
+      }
+
       state = state.copyWith(errorMessage: error.message, isLoading: false);
     } catch (_) {
       state = state.copyWith(
@@ -115,6 +208,16 @@ class ThreadListController extends StateNotifier<ThreadListState> {
         isLoading: false,
       );
     }
+  }
+
+  Future<void> selectThread(String threadId) async {
+    final normalizedThreadId = threadId.trim();
+    if (normalizedThreadId.isEmpty) {
+      return;
+    }
+
+    state = state.copyWith(selectedThreadId: normalizedThreadId);
+    await _cacheRepository.saveSelectedThreadId(normalizedThreadId);
   }
 
   void updateSearchQuery(String searchQuery) {
@@ -169,7 +272,9 @@ class ThreadListController extends StateNotifier<ThreadListState> {
     required String threadId,
     required ThreadSummaryDto Function(ThreadSummaryDto thread) transform,
   }) {
-    final index = state.threads.indexWhere((thread) => thread.threadId == threadId);
+    final index = state.threads.indexWhere(
+      (thread) => thread.threadId == threadId,
+    );
     if (index < 0) {
       return;
     }

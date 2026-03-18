@@ -34,6 +34,7 @@ class ThreadDetailPage extends ConsumerWidget {
           state: state,
           onRetry: controller.loadThread,
           onLoadEarlier: controller.loadEarlierHistory,
+          onRetryReconnect: controller.retryReconnectCatchUp,
         ),
       ),
     );
@@ -45,6 +46,7 @@ Widget _buildBody(
   required ThreadDetailState state,
   required Future<void> Function() onRetry,
   required VoidCallback onLoadEarlier,
+  required Future<void> Function() onRetryReconnect,
 }) {
   if (state.isLoading && !state.hasThread) {
     return const _ThreadDetailLoadingState();
@@ -74,6 +76,14 @@ Widget _buildBody(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
         _ThreadDetailHeader(thread: thread),
+        if (state.staleMessage != null) ...[
+          const SizedBox(height: 12),
+          _InlineWarning(message: state.staleMessage!),
+        ],
+        if (!state.canRunMutatingActions) ...[
+          const SizedBox(height: 12),
+          _MutatingActionsBlockedNotice(onRetryReconnect: onRetryReconnect),
+        ],
         if (state.streamErrorMessage != null) ...[
           const SizedBox(height: 12),
           _InlineWarning(message: state.streamErrorMessage!),
@@ -86,9 +96,7 @@ Widget _buildBody(
               key: const Key('load-earlier-history'),
               onPressed: onLoadEarlier,
               icon: const Icon(Icons.history),
-              label: Text(
-                'Load earlier history (${state.hiddenHistoryCount})',
-              ),
+              label: Text('Load earlier history (${state.hiddenHistoryCount})'),
             ),
           ),
           const SizedBox(height: 12),
@@ -189,7 +197,10 @@ class _ThreadDetailHeader extends StatelessWidget {
             const SizedBox(height: 8),
             Text('${thread.repository} • ${thread.branch}'),
             const SizedBox(height: 2),
-            Text(thread.workspace, style: Theme.of(context).textTheme.bodySmall),
+            Text(
+              thread.workspace,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
             const SizedBox(height: 6),
             Text(
               thread.threadId,
@@ -292,6 +303,41 @@ class _InlineWarning extends StatelessWidget {
   }
 }
 
+class _MutatingActionsBlockedNotice extends StatelessWidget {
+  const _MutatingActionsBlockedNotice({required this.onRetryReconnect});
+
+  final Future<void> Function() onRetryReconnect;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Mutating actions are blocked while the bridge or private route is unavailable.',
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton(
+            key: const Key('retry-reconnect-catchup'),
+            onPressed: onRetryReconnect,
+            child: const Text('Retry reconnect'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _StatusBadge extends StatelessWidget {
   const _StatusBadge({required this.status});
 
@@ -357,7 +403,10 @@ class _ActivityStyle {
   final Color foreground;
 }
 
-_ActivityStyle _activityStyle(BuildContext context, ThreadActivityItemType type) {
+_ActivityStyle _activityStyle(
+  BuildContext context,
+  ThreadActivityItemType type,
+) {
   final colorScheme = Theme.of(context).colorScheme;
 
   switch (type) {

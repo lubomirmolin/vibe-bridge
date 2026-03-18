@@ -362,7 +362,7 @@ void main() {
   );
 
   testWidgets(
-    'unreachable trusted bridge path on reconnect fails closed and clears local trust',
+    'unreachable trusted bridge path on reconnect preserves trust with explicit disconnected state',
     (tester) async {
       final store = InMemorySecureStore();
       await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
@@ -400,7 +400,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Pair your phone to this Mac'), findsOneWidget);
+      expect(find.text('Paired with Codex Mobile Companion'), findsOneWidget);
+      expect(find.text('Bridge disconnected'), findsOneWidget);
       expect(
         find.text(
           'Private bridge path is currently unreachable. Reconnect to Tailscale and retry.',
@@ -409,9 +410,9 @@ void main() {
       );
       expect(
         await store.readSecret(SecureValueKey.trustedBridgeIdentity),
-        isNull,
+        isNotNull,
       );
-      expect(await store.readSecret(SecureValueKey.sessionToken), isNull);
+      expect(await store.readSecret(SecureValueKey.sessionToken), isNotNull);
     },
   );
 }

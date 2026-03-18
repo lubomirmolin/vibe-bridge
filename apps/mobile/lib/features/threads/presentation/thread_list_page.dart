@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:codex_mobile_companion/features/threads/application/thread_list_controller.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_detail_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
@@ -15,6 +17,7 @@ class ThreadListPage extends ConsumerStatefulWidget {
 
 class _ThreadListPageState extends ConsumerState<ThreadListPage> {
   late final TextEditingController _searchController;
+  bool _didRestoreSelectedThread = false;
 
   @override
   void initState() {
@@ -36,6 +39,8 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
     final controller = ref.read(
       threadListControllerProvider(widget.bridgeApiBaseUrl).notifier,
     );
+
+    _restoreSelectedThreadIfNeeded(state, controller);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Threads')),
@@ -67,8 +72,54 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                 ),
               ),
             ),
+            if (state.hasStaleMessage)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: _StaleDataBanner(message: state.staleMessage!),
+              ),
             Expanded(child: _buildBody(state, controller)),
           ],
+        ),
+      ),
+    );
+  }
+
+  void _restoreSelectedThreadIfNeeded(
+    ThreadListState state,
+    ThreadListController controller,
+  ) {
+    if (_didRestoreSelectedThread ||
+        !state.hasSelectedThread ||
+        state.isLoading) {
+      return;
+    }
+
+    _didRestoreSelectedThread = true;
+    final selectedThreadId = state.selectedThreadId!;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      unawaited(_openThreadDetail(controller, selectedThreadId));
+    });
+  }
+
+  Future<void> _openThreadDetail(
+    ThreadListController controller,
+    String threadId,
+  ) async {
+    _didRestoreSelectedThread = true;
+    await controller.selectThread(threadId);
+    if (!mounted) {
+      return;
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ThreadDetailPage(
+          bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+          threadId: threadId,
         ),
       ),
     );
@@ -111,18 +162,33 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
           return _ThreadSummaryCard(
             thread: thread,
             onOpenDetail: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (context) => ThreadDetailPage(
-                    bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
-                    threadId: thread.threadId,
-                  ),
-                ),
-              );
+              unawaited(_openThreadDetail(controller, thread.threadId));
             },
           );
         },
       ),
+    );
+  }
+}
+
+class _StaleDataBanner extends StatelessWidget {
+  const _StaleDataBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: colorScheme.errorContainer.withValues(alpha: 0.24),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: colorScheme.error),
+      ),
+      child: Text(message),
     );
   }
 }

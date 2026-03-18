@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,21 +14,25 @@ void main() {
     'shows loading then populated thread rows with status and context',
     (tester) async {
       final completer = Completer<List<ThreadSummaryDto>>();
+      final cacheRepository = _newCacheRepository();
       final bridgeApi = FakeThreadListBridgeApi(
         scriptedResults: [completer.future],
       );
 
       await tester.pumpWidget(
         ProviderScope(
-          overrides: [threadListBridgeApiProvider.overrideWithValue(bridgeApi)],
+          overrides: [
+            threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+            threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
+          ],
           child: const MaterialApp(
             home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
           ),
         ),
       );
 
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
-      expect(find.text('Loading threads…'), findsOneWidget);
+      await tester.pump();
+      expect(find.text('Implement shared contracts'), findsNothing);
 
       completer.complete(_sampleThreads());
       await tester.pumpAndSettle();
@@ -49,13 +55,17 @@ void main() {
   testWidgets('shows an explicit empty state when no threads exist', (
     tester,
   ) async {
+    final cacheRepository = _newCacheRepository();
     final bridgeApi = FakeThreadListBridgeApi(
       scriptedResults: [<ThreadSummaryDto>[]],
     );
 
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [threadListBridgeApiProvider.overrideWithValue(bridgeApi)],
+        overrides: [
+          threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+          threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
+        ],
         child: const MaterialApp(
           home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
         ),
@@ -73,6 +83,7 @@ void main() {
   testWidgets('shows retryable error state and recovers on retry', (
     tester,
   ) async {
+    final cacheRepository = _newCacheRepository();
     final bridgeApi = FakeThreadListBridgeApi(
       scriptedResults: [
         const ThreadListBridgeException(
@@ -84,7 +95,10 @@ void main() {
 
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [threadListBridgeApiProvider.overrideWithValue(bridgeApi)],
+        overrides: [
+          threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+          threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
+        ],
         child: const MaterialApp(
           home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
         ),
@@ -110,13 +124,17 @@ void main() {
   testWidgets('search narrows and clearing search restores full list', (
     tester,
   ) async {
+    final cacheRepository = _newCacheRepository();
     final bridgeApi = FakeThreadListBridgeApi(
       scriptedResults: [_sampleThreads()],
     );
 
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [threadListBridgeApiProvider.overrideWithValue(bridgeApi)],
+        overrides: [
+          threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+          threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
+        ],
         child: const MaterialApp(
           home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
         ),
@@ -142,6 +160,51 @@ void main() {
     expect(find.text('Implement shared contracts'), findsOneWidget);
     expect(find.text('Investigate reconnect dedup'), findsOneWidget);
   });
+
+  testWidgets(
+    'offline bridge keeps cached thread list readable with stale state',
+    (tester) async {
+      final cacheRepository = _newCacheRepository();
+      await cacheRepository.saveThreadList(_sampleThreads());
+
+      final bridgeApi = FakeThreadListBridgeApi(
+        scriptedResults: [
+          const ThreadListBridgeException(
+            'Cannot reach the bridge. Check your private route.',
+            isConnectivityError: true,
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+            threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
+          ],
+          child: const MaterialApp(
+            home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Implement shared contracts'), findsOneWidget);
+      expect(find.text('Investigate reconnect dedup'), findsOneWidget);
+      expect(
+        find.textContaining('Bridge is offline. Showing cached threads.'),
+        findsOneWidget,
+      );
+      expect(find.text('Couldn’t load threads'), findsNothing);
+    },
+  );
+}
+
+ThreadCacheRepository _newCacheRepository() {
+  return SecureStoreThreadCacheRepository(
+    secureStore: InMemorySecureStore(),
+    nowUtc: () => DateTime.utc(2026, 3, 18, 10, 0),
+  );
 }
 
 List<ThreadSummaryDto> _sampleThreads() {

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:codex_mobile_companion/features/threads/application/thread_list_controller.dart';
+import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
 import 'package:codex_mobile_companion/features/threads/domain/thread_activity_item.dart';
@@ -8,22 +9,25 @@ import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dar
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final threadDetailControllerProvider = StateNotifierProvider.autoDispose
-    .family<ThreadDetailController, ThreadDetailState, ThreadDetailControllerArgs>(
-      (ref, args) {
-        final threadListController = ref.read(
-          threadListControllerProvider(args.bridgeApiBaseUrl).notifier,
-        );
+    .family<
+      ThreadDetailController,
+      ThreadDetailState,
+      ThreadDetailControllerArgs
+    >((ref, args) {
+      final threadListController = ref.read(
+        threadListControllerProvider(args.bridgeApiBaseUrl).notifier,
+      );
 
-        return ThreadDetailController(
-          bridgeApiBaseUrl: args.bridgeApiBaseUrl,
-          threadId: args.threadId,
-          initialVisibleTimelineEntries: args.initialVisibleTimelineEntries,
-          bridgeApi: ref.watch(threadDetailBridgeApiProvider),
-          liveStream: ref.watch(threadLiveStreamProvider),
-          threadListController: threadListController,
-        );
-      },
-    );
+      return ThreadDetailController(
+        bridgeApiBaseUrl: args.bridgeApiBaseUrl,
+        threadId: args.threadId,
+        initialVisibleTimelineEntries: args.initialVisibleTimelineEntries,
+        bridgeApi: ref.watch(threadDetailBridgeApiProvider),
+        cacheRepository: ref.watch(threadCacheRepositoryProvider),
+        liveStream: ref.watch(threadLiveStreamProvider),
+        threadListController: threadListController,
+      );
+    });
 
 class ThreadDetailControllerArgs {
   const ThreadDetailControllerArgs({
@@ -45,11 +49,8 @@ class ThreadDetailControllerArgs {
   }
 
   @override
-  int get hashCode => Object.hash(
-    bridgeApiBaseUrl,
-    threadId,
-    initialVisibleTimelineEntries,
-  );
+  int get hashCode =>
+      Object.hash(bridgeApiBaseUrl, threadId, initialVisibleTimelineEntries);
 }
 
 class ThreadDetailState {
@@ -59,8 +60,11 @@ class ThreadDetailState {
     this.items = const <ThreadActivityItem>[],
     this.errorMessage,
     this.streamErrorMessage,
+    this.staleMessage,
     this.isUnavailable = false,
     this.isLoading = true,
+    this.isShowingCachedData = false,
+    this.isConnectivityUnavailable = false,
     this.visibleItemCount = 0,
   });
 
@@ -69,13 +73,18 @@ class ThreadDetailState {
   final List<ThreadActivityItem> items;
   final String? errorMessage;
   final String? streamErrorMessage;
+  final String? staleMessage;
   final bool isUnavailable;
   final bool isLoading;
+  final bool isShowingCachedData;
+  final bool isConnectivityUnavailable;
   final int visibleItemCount;
 
   bool get hasThread => thread != null;
 
   bool get hasError => errorMessage != null;
+
+  bool get canRunMutatingActions => !isConnectivityUnavailable;
 
   int get hiddenHistoryCount {
     if (items.length <= visibleItemCount) {
@@ -109,8 +118,12 @@ class ThreadDetailState {
     bool clearErrorMessage = false,
     String? streamErrorMessage,
     bool clearStreamErrorMessage = false,
+    String? staleMessage,
+    bool clearStaleMessage = false,
     bool? isUnavailable,
     bool? isLoading,
+    bool? isShowingCachedData,
+    bool? isConnectivityUnavailable,
     int? visibleItemCount,
   }) {
     return ThreadDetailState(
@@ -123,8 +136,14 @@ class ThreadDetailState {
       streamErrorMessage: clearStreamErrorMessage
           ? null
           : (streamErrorMessage ?? this.streamErrorMessage),
+      staleMessage: clearStaleMessage
+          ? null
+          : (staleMessage ?? this.staleMessage),
       isUnavailable: isUnavailable ?? this.isUnavailable,
       isLoading: isLoading ?? this.isLoading,
+      isShowingCachedData: isShowingCachedData ?? this.isShowingCachedData,
+      isConnectivityUnavailable:
+          isConnectivityUnavailable ?? this.isConnectivityUnavailable,
       visibleItemCount: visibleItemCount ?? this.visibleItemCount,
     );
   }
@@ -136,11 +155,13 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     required String threadId,
     required int initialVisibleTimelineEntries,
     required ThreadDetailBridgeApi bridgeApi,
+    required ThreadCacheRepository cacheRepository,
     required ThreadLiveStream liveStream,
     required ThreadListController threadListController,
   }) : _bridgeApiBaseUrl = bridgeApiBaseUrl,
        _initialVisibleTimelineEntries = initialVisibleTimelineEntries,
        _bridgeApi = bridgeApi,
+       _cacheRepository = cacheRepository,
        _liveStream = liveStream,
        _threadListController = threadListController,
        super(ThreadDetailState(threadId: threadId)) {
@@ -150,6 +171,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   final String _bridgeApiBaseUrl;
   final int _initialVisibleTimelineEntries;
   final ThreadDetailBridgeApi _bridgeApi;
+  final ThreadCacheRepository _cacheRepository;
   final ThreadLiveStream _liveStream;
   final ThreadListController _threadListController;
   final Set<String> _knownEventIds = <String>{};
@@ -157,13 +179,20 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   ThreadLiveSubscription? _liveSubscription;
   StreamSubscription<BridgeEventEnvelope<Map<String, dynamic>>>?
   _liveEventSubscription;
+  Timer? _reconnectTimer;
+  bool _isReconnectInProgress = false;
+  bool _isDisposed = false;
 
   Future<void> loadThread() async {
+    _reconnectTimer?.cancel();
     state = state.copyWith(
       isLoading: true,
       isUnavailable: false,
       clearErrorMessage: true,
       clearStreamErrorMessage: true,
+      clearStaleMessage: true,
+      isShowingCachedData: false,
+      isConnectivityUnavailable: false,
     );
 
     try {
@@ -179,16 +208,17 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         threadId: state.threadId,
       );
 
+      await _cacheRepository.saveThreadDetail(
+        detail: detail,
+        timeline: timeline,
+      );
+
       final items = timeline
           .map(ThreadActivityItem.fromTimelineEntry)
           .toList(growable: false);
       _knownEventIds.addAll(items.map((item) => item.eventId));
 
-      final visibleItemCount = items.isEmpty
-          ? 0
-          : items.length < _initialVisibleTimelineEntries
-          ? items.length
-          : _initialVisibleTimelineEntries;
+      final visibleItemCount = _initialVisibleCount(items.length);
 
       state = state.copyWith(
         thread: detail,
@@ -198,11 +228,24 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         isUnavailable: false,
         clearErrorMessage: true,
         clearStreamErrorMessage: true,
+        clearStaleMessage: true,
+        isShowingCachedData: false,
+        isConnectivityUnavailable: false,
       );
 
       _threadListController.syncThreadDetail(detail);
       await _startLiveSubscription();
     } on ThreadDetailBridgeException catch (error) {
+      if (error.isConnectivityError) {
+        final loadedFromCache = await _loadFromCachedThreadSnapshot(
+          bridgeMessage: error.message,
+        );
+        if (loadedFromCache) {
+          _scheduleReconnectCatchUp();
+          return;
+        }
+      }
+
       state = state.copyWith(
         isLoading: false,
         errorMessage: error.message,
@@ -221,12 +264,18 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       return;
     }
 
-    final nextVisibleCount = state.visibleItemCount + _initialVisibleTimelineEntries;
+    final nextVisibleCount =
+        state.visibleItemCount + _initialVisibleTimelineEntries;
     state = state.copyWith(
       visibleItemCount: nextVisibleCount > state.items.length
           ? state.items.length
           : nextVisibleCount,
     );
+  }
+
+  Future<void> retryReconnectCatchUp() async {
+    _reconnectTimer?.cancel();
+    await _runReconnectCatchUp();
   }
 
   Future<void> _startLiveSubscription() async {
@@ -240,22 +289,201 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       _liveEventSubscription = subscription.events.listen(
         _handleLiveEvent,
         onError: (_) {
-          state = state.copyWith(
-            streamErrorMessage:
-                'Live updates disconnected. Pull to retry thread history.',
-          );
+          _handleLiveStreamDisconnected();
+        },
+        onDone: () {
+          _handleLiveStreamDisconnected();
         },
       );
-    } catch (_) {
+
       state = state.copyWith(
-        streamErrorMessage:
-            'Live updates are unavailable. Pull to refresh thread history.',
+        clearStreamErrorMessage: true,
+        clearStaleMessage: true,
+        isShowingCachedData: false,
+        isConnectivityUnavailable: false,
       );
+    } catch (_) {
+      _handleLiveStreamDisconnected();
     }
   }
 
+  void _handleLiveStreamDisconnected() {
+    if (_isDisposed) {
+      return;
+    }
+
+    state = state.copyWith(
+      streamErrorMessage:
+          'Live updates disconnected. Reconnecting and catching up…',
+      staleMessage:
+          'Bridge is offline. Showing cached thread content. Mutating actions are blocked until reconnect.',
+      isShowingCachedData: true,
+      isConnectivityUnavailable: true,
+    );
+  }
+
+  void _scheduleReconnectCatchUp() {
+    if (_isDisposed ||
+        _isReconnectInProgress ||
+        _reconnectTimer?.isActive == true) {
+      return;
+    }
+
+    _reconnectTimer = Timer(const Duration(seconds: 2), () {
+      unawaited(_runReconnectCatchUp());
+    });
+  }
+
+  Future<void> _runReconnectCatchUp() async {
+    if (_isDisposed || _isReconnectInProgress) {
+      return;
+    }
+
+    _isReconnectInProgress = true;
+
+    try {
+      await _closeLiveSubscription();
+
+      final detail = await _bridgeApi.fetchThreadDetail(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: state.threadId,
+      );
+      final timeline = await _bridgeApi.fetchThreadTimeline(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: state.threadId,
+      );
+
+      final mergedItems = _mergeTimeline(timeline);
+
+      await _cacheRepository.saveThreadDetail(
+        detail: detail,
+        timeline: timeline,
+      );
+
+      state = state.copyWith(
+        thread: detail,
+        items: mergedItems,
+        visibleItemCount: _nextVisibleCountForMergedItems(
+          previousVisibleItemCount: state.visibleItemCount,
+          previousItemCount: state.items.length,
+          nextItemCount: mergedItems.length,
+        ),
+        clearErrorMessage: true,
+        clearStreamErrorMessage: true,
+        clearStaleMessage: true,
+        isLoading: false,
+        isUnavailable: false,
+        isShowingCachedData: false,
+        isConnectivityUnavailable: false,
+      );
+
+      _threadListController.syncThreadDetail(detail);
+      await _startLiveSubscription();
+    } on ThreadDetailBridgeException catch (error) {
+      if (!error.isConnectivityError) {
+        state = state.copyWith(
+          streamErrorMessage: error.message,
+          staleMessage:
+              'Bridge is offline. Showing cached thread content. Mutating actions are blocked until reconnect.',
+          isShowingCachedData: true,
+          isConnectivityUnavailable: true,
+        );
+      }
+      _scheduleReconnectCatchUp();
+    } catch (_) {
+      _scheduleReconnectCatchUp();
+    } finally {
+      _isReconnectInProgress = false;
+    }
+  }
+
+  Future<bool> _loadFromCachedThreadSnapshot({
+    required String bridgeMessage,
+  }) async {
+    final cachedSnapshot = await _cacheRepository.readThreadDetail(
+      state.threadId,
+    );
+    if (cachedSnapshot == null) {
+      return false;
+    }
+
+    final items = cachedSnapshot.timeline
+        .map(ThreadActivityItem.fromTimelineEntry)
+        .toList(growable: false);
+
+    _knownEventIds
+      ..clear()
+      ..addAll(items.map((item) => item.eventId));
+
+    state = state.copyWith(
+      thread: cachedSnapshot.detail,
+      items: items,
+      visibleItemCount: _initialVisibleCount(items.length),
+      clearErrorMessage: true,
+      streamErrorMessage: bridgeMessage,
+      staleMessage:
+          'Bridge is offline. Showing cached thread content. Mutating actions are blocked until reconnect.',
+      isLoading: false,
+      isUnavailable: false,
+      isShowingCachedData: true,
+      isConnectivityUnavailable: true,
+    );
+
+    _threadListController.syncThreadDetail(cachedSnapshot.detail);
+    return true;
+  }
+
+  List<ThreadActivityItem> _mergeTimeline(
+    List<ThreadTimelineEntryDto> timeline,
+  ) {
+    if (timeline.isEmpty) {
+      return state.items;
+    }
+
+    final nextItems = List<ThreadActivityItem>.from(state.items);
+    for (final entry in timeline) {
+      if (_knownEventIds.contains(entry.eventId)) {
+        continue;
+      }
+
+      nextItems.add(ThreadActivityItem.fromTimelineEntry(entry));
+      _knownEventIds.add(entry.eventId);
+    }
+
+    return nextItems;
+  }
+
+  int _initialVisibleCount(int itemCount) {
+    if (itemCount <= 0) {
+      return 0;
+    }
+
+    return itemCount < _initialVisibleTimelineEntries
+        ? itemCount
+        : _initialVisibleTimelineEntries;
+  }
+
+  int _nextVisibleCountForMergedItems({
+    required int previousVisibleItemCount,
+    required int previousItemCount,
+    required int nextItemCount,
+  }) {
+    final shouldExpandVisibleWindow =
+        previousVisibleItemCount >= previousItemCount;
+    if (!shouldExpandVisibleWindow) {
+      return previousVisibleItemCount > nextItemCount
+          ? nextItemCount
+          : previousVisibleItemCount;
+    }
+
+    final delta = nextItemCount - previousItemCount;
+    final candidate = previousVisibleItemCount + (delta > 0 ? delta : 0);
+    return candidate > nextItemCount ? nextItemCount : candidate;
+  }
+
   void _handleLiveEvent(BridgeEventEnvelope<Map<String, dynamic>> event) {
-    if (event.threadId != state.threadId || _knownEventIds.contains(event.eventId)) {
+    if (event.threadId != state.threadId ||
+        _knownEventIds.contains(event.eventId)) {
       return;
     }
 
@@ -268,7 +496,8 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     _knownEventIds.add(event.eventId);
 
     final previousItemCount = state.items.length;
-    final shouldExpandVisibleWindow = state.visibleItemCount >= previousItemCount;
+    final shouldExpandVisibleWindow =
+        state.visibleItemCount >= previousItemCount;
     final nextVisibleCount = shouldExpandVisibleWindow
         ? state.visibleItemCount + 1
         : state.visibleItemCount;
@@ -328,12 +557,24 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   Future<void> _closeLiveSubscription() async {
     await _liveEventSubscription?.cancel();
     _liveEventSubscription = null;
-    await _liveSubscription?.close();
+
+    final subscription = _liveSubscription;
     _liveSubscription = null;
+    if (subscription == null) {
+      return;
+    }
+
+    try {
+      await subscription.close();
+    } catch (_) {
+      // Ignore teardown failures from already-closed sockets/streams.
+    }
   }
 
   @override
   void dispose() {
+    _isDisposed = true;
+    _reconnectTimer?.cancel();
     unawaited(_closeLiveSubscription());
     super.dispose();
   }

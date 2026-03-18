@@ -4,11 +4,10 @@ import 'package:codex_mobile_companion/features/pairing/data/pairing_bridge_api.
 import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
 import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_validator.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
+import 'package:codex_mobile_companion/foundation/storage/secure_store_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-final secureStoreProvider = Provider<SecureStore>((ref) {
-  return InMemorySecureStore();
-});
+final secureStoreProvider = appSecureStoreProvider;
 
 final nowUtcProvider = Provider<DateTime>((ref) {
   return DateTime.now().toUtc();
@@ -34,10 +33,13 @@ final pairingControllerProvider =
 
 enum PairingStep { unpaired, scanning, review, paired }
 
+enum BridgeConnectionState { connected, disconnected }
+
 class PairingState {
   const PairingState({
     required this.step,
     required this.consumedSessionIds,
+    required this.bridgeConnectionState,
     this.pendingPayload,
     this.trustedBridge,
     this.errorMessage,
@@ -49,12 +51,18 @@ class PairingState {
   final TrustedBridgeIdentity? trustedBridge;
   final String? errorMessage;
   final Set<String> consumedSessionIds;
+  final BridgeConnectionState bridgeConnectionState;
   final bool isPersistingTrust;
+
+  bool get canRunMutatingActions =>
+      step == PairingStep.paired &&
+      bridgeConnectionState == BridgeConnectionState.connected;
 
   factory PairingState.initial() {
     return const PairingState(
       step: PairingStep.unpaired,
       consumedSessionIds: <String>{},
+      bridgeConnectionState: BridgeConnectionState.connected,
     );
   }
 
@@ -67,6 +75,7 @@ class PairingState {
     String? errorMessage,
     bool clearErrorMessage = false,
     Set<String>? consumedSessionIds,
+    BridgeConnectionState? bridgeConnectionState,
     bool? isPersistingTrust,
   }) {
     return PairingState(
@@ -83,6 +92,8 @@ class PairingState {
       consumedSessionIds: Set<String>.unmodifiable(
         consumedSessionIds ?? this.consumedSessionIds,
       ),
+      bridgeConnectionState:
+          bridgeConnectionState ?? this.bridgeConnectionState,
       isPersistingTrust: isPersistingTrust ?? this.isPersistingTrust,
     );
   }
@@ -115,7 +126,9 @@ class PairingController extends StateNotifier<PairingState> {
       return;
     }
 
-    final sessionToken = await _secureStore.readSecret(SecureValueKey.sessionToken);
+    final sessionToken = await _secureStore.readSecret(
+      SecureValueKey.sessionToken,
+    );
     if (sessionToken == null || sessionToken.trim().isEmpty) {
       await _clearLocalTrust();
       return;
@@ -141,7 +154,21 @@ class PairingController extends StateNotifier<PairingState> {
         state = state.copyWith(
           step: PairingStep.paired,
           trustedBridge: trustedBridge,
+          bridgeConnectionState: BridgeConnectionState.connected,
           clearErrorMessage: true,
+        );
+        return;
+      }
+
+      if (handshake.connectivityUnavailable) {
+        state = state.copyWith(
+          step: PairingStep.paired,
+          trustedBridge: trustedBridge,
+          bridgeConnectionState: BridgeConnectionState.disconnected,
+          errorMessage:
+              handshake.message ??
+              'Private bridge path is currently unreachable. Reconnect to Tailscale and retry.',
+          isPersistingTrust: false,
         );
         return;
       }
@@ -151,6 +178,7 @@ class PairingController extends StateNotifier<PairingState> {
         step: PairingStep.unpaired,
         clearTrustedBridge: true,
         clearPendingPayload: true,
+        bridgeConnectionState: BridgeConnectionState.connected,
         errorMessage:
             handshake.message ??
             'Stored trust is no longer accepted by the bridge. Re-pair from your Mac.',
@@ -166,6 +194,7 @@ class PairingController extends StateNotifier<PairingState> {
       step: PairingStep.scanning,
       clearPendingPayload: true,
       clearErrorMessage: true,
+      bridgeConnectionState: BridgeConnectionState.connected,
     );
   }
 
@@ -229,7 +258,9 @@ class PairingController extends StateNotifier<PairingState> {
 
     if (!finalizeResult.isSuccess) {
       state = state.copyWith(
-        step: finalizeResult.requiresRescan ? PairingStep.scanning : PairingStep.review,
+        step: finalizeResult.requiresRescan
+            ? PairingStep.scanning
+            : PairingStep.review,
         clearPendingPayload: finalizeResult.requiresRescan,
         isPersistingTrust: false,
         errorMessage: finalizeResult.message,
@@ -259,8 +290,71 @@ class PairingController extends StateNotifier<PairingState> {
       trustedBridge: trust,
       clearPendingPayload: true,
       clearErrorMessage: true,
+      bridgeConnectionState: BridgeConnectionState.connected,
       isPersistingTrust: false,
       consumedSessionIds: consumedSessionIds,
+    );
+  }
+
+  Future<void> retryTrustedBridgeConnection() async {
+    final trustedBridge = state.trustedBridge;
+    if (trustedBridge == null) {
+      return;
+    }
+
+    final sessionToken = await _secureStore.readSecret(
+      SecureValueKey.sessionToken,
+    );
+    if (sessionToken == null || sessionToken.trim().isEmpty) {
+      await _clearLocalTrust();
+      state = state.copyWith(
+        step: PairingStep.unpaired,
+        clearTrustedBridge: true,
+        clearPendingPayload: true,
+        bridgeConnectionState: BridgeConnectionState.connected,
+        errorMessage: 'Stored trust is incomplete. Re-pair from your Mac.',
+      );
+      return;
+    }
+
+    final phoneId = await _readOrCreatePhoneId();
+    final handshake = await _bridgeApi.handshake(
+      trustedBridge: trustedBridge,
+      phoneId: phoneId,
+      sessionToken: sessionToken,
+    );
+
+    if (handshake.isTrusted) {
+      state = state.copyWith(
+        step: PairingStep.paired,
+        trustedBridge: trustedBridge,
+        bridgeConnectionState: BridgeConnectionState.connected,
+        clearErrorMessage: true,
+      );
+      return;
+    }
+
+    if (handshake.connectivityUnavailable) {
+      state = state.copyWith(
+        step: PairingStep.paired,
+        trustedBridge: trustedBridge,
+        bridgeConnectionState: BridgeConnectionState.disconnected,
+        errorMessage:
+            handshake.message ??
+            'Private bridge path is currently unreachable. Reconnect to Tailscale and retry.',
+      );
+      return;
+    }
+
+    await _clearLocalTrust();
+    state = state.copyWith(
+      step: PairingStep.unpaired,
+      clearTrustedBridge: true,
+      clearPendingPayload: true,
+      bridgeConnectionState: BridgeConnectionState.connected,
+      errorMessage:
+          handshake.message ??
+          'Stored trust is no longer accepted by the bridge. Re-pair from your Mac.',
     );
   }
 
@@ -270,7 +364,9 @@ class PairingController extends StateNotifier<PairingState> {
   }
 
   Future<String> _readOrCreatePhoneId() async {
-    final existing = await _secureStore.readSecret(SecureValueKey.pairingPrivateKey);
+    final existing = await _secureStore.readSecret(
+      SecureValueKey.pairingPrivateKey,
+    );
     if (existing != null && existing.trim().isNotEmpty) {
       return existing.trim();
     }

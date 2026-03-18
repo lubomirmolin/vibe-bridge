@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -59,14 +60,22 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     } on SocketException {
       throw const ThreadDetailBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
       );
     } on HandshakeException {
       throw const ThreadDetailBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
       );
     } on HttpException {
       throw const ThreadDetailBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on TimeoutException {
+      throw const ThreadDetailBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
       );
     } on FormatException {
       throw const ThreadDetailBridgeException(
@@ -123,14 +132,22 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     } on SocketException {
       throw const ThreadDetailBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
       );
     } on HandshakeException {
       throw const ThreadDetailBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
       );
     } on HttpException {
       throw const ThreadDetailBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on TimeoutException {
+      throw const ThreadDetailBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
       );
     } on FormatException {
       throw const ThreadDetailBridgeException(
@@ -146,10 +163,12 @@ class ThreadDetailBridgeException implements Exception {
   const ThreadDetailBridgeException({
     required this.message,
     this.isUnavailable = false,
+    this.isConnectivityError = false,
   });
 
   final String message;
   final bool isUnavailable;
+  final bool isConnectivityError;
 
   @override
   String toString() => message;

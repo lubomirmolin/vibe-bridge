@@ -370,7 +370,7 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
       );
     }
 
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -383,6 +383,16 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
           _IdentityRow(label: 'Bridge id', value: bridge.bridgeId),
           _IdentityRow(label: 'Bridge URL', value: bridge.bridgeApiBaseUrl),
           _IdentityRow(label: 'Trusted session', value: bridge.sessionId),
+          if (pairingState.bridgeConnectionState ==
+              BridgeConnectionState.disconnected) ...[
+            const SizedBox(height: 12),
+            _ConnectionWarningBanner(
+              message:
+                  pairingState.errorMessage ??
+                  'Bridge is currently unreachable. Cached data stays readable, but mutating actions are blocked until reconnect.',
+              onRetry: pairingController.retryTrustedBridgeConnection,
+            ),
+          ],
           const SizedBox(height: 24),
           FilledButton.icon(
             onPressed: () {
@@ -401,13 +411,56 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
             onPressed: () => _openScanner(pairingController),
             child: const Text('Scan another QR'),
           ),
-          if (pairingState.errorMessage != null) ...[
+          if (pairingState.errorMessage != null &&
+              pairingState.bridgeConnectionState !=
+                  BridgeConnectionState.disconnected) ...[
             const SizedBox(height: 12),
             Text(
               pairingState.errorMessage!,
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ConnectionWarningBanner extends StatelessWidget {
+  const _ConnectionWarningBanner({
+    required this.message,
+    required this.onRetry,
+  });
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: colorScheme.errorContainer.withValues(alpha: 0.28),
+        border: Border.all(color: colorScheme.error),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Bridge disconnected',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 6),
+          Text(message),
+          const SizedBox(height: 8),
+          FilledButton(
+            onPressed: onRetry,
+            child: const Text('Retry connection'),
+          ),
         ],
       ),
     );

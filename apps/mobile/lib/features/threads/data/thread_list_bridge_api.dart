@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -61,14 +62,22 @@ class HttpThreadListBridgeApi implements ThreadListBridgeApi {
     } on SocketException {
       throw const ThreadListBridgeException(
         'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
       );
     } on HandshakeException {
       throw const ThreadListBridgeException(
         'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
       );
     } on HttpException {
       throw const ThreadListBridgeException(
         'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on TimeoutException {
+      throw const ThreadListBridgeException(
+        'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
       );
     } on FormatException {
       throw const ThreadListBridgeException(
@@ -81,9 +90,13 @@ class HttpThreadListBridgeApi implements ThreadListBridgeApi {
 }
 
 class ThreadListBridgeException implements Exception {
-  const ThreadListBridgeException(this.message);
+  const ThreadListBridgeException(
+    this.message, {
+    this.isConnectivityError = false,
+  });
 
   final String message;
+  final bool isConnectivityError;
 
   @override
   String toString() => message;

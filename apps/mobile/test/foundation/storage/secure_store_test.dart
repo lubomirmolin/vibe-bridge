@@ -20,6 +20,9 @@ void main() {
       SecureValueKey.trustedBridgeIdentity.wireValue,
       'trusted_bridge_identity',
     );
+    expect(SecureValueKey.threadListCache.wireValue, 'thread_list_cache');
+    expect(SecureValueKey.threadDetailsCache.wireValue, 'thread_details_cache');
+    expect(SecureValueKey.selectedThreadId.wireValue, 'selected_thread_id');
   });
 
   test('persistence boundary routes sqlite scopes and excludes secrets', () {

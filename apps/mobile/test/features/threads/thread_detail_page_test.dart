@@ -1,11 +1,13 @@
 import 'dart:async';
 
+import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_detail_page.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,7 +16,9 @@ void main() {
   testWidgets(
     'opening a thread shows matching detail and mixed item types distinctly',
     (tester) async {
-      final listApi = FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]);
+      final listApi = FakeThreadListBridgeApi(
+        scriptedResults: [_threadSummaries()],
+      );
       final detailApi = FakeThreadDetailBridgeApi(
         detailScriptByThreadId: {
           'thread-123': [_thread123Detail()],
@@ -49,68 +53,73 @@ void main() {
     },
   );
 
-  testWidgets('live stream updates detail and syncs lifecycle status back to list', (
-    tester,
-  ) async {
-    final listApi = FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]);
-    final detailApi = FakeThreadDetailBridgeApi(
-      detailScriptByThreadId: {
-        'thread-123': [_thread123Detail()],
-      },
-      timelineScriptByThreadId: {
-        'thread-123': [<ThreadTimelineEntryDto>[]],
-      },
-    );
-    final liveStream = FakeThreadLiveStream();
+  testWidgets(
+    'live stream updates detail and syncs lifecycle status back to list',
+    (tester) async {
+      final listApi = FakeThreadListBridgeApi(
+        scriptedResults: [_threadSummaries()],
+      );
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+      );
+      final liveStream = FakeThreadLiveStream();
 
-    await _pumpThreadListApp(
-      tester,
-      listApi: listApi,
-      detailApi: detailApi,
-      liveStream: liveStream,
-    );
+      await _pumpThreadListApp(
+        tester,
+        listApi: listApi,
+        detailApi: detailApi,
+        liveStream: liveStream,
+      );
 
-    await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+      await tester.pumpAndSettle();
 
-    liveStream.emit(
-      BridgeEventEnvelope<Map<String, dynamic>>(
-        contractVersion: contractVersion,
-        eventId: 'evt-live-1',
-        threadId: 'thread-123',
-        kind: BridgeEventKind.messageDelta,
-        occurredAt: '2026-03-18T10:11:00Z',
-        payload: {'delta': 'Streaming chunk from live output.'},
-      ),
-    );
-    await tester.pumpAndSettle();
+      liveStream.emit(
+        BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-live-1',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:11:00Z',
+          payload: {'delta': 'Streaming chunk from live output.'},
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.text('Streaming chunk from live output.'), findsOneWidget);
+      expect(find.text('Streaming chunk from live output.'), findsOneWidget);
 
-    liveStream.emit(
-      BridgeEventEnvelope<Map<String, dynamic>>(
-        contractVersion: contractVersion,
-        eventId: 'evt-live-2',
-        threadId: 'thread-123',
-        kind: BridgeEventKind.threadStatusChanged,
-        occurredAt: '2026-03-18T10:12:00Z',
-        payload: {'status': 'completed', 'reason': 'turn_complete'},
-      ),
-    );
-    await tester.pumpAndSettle();
+      liveStream.emit(
+        BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-live-2',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.threadStatusChanged,
+          occurredAt: '2026-03-18T10:12:00Z',
+          payload: {'status': 'completed', 'reason': 'turn_complete'},
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.text('Completed'), findsOneWidget);
+      expect(find.text('Completed'), findsOneWidget);
 
-    await tester.pageBack();
-    await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
 
-    expect(find.text('Completed'), findsOneWidget);
-  });
+      expect(find.text('Completed'), findsOneWidget);
+    },
+  );
 
   testWidgets('timeline browsing loads earlier history in coherent order', (
     tester,
   ) async {
-    final listApi = FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]);
+    final listApi = FakeThreadListBridgeApi(
+      scriptedResults: [_threadSummaries()],
+    );
     final detailApi = FakeThreadDetailBridgeApi(
       detailScriptByThreadId: {
         'thread-123': [_thread123Detail()],
@@ -157,6 +166,9 @@ void main() {
           threadListBridgeApiProvider.overrideWithValue(listApi),
           threadDetailBridgeApiProvider.overrideWithValue(detailApi),
           threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+          threadCacheRepositoryProvider.overrideWithValue(
+            _newCacheRepository(),
+          ),
         ],
         child: const MaterialApp(
           home: ThreadDetailPage(
@@ -190,94 +202,130 @@ void main() {
     expect(recentAY, lessThan(recentBY));
   });
 
-  testWidgets('switching threads keeps live updates scoped to selected thread', (
+  testWidgets(
+    'switching threads keeps live updates scoped to selected thread',
+    (tester) async {
+      final listApi = FakeThreadListBridgeApi(
+        scriptedResults: [_threadSummaries()],
+      );
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+          'thread-456': [_thread456Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+          'thread-456': [<ThreadTimelineEntryDto>[]],
+        },
+      );
+      final liveStream = FakeThreadLiveStream();
+
+      await _pumpThreadListApp(
+        tester,
+        listApi: listApi,
+        detailApi: detailApi,
+        liveStream: liveStream,
+      );
+
+      await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+      await tester.pumpAndSettle();
+
+      liveStream.emit(
+        BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-t2-1',
+          threadId: 'thread-456',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:30:00Z',
+          payload: {'delta': 'Should not appear on thread 123'},
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Should not appear on thread 123'), findsNothing);
+
+      liveStream.emit(
+        BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-t1-1',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:30:05Z',
+          payload: {'delta': 'Visible on thread 123'},
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Visible on thread 123'), findsOneWidget);
+
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('thread-summary-card-thread-456')));
+      await tester.pumpAndSettle();
+
+      liveStream.emit(
+        BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-t1-2',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:31:00Z',
+          payload: {'delta': 'Old thread update should stay hidden'},
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Old thread update should stay hidden'), findsNothing);
+
+      liveStream.emit(
+        BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-t2-2',
+          threadId: 'thread-456',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:31:10Z',
+          payload: {'delta': 'Visible on thread 456'},
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Visible on thread 456'), findsOneWidget);
+    },
+  );
+
+  testWidgets('reopening threads restores previously selected thread context', (
     tester,
   ) async {
-    final listApi = FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]);
+    final cacheRepository = _newCacheRepository();
+    await cacheRepository.saveSelectedThreadId('thread-456');
+
+    final listApi = FakeThreadListBridgeApi(
+      scriptedResults: [_threadSummaries()],
+    );
     final detailApi = FakeThreadDetailBridgeApi(
       detailScriptByThreadId: {
-        'thread-123': [_thread123Detail()],
         'thread-456': [_thread456Detail()],
       },
       timelineScriptByThreadId: {
-        'thread-123': [<ThreadTimelineEntryDto>[]],
         'thread-456': [<ThreadTimelineEntryDto>[]],
       },
     );
-    final liveStream = FakeThreadLiveStream();
 
     await _pumpThreadListApp(
       tester,
       listApi: listApi,
       detailApi: detailApi,
-      liveStream: liveStream,
+      liveStream: FakeThreadLiveStream(),
+      cacheRepository: cacheRepository,
     );
 
-    await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
-    await tester.pumpAndSettle();
-
-    liveStream.emit(
-      BridgeEventEnvelope<Map<String, dynamic>>(
-        contractVersion: contractVersion,
-        eventId: 'evt-t2-1',
-        threadId: 'thread-456',
-        kind: BridgeEventKind.messageDelta,
-        occurredAt: '2026-03-18T10:30:00Z',
-        payload: {'delta': 'Should not appear on thread 123'},
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Should not appear on thread 123'), findsNothing);
-
-    liveStream.emit(
-      BridgeEventEnvelope<Map<String, dynamic>>(
-        contractVersion: contractVersion,
-        eventId: 'evt-t1-1',
-        threadId: 'thread-123',
-        kind: BridgeEventKind.messageDelta,
-        occurredAt: '2026-03-18T10:30:05Z',
-        payload: {'delta': 'Visible on thread 123'},
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Visible on thread 123'), findsOneWidget);
-
-    await tester.pageBack();
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('thread-summary-card-thread-456')));
-    await tester.pumpAndSettle();
-
-    liveStream.emit(
-      BridgeEventEnvelope<Map<String, dynamic>>(
-        contractVersion: contractVersion,
-        eventId: 'evt-t1-2',
-        threadId: 'thread-123',
-        kind: BridgeEventKind.messageDelta,
-        occurredAt: '2026-03-18T10:31:00Z',
-        payload: {'delta': 'Old thread update should stay hidden'},
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Old thread update should stay hidden'), findsNothing);
-
-    liveStream.emit(
-      BridgeEventEnvelope<Map<String, dynamic>>(
-        contractVersion: contractVersion,
-        eventId: 'evt-t2-2',
-        threadId: 'thread-456',
-        kind: BridgeEventKind.messageDelta,
-        occurredAt: '2026-03-18T10:31:10Z',
-        payload: {'delta': 'Visible on thread 456'},
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Visible on thread 456'), findsOneWidget);
+    expect(find.byKey(const Key('thread-detail-thread-id')), findsOneWidget);
+    expect(find.text('thread-456'), findsOneWidget);
+    expect(find.text('Investigate reconnect dedup'), findsOneWidget);
   });
 
   testWidgets('unavailable thread detail shows retryable fallback state', (
     tester,
   ) async {
-    final listApi = FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]);
+    final listApi = FakeThreadListBridgeApi(
+      scriptedResults: [_threadSummaries()],
+    );
     final detailApi = FakeThreadDetailBridgeApi(
       detailScriptByThreadId: {
         'thread-123': [
@@ -313,6 +361,167 @@ void main() {
     expect(find.text('Thread unavailable'), findsNothing);
     expect(find.text('Implement shared contracts'), findsOneWidget);
   });
+
+  testWidgets(
+    'offline mode keeps cached thread detail readable and blocks mutating actions',
+    (tester) async {
+      final cacheRepository = _newCacheRepository();
+      await cacheRepository.saveThreadList(_threadSummaries());
+      await cacheRepository.saveThreadDetail(
+        detail: _thread123Detail(),
+        timeline: _mixedTimelineEvents(),
+      );
+
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            const ThreadDetailBridgeException(
+              message: 'Cannot reach the bridge. Check your private route.',
+              isConnectivityError: true,
+            ),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            const ThreadDetailBridgeException(
+              message: 'Cannot reach the bridge. Check your private route.',
+              isConnectivityError: true,
+            ),
+          ],
+        },
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            threadListBridgeApiProvider.overrideWithValue(
+              FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]),
+            ),
+            threadDetailBridgeApiProvider.overrideWithValue(detailApi),
+            threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+            threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
+          ],
+          child: const MaterialApp(
+            home: ThreadDetailPage(
+              bridgeApiBaseUrl: _bridgeApiBaseUrl,
+              threadId: 'thread-123',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Implement shared contracts'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'Bridge is offline. Showing cached thread content.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          'Mutating actions are blocked while the bridge or private route is unavailable.',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'disconnect keeps existing items deduplicated and exposes reconnect controls',
+    (tester) async {
+      final listApi = FakeThreadListBridgeApi(
+        scriptedResults: [_threadSummaries()],
+      );
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail(), _thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            [
+              _timelineEvent(
+                id: 'evt-history-1',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Initial history event',
+                payload: {'delta': 'Initial history event'},
+                occurredAt: '2026-03-18T10:00:00Z',
+              ),
+            ],
+            [
+              _timelineEvent(
+                id: 'evt-history-1',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Initial history event',
+                payload: {'delta': 'Initial history event'},
+                occurredAt: '2026-03-18T10:00:00Z',
+              ),
+              _timelineEvent(
+                id: 'evt-live-1',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Streaming chunk from live output.',
+                payload: {'delta': 'Streaming chunk from live output.'},
+                occurredAt: '2026-03-18T10:01:00Z',
+              ),
+              _timelineEvent(
+                id: 'evt-catchup-1',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Caught up after reconnect.',
+                payload: {'delta': 'Caught up after reconnect.'},
+                occurredAt: '2026-03-18T10:02:00Z',
+              ),
+            ],
+          ],
+        },
+      );
+      final liveStream = FakeThreadLiveStream();
+
+      await _pumpThreadListApp(
+        tester,
+        listApi: listApi,
+        detailApi: detailApi,
+        liveStream: liveStream,
+      );
+
+      await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+      await tester.pumpAndSettle();
+
+      liveStream.emit(
+        BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-live-1',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:01:00Z',
+          payload: {'delta': 'Streaming chunk from live output.'},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('thread-activity-evt-live-1')),
+        findsOneWidget,
+      );
+
+      liveStream.emitError('thread-123');
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('retry-reconnect-catchup')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('retry-reconnect-catchup')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('thread-activity-evt-live-1')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          'Mutating actions are blocked while the bridge or private route is unavailable.',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
 }
 
 Future<void> _pumpThreadListApp(
@@ -320,6 +529,7 @@ Future<void> _pumpThreadListApp(
   required ThreadListBridgeApi listApi,
   required ThreadDetailBridgeApi detailApi,
   required ThreadLiveStream liveStream,
+  ThreadCacheRepository? cacheRepository,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -327,6 +537,9 @@ Future<void> _pumpThreadListApp(
         threadListBridgeApiProvider.overrideWithValue(listApi),
         threadDetailBridgeApiProvider.overrideWithValue(detailApi),
         threadLiveStreamProvider.overrideWithValue(liveStream),
+        threadCacheRepositoryProvider.overrideWithValue(
+          cacheRepository ?? _newCacheRepository(),
+        ),
       ],
       child: const MaterialApp(
         home: ThreadListPage(bridgeApiBaseUrl: _bridgeApiBaseUrl),
@@ -335,6 +548,16 @@ Future<void> _pumpThreadListApp(
   );
 
   await tester.pumpAndSettle();
+}
+
+ThreadCacheRepository _newCacheRepository({
+  InMemorySecureStore? store,
+  DateTime Function()? nowUtc,
+}) {
+  return SecureStoreThreadCacheRepository(
+    secureStore: store ?? InMemorySecureStore(),
+    nowUtc: nowUtc ?? () => DateTime.utc(2026, 3, 18, 10, 0),
+  );
 }
 
 const _bridgeApiBaseUrl = 'https://bridge.ts.net';
@@ -471,12 +694,15 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
 
   final Map<String, List<Object>> _detailScriptByThreadId;
   final Map<String, List<Object>> _timelineScriptByThreadId;
+  int detailFetchCount = 0;
+  int timelineFetchCount = 0;
 
   @override
   Future<ThreadDetailDto> fetchThreadDetail({
     required String bridgeApiBaseUrl,
     required String threadId,
   }) async {
+    detailFetchCount += 1;
     final scriptedResult = _nextResult(_detailScriptByThreadId, threadId);
     if (scriptedResult is ThreadDetailDto) {
       return scriptedResult;
@@ -493,6 +719,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
   }) async {
+    timelineFetchCount += 1;
     final scriptedResult = _nextResult(_timelineScriptByThreadId, threadId);
     if (scriptedResult is List<ThreadTimelineEntryDto>) {
       return scriptedResult;
@@ -504,7 +731,10 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     throw StateError('Unsupported timeline scripted result: $scriptedResult');
   }
 
-  Object _nextResult(Map<String, List<Object>> scriptByThreadId, String threadId) {
+  Object _nextResult(
+    Map<String, List<Object>> scriptByThreadId,
+    String threadId,
+  ) {
     final script = scriptByThreadId[threadId];
     if (script == null || script.isEmpty) {
       throw StateError('Missing scripted result for thread "$threadId".');
@@ -520,23 +750,37 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
 }
 
 class FakeThreadLiveStream implements ThreadLiveStream {
-  final Map<String, List<StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>>
+  final Map<
+    String,
+    List<StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>
+  >
   _controllersByThreadId =
-      <String, List<StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>>{};
+      <
+        String,
+        List<StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>
+      >{};
 
   @override
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
     required String threadId,
   }) async {
-    final controller = StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();
-    _controllersByThreadId.putIfAbsent(threadId, () => <StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>[]).add(controller);
+    final controller =
+        StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();
+    _controllersByThreadId
+        .putIfAbsent(
+          threadId,
+          () => <StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>[],
+        )
+        .add(controller);
 
     return ThreadLiveSubscription(
       events: controller.stream,
       close: () async {
         _controllersByThreadId[threadId]?.remove(controller);
-        await controller.close();
+        if (!controller.isClosed) {
+          await controller.close();
+        }
       },
     );
   }
@@ -547,11 +791,48 @@ class FakeThreadLiveStream implements ThreadLiveStream {
       return;
     }
 
-    for (final controller in List<StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>.from(controllers)) {
+    for (final controller
+        in List<
+          StreamController<BridgeEventEnvelope<Map<String, dynamic>>>
+        >.from(controllers)) {
       if (!controller.isClosed) {
         controller.add(event);
       }
     }
+  }
+
+  void emitError(String threadId) {
+    final controllers = _controllersByThreadId[threadId];
+    if (controllers == null) {
+      return;
+    }
+
+    for (final controller
+        in List<
+          StreamController<BridgeEventEnvelope<Map<String, dynamic>>>
+        >.from(controllers)) {
+      if (!controller.isClosed) {
+        controller.addError(StateError('stream disconnected'));
+      }
+    }
+  }
+
+  Future<void> closeThread(String threadId) async {
+    final controllers = _controllersByThreadId[threadId];
+    if (controllers == null) {
+      return;
+    }
+
+    for (final controller
+        in List<
+          StreamController<BridgeEventEnvelope<Map<String, dynamic>>>
+        >.from(controllers)) {
+      if (!controller.isClosed) {
+        await controller.close();
+      }
+    }
+
+    _controllersByThreadId.remove(threadId);
   }
 }
 
