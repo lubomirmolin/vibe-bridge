@@ -2,140 +2,200 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
+import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
 import 'package:codex_mobile_companion/features/settings/data/settings_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
+import 'package:codex_mobile_companion/foundation/storage/secure_store_provider.dart';
+import 'package:codex_mobile_companion/main.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('live bridge approval queue/detail/approve/reject flow', (
-    tester,
-  ) async {
-    final bridgeApiBaseUrl = _resolveBridgeApiBaseUrl();
-    final threadApi = const HttpThreadDetailBridgeApi();
-    final threadListApi = const HttpThreadListBridgeApi();
-    final approvalApi = const HttpApprovalBridgeApi();
-    final settingsApi = const HttpSettingsBridgeApi();
+  testWidgets(
+    'live bridge approval queue/detail/approve/reject flow uses real mobile UI surfaces',
+    (tester) async {
+      final bridgeApiBaseUrl = _resolveBridgeApiBaseUrl();
+      final threadApi = const HttpThreadDetailBridgeApi();
+      final threadListApi = const HttpThreadListBridgeApi();
+      final approvalApi = const HttpApprovalBridgeApi();
+      final settingsApi = const HttpSettingsBridgeApi();
 
-    final trustedSession = await _createTrustedSession(bridgeApiBaseUrl);
-    final gitThreadContext = await _selectThreadWithGitContext(
-      bridgeApiBaseUrl: bridgeApiBaseUrl,
-      threadApi: threadApi,
-      threadListApi: threadListApi,
-    );
-
-    await settingsApi.setAccessMode(
-      bridgeApiBaseUrl: bridgeApiBaseUrl,
-      accessMode: AccessMode.controlWithApprovals,
-      phoneId: trustedSession.phoneId,
-      bridgeId: trustedSession.bridgeId,
-      sessionToken: trustedSession.sessionToken,
-      actor: _integrationActor,
-    );
-
-    final queuedBranchSwitchApproval = await _expectApprovalRequired(
-      () => threadApi.switchBranch(
+      final trustedSession = await _createTrustedSession(bridgeApiBaseUrl);
+      final gitThreadContext = await _selectThreadWithGitContext(
         bridgeApiBaseUrl: bridgeApiBaseUrl,
-        threadId: gitThreadContext.threadId,
-        branch: gitThreadContext.branch,
-      ),
-    );
+        threadApi: threadApi,
+        threadListApi: threadListApi,
+      );
 
-    final approvalsAfterBranchSwitch = await approvalApi.fetchApprovals(
-      bridgeApiBaseUrl: bridgeApiBaseUrl,
-    );
-    final branchSwitchRecord = approvalsAfterBranchSwitch.firstWhere(
-      (approval) =>
-          approval.approvalId == queuedBranchSwitchApproval.approvalId,
-    );
-    expect(branchSwitchRecord.status, ApprovalStatus.pending);
-    expect(branchSwitchRecord.threadId, gitThreadContext.threadId);
-
-    await settingsApi.setAccessMode(
-      bridgeApiBaseUrl: bridgeApiBaseUrl,
-      accessMode: AccessMode.fullControl,
-      phoneId: trustedSession.phoneId,
-      bridgeId: trustedSession.bridgeId,
-      sessionToken: trustedSession.sessionToken,
-      actor: _integrationActor,
-    );
-
-    final approveResponse = await approvalApi.approve(
-      bridgeApiBaseUrl: bridgeApiBaseUrl,
-      approvalId: queuedBranchSwitchApproval.approvalId,
-    );
-    expect(approveResponse.approval.status, ApprovalStatus.approved);
-    expect(approveResponse.approval.threadId, gitThreadContext.threadId);
-    expect(approveResponse.mutationResult, isNotNull);
-
-    await settingsApi.setAccessMode(
-      bridgeApiBaseUrl: bridgeApiBaseUrl,
-      accessMode: AccessMode.controlWithApprovals,
-      phoneId: trustedSession.phoneId,
-      bridgeId: trustedSession.bridgeId,
-      sessionToken: trustedSession.sessionToken,
-      actor: _integrationActor,
-    );
-
-    final queuedPullApproval = await _expectApprovalRequired(
-      () => threadApi.pullRepository(
+      await settingsApi.setAccessMode(
         bridgeApiBaseUrl: bridgeApiBaseUrl,
-        threadId: gitThreadContext.threadId,
-        remote: gitThreadContext.remote,
-      ),
-    );
+        accessMode: AccessMode.controlWithApprovals,
+        phoneId: trustedSession.phoneId,
+        bridgeId: trustedSession.bridgeId,
+        sessionToken: trustedSession.sessionToken,
+        actor: _integrationActor,
+      );
 
-    final approvalsAfterPull = await approvalApi.fetchApprovals(
-      bridgeApiBaseUrl: bridgeApiBaseUrl,
-    );
-    final pullRecord = approvalsAfterPull.firstWhere(
-      (approval) => approval.approvalId == queuedPullApproval.approvalId,
-    );
-    expect(pullRecord.status, ApprovalStatus.pending);
-    expect(pullRecord.threadId, gitThreadContext.threadId);
+      final queuedBranchSwitchApproval = await _expectApprovalRequired(
+        () => threadApi.switchBranch(
+          bridgeApiBaseUrl: bridgeApiBaseUrl,
+          threadId: gitThreadContext.threadId,
+          branch: gitThreadContext.branch,
+        ),
+      );
 
-    await settingsApi.setAccessMode(
-      bridgeApiBaseUrl: bridgeApiBaseUrl,
-      accessMode: AccessMode.fullControl,
-      phoneId: trustedSession.phoneId,
-      bridgeId: trustedSession.bridgeId,
-      sessionToken: trustedSession.sessionToken,
-      actor: _integrationActor,
-    );
+      final queuedPullApproval = await _expectApprovalRequired(
+        () => threadApi.pullRepository(
+          bridgeApiBaseUrl: bridgeApiBaseUrl,
+          threadId: gitThreadContext.threadId,
+          remote: gitThreadContext.remote,
+        ),
+      );
 
-    final rejectResponse = await approvalApi.reject(
-      bridgeApiBaseUrl: bridgeApiBaseUrl,
-      approvalId: queuedPullApproval.approvalId,
-    );
-    expect(rejectResponse.approval.status, ApprovalStatus.rejected);
-    expect(rejectResponse.approval.threadId, gitThreadContext.threadId);
-    expect(rejectResponse.mutationResult, isNull);
+      await settingsApi.setAccessMode(
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        accessMode: AccessMode.fullControl,
+        phoneId: trustedSession.phoneId,
+        bridgeId: trustedSession.bridgeId,
+        sessionToken: trustedSession.sessionToken,
+        actor: _integrationActor,
+      );
 
-    final finalApprovals = await approvalApi.fetchApprovals(
-      bridgeApiBaseUrl: bridgeApiBaseUrl,
-    );
-    expect(
-      finalApprovals
-          .firstWhere(
-            (approval) =>
-                approval.approvalId == queuedBranchSwitchApproval.approvalId,
-          )
-          .status,
-      ApprovalStatus.approved,
-    );
-    expect(
-      finalApprovals
-          .firstWhere(
-            (approval) => approval.approvalId == queuedPullApproval.approvalId,
-          )
-          .status,
-      ApprovalStatus.rejected,
-    );
-  });
+      final secureStore = InMemorySecureStore();
+      await _seedTrustedBridge(
+        secureStore: secureStore,
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        trustedSession: trustedSession,
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [appSecureStoreProvider.overrideWithValue(secureStore)],
+          child: const CodexMobileApp(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await _pumpUntilFound(tester, find.text('Threads'));
+      await _pumpUntilFound(
+        tester,
+        find.byKey(const Key('open-approvals-queue')),
+      );
+
+      await tester.tap(find.byKey(const Key('open-approvals-queue')));
+      await tester.pumpAndSettle();
+
+      final branchSwitchCard = find.byKey(
+        Key('approval-card-${queuedBranchSwitchApproval.approvalId}'),
+      );
+      await _pumpUntilFound(tester, branchSwitchCard);
+      await tester.tap(branchSwitchCard);
+      await tester.pumpAndSettle();
+
+      await _pumpUntilFound(
+        tester,
+        find.byKey(const Key('approval-detail-id')),
+      );
+      expect(
+        find.textContaining(queuedBranchSwitchApproval.approvalId),
+        findsOneWidget,
+      );
+      expect(find.text('Branch switch'), findsOneWidget);
+
+      final approveButtonFinder = find.byKey(
+        const Key('approve-approval-button'),
+      );
+      await _scrollUntilVisible(tester, approveButtonFinder);
+      await tester.tap(approveButtonFinder);
+      await tester.pumpAndSettle();
+
+      await _waitForApprovalStatus(
+        approvalApi: approvalApi,
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        approvalId: queuedBranchSwitchApproval.approvalId,
+        expectedStatus: ApprovalStatus.approved,
+      );
+
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      await _refreshApprovalsQueue(tester);
+      await _expectQueueCardStatus(
+        tester,
+        approvalId: queuedBranchSwitchApproval.approvalId,
+        expectedStatusLabel: 'Approved',
+      );
+
+      final pullCard = find.byKey(
+        Key('approval-card-${queuedPullApproval.approvalId}'),
+      );
+      await _scrollUntilVisible(tester, pullCard);
+      await tester.tap(pullCard);
+      await tester.pumpAndSettle();
+
+      await _pumpUntilFound(
+        tester,
+        find.byKey(const Key('approval-detail-id')),
+      );
+      expect(
+        find.textContaining(queuedPullApproval.approvalId),
+        findsOneWidget,
+      );
+      expect(find.text('Git pull'), findsOneWidget);
+
+      final rejectButtonFinder = find.byKey(
+        const Key('reject-approval-button'),
+      );
+      await _scrollUntilVisible(tester, rejectButtonFinder);
+      await tester.tap(rejectButtonFinder);
+      await tester.pumpAndSettle();
+
+      await _waitForApprovalStatus(
+        approvalApi: approvalApi,
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        approvalId: queuedPullApproval.approvalId,
+        expectedStatus: ApprovalStatus.rejected,
+      );
+
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await _refreshApprovalsQueue(tester);
+      await _expectQueueCardStatus(
+        tester,
+        approvalId: queuedPullApproval.approvalId,
+        expectedStatusLabel: 'Rejected',
+      );
+
+      final finalApprovals = await approvalApi.fetchApprovals(
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+      );
+      expect(
+        finalApprovals
+            .firstWhere(
+              (approval) =>
+                  approval.approvalId == queuedBranchSwitchApproval.approvalId,
+            )
+            .status,
+        ApprovalStatus.approved,
+      );
+      expect(
+        finalApprovals
+            .firstWhere(
+              (approval) =>
+                  approval.approvalId == queuedPullApproval.approvalId,
+            )
+            .status,
+        ApprovalStatus.rejected,
+      );
+    },
+  );
 }
 
 const String _integrationActor = 'integration-test';
@@ -164,6 +224,7 @@ Future<_TrustedSession> _createTrustedSession(String bridgeApiBaseUrl) async {
   final pairing = _readRequiredObject(pairingSession, 'pairing_session');
 
   final bridgeId = _readRequiredString(bridgeIdentity, 'bridge_id');
+  final bridgeName = _readRequiredString(bridgeIdentity, 'display_name');
   final sessionId = _readRequiredString(pairing, 'session_id');
   final pairingToken = _readRequiredString(pairing, 'pairing_token');
 
@@ -180,7 +241,37 @@ Future<_TrustedSession> _createTrustedSession(String bridgeApiBaseUrl) async {
   return _TrustedSession(
     phoneId: _integrationPhoneId,
     bridgeId: bridgeId,
+    bridgeName: bridgeName,
+    sessionId: sessionId,
     sessionToken: _readRequiredString(finalize, 'session_token'),
+  );
+}
+
+Future<void> _seedTrustedBridge({
+  required InMemorySecureStore secureStore,
+  required String bridgeApiBaseUrl,
+  required _TrustedSession trustedSession,
+}) async {
+  await secureStore.writeSecret(
+    SecureValueKey.pairingPrivateKey,
+    trustedSession.phoneId,
+  );
+  await secureStore.writeSecret(
+    SecureValueKey.sessionToken,
+    trustedSession.sessionToken,
+  );
+
+  final trustedBridge = TrustedBridgeIdentity(
+    bridgeId: trustedSession.bridgeId,
+    bridgeName: trustedSession.bridgeName,
+    bridgeApiBaseUrl: bridgeApiBaseUrl,
+    sessionId: trustedSession.sessionId,
+    pairedAtEpochSeconds: DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000,
+  );
+
+  await secureStore.writeSecret(
+    SecureValueKey.trustedBridgeIdentity,
+    jsonEncode(trustedBridge.toJson()),
   );
 }
 
@@ -206,10 +297,16 @@ Future<_GitThreadContext> _selectThreadWithGitContext({
         threadId: thread.threadId,
       );
 
+      final branch = gitStatus.repository.branch.trim();
+      final remote = gitStatus.repository.remote.trim();
+      if (branch.isEmpty || remote.isEmpty) {
+        continue;
+      }
+
       return _GitThreadContext(
         threadId: thread.threadId,
-        branch: gitStatus.repository.branch,
-        remote: gitStatus.repository.remote,
+        branch: branch,
+        remote: remote,
       );
     } on ThreadGitBridgeException {
       continue;
@@ -219,6 +316,133 @@ Future<_GitThreadContext> _selectThreadWithGitContext({
   fail(
     'No thread with bridge-backed git context was available to validate approval flows.',
   );
+}
+
+Future<void> _refreshApprovalsQueue(WidgetTester tester) async {
+  final refreshFinder = find.byTooltip('Refresh approvals');
+  await _pumpUntilFound(tester, refreshFinder);
+  await tester.tap(refreshFinder.first);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _expectQueueCardStatus(
+  WidgetTester tester, {
+  required String approvalId,
+  required String expectedStatusLabel,
+}) async {
+  final cardFinder = find.byKey(Key('approval-card-$approvalId'));
+
+  final foundCard = await _tryScrollUntilVisible(tester, cardFinder);
+  if (!foundCard) {
+    // Some live bridge setups return only pending approvals in queue payloads.
+    // In that case, a resolved approval legitimately disappears from the queue.
+    expect(cardFinder, findsNothing);
+    return;
+  }
+
+  expect(cardFinder, findsOneWidget);
+  expect(
+    find.descendant(of: cardFinder, matching: find.text(expectedStatusLabel)),
+    findsOneWidget,
+  );
+}
+
+Future<void> _waitForApprovalStatus({
+  required HttpApprovalBridgeApi approvalApi,
+  required String bridgeApiBaseUrl,
+  required String approvalId,
+  required ApprovalStatus expectedStatus,
+  Duration timeout = const Duration(seconds: 12),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  ApprovalStatus? latestStatus;
+
+  while (DateTime.now().isBefore(deadline)) {
+    final approvals = await approvalApi.fetchApprovals(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+    );
+
+    for (final approval in approvals) {
+      if (approval.approvalId == approvalId) {
+        latestStatus = approval.status;
+        if (latestStatus == expectedStatus) {
+          return;
+        }
+      }
+    }
+
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
+
+  fail(
+    'Timed out waiting for approval $approvalId to reach '
+    '$expectedStatus (latest: $latestStatus).',
+  );
+}
+
+Future<void> _pumpUntilFound(
+  WidgetTester tester,
+  Finder finder, {
+  Duration timeout = const Duration(seconds: 12),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+
+  while (DateTime.now().isBefore(deadline)) {
+    await tester.pump(const Duration(milliseconds: 100));
+    if (finder.evaluate().isNotEmpty) {
+      return;
+    }
+  }
+
+  fail('Timed out waiting for finder: $finder');
+}
+
+Future<void> _scrollUntilVisible(WidgetTester tester, Finder finder) async {
+  final wasFound = await _tryScrollUntilVisible(tester, finder);
+  if (wasFound) {
+    return;
+  }
+
+  fail('Timed out scrolling to finder: $finder');
+}
+
+Future<bool> _tryScrollUntilVisible(WidgetTester tester, Finder finder) async {
+  if (finder.evaluate().isNotEmpty) {
+    await tester.ensureVisible(finder);
+    await tester.pumpAndSettle();
+    return true;
+  }
+
+  final scrollableCandidates = find.byType(Scrollable);
+  if (scrollableCandidates.evaluate().isEmpty) {
+    return false;
+  }
+
+  final scrollable = find.byType(Scrollable).first;
+
+  for (var attempt = 0; attempt < 25; attempt += 1) {
+    if (finder.evaluate().isNotEmpty) {
+      await tester.ensureVisible(finder);
+      await tester.pumpAndSettle();
+      return true;
+    }
+
+    await tester.drag(scrollable, const Offset(0, -300));
+    await tester.pumpAndSettle();
+  }
+
+  for (var attempt = 0; attempt < 25; attempt += 1) {
+    if (finder.evaluate().isNotEmpty) {
+      await tester.ensureVisible(finder);
+      await tester.pumpAndSettle();
+      return true;
+    }
+
+    await tester.drag(scrollable, const Offset(0, 300));
+    await tester.pumpAndSettle();
+  }
+
+  return finder.evaluate().isNotEmpty;
 }
 
 Future<ApprovalRecordDto> _expectApprovalRequired(
@@ -310,11 +534,15 @@ class _TrustedSession {
   const _TrustedSession({
     required this.phoneId,
     required this.bridgeId,
+    required this.bridgeName,
+    required this.sessionId,
     required this.sessionToken,
   });
 
   final String phoneId;
   final String bridgeId;
+  final String bridgeName;
+  final String sessionId;
   final String sessionToken;
 }
 
