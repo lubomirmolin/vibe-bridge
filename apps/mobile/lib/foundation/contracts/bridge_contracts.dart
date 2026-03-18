@@ -323,6 +323,39 @@ class MutationResultResponseDto {
   }
 }
 
+class ApprovalGateResponseDto {
+  const ApprovalGateResponseDto({
+    required this.contractVersion,
+    required this.operation,
+    required this.outcome,
+    required this.message,
+    required this.approval,
+  });
+
+  final String contractVersion;
+  final String operation;
+  final String outcome;
+  final String message;
+  final ApprovalRecordDto approval;
+
+  factory ApprovalGateResponseDto.fromJson(Map<String, dynamic> json) {
+    final approval = json['approval'];
+    if (approval is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "approval" object in approval gate response.',
+      );
+    }
+
+    return ApprovalGateResponseDto(
+      contractVersion: json['contract_version'] as String,
+      operation: json['operation'] as String,
+      outcome: json['outcome'] as String,
+      message: json['message'] as String,
+      approval: ApprovalRecordDto.fromJson(approval),
+    );
+  }
+}
+
 class ApprovalResolutionResponseDto {
   const ApprovalResolutionResponseDto({
     required this.contractVersion,

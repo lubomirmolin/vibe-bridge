@@ -108,9 +108,21 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
           onSubmitComposer: controller.submitComposerInput,
           onInterruptActiveTurn: controller.interruptActiveTurn,
           onRefreshGitStatus: controller.refreshGitStatus,
-          onSwitchBranch: controller.switchBranch,
-          onPullRepository: controller.pullRepository,
-          onPushRepository: controller.pushRepository,
+          onSwitchBranch: (rawBranch) async {
+            final accepted = await controller.switchBranch(rawBranch);
+            await approvalsController.loadApprovals(showLoading: false);
+            return accepted;
+          },
+          onPullRepository: () async {
+            final accepted = await controller.pullRepository();
+            await approvalsController.loadApprovals(showLoading: false);
+            return accepted;
+          },
+          onPushRepository: () async {
+            final accepted = await controller.pushRepository();
+            await approvalsController.loadApprovals(showLoading: false);
+            return accepted;
+          },
           threadApprovals: approvalsState.forThread(widget.threadId),
           approvalsErrorMessage: approvalsState.errorMessage,
           canResolveApprovals: approvalsState.canResolveApprovals,

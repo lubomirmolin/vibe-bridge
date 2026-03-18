@@ -859,6 +859,14 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       );
       await refreshGitStatus(showLoading: false);
       return true;
+    } on ThreadGitApprovalRequiredException catch (error) {
+      _applyGitApprovalRequired(error);
+      state = state.copyWith(
+        isGitMutationInFlight: false,
+        clearGitErrorMessage: true,
+      );
+      await refreshGitStatus(showLoading: false);
+      return true;
     } on ThreadGitMutationBridgeException catch (error) {
       state = state.copyWith(
         isGitMutationInFlight: false,
@@ -914,6 +922,14 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       state = state.copyWith(
         isGitMutationInFlight: false,
         gitMutationMessage: mutationResult.message,
+        clearGitErrorMessage: true,
+      );
+      await refreshGitStatus(showLoading: false);
+      return true;
+    } on ThreadGitApprovalRequiredException catch (error) {
+      _applyGitApprovalRequired(error);
+      state = state.copyWith(
+        isGitMutationInFlight: false,
         clearGitErrorMessage: true,
       );
       await refreshGitStatus(showLoading: false);
@@ -977,6 +993,14 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       );
       await refreshGitStatus(showLoading: false);
       return true;
+    } on ThreadGitApprovalRequiredException catch (error) {
+      _applyGitApprovalRequired(error);
+      state = state.copyWith(
+        isGitMutationInFlight: false,
+        clearGitErrorMessage: true,
+      );
+      await refreshGitStatus(showLoading: false);
+      return true;
     } on ThreadGitMutationBridgeException catch (error) {
       state = state.copyWith(
         isGitMutationInFlight: false,
@@ -1032,6 +1056,23 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       updatedAt: DateTime.now().toUtc().toIso8601String(),
       lastTurnSummary: mutationResult.message,
     );
+  }
+
+  void _applyGitApprovalRequired(ThreadGitApprovalRequiredException gate) {
+    final approval = gate.approval;
+    state = state.copyWith(
+      gitStatus: GitStatusResponseDto(
+        contractVersion: approval.contractVersion,
+        threadId: approval.threadId,
+        repository: approval.repository,
+        status: approval.gitStatus,
+      ),
+      gitMutationMessage: _pendingGitApprovalMessage(approval),
+      clearGitErrorMessage: true,
+      clearGitControlsUnavailableReason: true,
+    );
+
+    _syncThreadWithRepositoryContext(approval.repository);
   }
 
   void _syncThreadWithRepositoryContext(
@@ -1119,6 +1160,19 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     _reconnectTimer?.cancel();
     unawaited(_closeLiveSubscription());
     super.dispose();
+  }
+}
+
+String _pendingGitApprovalMessage(ApprovalRecordDto approval) {
+  switch (approval.action) {
+    case 'git_branch_switch':
+      return 'Branch switch to ${approval.target} is pending approval for ${approval.repository.repository} (current branch: ${approval.repository.branch}).';
+    case 'git_pull':
+      return 'Pull from ${approval.target} is pending approval for ${approval.repository.repository} on ${approval.repository.branch}.';
+    case 'git_push':
+      return 'Push to ${approval.target} is pending approval for ${approval.repository.repository} on ${approval.repository.branch}.';
+    default:
+      return 'Action is pending approval: ${approval.action} (${approval.target}).';
   }
 }
 

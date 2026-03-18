@@ -441,6 +441,27 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       final bodyText = await utf8.decodeStream(response);
       final decoded = _decodeJsonObject(bodyText);
 
+      if (response.statusCode == 202 ||
+          _readOptionalString(decoded, 'outcome') == 'approval_required') {
+        try {
+          final gateResponse = ApprovalGateResponseDto.fromJson(decoded);
+          throw ThreadGitApprovalRequiredException(
+            message: gateResponse.message,
+            operation: gateResponse.operation,
+            outcome: gateResponse.outcome,
+            approval: gateResponse.approval,
+          );
+        } on FormatException {
+          throw ThreadGitMutationBridgeException(
+            message:
+                _readOptionalString(decoded, 'message') ??
+                'Bridge returned an invalid approval-gate response.',
+            statusCode: response.statusCode,
+            code: _readOptionalString(decoded, 'code'),
+          );
+        }
+      }
+
       if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
           return MutationResultResponseDto.fromJson(decoded);
@@ -550,6 +571,20 @@ class ThreadGitMutationBridgeException implements Exception {
 
   @override
   String toString() => message;
+}
+
+class ThreadGitApprovalRequiredException
+    extends ThreadGitMutationBridgeException {
+  const ThreadGitApprovalRequiredException({
+    required super.message,
+    required this.operation,
+    required this.outcome,
+    required this.approval,
+  }) : super(statusCode: 202, code: 'approval_required');
+
+  final String operation;
+  final String outcome;
+  final ApprovalRecordDto approval;
 }
 
 class TurnMutationResult {

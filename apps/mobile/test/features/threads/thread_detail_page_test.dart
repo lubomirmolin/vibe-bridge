@@ -268,9 +268,189 @@ void main() {
   testWidgets('git status and mutations show context and refresh state', (
     tester,
   ) async {
+    final approvalApi = MutableApprovalBridgeApi(
+      accessMode: AccessMode.controlWithApprovals,
+    );
     final detailApi = FakeThreadDetailBridgeApi(
       detailScriptByThreadId: {
         'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+      gitStatusScriptByThreadId: {
+        'thread-123': [
+          _gitStatus(
+            threadId: 'thread-123',
+            repository: 'codex-mobile-companion',
+            branch: 'master',
+            remote: 'origin',
+            dirty: true,
+            aheadBy: 2,
+            behindBy: 3,
+          ),
+          _gitStatus(
+            threadId: 'thread-123',
+            repository: 'codex-mobile-companion',
+            branch: 'master',
+            remote: 'origin',
+            dirty: true,
+            aheadBy: 2,
+            behindBy: 3,
+          ),
+          _gitStatus(
+            threadId: 'thread-123',
+            repository: 'codex-mobile-companion',
+            branch: 'master',
+            remote: 'origin',
+            dirty: true,
+            aheadBy: 2,
+            behindBy: 3,
+          ),
+          _gitStatus(
+            threadId: 'thread-123',
+            repository: 'codex-mobile-companion',
+            branch: 'master',
+            remote: 'origin',
+            dirty: true,
+            aheadBy: 2,
+            behindBy: 3,
+          ),
+        ],
+      },
+      branchSwitchScriptByThreadId: {
+        'thread-123': [
+          _gitApprovalRequired(
+            approvalId: 'approval-branch-switch',
+            action: 'git_branch_switch',
+            target: 'release/2026',
+            reason: 'dangerous_action_requires_approval',
+            threadId: 'thread-123',
+            repository: 'codex-mobile-companion',
+            branch: 'master',
+            remote: 'origin',
+            workspace: '/workspace/codex-mobile-companion',
+            dirty: true,
+            aheadBy: 2,
+            behindBy: 3,
+          ),
+        ],
+      },
+      pullScriptByThreadId: {
+        'thread-123': [
+          _gitApprovalRequired(
+            approvalId: 'approval-pull',
+            action: 'git_pull',
+            target: 'origin',
+            reason: 'dangerous_action_requires_approval',
+            threadId: 'thread-123',
+            repository: 'codex-mobile-companion',
+            branch: 'master',
+            remote: 'origin',
+            workspace: '/workspace/codex-mobile-companion',
+            dirty: true,
+            aheadBy: 2,
+            behindBy: 3,
+          ),
+        ],
+      },
+      pushScriptByThreadId: {
+        'thread-123': [
+          _gitApprovalRequired(
+            approvalId: 'approval-push',
+            action: 'git_push',
+            target: 'origin',
+            reason: 'dangerous_action_requires_approval',
+            threadId: 'thread-123',
+            repository: 'codex-mobile-companion',
+            branch: 'master',
+            remote: 'origin',
+            workspace: '/workspace/codex-mobile-companion',
+            dirty: true,
+            aheadBy: 2,
+            behindBy: 3,
+          ),
+        ],
+      },
+      onGitApprovalRequired: approvalApi.upsertApproval,
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+      approvalApi: approvalApi,
+    );
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('git-controls-card')),
+    );
+    expect(find.text('Repository: codex-mobile-companion'), findsOneWidget);
+    expect(find.text('Branch: master'), findsOneWidget);
+    expect(find.text('Remote: origin'), findsOneWidget);
+    expect(find.text('Status: Dirty • Ahead 2 • Behind 3'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('git-branch-input')),
+      '  release/2026  ',
+    );
+    await tester.tap(find.byKey(const Key('git-branch-switch-button')));
+    await tester.pumpAndSettle();
+
+    expect(detailApi.branchSwitchRequestsByThreadId['thread-123'], [
+      'release/2026',
+    ]);
+    expect(find.text('Branch: master'), findsOneWidget);
+    expect(find.text('Switched branch to release/2026'), findsNothing);
+    expect(
+      find.text(
+        'Branch switch to release/2026 is pending approval for codex-mobile-companion (current branch: master).',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('thread-approval-status-approval-branch-switch')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('git-pull-button')));
+    await tester.pumpAndSettle();
+    expect(detailApi.pullCallsByThreadId['thread-123'], 1);
+    expect(
+      find.text(
+        'Pull from origin is pending approval for codex-mobile-companion on master.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('thread-approval-status-approval-pull')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('git-push-button')));
+    await tester.pumpAndSettle();
+    expect(detailApi.pushCallsByThreadId['thread-123'], 1);
+    expect(
+      find.text(
+        'Push to origin is pending approval for codex-mobile-companion on master.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('thread-approval-status-approval-push')),
+      findsOneWidget,
+    );
+    expect(find.text('Status: Dirty • Ahead 2 • Behind 3'), findsOneWidget);
+    expect(detailApi.gitStatusFetchCountByThreadId['thread-123'], 4);
+  });
+
+  testWidgets('full-control git mutations execute and refresh state', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail(accessMode: AccessMode.fullControl)],
       },
       timelineScriptByThreadId: {
         'thread-123': [<ThreadTimelineEntryDto>[]],
@@ -366,33 +546,24 @@ void main() {
       tester,
       detailApi: detailApi,
       threadId: 'thread-123',
+      settingsApi: FakeSettingsBridgeApi(accessMode: AccessMode.fullControl),
     );
 
     await _scrollUntilVisible(
       tester,
       find.byKey(const Key('git-controls-card')),
     );
-    expect(find.text('Repository: codex-mobile-companion'), findsOneWidget);
-    expect(find.text('Branch: master'), findsOneWidget);
-    expect(find.text('Remote: origin'), findsOneWidget);
-    expect(find.text('Status: Dirty • Ahead 2 • Behind 3'), findsOneWidget);
-
     await tester.enterText(
       find.byKey(const Key('git-branch-input')),
-      '  release/2026  ',
+      'release/2026',
     );
     await tester.tap(find.byKey(const Key('git-branch-switch-button')));
     await tester.pumpAndSettle();
 
-    expect(detailApi.branchSwitchRequestsByThreadId['thread-123'], [
-      'release/2026',
-    ]);
-    expect(find.text('Branch: release/2026'), findsOneWidget);
     expect(find.text('Switched branch to release/2026'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('git-pull-button')));
     await tester.pumpAndSettle();
-    expect(detailApi.pullCallsByThreadId['thread-123'], 1);
     expect(
       find.text('Pulled latest changes from origin for release/2026'),
       findsOneWidget,
@@ -400,9 +571,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('git-push-button')));
     await tester.pumpAndSettle();
-    expect(detailApi.pushCallsByThreadId['thread-123'], 1);
     expect(find.text('Status: Clean • Ahead 0 • Behind 0'), findsOneWidget);
-    expect(detailApi.gitStatusFetchCountByThreadId['thread-123'], 4);
   });
 
   testWidgets(
@@ -1135,112 +1304,105 @@ void main() {
     },
   );
 
-  testWidgets(
-    'disconnect reconnects and keeps items deduplicated',
-    (tester) async {
-      final listApi = FakeThreadListBridgeApi(
-        scriptedResults: [_threadSummaries()],
-      );
-      final detailApi = FakeThreadDetailBridgeApi(
-        detailScriptByThreadId: {
-          'thread-123': [_thread123Detail(), _thread123Detail()],
-        },
-        timelineScriptByThreadId: {
-          'thread-123': [
-            [
-              _timelineEvent(
-                id: 'evt-history-1',
-                kind: BridgeEventKind.messageDelta,
-                summary: 'Initial history event',
-                payload: {'delta': 'Initial history event'},
-                occurredAt: '2026-03-18T10:00:00Z',
-              ),
-            ],
-            [
-              _timelineEvent(
-                id: 'evt-history-1',
-                kind: BridgeEventKind.messageDelta,
-                summary: 'Initial history event',
-                payload: {'delta': 'Initial history event'},
-                occurredAt: '2026-03-18T10:00:00Z',
-              ),
-              _timelineEvent(
-                id: 'evt-live-1',
-                kind: BridgeEventKind.messageDelta,
-                summary: 'Streaming chunk from live output.',
-                payload: {'delta': 'Streaming chunk from live output.'},
-                occurredAt: '2026-03-18T10:01:00Z',
-              ),
-              _timelineEvent(
-                id: 'evt-catchup-1',
-                kind: BridgeEventKind.messageDelta,
-                summary: 'Caught up after reconnect.',
-                payload: {'delta': 'Caught up after reconnect.'},
-                occurredAt: '2026-03-18T10:02:00Z',
-              ),
-            ],
+  testWidgets('disconnect reconnects and keeps items deduplicated', (
+    tester,
+  ) async {
+    final listApi = FakeThreadListBridgeApi(
+      scriptedResults: [_threadSummaries()],
+    );
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail(), _thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          [
+            _timelineEvent(
+              id: 'evt-history-1',
+              kind: BridgeEventKind.messageDelta,
+              summary: 'Initial history event',
+              payload: {'delta': 'Initial history event'},
+              occurredAt: '2026-03-18T10:00:00Z',
+            ),
           ],
-        },
-      );
-      final liveStream = FakeThreadLiveStream();
+          [
+            _timelineEvent(
+              id: 'evt-history-1',
+              kind: BridgeEventKind.messageDelta,
+              summary: 'Initial history event',
+              payload: {'delta': 'Initial history event'},
+              occurredAt: '2026-03-18T10:00:00Z',
+            ),
+            _timelineEvent(
+              id: 'evt-live-1',
+              kind: BridgeEventKind.messageDelta,
+              summary: 'Streaming chunk from live output.',
+              payload: {'delta': 'Streaming chunk from live output.'},
+              occurredAt: '2026-03-18T10:01:00Z',
+            ),
+            _timelineEvent(
+              id: 'evt-catchup-1',
+              kind: BridgeEventKind.messageDelta,
+              summary: 'Caught up after reconnect.',
+              payload: {'delta': 'Caught up after reconnect.'},
+              occurredAt: '2026-03-18T10:02:00Z',
+            ),
+          ],
+        ],
+      },
+    );
+    final liveStream = FakeThreadLiveStream();
 
-      await _pumpThreadListApp(
-        tester,
-        listApi: listApi,
-        detailApi: detailApi,
-        liveStream: liveStream,
-      );
+    await _pumpThreadListApp(
+      tester,
+      listApi: listApi,
+      detailApi: detailApi,
+      liveStream: liveStream,
+    );
 
-      await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
-      await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+    await tester.pumpAndSettle();
 
-      liveStream.emit(
-        BridgeEventEnvelope<Map<String, dynamic>>(
-          contractVersion: contractVersion,
-          eventId: 'evt-live-1',
-          threadId: 'thread-123',
-          kind: BridgeEventKind.messageDelta,
-          occurredAt: '2026-03-18T10:01:00Z',
-          payload: {'delta': 'Streaming chunk from live output.'},
-        ),
-      );
-      await tester.pumpAndSettle();
+    liveStream.emit(
+      BridgeEventEnvelope<Map<String, dynamic>>(
+        contractVersion: contractVersion,
+        eventId: 'evt-live-1',
+        threadId: 'thread-123',
+        kind: BridgeEventKind.messageDelta,
+        occurredAt: '2026-03-18T10:01:00Z',
+        payload: {'delta': 'Streaming chunk from live output.'},
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      await _scrollUntilVisible(
-        tester,
-        find.byKey(const Key('thread-activity-evt-live-1')),
-      );
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('thread-activity-evt-live-1')),
+    );
 
-      expect(
-        find.byKey(const Key('thread-activity-evt-live-1')),
-        findsOneWidget,
-      );
+    expect(find.byKey(const Key('thread-activity-evt-live-1')), findsOneWidget);
 
-      await tester.fling(
-        find.byType(Scrollable).first,
-        const Offset(0, 600),
-        1000,
-      );
-      await tester.pumpAndSettle();
+    await tester.fling(
+      find.byType(Scrollable).first,
+      const Offset(0, 600),
+      1000,
+    );
+    await tester.pumpAndSettle();
 
-      liveStream.emitError('thread-123');
-      await tester.pumpAndSettle();
+    liveStream.emitError('thread-123');
+    await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('retry-reconnect-catchup')), findsOneWidget);
-      await tester.tap(find.byKey(const Key('retry-reconnect-catchup')));
-      await tester.pumpAndSettle();
+    expect(find.byKey(const Key('retry-reconnect-catchup')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('retry-reconnect-catchup')));
+    await tester.pumpAndSettle();
 
-      await _scrollUntilVisible(
-        tester,
-        find.byKey(const Key('thread-activity-evt-live-1')),
-      );
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('thread-activity-evt-live-1')),
+    );
 
-      expect(
-        find.byKey(const Key('thread-activity-evt-live-1')),
-        findsOneWidget,
-      );
-    },
-  );
+    expect(find.byKey(const Key('thread-activity-evt-live-1')), findsOneWidget);
+  });
 }
 
 Future<void> _pumpThreadListApp(
@@ -1248,6 +1410,7 @@ Future<void> _pumpThreadListApp(
   required ThreadListBridgeApi listApi,
   required ThreadDetailBridgeApi detailApi,
   required ThreadLiveStream liveStream,
+  ApprovalBridgeApi? approvalApi,
   ThreadCacheRepository? cacheRepository,
   SettingsBridgeApi? settingsApi,
 }) async {
@@ -1255,7 +1418,9 @@ Future<void> _pumpThreadListApp(
     ProviderScope(
       overrides: [
         threadListBridgeApiProvider.overrideWithValue(listApi),
-        approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
+        approvalBridgeApiProvider.overrideWithValue(
+          approvalApi ?? EmptyApprovalBridgeApi(),
+        ),
         threadDetailBridgeApiProvider.overrideWithValue(detailApi),
         settingsBridgeApiProvider.overrideWithValue(
           settingsApi ?? FakeSettingsBridgeApi(),
@@ -1280,6 +1445,7 @@ Future<void> _pumpThreadDetailApp(
   required String threadId,
   ThreadListBridgeApi? listApi,
   ThreadLiveStream? liveStream,
+  ApprovalBridgeApi? approvalApi,
   ThreadCacheRepository? cacheRepository,
   SettingsBridgeApi? settingsApi,
 }) async {
@@ -1290,7 +1456,9 @@ Future<void> _pumpThreadDetailApp(
           listApi ??
               FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]),
         ),
-        approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
+        approvalBridgeApiProvider.overrideWithValue(
+          approvalApi ?? EmptyApprovalBridgeApi(),
+        ),
         threadDetailBridgeApiProvider.overrideWithValue(detailApi),
         settingsBridgeApiProvider.overrideWithValue(
           settingsApi ?? FakeSettingsBridgeApi(),
@@ -1360,8 +1528,10 @@ List<ThreadSummaryDto> _threadSummaries() {
   ];
 }
 
-ThreadDetailDto _thread123Detail() {
-  return const ThreadDetailDto(
+ThreadDetailDto _thread123Detail({
+  AccessMode accessMode = AccessMode.controlWithApprovals,
+}) {
+  return ThreadDetailDto(
     contractVersion: contractVersion,
     threadId: 'thread-123',
     title: 'Implement shared contracts',
@@ -1372,7 +1542,7 @@ ThreadDetailDto _thread123Detail() {
     createdAt: '2026-03-18T09:45:00Z',
     updatedAt: '2026-03-18T10:00:00Z',
     source: 'cli',
-    accessMode: AccessMode.controlWithApprovals,
+    accessMode: accessMode,
     lastTurnSummary: 'Normalize event payloads',
   );
 }
@@ -1528,6 +1698,49 @@ MutationResultResponseDto _gitMutationResult({
   );
 }
 
+ThreadGitApprovalRequiredException _gitApprovalRequired({
+  required String approvalId,
+  required String action,
+  required String target,
+  required String reason,
+  required String threadId,
+  required String repository,
+  required String branch,
+  required String remote,
+  required String workspace,
+  required bool dirty,
+  required int aheadBy,
+  required int behindBy,
+}) {
+  return ThreadGitApprovalRequiredException(
+    message: 'Dangerous action was gated pending explicit approval',
+    operation: action,
+    outcome: 'approval_required',
+    approval: ApprovalRecordDto(
+      contractVersion: contractVersion,
+      approvalId: approvalId,
+      threadId: threadId,
+      action: action,
+      target: target,
+      reason: reason,
+      status: ApprovalStatus.pending,
+      requestedAt: '2026-03-18T10:10:00Z',
+      resolvedAt: null,
+      repository: RepositoryContextDto(
+        workspace: workspace,
+        repository: repository,
+        branch: branch,
+        remote: remote,
+      ),
+      gitStatus: GitStatusDto(
+        dirty: dirty,
+        aheadBy: aheadBy,
+        behindBy: behindBy,
+      ),
+    ),
+  );
+}
+
 class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   FakeThreadDetailBridgeApi({
     required Map<String, List<Object>> detailScriptByThreadId,
@@ -1539,6 +1752,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     Map<String, List<Object>>? branchSwitchScriptByThreadId,
     Map<String, List<Object>>? pullScriptByThreadId,
     Map<String, List<Object>>? pushScriptByThreadId,
+    this.onGitApprovalRequired,
   }) : _detailScriptByThreadId = detailScriptByThreadId,
        _timelineScriptByThreadId = timelineScriptByThreadId,
        _startTurnScriptByThreadId = startTurnScriptByThreadId ?? {},
@@ -1558,6 +1772,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   final Map<String, List<Object>> _branchSwitchScriptByThreadId;
   final Map<String, List<Object>> _pullScriptByThreadId;
   final Map<String, List<Object>> _pushScriptByThreadId;
+  final void Function(ApprovalRecordDto approval)? onGitApprovalRequired;
   int detailFetchCount = 0;
   int timelineFetchCount = 0;
   final Map<String, List<String>> startTurnPromptsByThreadId =
@@ -1749,6 +1964,10 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     if (scriptedResult is MutationResultResponseDto) {
       return scriptedResult;
     }
+    if (scriptedResult is ThreadGitApprovalRequiredException) {
+      onGitApprovalRequired?.call(scriptedResult.approval);
+      throw scriptedResult;
+    }
     if (scriptedResult is ThreadGitMutationBridgeException) {
       throw scriptedResult;
     }
@@ -1788,6 +2007,10 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     final scriptedResult = _nextOptionalResult(_pullScriptByThreadId, threadId);
     if (scriptedResult is MutationResultResponseDto) {
       return scriptedResult;
+    }
+    if (scriptedResult is ThreadGitApprovalRequiredException) {
+      onGitApprovalRequired?.call(scriptedResult.approval);
+      throw scriptedResult;
     }
     if (scriptedResult is ThreadGitMutationBridgeException) {
       throw scriptedResult;
@@ -1831,6 +2054,10 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     final scriptedResult = _nextOptionalResult(_pushScriptByThreadId, threadId);
     if (scriptedResult is MutationResultResponseDto) {
       return scriptedResult;
+    }
+    if (scriptedResult is ThreadGitApprovalRequiredException) {
+      onGitApprovalRequired?.call(scriptedResult.approval);
+      throw scriptedResult;
     }
     if (scriptedResult is ThreadGitMutationBridgeException) {
       throw scriptedResult;
@@ -2036,6 +2263,52 @@ class FakeThreadListBridgeApi implements ThreadListBridgeApi {
     }
 
     throw StateError('Unsupported scripted result type: $scriptedResult');
+  }
+}
+
+class MutableApprovalBridgeApi implements ApprovalBridgeApi {
+  MutableApprovalBridgeApi({
+    required this.accessMode,
+    List<ApprovalRecordDto> approvals = const <ApprovalRecordDto>[],
+  }) : _approvalsById = {
+         for (final approval in approvals) approval.approvalId: approval,
+       };
+
+  final AccessMode accessMode;
+  final Map<String, ApprovalRecordDto> _approvalsById;
+
+  void upsertApproval(ApprovalRecordDto approval) {
+    _approvalsById[approval.approvalId] = approval;
+  }
+
+  @override
+  Future<AccessMode> fetchAccessMode({required String bridgeApiBaseUrl}) async {
+    return accessMode;
+  }
+
+  @override
+  Future<List<ApprovalRecordDto>> fetchApprovals({
+    required String bridgeApiBaseUrl,
+  }) async {
+    final approvals = _approvalsById.values.toList(growable: false)
+      ..sort((left, right) => right.requestedAt.compareTo(left.requestedAt));
+    return approvals;
+  }
+
+  @override
+  Future<ApprovalResolutionResponseDto> approve({
+    required String bridgeApiBaseUrl,
+    required String approvalId,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<ApprovalResolutionResponseDto> reject({
+    required String bridgeApiBaseUrl,
+    required String approvalId,
+  }) {
+    throw UnimplementedError();
   }
 }
 
