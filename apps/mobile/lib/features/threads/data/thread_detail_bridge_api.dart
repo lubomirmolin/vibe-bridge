@@ -37,6 +37,11 @@ abstract class ThreadDetailBridgeApi {
     required String threadId,
   });
 
+  Future<OpenOnMacResponseDto> openOnMac({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  });
+
   Future<GitStatusResponseDto> fetchGitStatus({
     required String bridgeApiBaseUrl,
     required String threadId,
@@ -211,6 +216,68 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       threadId: threadId,
       action: 'interrupt',
     );
+  }
+
+  @override
+  Future<OpenOnMacResponseDto> openOnMac({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+
+    try {
+      final request = await client.postUrl(
+        _buildThreadOpenOnMacUri(bridgeApiBaseUrl, threadId),
+      );
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      final response = await request.close();
+      final bodyText = await utf8.decodeStream(response);
+      final decoded = _decodeJsonObject(bodyText);
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        try {
+          return OpenOnMacResponseDto.fromJson(decoded);
+        } on FormatException {
+          throw const ThreadOpenOnMacBridgeException(
+            message: 'Bridge returned an invalid open-on-Mac response.',
+          );
+        }
+      }
+
+      throw ThreadOpenOnMacBridgeException(
+        message:
+            _readOptionalString(decoded, 'message') ??
+            'Couldn’t open this thread in Codex.app right now.',
+        statusCode: response.statusCode,
+        code: _readOptionalString(decoded, 'code'),
+      );
+    } on SocketException {
+      throw const ThreadOpenOnMacBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on HandshakeException {
+      throw const ThreadOpenOnMacBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on HttpException {
+      throw const ThreadOpenOnMacBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on TimeoutException {
+      throw const ThreadOpenOnMacBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on FormatException {
+      throw const ThreadOpenOnMacBridgeException(
+        message: 'Bridge returned an invalid open-on-Mac response.',
+      );
+    } finally {
+      client.close();
+    }
   }
 
   @override
@@ -587,6 +654,23 @@ class ThreadGitApprovalRequiredException
   final ApprovalRecordDto approval;
 }
 
+class ThreadOpenOnMacBridgeException implements Exception {
+  const ThreadOpenOnMacBridgeException({
+    required this.message,
+    this.statusCode,
+    this.code,
+    this.isConnectivityError = false,
+  });
+
+  final String message;
+  final int? statusCode;
+  final String? code;
+  final bool isConnectivityError;
+
+  @override
+  String toString() => message;
+}
+
 class TurnMutationResult {
   const TurnMutationResult({
     required this.contractVersion,
@@ -648,6 +732,16 @@ Uri _buildThreadGitStatusUri(String baseUrl, String threadId) {
       : baseUri.path;
   final fullPath =
       '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/git/status';
+  return baseUri.replace(path: fullPath, queryParameters: null);
+}
+
+Uri _buildThreadOpenOnMacUri(String baseUrl, String threadId) {
+  final baseUri = Uri.parse(baseUrl);
+  final normalizedBasePath = baseUri.path.endsWith('/')
+      ? baseUri.path.substring(0, baseUri.path.length - 1)
+      : baseUri.path;
+  final fullPath =
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/open-on-mac';
   return baseUri.replace(path: fullPath, queryParameters: null);
 }
 

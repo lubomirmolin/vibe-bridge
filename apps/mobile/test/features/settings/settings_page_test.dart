@@ -79,6 +79,10 @@ void main() {
         find.byKey(const Key('live-activity-notification-toggle')),
         findsOneWidget,
       );
+      expect(
+        find.byKey(const Key('desktop-integration-toggle')),
+        findsOneWidget,
+      );
 
       await tester.scrollUntilVisible(
         find.text('Actor: mobile-settings'),
@@ -213,6 +217,102 @@ void main() {
       tester
           .widget<SwitchListTile>(
             find.byKey(const Key('approval-notification-toggle')),
+          )
+          .value,
+      isFalse,
+    );
+
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('desktop-integration-toggle')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('desktop-integration-toggle')));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<SwitchListTile>(
+            find.byKey(const Key('desktop-integration-toggle')),
+          )
+          .value,
+      isFalse,
+    );
+  });
+
+  testWidgets('desktop integration toggle persists across relaunch', (
+    tester,
+  ) async {
+    final store = InMemorySecureStore();
+    await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
+{
+  "bridge_id": "bridge-a1",
+  "bridge_name": "Codex Mobile Companion",
+  "bridge_api_base_url": "https://bridge.ts.net",
+  "session_id": "session-abc",
+  "paired_at_epoch_seconds": 100
+}
+''');
+    await store.writeSecret(SecureValueKey.sessionToken, 'session-token');
+    await store.writeSecret(SecureValueKey.pairingPrivateKey, 'phone-a1');
+
+    final settingsApi = FakeSettingsBridgeApi(
+      accessMode: AccessMode.controlWithApprovals,
+      events: const <SecurityEventRecordDto>[],
+    );
+
+    Future<void> pumpSettingsPage() async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            secureStoreProvider.overrideWithValue(store),
+            pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
+            settingsBridgeApiProvider.overrideWithValue(settingsApi),
+          ],
+          child: const MaterialApp(
+            home: SettingsPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await pumpSettingsPage();
+
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('desktop-integration-toggle')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('desktop-integration-toggle')));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<SwitchListTile>(
+            find.byKey(const Key('desktop-integration-toggle')),
+          )
+          .value,
+      isFalse,
+    );
+
+    await pumpSettingsPage();
+
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('desktop-integration-toggle')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<SwitchListTile>(
+            find.byKey(const Key('desktop-integration-toggle')),
           )
           .value,
       isFalse,

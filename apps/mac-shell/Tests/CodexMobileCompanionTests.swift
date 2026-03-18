@@ -195,6 +195,52 @@ final class CodexMobileCompanionTests: XCTestCase {
         XCTAssertNil(viewModel.pairingSession)
     }
 
+    @MainActor
+    func testPairingViewModelRevokesTrustFromDesktopAndReturnsToUnpaired() async {
+        let client = StubShellBridgeClient(
+            healthResults: [
+                .success(Self.healthResponse(runtimeState: "managed", trustStatus: Self.trustStatus())),
+                .success(Self.healthResponse(runtimeState: "managed", trustStatus: nil)),
+            ],
+            threadResults: [
+                .success(Self.threadListResponse(statuses: [])),
+                .success(Self.threadListResponse(statuses: [])),
+            ],
+            pairingResults: [.success(Self.samplePairingResponse)],
+            revokeResults: [.success(Self.sampleRevokeResponse)]
+        )
+        let viewModel = PairingEntryViewModel(bridgeClient: client)
+
+        await viewModel.refreshRuntimeState()
+        XCTAssertEqual(viewModel.shellState, .pairedIdle)
+
+        await viewModel.revokeTrustedPhoneFromDesktop()
+
+        XCTAssertEqual(viewModel.shellState, .unpaired)
+        XCTAssertNil(viewModel.errorMessage)
+        let revokedPhoneIDs = await client.revokedPhoneIDs()
+        XCTAssertEqual(revokedPhoneIDs, ["phone-1"])
+    }
+
+    @MainActor
+    func testPairingViewModelReportsDesktopRevokeFailure() async {
+        let client = StubShellBridgeClient(
+            healthResults: [.success(Self.healthResponse(runtimeState: "managed", trustStatus: Self.trustStatus()))],
+            threadResults: [.success(Self.threadListResponse(statuses: []))],
+            pairingResults: [],
+            revokeResults: [.failure(StubError.bridgeUnavailable)]
+        )
+        let viewModel = PairingEntryViewModel(bridgeClient: client)
+
+        await viewModel.refreshRuntimeState()
+        XCTAssertEqual(viewModel.shellState, .pairedIdle)
+
+        await viewModel.revokeTrustedPhoneFromDesktop()
+
+        XCTAssertEqual(viewModel.shellState, .pairedIdle)
+        XCTAssertNotNil(viewModel.errorMessage)
+    }
+
     private static func healthResponse(
         runtimeState: String,
         trustStatus: BridgeTrustStatusDTO?,
@@ -268,6 +314,11 @@ final class CodexMobileCompanionTests: XCTestCase {
         ),
         qrPayload: "bridge-sample|pairing-session-42|ptk-42"
     )
+
+    private static let sampleRevokeResponse = PairingRevokeResponseDTO(
+        contractVersion: SharedContract.version,
+        revoked: true
+    )
 }
 
 private struct StubShellBridgeClient: ShellBridgeClient {
@@ -276,12 +327,14 @@ private struct StubShellBridgeClient: ShellBridgeClient {
     init(
         healthResults: [Result<BridgeHealthResponseDTO, Error>],
         threadResults: [Result<ThreadListResponseDTO, Error>],
-        pairingResults: [Result<PairingSessionResponseDTO, Error>]
+        pairingResults: [Result<PairingSessionResponseDTO, Error>],
+        revokeResults: [Result<PairingRevokeResponseDTO, Error>] = []
     ) {
         self.store = StubShellBridgeResponseStore(
             healthResults: healthResults,
             threadResults: threadResults,
-            pairingResults: pairingResults
+            pairingResults: pairingResults,
+            revokeResults: revokeResults
         )
     }
 
@@ -296,21 +349,33 @@ private struct StubShellBridgeClient: ShellBridgeClient {
     func fetchPairingSession() async throws -> PairingSessionResponseDTO {
         try await store.nextPairing()
     }
+
+    func revokeTrust(phoneID: String?) async throws -> PairingRevokeResponseDTO {
+        try await store.nextRevoke(phoneID: phoneID)
+    }
+
+    func revokedPhoneIDs() async -> [String?] {
+        await store.revokedPhoneIDs()
+    }
 }
 
 private actor StubShellBridgeResponseStore {
     private var healthResults: [Result<BridgeHealthResponseDTO, Error>]
     private var threadResults: [Result<ThreadListResponseDTO, Error>]
     private var pairingResults: [Result<PairingSessionResponseDTO, Error>]
+    private var revokeResults: [Result<PairingRevokeResponseDTO, Error>]
+    private var recordedRevokedPhoneIDs: [String?] = []
 
     init(
         healthResults: [Result<BridgeHealthResponseDTO, Error>],
         threadResults: [Result<ThreadListResponseDTO, Error>],
-        pairingResults: [Result<PairingSessionResponseDTO, Error>]
+        pairingResults: [Result<PairingSessionResponseDTO, Error>],
+        revokeResults: [Result<PairingRevokeResponseDTO, Error>]
     ) {
         self.healthResults = healthResults
         self.threadResults = threadResults
         self.pairingResults = pairingResults
+        self.revokeResults = revokeResults
     }
 
     func nextHealth() throws -> BridgeHealthResponseDTO {
@@ -333,6 +398,18 @@ private actor StubShellBridgeResponseStore {
         }
         return try pairingResults.removeFirst().get()
     }
+
+    func nextRevoke(phoneID: String?) throws -> PairingRevokeResponseDTO {
+        recordedRevokedPhoneIDs.append(phoneID)
+        guard !revokeResults.isEmpty else {
+            throw StubError.missingRevokeResult
+        }
+        return try revokeResults.removeFirst().get()
+    }
+
+    func revokedPhoneIDs() -> [String?] {
+        recordedRevokedPhoneIDs
+    }
 }
 
 private enum StubError: LocalizedError {
@@ -340,6 +417,7 @@ private enum StubError: LocalizedError {
     case missingHealthResult
     case missingThreadResult
     case missingPairingResult
+    case missingRevokeResult
 
     var errorDescription: String? {
         switch self {
@@ -351,6 +429,8 @@ private enum StubError: LocalizedError {
             return "missing stub thread result"
         case .missingPairingResult:
             return "missing stub pairing result"
+        case .missingRevokeResult:
+            return "missing stub revoke result"
         }
     }
 }

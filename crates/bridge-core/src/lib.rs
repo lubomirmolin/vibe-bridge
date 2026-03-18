@@ -2,6 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
+#[cfg(not(test))]
+use std::process::Command;
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -1127,6 +1129,7 @@ fn route_request(request_line: &str, app: &BridgeApplication) -> String {
                         "GET /threads",
                         "GET /threads/:id",
                         "GET /threads/:id/timeline",
+                        "POST /threads/:id/open-on-mac",
                         "GET /threads/:id/git/status",
                         "POST /threads/:id/turns/start",
                         "POST /threads/:id/turns/steer",
@@ -1467,6 +1470,27 @@ fn route_thread_request(
                 .expect("thread API mutex should not be poisoned")
                 .timeline_response(thread_id)?;
             Some(json_response("200 OK", &timeline))
+        }
+        ("POST", [_, "open-on-mac"]) => {
+            let thread_exists = app
+                .thread_api
+                .lock()
+                .expect("thread API mutex should not be poisoned")
+                .detail_response(thread_id)
+                .is_some();
+            if !thread_exists {
+                return None;
+            }
+
+            Some(match open_thread_in_codex_app(thread_id) {
+                Ok(response) => json_response("200 OK", &response),
+                Err(message) => json_error_response(
+                    "503 Service Unavailable",
+                    "open_on_mac_failed",
+                    "codex_app_unavailable",
+                    &message,
+                ),
+            })
         }
         ("GET", [_, "git", "status"]) => {
             let status = app
@@ -2066,6 +2090,101 @@ fn bad_request_response(message: &str) -> String {
     json_error_response("400 Bad Request", "bad_request", "bad_request", message)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct OpenOnMacResponse {
+    contract_version: String,
+    thread_id: String,
+    attempted_url: String,
+    message: String,
+    best_effort: bool,
+}
+
+fn open_thread_in_codex_app(thread_id: &str) -> Result<OpenOnMacResponse, String> {
+    open_thread_in_codex_app_with(thread_id, open_codex_deep_link)
+}
+
+fn open_thread_in_codex_app_with<F>(
+    thread_id: &str,
+    mut open_deep_link: F,
+) -> Result<OpenOnMacResponse, String>
+where
+    F: FnMut(&str) -> Result<(), String>,
+{
+    let attempted_urls = candidate_codex_deep_links(thread_id);
+    let mut errors = Vec::new();
+
+    for attempted_url in attempted_urls {
+        match open_deep_link(&attempted_url) {
+            Ok(()) => {
+                return Ok(OpenOnMacResponse {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: thread_id.to_string(),
+                    attempted_url,
+                    message: "Requested Codex.app to open the matching shared thread. Desktop refresh is best effort; mobile remains fully usable.".to_string(),
+                    best_effort: true,
+                });
+            }
+            Err(error) => errors.push(error),
+        }
+    }
+
+    let detail = if errors.is_empty() {
+        "Codex.app is unavailable or could not be opened.".to_string()
+    } else {
+        format!(
+            "Codex.app is unavailable or could not be opened ({}).",
+            errors.join(" | ")
+        )
+    };
+
+    Err(format!(
+        "{detail} Mobile remains usable and open-on-Mac is best effort."
+    ))
+}
+
+fn candidate_codex_deep_links(thread_id: &str) -> Vec<String> {
+    vec![
+        format!("codex://thread/{thread_id}"),
+        format!("codex://threads/{thread_id}"),
+        format!("codex://open?thread_id={thread_id}"),
+    ]
+}
+
+fn open_codex_deep_link(url: &str) -> Result<(), String> {
+    #[cfg(test)]
+    {
+        let _ = url;
+        Ok(())
+    }
+
+    #[cfg(not(test))]
+    {
+        let primary = Command::new("open")
+            .arg("-a")
+            .arg("Codex")
+            .arg(url)
+            .status()
+            .map_err(|error| format!("failed to invoke `open -a Codex`: {error}"))?;
+
+        if primary.success() {
+            return Ok(());
+        }
+
+        let fallback = Command::new("open")
+            .arg(url)
+            .status()
+            .map_err(|error| format!("failed to invoke `open`: {error}"))?;
+
+        if fallback.success() {
+            return Ok(());
+        }
+
+        Err(format!(
+            "`open -a Codex` exited with {primary}, and fallback `open` exited with {fallback}"
+        ))
+    }
+}
+
 fn pairing_finalize_error_response(error: PairingFinalizeError) -> String {
     let status = match error {
         PairingFinalizeError::UnknownPairingSession
@@ -2540,6 +2659,43 @@ mod tests {
         assert!(timeline_response.starts_with("HTTP/1.1 200 OK"));
         assert!(timeline_response.contains("\"events\""));
         assert!(timeline_response.contains("\"kind\":\"message_delta\""));
+    }
+
+    #[test]
+    fn open_on_mac_route_returns_best_effort_response_for_known_thread() {
+        let app = test_application();
+
+        let response = route_request("POST /threads/thread-123/open-on-mac HTTP/1.1", &app);
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+
+        let body = parse_json_body(&response);
+        assert_eq!(body["thread_id"], "thread-123");
+        assert_eq!(body["best_effort"], true);
+        assert_eq!(body["contract_version"], shared_contracts::CONTRACT_VERSION);
+
+        let attempted_url = body["attempted_url"]
+            .as_str()
+            .expect("attempted URL should be present");
+        assert!(attempted_url.contains("thread-123"));
+    }
+
+    #[test]
+    fn open_on_mac_route_returns_not_found_for_unknown_thread() {
+        let app = test_application();
+
+        let response = route_request("POST /threads/thread-missing/open-on-mac HTTP/1.1", &app);
+        assert!(response.starts_with("HTTP/1.1 404 Not Found"));
+    }
+
+    #[test]
+    fn open_on_mac_reports_graceful_failure_when_all_links_fail() {
+        let error = super::open_thread_in_codex_app_with("thread-123", |_url| {
+            Err("Codex.app is not installed".to_string())
+        })
+        .expect_err("open-on-mac should fail when opener fails");
+
+        assert!(error.contains("Codex.app is unavailable or could not be opened"));
+        assert!(error.contains("Mobile remains usable"));
     }
 
     #[test]

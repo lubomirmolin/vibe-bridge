@@ -78,7 +78,16 @@ private struct PairingEntryView: View {
                 }
                 .disabled(viewModel.isRefreshingRuntime)
 
-                if viewModel.isLoadingPairing || viewModel.isRefreshingRuntime {
+                if viewModel.canRevokeTrust {
+                    Button(viewModel.isRevokingTrust ? "Revoking…" : "Unpair Trusted Phone") {
+                        Task {
+                            await viewModel.revokeTrustedPhoneFromDesktop()
+                        }
+                    }
+                    .disabled(viewModel.isRevokingTrust || viewModel.isRefreshingRuntime)
+                }
+
+                if viewModel.isLoadingPairing || viewModel.isRefreshingRuntime || viewModel.isRevokingTrust {
                     ProgressView()
                         .controlSize(.small)
                 }
@@ -132,7 +141,7 @@ private struct PairingEntryView: View {
             }
 
         case .pairedIdle, .pairedActive:
-            Text("This Mac is already paired. Existing trusted phone sessions stay active without rescanning.")
+            Text("This Mac is already paired. Existing trusted phone sessions stay active without rescanning. Use “Unpair Trusted Phone” to revoke trust and require a fresh pairing flow.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .padding(.vertical, 24)
@@ -169,9 +178,12 @@ final class PairingEntryViewModel: ObservableObject {
 
     @Published private(set) var isLoadingPairing = false
     @Published private(set) var isRefreshingRuntime = false
+    @Published private(set) var isRevokingTrust = false
     @Published private(set) var pairingSession: PairingSessionResponseDTO?
     @Published private(set) var qrImage: NSImage?
     @Published private(set) var errorMessage: String?
+
+    private var trustedPhoneID: String?
 
     private let bridgeClient: ShellBridgeClient
     private var supervisionTask: Task<Void, Never>?
@@ -182,6 +194,10 @@ final class PairingEntryViewModel: ObservableObject {
 
     var shouldShowPairingQR: Bool {
         shellState == .unpaired
+    }
+
+    var canRevokeTrust: Bool {
+        shellState == .pairedIdle || shellState == .pairedActive
     }
 
     init(bridgeClient: ShellBridgeClient = BridgeShellAPIClient()) {
@@ -264,8 +280,10 @@ final class PairingEntryViewModel: ObservableObject {
 
         if let trustedPhone = trustStatus?.trustedPhone {
             pairedDeviceLabel = "\(trustedPhone.phoneName) (\(trustedPhone.phoneID))"
+            trustedPhoneID = trustedPhone.phoneID
         } else {
             pairedDeviceLabel = "Not paired"
+            trustedPhoneID = nil
         }
 
         if let activeSession = trustStatus?.activeSession {
@@ -287,10 +305,37 @@ final class PairingEntryViewModel: ObservableObject {
         runningThreadCount = 0
         pairedDeviceLabel = "Unavailable"
         activeSessionLabel = "Unavailable"
+        trustedPhoneID = nil
         runtimeDetail = message
         pairingSession = nil
         qrImage = nil
         errorMessage = message
+    }
+
+    func revokeTrustedPhoneFromDesktop() async {
+        guard !isRevokingTrust else {
+            return
+        }
+
+        isRevokingTrust = true
+        defer { isRevokingTrust = false }
+
+        do {
+            let response = try await bridgeClient.revokeTrust(phoneID: trustedPhoneID)
+            if response.revoked {
+                errorMessage = nil
+                runtimeDetail = "Desktop trust revoked. The phone must pair again before reconnecting."
+                await refreshRuntimeState()
+                if shellState == .unpaired {
+                    await refreshPairingSessionIfNeeded()
+                }
+                return
+            }
+
+            errorMessage = "No trusted phone was available to revoke."
+        } catch {
+            errorMessage = "Failed to revoke trust from desktop shell: \(error.localizedDescription)"
+        }
     }
 
     func refreshPairingSessionIfNeeded() async {
@@ -379,6 +424,7 @@ protocol ShellBridgeClient {
     func fetchHealth() async throws -> BridgeHealthResponseDTO
     func fetchThreads() async throws -> ThreadListResponseDTO
     func fetchPairingSession() async throws -> PairingSessionResponseDTO
+    func revokeTrust(phoneID: String?) async throws -> PairingRevokeResponseDTO
 }
 
 struct BridgeShellAPIClient: ShellBridgeClient {
@@ -400,9 +446,28 @@ struct BridgeShellAPIClient: ShellBridgeClient {
         try await fetch(path: "/pairing/session", method: "POST")
     }
 
+    func revokeTrust(phoneID: String?) async throws -> PairingRevokeResponseDTO {
+        var components = URLComponents(url: apiBaseURL.appending(path: "/pairing/trust/revoke"), resolvingAgainstBaseURL: false)
+        if let phoneID, !phoneID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            components?.queryItems = [
+                URLQueryItem(name: "phone_id", value: phoneID),
+            ]
+        }
+
+        guard let endpoint = components?.url else {
+            throw BridgeShellAPIClientError.invalidResponse
+        }
+
+        return try await fetch(url: endpoint, method: "POST")
+    }
+
     private func fetch<T: Decodable>(path: String, method: String) async throws -> T {
         let endpoint = apiBaseURL.appending(path: path)
-        var request = URLRequest(url: endpoint)
+        return try await fetch(url: endpoint, method: method)
+    }
+
+    private func fetch<T: Decodable>(url: URL, method: String) async throws -> T {
+        var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 

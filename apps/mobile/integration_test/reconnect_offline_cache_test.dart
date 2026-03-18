@@ -861,6 +861,21 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   }
 
   @override
+  Future<OpenOnMacResponseDto> openOnMac({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    return OpenOnMacResponseDto(
+      contractVersion: contractVersion,
+      threadId: threadId,
+      attemptedUrl: 'codex://thread/$threadId',
+      message:
+          'Requested Codex.app to open the matching shared thread. Desktop refresh is best effort; mobile remains fully usable.',
+      bestEffort: true,
+    );
+  }
+
+  @override
   Future<MutationResultResponseDto> pushRepository({
     required String bridgeApiBaseUrl,
     required String threadId,

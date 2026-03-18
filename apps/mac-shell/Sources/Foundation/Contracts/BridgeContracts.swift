@@ -126,6 +126,16 @@ struct PairingSessionResponseDTO: Codable, Equatable {
     }
 }
 
+struct PairingRevokeResponseDTO: Codable, Equatable {
+    let contractVersion: String
+    let revoked: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case contractVersion = "contract_version"
+        case revoked
+    }
+}
+
 struct BridgeHealthResponseDTO: Codable, Equatable {
     let status: String
     let runtime: BridgeRuntimeSnapshotDTO

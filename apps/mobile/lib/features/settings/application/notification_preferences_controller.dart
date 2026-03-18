@@ -19,16 +19,19 @@ class NotificationPreferencesState {
   const NotificationPreferencesState({
     this.approvalNotificationsEnabled = true,
     this.liveActivityNotificationsEnabled = true,
+    this.desktopIntegrationEnabled = true,
     this.isLoading = true,
   });
 
   final bool approvalNotificationsEnabled;
   final bool liveActivityNotificationsEnabled;
+  final bool desktopIntegrationEnabled;
   final bool isLoading;
 
   NotificationPreferencesState copyWith({
     bool? approvalNotificationsEnabled,
     bool? liveActivityNotificationsEnabled,
+    bool? desktopIntegrationEnabled,
     bool? isLoading,
   }) {
     return NotificationPreferencesState(
@@ -37,6 +40,8 @@ class NotificationPreferencesState {
       liveActivityNotificationsEnabled:
           liveActivityNotificationsEnabled ??
           this.liveActivityNotificationsEnabled,
+      desktopIntegrationEnabled:
+          desktopIntegrationEnabled ?? this.desktopIntegrationEnabled,
       isLoading: isLoading ?? this.isLoading,
     );
   }
@@ -68,6 +73,11 @@ class NotificationPreferencesController
     await _persist();
   }
 
+  Future<void> setDesktopIntegrationEnabled(bool enabled) async {
+    state = state.copyWith(desktopIntegrationEnabled: enabled, isLoading: false);
+    await _persist();
+  }
+
   Future<void> _restore() async {
     final raw = await _secureStore.readSecret(
       SecureValueKey.notificationPreferences,
@@ -90,6 +100,8 @@ class NotificationPreferencesController
             decoded['approval_notifications_enabled'] as bool? ?? true,
         liveActivityNotificationsEnabled:
             decoded['live_activity_notifications_enabled'] as bool? ?? true,
+        desktopIntegrationEnabled:
+            decoded['desktop_integration_enabled'] as bool? ?? true,
         isLoading: false,
       );
     } on FormatException {
@@ -104,6 +116,7 @@ class NotificationPreferencesController
       'approval_notifications_enabled': state.approvalNotificationsEnabled,
       'live_activity_notifications_enabled':
           state.liveActivityNotificationsEnabled,
+      'desktop_integration_enabled': state.desktopIntegrationEnabled,
     });
 
     return _secureStore.writeSecret(

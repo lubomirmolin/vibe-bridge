@@ -98,11 +98,14 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
           state: state,
           accessMode: effectiveAccessMode,
           controlsEnabled: controlsEnabled,
+          desktopIntegrationEnabled:
+              notificationPreferences.desktopIntegrationEnabled,
           showLiveNotificationSuppressedBanner:
               !notificationPreferences.liveActivityNotificationsEnabled,
           onRetry: controller.loadThread,
           onLoadEarlier: controller.loadEarlierHistory,
           onRetryReconnect: controller.retryReconnectCatchUp,
+          onOpenOnMac: controller.openOnMac,
           composerController: _composerController,
           gitBranchController: _gitBranchController,
           onSubmitComposer: controller.submitComposerInput,
@@ -132,6 +135,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
           gitErrorMessage: state.gitErrorMessage,
           gitMutationMessage: state.gitMutationMessage,
           gitControlsUnavailableReason: state.gitControlsUnavailableReason,
+          isOpenOnMacInFlight: state.isOpenOnMacInFlight,
+          openOnMacMessage: state.openOnMacMessage,
+          openOnMacErrorMessage: state.openOnMacErrorMessage,
           onRefreshApprovals: () {
             approvalsController.loadApprovals(showLoading: false);
           },
@@ -146,10 +152,12 @@ Widget _buildBody(
   required ThreadDetailState state,
   required AccessMode accessMode,
   required bool controlsEnabled,
+  required bool desktopIntegrationEnabled,
   required bool showLiveNotificationSuppressedBanner,
   required Future<void> Function() onRetry,
   required VoidCallback onLoadEarlier,
   required Future<void> Function() onRetryReconnect,
+  required Future<bool> Function() onOpenOnMac,
   required TextEditingController composerController,
   required TextEditingController gitBranchController,
   required Future<bool> Function(String rawInput) onSubmitComposer,
@@ -167,6 +175,9 @@ Widget _buildBody(
   required String? gitErrorMessage,
   required String? gitMutationMessage,
   required String? gitControlsUnavailableReason,
+  required bool isOpenOnMacInFlight,
+  required String? openOnMacMessage,
+  required String? openOnMacErrorMessage,
   required VoidCallback onRefreshApprovals,
 }) {
   if (state.isLoading && !state.hasThread) {
@@ -264,6 +275,15 @@ Widget _buildBody(
           errorMessage: approvalsErrorMessage,
           onRefresh: onRefreshApprovals,
         ),
+        const SizedBox(height: 12),
+        _DesktopIntegrationCard(
+          desktopIntegrationEnabled: desktopIntegrationEnabled,
+          controlsEnabled: controlsEnabled,
+          isOpeningOnMac: isOpenOnMacInFlight,
+          openOnMacMessage: openOnMacMessage,
+          openOnMacErrorMessage: openOnMacErrorMessage,
+          onOpenOnMac: onOpenOnMac,
+        ),
         const SizedBox(height: 16),
         if (state.canLoadEarlierHistory) ...[
           Align(
@@ -286,6 +306,88 @@ Widget _buildBody(
       ],
     ),
   );
+}
+
+class _DesktopIntegrationCard extends StatelessWidget {
+  const _DesktopIntegrationCard({
+    required this.desktopIntegrationEnabled,
+    required this.controlsEnabled,
+    required this.isOpeningOnMac,
+    required this.openOnMacMessage,
+    required this.openOnMacErrorMessage,
+    required this.onOpenOnMac,
+  });
+
+  final bool desktopIntegrationEnabled;
+  final bool controlsEnabled;
+  final bool isOpeningOnMac;
+  final String? openOnMacMessage;
+  final String? openOnMacErrorMessage;
+  final Future<bool> Function() onOpenOnMac;
+
+  @override
+  Widget build(BuildContext context) {
+    final canOpenOnMac =
+        desktopIntegrationEnabled && controlsEnabled && !isOpeningOnMac;
+
+    return Card(
+      key: const Key('desktop-integration-card'),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Desktop integration',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Open this thread in Codex.app on Mac. This is best effort: desktop live-refresh may lag, while mobile stays fully usable.',
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              key: const Key('open-on-mac-button'),
+              onPressed: canOpenOnMac
+                  ? () async {
+                      await onOpenOnMac();
+                    }
+                  : null,
+              icon: isOpeningOnMac
+                  ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.desktop_windows_outlined),
+              label: const Text('Open on Mac'),
+            ),
+            if (!desktopIntegrationEnabled) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Desktop integration is disabled in settings. Re-enable it to use Open on Mac.',
+                key: const Key('desktop-integration-disabled-message'),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+            if (openOnMacMessage != null) ...[
+              const SizedBox(height: 8),
+              _InlineInfo(
+                key: const Key('open-on-mac-success-message'),
+                message: openOnMacMessage!,
+              ),
+            ],
+            if (openOnMacErrorMessage != null) ...[
+              const SizedBox(height: 8),
+              _InlineWarning(
+                key: const Key('open-on-mac-error-message'),
+                message: openOnMacErrorMessage!,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _ThreadDetailLoadingState extends StatelessWidget {
@@ -932,7 +1034,7 @@ class _EmptyTimelineState extends StatelessWidget {
 }
 
 class _InlineWarning extends StatelessWidget {
-  const _InlineWarning({required this.message});
+  const _InlineWarning({super.key, required this.message});
 
   final String message;
 
@@ -954,7 +1056,7 @@ class _InlineWarning extends StatelessWidget {
 }
 
 class _InlineInfo extends StatelessWidget {
-  const _InlineInfo({required this.message});
+  const _InlineInfo({super.key, required this.message});
 
   final String message;
 

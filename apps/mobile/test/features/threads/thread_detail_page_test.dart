@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
+import 'package:codex_mobile_companion/features/settings/application/notification_preferences_controller.dart';
 import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
 import 'package:codex_mobile_companion/features/settings/data/settings_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
@@ -11,6 +12,7 @@ import 'package:codex_mobile_companion/features/threads/presentation/thread_deta
 import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
+import 'package:codex_mobile_companion/foundation/storage/secure_store_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -637,6 +639,119 @@ void main() {
     await tester.tap(find.byKey(const Key('git-push-button')));
     await tester.pumpAndSettle();
     expect(find.text('Status: Clean • Ahead 0 • Behind 0'), findsOneWidget);
+  });
+
+  testWidgets('open-on-Mac success and failure are surfaced clearly', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+      gitStatusScriptByThreadId: {
+        'thread-123': [_gitStatus(threadId: 'thread-123')],
+      },
+      openOnMacScriptByThreadId: {
+        'thread-123': [
+          _openOnMacResponse(threadId: 'thread-123'),
+          const ThreadOpenOnMacBridgeException(
+            message:
+                'Codex.app is unavailable or could not be opened. Mobile remains usable and open-on-Mac is best effort.',
+          ),
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('desktop-integration-card')),
+    );
+
+    await tester.tap(find.byKey(const Key('open-on-mac-button')));
+    await tester.pumpAndSettle();
+    expect(detailApi.openOnMacCallsByThreadId['thread-123'], 1);
+    expect(
+      find.byKey(const Key('open-on-mac-success-message')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('open-on-mac-button')));
+    await tester.pumpAndSettle();
+    expect(detailApi.openOnMacCallsByThreadId['thread-123'], 2);
+    expect(find.byKey(const Key('open-on-mac-error-message')), findsOneWidget);
+  });
+
+  testWidgets('desktop integration toggle updates open-on-Mac affordances', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+      gitStatusScriptByThreadId: {
+        'thread-123': [_gitStatus(threadId: 'thread-123')],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('desktop-integration-card')),
+    );
+
+    var openButton = tester.widget<FilledButton>(
+      find.byKey(const Key('open-on-mac-button')),
+    );
+    expect(openButton.onPressed, isNotNull);
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(ThreadDetailPage)),
+    );
+
+    await container
+        .read(notificationPreferencesControllerProvider.notifier)
+        .setDesktopIntegrationEnabled(false);
+    await tester.pumpAndSettle();
+
+    openButton = tester.widget<FilledButton>(
+      find.byKey(const Key('open-on-mac-button')),
+    );
+    expect(openButton.onPressed, isNull);
+    expect(
+      find.byKey(const Key('desktop-integration-disabled-message')),
+      findsOneWidget,
+    );
+
+    await container
+        .read(notificationPreferencesControllerProvider.notifier)
+        .setDesktopIntegrationEnabled(true);
+    await tester.pumpAndSettle();
+
+    openButton = tester.widget<FilledButton>(
+      find.byKey(const Key('open-on-mac-button')),
+    );
+    expect(openButton.onPressed, isNotNull);
+    expect(
+      find.byKey(const Key('desktop-integration-disabled-message')),
+      findsNothing,
+    );
   });
 
   testWidgets(
@@ -1482,6 +1597,7 @@ Future<void> _pumpThreadListApp(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        appSecureStoreProvider.overrideWithValue(InMemorySecureStore()),
         threadListBridgeApiProvider.overrideWithValue(listApi),
         approvalBridgeApiProvider.overrideWithValue(
           approvalApi ?? EmptyApprovalBridgeApi(),
@@ -1517,6 +1633,7 @@ Future<void> _pumpThreadDetailApp(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        appSecureStoreProvider.overrideWithValue(InMemorySecureStore()),
         threadListBridgeApiProvider.overrideWithValue(
           listApi ??
               FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]),
@@ -1763,6 +1880,21 @@ MutationResultResponseDto _gitMutationResult({
   );
 }
 
+OpenOnMacResponseDto _openOnMacResponse({
+  required String threadId,
+  String? message,
+}) {
+  return OpenOnMacResponseDto(
+    contractVersion: contractVersion,
+    threadId: threadId,
+    attemptedUrl: 'codex://thread/$threadId',
+    message:
+        message ??
+        'Requested Codex.app to open the matching shared thread. Desktop refresh is best effort; mobile remains fully usable.',
+    bestEffort: true,
+  );
+}
+
 ThreadGitApprovalRequiredException _gitApprovalRequired({
   required String approvalId,
   required String action,
@@ -1817,6 +1949,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     Map<String, List<Object>>? branchSwitchScriptByThreadId,
     Map<String, List<Object>>? pullScriptByThreadId,
     Map<String, List<Object>>? pushScriptByThreadId,
+    Map<String, List<Object>>? openOnMacScriptByThreadId,
     this.onGitApprovalRequired,
   }) : _detailScriptByThreadId = detailScriptByThreadId,
        _timelineScriptByThreadId = timelineScriptByThreadId,
@@ -1826,7 +1959,8 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
        _gitStatusScriptByThreadId = gitStatusScriptByThreadId ?? {},
        _branchSwitchScriptByThreadId = branchSwitchScriptByThreadId ?? {},
        _pullScriptByThreadId = pullScriptByThreadId ?? {},
-       _pushScriptByThreadId = pushScriptByThreadId ?? {};
+       _pushScriptByThreadId = pushScriptByThreadId ?? {},
+       _openOnMacScriptByThreadId = openOnMacScriptByThreadId ?? {};
 
   final Map<String, List<Object>> _detailScriptByThreadId;
   final Map<String, List<Object>> _timelineScriptByThreadId;
@@ -1837,6 +1971,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   final Map<String, List<Object>> _branchSwitchScriptByThreadId;
   final Map<String, List<Object>> _pullScriptByThreadId;
   final Map<String, List<Object>> _pushScriptByThreadId;
+  final Map<String, List<Object>> _openOnMacScriptByThreadId;
   final void Function(ApprovalRecordDto approval)? onGitApprovalRequired;
   int detailFetchCount = 0;
   int timelineFetchCount = 0;
@@ -1850,6 +1985,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       <String, List<String>>{};
   final Map<String, int> pullCallsByThreadId = <String, int>{};
   final Map<String, int> pushCallsByThreadId = <String, int>{};
+  final Map<String, int> openOnMacCallsByThreadId = <String, int>{};
 
   @override
   Future<ThreadDetailDto> fetchThreadDetail({
@@ -2149,6 +2285,35 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       aheadBy: 0,
       behindBy: status.status.behindBy,
     );
+  }
+
+  @override
+  Future<OpenOnMacResponseDto> openOnMac({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    openOnMacCallsByThreadId.update(
+      threadId,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+
+    final scriptedResult = _nextOptionalResult(
+      _openOnMacScriptByThreadId,
+      threadId,
+    );
+
+    if (scriptedResult is OpenOnMacResponseDto) {
+      return scriptedResult;
+    }
+    if (scriptedResult is ThreadOpenOnMacBridgeException) {
+      throw scriptedResult;
+    }
+    if (scriptedResult != null) {
+      throw StateError('Unsupported open-on-Mac scripted result: $scriptedResult');
+    }
+
+    return _openOnMacResponse(threadId: threadId);
   }
 
   GitStatusResponseDto _defaultGitStatusForThread(String threadId) {

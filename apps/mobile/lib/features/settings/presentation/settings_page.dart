@@ -75,10 +75,14 @@ class SettingsPage extends ConsumerWidget {
                   notificationState.approvalNotificationsEnabled,
               liveActivityNotificationsEnabled:
                   notificationState.liveActivityNotificationsEnabled,
+              desktopIntegrationEnabled:
+                  notificationState.desktopIntegrationEnabled,
               onToggleApprovals:
                   notificationController.setApprovalNotificationsEnabled,
               onToggleLiveActivity:
                   notificationController.setLiveActivityNotificationsEnabled,
+              onToggleDesktopIntegration:
+                  notificationController.setDesktopIntegrationEnabled,
             ),
             const SizedBox(height: 12),
             _SecurityEventsCard(
@@ -253,14 +257,18 @@ class _NotificationPreferencesCard extends StatelessWidget {
   const _NotificationPreferencesCard({
     required this.approvalNotificationsEnabled,
     required this.liveActivityNotificationsEnabled,
+    required this.desktopIntegrationEnabled,
     required this.onToggleApprovals,
     required this.onToggleLiveActivity,
+    required this.onToggleDesktopIntegration,
   });
 
   final bool approvalNotificationsEnabled;
   final bool liveActivityNotificationsEnabled;
+  final bool desktopIntegrationEnabled;
   final ValueChanged<bool> onToggleApprovals;
   final ValueChanged<bool> onToggleLiveActivity;
+  final ValueChanged<bool> onToggleDesktopIntegration;
 
   @override
   Widget build(BuildContext context) {
@@ -297,6 +305,17 @@ class _NotificationPreferencesCard extends StatelessWidget {
                 liveActivityNotificationsEnabled
                     ? 'Turn and activity alerts are delivered.'
                     : 'Turn and activity alerts are suppressed.',
+              ),
+            ),
+            SwitchListTile(
+              key: const Key('desktop-integration-toggle'),
+              value: desktopIntegrationEnabled,
+              onChanged: onToggleDesktopIntegration,
+              title: const Text('Desktop integration'),
+              subtitle: Text(
+                desktopIntegrationEnabled
+                    ? 'Open-on-Mac actions are available from thread detail.'
+                    : 'Open-on-Mac actions are hidden or disabled.',
               ),
             ),
           ],

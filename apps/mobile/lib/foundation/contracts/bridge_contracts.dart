@@ -323,6 +323,32 @@ class MutationResultResponseDto {
   }
 }
 
+class OpenOnMacResponseDto {
+  const OpenOnMacResponseDto({
+    required this.contractVersion,
+    required this.threadId,
+    required this.attemptedUrl,
+    required this.message,
+    required this.bestEffort,
+  });
+
+  final String contractVersion;
+  final String threadId;
+  final String attemptedUrl;
+  final String message;
+  final bool bestEffort;
+
+  factory OpenOnMacResponseDto.fromJson(Map<String, dynamic> json) {
+    return OpenOnMacResponseDto(
+      contractVersion: json['contract_version'] as String,
+      threadId: json['thread_id'] as String,
+      attemptedUrl: json['attempted_url'] as String,
+      message: json['message'] as String,
+      bestEffort: json['best_effort'] as bool,
+    );
+  }
+}
+
 class ApprovalGateResponseDto {
   const ApprovalGateResponseDto({
     required this.contractVersion,

@@ -75,6 +75,9 @@ class ThreadDetailState {
     this.gitErrorMessage,
     this.gitMutationMessage,
     this.gitControlsUnavailableReason,
+    this.isOpenOnMacInFlight = false,
+    this.openOnMacMessage,
+    this.openOnMacErrorMessage,
   });
 
   final String threadId;
@@ -97,6 +100,9 @@ class ThreadDetailState {
   final String? gitErrorMessage;
   final String? gitMutationMessage;
   final String? gitControlsUnavailableReason;
+  final bool isOpenOnMacInFlight;
+  final String? openOnMacMessage;
+  final String? openOnMacErrorMessage;
 
   bool get hasThread => thread != null;
 
@@ -169,6 +175,11 @@ class ThreadDetailState {
     bool clearGitMutationMessage = false,
     String? gitControlsUnavailableReason,
     bool clearGitControlsUnavailableReason = false,
+    bool? isOpenOnMacInFlight,
+    String? openOnMacMessage,
+    bool clearOpenOnMacMessage = false,
+    String? openOnMacErrorMessage,
+    bool clearOpenOnMacErrorMessage = false,
   }) {
     return ThreadDetailState(
       threadId: threadId,
@@ -209,6 +220,13 @@ class ThreadDetailState {
       gitControlsUnavailableReason: clearGitControlsUnavailableReason
           ? null
           : (gitControlsUnavailableReason ?? this.gitControlsUnavailableReason),
+      isOpenOnMacInFlight: isOpenOnMacInFlight ?? this.isOpenOnMacInFlight,
+      openOnMacMessage: clearOpenOnMacMessage
+          ? null
+          : (openOnMacMessage ?? this.openOnMacMessage),
+      openOnMacErrorMessage: clearOpenOnMacErrorMessage
+          ? null
+          : (openOnMacErrorMessage ?? this.openOnMacErrorMessage),
     );
   }
 }
@@ -264,6 +282,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       clearGitErrorMessage: true,
       clearGitMutationMessage: true,
       clearGitControlsUnavailableReason: true,
+      isOpenOnMacInFlight: false,
+      clearOpenOnMacMessage: true,
+      clearOpenOnMacErrorMessage: true,
     );
 
     try {
@@ -309,6 +330,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearGitErrorMessage: true,
         clearGitMutationMessage: true,
         clearGitControlsUnavailableReason: true,
+        isOpenOnMacInFlight: false,
+        clearOpenOnMacMessage: true,
+        clearOpenOnMacErrorMessage: true,
       );
 
       _threadListController.syncThreadDetail(detail);
@@ -517,6 +541,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       clearGitMutationMessage: true,
       gitControlsUnavailableReason:
           'Git controls are unavailable while reconnecting to the private route.',
+      isOpenOnMacInFlight: false,
+      clearOpenOnMacMessage: true,
+      clearOpenOnMacErrorMessage: true,
     );
 
     _threadListController.syncThreadDetail(cachedSnapshot.detail);
@@ -692,6 +719,57 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         isComposerMutationInFlight: false,
         turnControlErrorMessage:
             'Couldn’t update the turn right now. Please try again.',
+      );
+      return false;
+    }
+  }
+
+  Future<bool> openOnMac() async {
+    final thread = state.thread;
+    if (thread == null) {
+      return false;
+    }
+
+    if (!state.canRunMutatingActions) {
+      state = state.copyWith(
+        openOnMacErrorMessage:
+            'Open-on-Mac is unavailable while the bridge is offline.',
+        clearOpenOnMacMessage: true,
+      );
+      return false;
+    }
+
+    state = state.copyWith(
+      isOpenOnMacInFlight: true,
+      clearOpenOnMacMessage: true,
+      clearOpenOnMacErrorMessage: true,
+    );
+
+    try {
+      final result = await _bridgeApi.openOnMac(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: state.threadId,
+      );
+
+      state = state.copyWith(
+        isOpenOnMacInFlight: false,
+        openOnMacMessage: result.message,
+        clearOpenOnMacErrorMessage: true,
+      );
+      return true;
+    } on ThreadOpenOnMacBridgeException catch (error) {
+      state = state.copyWith(
+        isOpenOnMacInFlight: false,
+        openOnMacErrorMessage: error.message,
+        clearOpenOnMacMessage: true,
+      );
+      return false;
+    } catch (_) {
+      state = state.copyWith(
+        isOpenOnMacInFlight: false,
+        openOnMacErrorMessage:
+            'Couldn’t open this thread in Codex.app right now.',
+        clearOpenOnMacMessage: true,
       );
       return false;
     }
