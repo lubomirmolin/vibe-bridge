@@ -1,3 +1,5 @@
+import 'package:codex_mobile_companion/features/approvals/application/approvals_queue_controller.dart';
+import 'package:codex_mobile_companion/features/approvals/presentation/approval_presenter.dart';
 import 'package:codex_mobile_companion/features/threads/application/thread_detail_controller.dart';
 import 'package:codex_mobile_companion/features/threads/domain/thread_activity_item.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
@@ -44,6 +46,12 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     );
     final state = ref.watch(threadDetailControllerProvider(args));
     final controller = ref.read(threadDetailControllerProvider(args).notifier);
+    final approvalsState = ref.watch(
+      approvalsQueueControllerProvider(widget.bridgeApiBaseUrl),
+    );
+    final approvalsController = ref.read(
+      approvalsQueueControllerProvider(widget.bridgeApiBaseUrl).notifier,
+    );
 
     return Scaffold(
       appBar: AppBar(title: const Text('Thread detail')),
@@ -57,6 +65,12 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
           composerController: _composerController,
           onSubmitComposer: controller.submitComposerInput,
           onInterruptActiveTurn: controller.interruptActiveTurn,
+          threadApprovals: approvalsState.forThread(widget.threadId),
+          approvalsErrorMessage: approvalsState.errorMessage,
+          canResolveApprovals: approvalsState.canResolveApprovals,
+          onRefreshApprovals: () {
+            approvalsController.loadApprovals(showLoading: false);
+          },
         ),
       ),
     );
@@ -72,6 +86,10 @@ Widget _buildBody(
   required TextEditingController composerController,
   required Future<bool> Function(String rawInput) onSubmitComposer,
   required Future<bool> Function() onInterruptActiveTurn,
+  required List<ApprovalItemState> threadApprovals,
+  required String? approvalsErrorMessage,
+  required bool canResolveApprovals,
+  required VoidCallback onRefreshApprovals,
 }) {
   if (state.isLoading && !state.hasThread) {
     return const _ThreadDetailLoadingState();
@@ -127,6 +145,13 @@ Widget _buildBody(
           const SizedBox(height: 12),
           _InlineWarning(message: state.turnControlErrorMessage!),
         ],
+        const SizedBox(height: 12),
+        _ThreadApprovalsCard(
+          approvals: threadApprovals,
+          canResolveApprovals: canResolveApprovals,
+          errorMessage: approvalsErrorMessage,
+          onRefresh: onRefreshApprovals,
+        ),
         const SizedBox(height: 16),
         if (state.canLoadEarlierHistory) ...[
           Align(
@@ -367,6 +392,114 @@ class _TurnControlsCard extends StatelessWidget {
                 ],
               ],
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ThreadApprovalsCard extends StatelessWidget {
+  const _ThreadApprovalsCard({
+    required this.approvals,
+    required this.canResolveApprovals,
+    required this.errorMessage,
+    required this.onRefresh,
+  });
+
+  final List<ApprovalItemState> approvals;
+  final bool canResolveApprovals;
+  final String? errorMessage;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Approvals in this thread',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                IconButton(
+                  key: const Key('refresh-thread-approvals'),
+                  onPressed: onRefresh,
+                  icon: const Icon(Icons.refresh),
+                  tooltip: 'Refresh approvals',
+                ),
+              ],
+            ),
+            Text(
+              canResolveApprovals
+                  ? 'Full-control mode: pending approvals are actionable from mobile.'
+                  : 'Lower-permission mode: approvals are visible but non-actionable from mobile.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            if (errorMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                errorMessage!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+            const SizedBox(height: 8),
+            if (approvals.isEmpty)
+              const Text('No approvals currently linked to this thread.')
+            else
+              ...approvals.map(
+                (item) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainer,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outlineVariant,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                approvalActionLabel(item.approval.action),
+                              ),
+                            ),
+                            Text(
+                              approvalStatusLabel(item.approval.status),
+                              key: Key(
+                                'thread-approval-status-${item.approval.approvalId}',
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(item.approval.reason),
+                        if (item.nonActionableReason != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            item.nonActionableReason!,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),

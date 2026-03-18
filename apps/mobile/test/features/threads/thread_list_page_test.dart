@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
@@ -23,6 +24,9 @@ void main() {
         ProviderScope(
           overrides: [
             threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+            approvalBridgeApiProvider.overrideWithValue(
+              EmptyApprovalBridgeApi(),
+            ),
             threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
           ],
           child: const MaterialApp(
@@ -64,6 +68,7 @@ void main() {
       ProviderScope(
         overrides: [
           threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+          approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
           threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
         ],
         child: const MaterialApp(
@@ -97,6 +102,7 @@ void main() {
       ProviderScope(
         overrides: [
           threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+          approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
           threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
         ],
         child: const MaterialApp(
@@ -133,6 +139,7 @@ void main() {
       ProviderScope(
         overrides: [
           threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+          approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
           threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
         ],
         child: const MaterialApp(
@@ -180,6 +187,9 @@ void main() {
         ProviderScope(
           overrides: [
             threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+            approvalBridgeApiProvider.overrideWithValue(
+              EmptyApprovalBridgeApi(),
+            ),
             threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
           ],
           child: const MaterialApp(
@@ -261,5 +271,35 @@ class FakeThreadListBridgeApi implements ThreadListBridgeApi {
       throw scriptedResult;
     }
     throw StateError('Unsupported scripted result type: $scriptedResult');
+  }
+}
+
+class EmptyApprovalBridgeApi implements ApprovalBridgeApi {
+  @override
+  Future<AccessMode> fetchAccessMode({required String bridgeApiBaseUrl}) async {
+    return AccessMode.readOnly;
+  }
+
+  @override
+  Future<List<ApprovalRecordDto>> fetchApprovals({
+    required String bridgeApiBaseUrl,
+  }) async {
+    return const <ApprovalRecordDto>[];
+  }
+
+  @override
+  Future<ApprovalResolutionResponseDto> approve({
+    required String bridgeApiBaseUrl,
+    required String approvalId,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<ApprovalResolutionResponseDto> reject({
+    required String bridgeApiBaseUrl,
+    required String approvalId,
+  }) {
+    throw UnimplementedError();
   }
 }

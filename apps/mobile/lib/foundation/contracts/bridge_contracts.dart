@@ -4,6 +4,8 @@ enum ThreadStatus { idle, running, completed, interrupted, failed }
 
 enum AccessMode { readOnly, controlWithApprovals, fullControl }
 
+enum ApprovalStatus { pending, approved, rejected }
+
 enum BridgeEventKind {
   messageDelta,
   planDelta,
@@ -68,19 +70,242 @@ extension BridgeEventKindWire on BridgeEventKind {
 ThreadStatus threadStatusFromWire(String wireValue) {
   return ThreadStatus.values.firstWhere(
     (status) => status.wireValue == wireValue,
-    orElse: () => throw FormatException(
-      'Unknown ThreadStatus wire value "$wireValue".',
-    ),
+    orElse: () =>
+        throw FormatException('Unknown ThreadStatus wire value "$wireValue".'),
   );
 }
 
 AccessMode accessModeFromWire(String wireValue) {
   return AccessMode.values.firstWhere(
     (mode) => mode.wireValue == wireValue,
+    orElse: () =>
+        throw FormatException('Unknown AccessMode wire value "$wireValue".'),
+  );
+}
+
+ApprovalStatus approvalStatusFromWire(String wireValue) {
+  return ApprovalStatus.values.firstWhere(
+    (status) => status.name == wireValue,
     orElse: () => throw FormatException(
-      'Unknown AccessMode wire value "$wireValue".',
+      'Unknown ApprovalStatus wire value "$wireValue".',
     ),
   );
+}
+
+class RepositoryContextDto {
+  const RepositoryContextDto({
+    required this.workspace,
+    required this.repository,
+    required this.branch,
+    required this.remote,
+  });
+
+  final String workspace;
+  final String repository;
+  final String branch;
+  final String remote;
+
+  factory RepositoryContextDto.fromJson(Map<String, dynamic> json) {
+    return RepositoryContextDto(
+      workspace: json['workspace'] as String,
+      repository: json['repository'] as String,
+      branch: json['branch'] as String,
+      remote: json['remote'] as String,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'workspace': workspace,
+      'repository': repository,
+      'branch': branch,
+      'remote': remote,
+    };
+  }
+}
+
+class GitStatusDto {
+  const GitStatusDto({
+    required this.dirty,
+    required this.aheadBy,
+    required this.behindBy,
+  });
+
+  final bool dirty;
+  final int aheadBy;
+  final int behindBy;
+
+  factory GitStatusDto.fromJson(Map<String, dynamic> json) {
+    return GitStatusDto(
+      dirty: json['dirty'] as bool,
+      aheadBy: json['ahead_by'] as int,
+      behindBy: json['behind_by'] as int,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'dirty': dirty,
+      'ahead_by': aheadBy,
+      'behind_by': behindBy,
+    };
+  }
+}
+
+class ApprovalRecordDto {
+  const ApprovalRecordDto({
+    required this.contractVersion,
+    required this.approvalId,
+    required this.threadId,
+    required this.action,
+    required this.target,
+    required this.reason,
+    required this.status,
+    required this.requestedAt,
+    required this.resolvedAt,
+    required this.repository,
+    required this.gitStatus,
+  });
+
+  final String contractVersion;
+  final String approvalId;
+  final String threadId;
+  final String action;
+  final String target;
+  final String reason;
+  final ApprovalStatus status;
+  final String requestedAt;
+  final String? resolvedAt;
+  final RepositoryContextDto repository;
+  final GitStatusDto gitStatus;
+
+  bool get isPending => status == ApprovalStatus.pending;
+
+  factory ApprovalRecordDto.fromJson(Map<String, dynamic> json) {
+    final repository = json['repository'];
+    if (repository is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "repository" object in approval record.',
+      );
+    }
+
+    final gitStatus = json['git_status'];
+    if (gitStatus is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "git_status" object in approval record.',
+      );
+    }
+
+    return ApprovalRecordDto(
+      contractVersion: json['contract_version'] as String,
+      approvalId: json['approval_id'] as String,
+      threadId: json['thread_id'] as String,
+      action: json['action'] as String,
+      target: json['target'] as String,
+      reason: json['reason'] as String,
+      status: approvalStatusFromWire(json['status'] as String),
+      requestedAt: json['requested_at'] as String,
+      resolvedAt: json['resolved_at'] as String?,
+      repository: RepositoryContextDto.fromJson(repository),
+      gitStatus: GitStatusDto.fromJson(gitStatus),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'contract_version': contractVersion,
+      'approval_id': approvalId,
+      'thread_id': threadId,
+      'action': action,
+      'target': target,
+      'reason': reason,
+      'status': status.name,
+      'requested_at': requestedAt,
+      'resolved_at': resolvedAt,
+      'repository': repository.toJson(),
+      'git_status': gitStatus.toJson(),
+    };
+  }
+}
+
+class MutationResultResponseDto {
+  const MutationResultResponseDto({
+    required this.contractVersion,
+    required this.threadId,
+    required this.operation,
+    required this.outcome,
+    required this.message,
+    required this.threadStatus,
+    required this.repository,
+    required this.status,
+  });
+
+  final String contractVersion;
+  final String threadId;
+  final String operation;
+  final String outcome;
+  final String message;
+  final ThreadStatus threadStatus;
+  final RepositoryContextDto repository;
+  final GitStatusDto status;
+
+  factory MutationResultResponseDto.fromJson(Map<String, dynamic> json) {
+    final repository = json['repository'];
+    if (repository is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "repository" object in mutation result.',
+      );
+    }
+
+    final status = json['status'];
+    if (status is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "status" object in mutation result.',
+      );
+    }
+
+    return MutationResultResponseDto(
+      contractVersion: json['contract_version'] as String,
+      threadId: json['thread_id'] as String,
+      operation: json['operation'] as String,
+      outcome: json['outcome'] as String,
+      message: json['message'] as String,
+      threadStatus: threadStatusFromWire(json['thread_status'] as String),
+      repository: RepositoryContextDto.fromJson(repository),
+      status: GitStatusDto.fromJson(status),
+    );
+  }
+}
+
+class ApprovalResolutionResponseDto {
+  const ApprovalResolutionResponseDto({
+    required this.contractVersion,
+    required this.approval,
+    required this.mutationResult,
+  });
+
+  final String contractVersion;
+  final ApprovalRecordDto approval;
+  final MutationResultResponseDto? mutationResult;
+
+  factory ApprovalResolutionResponseDto.fromJson(Map<String, dynamic> json) {
+    final approvalJson = json['approval'];
+    if (approvalJson is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "approval" object in resolution response.',
+      );
+    }
+
+    final mutationResultJson = json['mutation_result'];
+
+    return ApprovalResolutionResponseDto(
+      contractVersion: json['contract_version'] as String,
+      approval: ApprovalRecordDto.fromJson(approvalJson),
+      mutationResult: mutationResultJson is Map<String, dynamic>
+          ? MutationResultResponseDto.fromJson(mutationResultJson)
+          : null,
+    );
+  }
 }
 
 BridgeEventKind bridgeEventKindFromWire(String wireValue) {

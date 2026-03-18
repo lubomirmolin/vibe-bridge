@@ -155,9 +155,11 @@ String _bodyForType(
     case ThreadActivityItemType.planUpdate:
       return _extractPlanText(payload) ?? fallbackSummary;
     case ThreadActivityItemType.terminalOutput:
-      final command = _optionalString(payload, 'command') ??
+      final command =
+          _optionalString(payload, 'command') ??
           _optionalString(payload, 'action');
-      final delta = _optionalString(payload, 'delta') ??
+      final delta =
+          _optionalString(payload, 'delta') ??
           _optionalString(payload, 'output') ??
           _optionalString(payload, 'text');
       if (command != null && delta != null) {
@@ -165,11 +167,13 @@ String _bodyForType(
       }
       return delta ?? command ?? fallbackSummary;
     case ThreadActivityItemType.fileChange:
-      final path = _optionalString(payload, 'path') ??
+      final path =
+          _optionalString(payload, 'path') ??
           _optionalString(payload, 'file') ??
           _optionalString(payload, 'file_path') ??
           _optionalString(payload, 'target');
-      final summary = _optionalString(payload, 'summary') ??
+      final summary =
+          _optionalString(payload, 'summary') ??
           _optionalString(payload, 'change') ??
           _optionalString(payload, 'delta');
       if (path != null && summary != null) {
@@ -184,7 +188,20 @@ String _bodyForType(
       }
       return status != null ? 'Status: $status' : fallbackSummary;
     case ThreadActivityItemType.approvalRequest:
-      return _optionalString(payload, 'reason') ?? fallbackSummary;
+      final action = _optionalString(payload, 'action');
+      final target = _optionalString(payload, 'target');
+      final status = _optionalString(payload, 'status');
+      final reason = _optionalString(payload, 'reason');
+      final details = <String>[
+        if (action != null) 'Action: $action',
+        if (target != null) 'Target: $target',
+        if (status != null) 'Status: $status',
+        if (reason != null) 'Reason: $reason',
+      ];
+      if (details.isNotEmpty) {
+        return details.join('\n');
+      }
+      return fallbackSummary;
     case ThreadActivityItemType.securityEvent:
       final outcome = _optionalString(payload, 'outcome');
       final reason = _optionalString(payload, 'reason');

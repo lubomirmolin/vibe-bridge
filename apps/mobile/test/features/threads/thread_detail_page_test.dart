@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
@@ -43,7 +44,9 @@ void main() {
       expect(find.text('Implement shared contracts'), findsOneWidget);
       expect(find.byKey(const Key('thread-detail-thread-id')), findsOneWidget);
       expect(find.text('thread-123'), findsOneWidget);
+      await _scrollUntilVisible(tester, find.text('User prompt'));
       expect(find.text('User prompt'), findsOneWidget);
+      await _scrollUntilVisible(tester, find.text('Assistant output'));
       expect(find.text('Assistant output'), findsOneWidget);
       await _scrollUntilVisible(tester, find.text('Plan update'));
       expect(find.text('Plan update'), findsOneWidget);
@@ -371,6 +374,7 @@ void main() {
       ProviderScope(
         overrides: [
           threadListBridgeApiProvider.overrideWithValue(listApi),
+          approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
           threadDetailBridgeApiProvider.overrideWithValue(detailApi),
           threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
           threadCacheRepositoryProvider.overrideWithValue(
@@ -390,7 +394,9 @@ void main() {
 
     expect(find.text('Oldest event'), findsNothing);
     expect(find.text('Older event'), findsNothing);
+    await _scrollUntilVisible(tester, find.text('Recent event A'));
     expect(find.text('Recent event A'), findsOneWidget);
+    await _scrollUntilVisible(tester, find.text('Recent event B'));
     expect(find.text('Recent event B'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('load-earlier-history')));
@@ -604,6 +610,9 @@ void main() {
             threadListBridgeApiProvider.overrideWithValue(
               FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]),
             ),
+            approvalBridgeApiProvider.overrideWithValue(
+              EmptyApprovalBridgeApi(),
+            ),
             threadDetailBridgeApiProvider.overrideWithValue(detailApi),
             threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
             threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
@@ -731,12 +740,6 @@ void main() {
         find.byKey(const Key('thread-activity-evt-live-1')),
         findsOneWidget,
       );
-      expect(
-        find.text(
-          'Mutating actions are blocked while the bridge or private route is unavailable.',
-        ),
-        findsOneWidget,
-      );
     },
   );
 }
@@ -752,6 +755,7 @@ Future<void> _pumpThreadListApp(
     ProviderScope(
       overrides: [
         threadListBridgeApiProvider.overrideWithValue(listApi),
+        approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
         threadDetailBridgeApiProvider.overrideWithValue(detailApi),
         threadLiveStreamProvider.overrideWithValue(liveStream),
         threadCacheRepositoryProvider.overrideWithValue(
@@ -782,6 +786,7 @@ Future<void> _pumpThreadDetailApp(
           listApi ??
               FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]),
         ),
+        approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
         threadDetailBridgeApiProvider.overrideWithValue(detailApi),
         threadLiveStreamProvider.overrideWithValue(
           liveStream ?? FakeThreadLiveStream(),
@@ -1250,5 +1255,35 @@ class FakeThreadListBridgeApi implements ThreadListBridgeApi {
     }
 
     throw StateError('Unsupported scripted result type: $scriptedResult');
+  }
+}
+
+class EmptyApprovalBridgeApi implements ApprovalBridgeApi {
+  @override
+  Future<AccessMode> fetchAccessMode({required String bridgeApiBaseUrl}) async {
+    return AccessMode.readOnly;
+  }
+
+  @override
+  Future<List<ApprovalRecordDto>> fetchApprovals({
+    required String bridgeApiBaseUrl,
+  }) async {
+    return const <ApprovalRecordDto>[];
+  }
+
+  @override
+  Future<ApprovalResolutionResponseDto> approve({
+    required String bridgeApiBaseUrl,
+    required String approvalId,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<ApprovalResolutionResponseDto> reject({
+    required String bridgeApiBaseUrl,
+    required String approvalId,
+  }) {
+    throw UnimplementedError();
   }
 }

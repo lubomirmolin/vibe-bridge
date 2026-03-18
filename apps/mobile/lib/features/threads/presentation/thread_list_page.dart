@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:codex_mobile_companion/features/approvals/application/approvals_queue_controller.dart';
+import 'package:codex_mobile_companion/features/approvals/presentation/approvals_queue_page.dart';
 import 'package:codex_mobile_companion/features/threads/application/thread_list_controller.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_detail_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
@@ -33,6 +35,9 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
 
   @override
   Widget build(BuildContext context) {
+    final approvalsState = ref.watch(
+      approvalsQueueControllerProvider(widget.bridgeApiBaseUrl),
+    );
     final state = ref.watch(
       threadListControllerProvider(widget.bridgeApiBaseUrl),
     );
@@ -43,7 +48,29 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
     _restoreSelectedThreadIfNeeded(state, controller);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Threads')),
+      appBar: AppBar(
+        title: const Text('Threads'),
+        actions: [
+          IconButton(
+            key: const Key('open-approvals-queue'),
+            tooltip: 'Open approvals queue',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) => ApprovalsQueuePage(
+                    bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+                  ),
+                ),
+              );
+            },
+            icon: Badge.count(
+              count: approvalsState.pendingCount,
+              isLabelVisible: approvalsState.pendingCount > 0,
+              child: const Icon(Icons.fact_check_outlined),
+            ),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: Column(
           children: [
