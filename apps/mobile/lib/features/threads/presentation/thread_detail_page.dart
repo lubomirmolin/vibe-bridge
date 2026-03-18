@@ -1,6 +1,7 @@
 import 'package:codex_mobile_companion/features/approvals/application/approvals_queue_controller.dart';
 import 'package:codex_mobile_companion/features/approvals/presentation/approval_presenter.dart';
 import 'package:codex_mobile_companion/features/settings/application/notification_preferences_controller.dart';
+import 'package:codex_mobile_companion/features/settings/application/runtime_notification_delivery_controller.dart';
 import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
 import 'package:codex_mobile_companion/features/settings/presentation/settings_page.dart';
 import 'package:codex_mobile_companion/features/threads/application/thread_detail_controller.dart';
@@ -61,6 +62,22 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     final notificationPreferences = ref.watch(
       notificationPreferencesControllerProvider,
     );
+    final runtimeNotificationController = ref.read(
+      runtimeNotificationDeliveryControllerProvider(
+        widget.bridgeApiBaseUrl,
+      ).notifier,
+    );
+
+    ref.listen<RuntimeNotificationDeliveryState>(
+      runtimeNotificationDeliveryControllerProvider(widget.bridgeApiBaseUrl),
+      (_, next) {
+        _handleRuntimeNotificationDelivery(
+          state: next,
+          controller: runtimeNotificationController,
+        );
+      },
+    );
+
     final approvalsController = ref.read(
       approvalsQueueControllerProvider(widget.bridgeApiBaseUrl).notifier,
     );
@@ -125,6 +142,37 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         ),
       ),
     );
+  }
+
+  void _handleRuntimeNotificationDelivery({
+    required RuntimeNotificationDeliveryState state,
+    required RuntimeNotificationDeliveryController controller,
+  }) {
+    if (!mounted || state.pendingNotifications.isEmpty) {
+      return;
+    }
+
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) {
+      return;
+    }
+
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) {
+      return;
+    }
+
+    for (final notification in state.pendingNotifications) {
+      messenger.showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('${notification.title}: ${notification.message}'),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+
+    controller.acknowledgeAllPending();
   }
 }
 
