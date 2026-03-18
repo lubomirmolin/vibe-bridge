@@ -2,8 +2,8 @@ import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-final threadListControllerProvider = StateNotifierProvider.autoDispose
-    .family<ThreadListController, ThreadListState, String>((
+final threadListControllerProvider =
+    StateNotifierProvider.family<ThreadListController, ThreadListState, String>((
       ref,
       bridgeApiBaseUrl,
     ) {
@@ -123,5 +123,60 @@ class ThreadListController extends StateNotifier<ThreadListState> {
 
   void clearSearchQuery() {
     updateSearchQuery('');
+  }
+
+  void syncThreadDetail(ThreadDetailDto detail) {
+    _updateThreadSummary(
+      threadId: detail.threadId,
+      transform: (thread) {
+        return ThreadSummaryDto(
+          contractVersion: thread.contractVersion,
+          threadId: thread.threadId,
+          title: detail.title,
+          status: detail.status,
+          workspace: detail.workspace,
+          repository: detail.repository,
+          branch: detail.branch,
+          updatedAt: detail.updatedAt,
+        );
+      },
+    );
+  }
+
+  void applyThreadStatusUpdate({
+    required String threadId,
+    required ThreadStatus status,
+    String? updatedAt,
+  }) {
+    _updateThreadSummary(
+      threadId: threadId,
+      transform: (thread) {
+        return ThreadSummaryDto(
+          contractVersion: thread.contractVersion,
+          threadId: thread.threadId,
+          title: thread.title,
+          status: status,
+          workspace: thread.workspace,
+          repository: thread.repository,
+          branch: thread.branch,
+          updatedAt: updatedAt ?? thread.updatedAt,
+        );
+      },
+    );
+  }
+
+  void _updateThreadSummary({
+    required String threadId,
+    required ThreadSummaryDto Function(ThreadSummaryDto thread) transform,
+  }) {
+    final index = state.threads.indexWhere((thread) => thread.threadId == threadId);
+    if (index < 0) {
+      return;
+    }
+
+    final updatedThread = transform(state.threads[index]);
+    final nextThreads = List<ThreadSummaryDto>.from(state.threads);
+    nextThreads[index] = updatedThread;
+    state = state.copyWith(threads: nextThreads);
   }
 }

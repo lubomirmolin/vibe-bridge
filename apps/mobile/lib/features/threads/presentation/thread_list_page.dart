@@ -1,4 +1,5 @@
 import 'package:codex_mobile_companion/features/threads/application/thread_list_controller.dart';
+import 'package:codex_mobile_companion/features/threads/presentation/thread_detail_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -107,7 +108,19 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
         separatorBuilder: (context, index) => const SizedBox(height: 8),
         itemBuilder: (context, index) {
           final thread = state.visibleThreads[index];
-          return _ThreadSummaryCard(thread: thread);
+          return _ThreadSummaryCard(
+            thread: thread,
+            onOpenDetail: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) => ThreadDetailPage(
+                    bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+                    threadId: thread.threadId,
+                  ),
+                ),
+              );
+            },
+          );
         },
       ),
     );
@@ -227,48 +240,54 @@ class _ThreadListFilteredEmptyState extends StatelessWidget {
 }
 
 class _ThreadSummaryCard extends StatelessWidget {
-  const _ThreadSummaryCard({required this.thread});
+  const _ThreadSummaryCard({required this.thread, required this.onOpenDetail});
 
   final ThreadSummaryDto thread;
+  final VoidCallback onOpenDetail;
 
   @override
   Widget build(BuildContext context) {
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    thread.title,
-                    style: Theme.of(context).textTheme.titleMedium,
+      child: InkWell(
+        key: Key('thread-summary-card-${thread.threadId}'),
+        borderRadius: BorderRadius.circular(12),
+        onTap: onOpenDetail,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      thread.title,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                _StatusBadge(status: thread.status),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text(
-              '${thread.repository} • ${thread.branch}',
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 2),
-            Text(
-              thread.workspace,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              thread.threadId,
-              style: Theme.of(
-                context,
-              ).textTheme.labelSmall?.copyWith(fontFamily: 'monospace'),
-            ),
-          ],
+                  const SizedBox(width: 8),
+                  _StatusBadge(status: thread.status),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                '${thread.repository} • ${thread.branch}',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                thread.workspace,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                thread.threadId,
+                style: Theme.of(
+                  context,
+                ).textTheme.labelSmall?.copyWith(fontFamily: 'monospace'),
+              ),
+            ],
+          ),
         ),
       ),
     );

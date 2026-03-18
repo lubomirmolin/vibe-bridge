@@ -140,6 +140,113 @@ class ThreadSummaryDto {
   }
 }
 
+class ThreadDetailDto {
+  const ThreadDetailDto({
+    required this.contractVersion,
+    required this.threadId,
+    required this.title,
+    required this.status,
+    required this.workspace,
+    required this.repository,
+    required this.branch,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.source,
+    required this.accessMode,
+    required this.lastTurnSummary,
+  });
+
+  final String contractVersion;
+  final String threadId;
+  final String title;
+  final ThreadStatus status;
+  final String workspace;
+  final String repository;
+  final String branch;
+  final String createdAt;
+  final String updatedAt;
+  final String source;
+  final AccessMode accessMode;
+  final String lastTurnSummary;
+
+  factory ThreadDetailDto.fromJson(Map<String, dynamic> json) {
+    return ThreadDetailDto(
+      contractVersion: json['contract_version'] as String,
+      threadId: json['thread_id'] as String,
+      title: json['title'] as String,
+      status: threadStatusFromWire(json['status'] as String),
+      workspace: json['workspace'] as String,
+      repository: json['repository'] as String,
+      branch: json['branch'] as String,
+      createdAt: json['created_at'] as String,
+      updatedAt: json['updated_at'] as String,
+      source: json['source'] as String,
+      accessMode: accessModeFromWire(json['access_mode'] as String),
+      lastTurnSummary: json['last_turn_summary'] as String,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'contract_version': contractVersion,
+      'thread_id': threadId,
+      'title': title,
+      'status': status.wireValue,
+      'workspace': workspace,
+      'repository': repository,
+      'branch': branch,
+      'created_at': createdAt,
+      'updated_at': updatedAt,
+      'source': source,
+      'access_mode': accessMode.wireValue,
+      'last_turn_summary': lastTurnSummary,
+    };
+  }
+}
+
+class ThreadTimelineEntryDto {
+  const ThreadTimelineEntryDto({
+    required this.eventId,
+    required this.kind,
+    required this.occurredAt,
+    required this.summary,
+    required this.payload,
+  });
+
+  final String eventId;
+  final BridgeEventKind kind;
+  final String occurredAt;
+  final String summary;
+  final Map<String, dynamic> payload;
+
+  factory ThreadTimelineEntryDto.fromJson(Map<String, dynamic> json) {
+    final payload = json['payload'];
+    if (payload is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "payload" in timeline event.',
+      );
+    }
+
+    return ThreadTimelineEntryDto(
+      eventId: json['event_id'] as String,
+      kind: bridgeEventKindFromWire(json['kind'] as String),
+      occurredAt: json['occurred_at'] as String,
+      summary: json['summary'] as String,
+      payload: payload,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'event_id': eventId,
+      'kind': kind.wireValue,
+      'occurred_at': occurredAt,
+      'summary': summary,
+      'payload': payload,
+    };
+  }
+}
+
 class SecurityAuditEventDto {
   const SecurityAuditEventDto({
     required this.actor,
