@@ -46,7 +46,53 @@ struct Config {
     port: u16,
     admin_port: u16,
     pairing_base_url: String,
+    pairing_route_reachable: bool,
+    pairing_route_message: Option<String>,
     codex_runtime: CodexRuntimeConfig,
+}
+
+const FALLBACK_PRIVATE_PAIRING_BASE_URL: &str = "https://bridge.ts.net";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PairingRouteContract {
+    pairing_base_url: String,
+    reachable: bool,
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PairingRouteState {
+    pairing_base_url: String,
+    reachable: bool,
+    message: Option<String>,
+}
+
+impl PairingRouteState {
+    fn health(&self) -> PairingRouteHealth {
+        PairingRouteHealth {
+            reachable: self.reachable,
+            advertised_base_url: self.reachable.then(|| self.pairing_base_url.clone()),
+            message: self.message.clone(),
+        }
+    }
+}
+
+impl PairingRouteContract {
+    fn verified(pairing_base_url: String) -> Self {
+        Self {
+            pairing_base_url,
+            reachable: true,
+            message: None,
+        }
+    }
+
+    fn degraded(message: String) -> Self {
+        Self {
+            pairing_base_url: FALLBACK_PRIVATE_PAIRING_BASE_URL.to_string(),
+            reachable: false,
+            message: Some(message),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +143,11 @@ where
             config.pairing_base_url.clone(),
             foundations.persistence.state_directory(),
         ),
+        PairingRouteState {
+            pairing_base_url: config.pairing_base_url,
+            reachable: config.pairing_route_reachable,
+            message: config.pairing_route_message,
+        },
         foundations.logger,
     ));
 
@@ -133,6 +184,17 @@ where
 fn parse_args<I>(args: I) -> Result<Config, String>
 where
     I: IntoIterator<Item = String>,
+{
+    parse_args_with_pairing_route_resolver(args, resolve_default_pairing_route_contract)
+}
+
+fn parse_args_with_pairing_route_resolver<I, F>(
+    args: I,
+    default_pairing_route_resolver: F,
+) -> Result<Config, String>
+where
+    I: IntoIterator<Item = String>,
+    F: Fn(u16) -> PairingRouteContract,
 {
     let mut host = String::from("127.0.0.1");
     let mut port = 3110_u16;
@@ -220,13 +282,25 @@ where
         ));
     }
 
-    let pairing_base_url = pairing_base_url.unwrap_or_else(default_pairing_base_url);
+    let pairing_route = if let Some(explicit_pairing_base_url) = pairing_base_url {
+        if !crate::pairing::is_private_bridge_api_base_url(&explicit_pairing_base_url) {
+            return Err(String::from(
+                "--pairing-base-url must be a private https Tailscale hostname",
+            ));
+        }
+
+        PairingRouteContract::verified(explicit_pairing_base_url)
+    } else {
+        default_pairing_route_resolver(port)
+    };
 
     Ok(Config {
         host,
         port,
         admin_port,
-        pairing_base_url,
+        pairing_base_url: pairing_route.pairing_base_url,
+        pairing_route_reachable: pairing_route.reachable,
+        pairing_route_message: pairing_route.message,
         codex_runtime: CodexRuntimeConfig {
             mode: codex_mode,
             endpoint: codex_endpoint,
@@ -236,13 +310,24 @@ where
     })
 }
 
-fn default_pairing_base_url() -> String {
-    discover_tailscale_pairing_base_url().unwrap_or_else(|| "https://bridge.ts.net".to_string())
+fn resolve_default_pairing_route_contract(port: u16) -> PairingRouteContract {
+    match discover_verified_tailscale_pairing_base_url(port) {
+        Some(pairing_base_url) => PairingRouteContract::verified(pairing_base_url),
+        None => PairingRouteContract::degraded(format!(
+            "Private pairing route is unavailable: no verified tailscale serve mapping was found for localhost port {port}. Start `tailscale serve --bg {port}` (if enabled on your tailnet) or pass a verified private --pairing-base-url."
+        )),
+    }
 }
 
-fn discover_tailscale_pairing_base_url() -> Option<String> {
+fn discover_verified_tailscale_pairing_base_url(port: u16) -> Option<String> {
+    let status = read_tailscale_json(["status", "--json"])?;
+    let serve_status = read_tailscale_json(["serve", "status", "--json"])?;
+    pairing_base_url_from_tailscale_status(&status, &serve_status, port)
+}
+
+fn read_tailscale_json<const N: usize>(args: [&str; N]) -> Option<Value> {
     let output = std::process::Command::new("tailscale")
-        .args(["status", "--json"])
+        .args(args)
         .output()
         .ok()?;
 
@@ -250,7 +335,14 @@ fn discover_tailscale_pairing_base_url() -> Option<String> {
         return None;
     }
 
-    let status: Value = serde_json::from_slice(&output.stdout).ok()?;
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+fn pairing_base_url_from_tailscale_status(
+    status: &Value,
+    serve_status: &Value,
+    port: u16,
+) -> Option<String> {
     let dns_name = status
         .get("Self")
         .and_then(|self_node| self_node.get("DNSName"))
@@ -258,7 +350,7 @@ fn discover_tailscale_pairing_base_url() -> Option<String> {
         .trim()
         .trim_end_matches('.');
 
-    if dns_name.is_empty() {
+    if dns_name.is_empty() || !serve_status_mentions_port(serve_status, port) {
         return None;
     }
 
@@ -268,6 +360,32 @@ fn discover_tailscale_pairing_base_url() -> Option<String> {
     } else {
         None
     }
+}
+
+fn serve_status_mentions_port(value: &Value, port: u16) -> bool {
+    match value {
+        Value::Null | Value::Bool(_) => false,
+        Value::Number(number) => number.as_u64() == Some(port as u64),
+        Value::String(text) => string_mentions_serve_port(text, port),
+        Value::Array(values) => values
+            .iter()
+            .any(|entry| serve_status_mentions_port(entry, port)),
+        Value::Object(entries) => entries.iter().any(|(key, entry)| {
+            string_mentions_serve_port(key, port) || serve_status_mentions_port(entry, port)
+        }),
+    }
+}
+
+fn string_mentions_serve_port(raw: &str, port: u16) -> bool {
+    let value = raw.trim().to_ascii_lowercase();
+    if value.is_empty() {
+        return false;
+    }
+
+    value.contains(&format!("127.0.0.1:{port}"))
+        || value.contains(&format!("localhost:{port}"))
+        || value.contains(&format!("[::1]:{port}"))
+        || value == port.to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -582,6 +700,7 @@ struct BridgeApplication {
     runtime: Mutex<CodexRuntimeSupervisor>,
     stream_router: StreamRouter,
     pairing_sessions: Mutex<PairingSessionService>,
+    pairing_route: PairingRouteState,
     security_state: Mutex<SecurityState>,
 }
 
@@ -591,6 +710,7 @@ impl BridgeApplication {
         runtime: CodexRuntimeSupervisor,
         stream_router: StreamRouter,
         pairing_sessions: PairingSessionService,
+        pairing_route: PairingRouteState,
         logger: StructuredLogger<InMemoryLogSink>,
     ) -> Self {
         Self {
@@ -598,8 +718,13 @@ impl BridgeApplication {
             runtime: Mutex::new(runtime),
             stream_router,
             pairing_sessions: Mutex::new(pairing_sessions),
+            pairing_route,
             security_state: Mutex::new(SecurityState::new(logger)),
         }
+    }
+
+    fn pairing_route_health(&self) -> PairingRouteHealth {
+        self.pairing_route.health()
     }
 
     fn runtime_snapshot(&self) -> RuntimeSnapshot {
@@ -875,6 +1000,7 @@ fn route_request(request_line: &str, app: &BridgeApplication) -> String {
             let payload = HealthResponse {
                 status: "ok",
                 runtime: app.runtime_snapshot(),
+                pairing_route: app.pairing_route_health(),
                 api: ApiSurface {
                     endpoints: vec![
                         "POST /pairing/session",
@@ -1025,6 +1151,20 @@ fn route_pairing_request(
 ) -> Option<String> {
     match (method, path) {
         ("POST", "/pairing/session") | ("GET", "/pairing/session") => {
+            if !app.pairing_route.reachable {
+                let message = app
+                    .pairing_route
+                    .message
+                    .as_deref()
+                    .unwrap_or("Private pairing route is unavailable.");
+                return Some(json_error_response(
+                    "503 Service Unavailable",
+                    "pairing_session_unavailable",
+                    "private_pairing_route_unavailable",
+                    message,
+                ));
+            }
+
             let session = app
                 .pairing_sessions
                 .lock()
@@ -1874,7 +2014,15 @@ where
 struct HealthResponse {
     status: &'static str,
     runtime: RuntimeSnapshot,
+    pairing_route: PairingRouteHealth,
     api: ApiSurface,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct PairingRouteHealth {
+    reachable: bool,
+    advertised_base_url: Option<String>,
+    message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1892,22 +2040,29 @@ mod tests {
 
     use super::{
         BridgeApplication, CodexRuntimeConfig, CodexRuntimeMode, CodexRuntimeSupervisor, Config,
-        InMemoryLogSink, PairingSessionService, PendingApprovalAction, RepositoryContextDto,
-        StreamRouter, StructuredLogger, build_foundations, parse_args, route_request,
+        InMemoryLogSink, PairingRouteContract, PairingRouteState, PairingSessionService,
+        PendingApprovalAction, RepositoryContextDto, StreamRouter, StructuredLogger,
+        build_foundations, pairing_base_url_from_tailscale_status, parse_args,
+        parse_args_with_pairing_route_resolver, route_request,
     };
     use crate::thread_api::ThreadApiService;
 
     #[test]
-    fn parse_args_uses_defaults() {
-        let config = parse_args(Vec::<String>::new()).expect("defaults should parse");
+    fn parse_args_uses_verified_default_pairing_route_when_available() {
+        let config = parse_args_with_pairing_route_resolver(Vec::<String>::new(), |_port| {
+            PairingRouteContract::verified("https://verified.taild54ede.ts.net".to_string())
+        })
+        .expect("defaults should parse");
 
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 3110);
         assert_eq!(config.admin_port, 3111);
-        assert!(config.pairing_base_url.starts_with("https://"));
-        assert!(crate::pairing::is_private_bridge_api_base_url(
-            &config.pairing_base_url
-        ));
+        assert_eq!(
+            config.pairing_base_url,
+            "https://verified.taild54ede.ts.net"
+        );
+        assert!(config.pairing_route_reachable);
+        assert!(config.pairing_route_message.is_none());
         assert_eq!(
             config.codex_runtime,
             CodexRuntimeConfig {
@@ -1920,23 +2075,41 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_marks_default_pairing_route_unavailable_when_not_verified() {
+        let config = parse_args_with_pairing_route_resolver(Vec::<String>::new(), |port| {
+            PairingRouteContract::degraded(format!("route for {port} is unavailable"))
+        })
+        .expect("defaults should parse");
+
+        assert_eq!(config.pairing_base_url, "https://bridge.ts.net");
+        assert!(!config.pairing_route_reachable);
+        assert_eq!(
+            config.pairing_route_message.as_deref(),
+            Some("route for 3110 is unavailable")
+        );
+    }
+
+    #[test]
     fn parse_args_reads_explicit_values() {
-        let config = parse_args(vec![
-            "--host".to_string(),
-            "0.0.0.0".to_string(),
-            "--port".to_string(),
-            "9999".to_string(),
-            "--admin-port".to_string(),
-            "9998".to_string(),
-            "--codex-mode".to_string(),
-            "spawn".to_string(),
-            "--codex-command".to_string(),
-            "sleep".to_string(),
-            "--codex-arg".to_string(),
-            "10".to_string(),
-            "--pairing-base-url".to_string(),
-            "https://bridge.ts.net".to_string(),
-        ])
+        let config = parse_args_with_pairing_route_resolver(
+            vec![
+                "--host".to_string(),
+                "0.0.0.0".to_string(),
+                "--port".to_string(),
+                "9999".to_string(),
+                "--admin-port".to_string(),
+                "9998".to_string(),
+                "--codex-mode".to_string(),
+                "spawn".to_string(),
+                "--codex-command".to_string(),
+                "sleep".to_string(),
+                "--codex-arg".to_string(),
+                "10".to_string(),
+                "--pairing-base-url".to_string(),
+                "https://bridge.ts.net".to_string(),
+            ],
+            |_port| panic!("default pairing route resolver should not be used"),
+        )
         .expect("explicit values should parse");
 
         assert_eq!(
@@ -1946,6 +2119,8 @@ mod tests {
                 port: 9999,
                 admin_port: 9998,
                 pairing_base_url: "https://bridge.ts.net".to_string(),
+                pairing_route_reachable: true,
+                pairing_route_message: None,
                 codex_runtime: CodexRuntimeConfig {
                     mode: CodexRuntimeMode::Spawn,
                     endpoint: Some("ws://127.0.0.1:4222".to_string()),
@@ -1954,6 +2129,17 @@ mod tests {
                 },
             }
         );
+    }
+
+    #[test]
+    fn parse_args_rejects_non_private_explicit_pairing_base_url() {
+        let error = parse_args(vec![
+            "--pairing-base-url".to_string(),
+            "http://127.0.0.1:3110".to_string(),
+        ])
+        .expect_err("non-private explicit route should be rejected");
+
+        assert!(error.contains("--pairing-base-url must be a private https Tailscale hostname"));
     }
 
     #[test]
@@ -1991,6 +2177,59 @@ mod tests {
         assert_eq!(
             config.codex_runtime.endpoint.as_deref(),
             Some("ws://127.0.0.1:4222")
+        );
+    }
+
+    #[test]
+    fn pairing_base_url_requires_matching_serve_route_for_bridge_port() {
+        let status = serde_json::json!({
+            "Self": {
+                "DNSName": "macbook-pro.taild54ede.ts.net."
+            }
+        });
+
+        let missing_route = serde_json::json!({});
+        assert!(pairing_base_url_from_tailscale_status(&status, &missing_route, 3110).is_none());
+
+        let verified_route = serde_json::json!({
+            "TCP": {
+                "443": {
+                    "HTTPS": true
+                }
+            },
+            "Web": {
+                "macbook-pro.taild54ede.ts.net:443": {
+                    "Handlers": {
+                        "/": {
+                            "Proxy": "http://127.0.0.1:3110"
+                        }
+                    }
+                }
+            }
+        });
+
+        assert_eq!(
+            pairing_base_url_from_tailscale_status(&status, &verified_route, 3110),
+            Some("https://macbook-pro.taild54ede.ts.net".to_string())
+        );
+    }
+
+    #[test]
+    fn pairing_session_route_fails_closed_when_private_route_is_unavailable() {
+        let app = test_application_with_pairing_route(
+            false,
+            Some("Private pairing route is unavailable for port 3110"),
+        );
+
+        let response = route_request("POST /pairing/session HTTP/1.1", &app);
+        assert!(response.starts_with("HTTP/1.1 503 Service Unavailable"));
+
+        let body = parse_json_body(&response);
+        assert_eq!(body["error"], "pairing_session_unavailable");
+        assert_eq!(body["code"], "private_pairing_route_unavailable");
+        assert_eq!(
+            body["message"],
+            "Private pairing route is unavailable for port 3110"
         );
     }
 
@@ -2420,6 +2659,13 @@ mod tests {
     }
 
     fn test_application() -> BridgeApplication {
+        test_application_with_pairing_route(true, None)
+    }
+
+    fn test_application_with_pairing_route(
+        pairing_route_reachable: bool,
+        pairing_route_message: Option<&str>,
+    ) -> BridgeApplication {
         let mut runtime = CodexRuntimeSupervisor::new(CodexRuntimeConfig {
             mode: CodexRuntimeMode::Attach,
             endpoint: Some("ws://127.0.0.1:4222".to_string()),
@@ -2440,6 +2686,11 @@ mod tests {
                 "https://bridge.ts.net",
                 unique_test_state_dir(),
             ),
+            PairingRouteState {
+                pairing_base_url: "https://bridge.ts.net".to_string(),
+                reachable: pairing_route_reachable,
+                message: pairing_route_message.map(ToString::to_string),
+            },
             StructuredLogger::new(InMemoryLogSink::default()),
         )
     }
