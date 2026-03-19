@@ -123,6 +123,103 @@ final class CodexMobileCompanionTests: XCTestCase {
         }
     }
 
+    func testBridgeBinaryPathResolverPrefersBundledHelper() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let resourcesDirectory = tempDirectory.appendingPathComponent("Resources", isDirectory: true)
+        let bundledBinary = resourcesDirectory
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("bridge-server")
+
+        try FileManager.default.createDirectory(
+            at: bundledBinary.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("bridge".utf8).write(to: bundledBinary)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: bundledBinary.path
+        )
+
+        let resolver = BridgeBinaryPathResolver(
+            environment: [:],
+            currentDirectoryURL: tempDirectory,
+            bundleResourceURL: resourcesDirectory
+        )
+
+        XCTAssertEqual(try resolver.resolveBridgeBinaryURL().path, bundledBinary.path)
+    }
+
+    func testBridgeBinaryPathResolverPrefersExplicitEnvironmentOverride() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let explicitBinary = tempDirectory.appendingPathComponent("custom-bridge-server")
+        let resourcesDirectory = tempDirectory.appendingPathComponent("Resources", isDirectory: true)
+        let bundledBinary = resourcesDirectory.appendingPathComponent("bridge-server")
+
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: resourcesDirectory, withIntermediateDirectories: true)
+        try Data("explicit".utf8).write(to: explicitBinary)
+        try Data("bundled".utf8).write(to: bundledBinary)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: explicitBinary.path
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: bundledBinary.path
+        )
+
+        let resolver = BridgeBinaryPathResolver(
+            environment: ["CODEX_MOBILE_COMPANION_BRIDGE_BINARY": explicitBinary.path],
+            currentDirectoryURL: tempDirectory,
+            bundleResourceURL: resourcesDirectory
+        )
+
+        XCTAssertEqual(try resolver.resolveBridgeBinaryURL().path, explicitBinary.path)
+    }
+
+    func testBridgeBinaryPathResolverResolvesCodexFromCommonUserInstallLocations() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDirectory = tempDirectory.appendingPathComponent("home", isDirectory: true)
+        let codexBinary = homeDirectory
+            .appendingPathComponent(".bun", isDirectory: true)
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("codex")
+
+        try FileManager.default.createDirectory(
+            at: codexBinary.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("codex".utf8).write(to: codexBinary)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: codexBinary.path
+        )
+
+        let resolver = BridgeBinaryPathResolver(
+            environment: ["HOME": homeDirectory.path],
+            currentDirectoryURL: tempDirectory,
+            bundleResourceURL: nil
+        )
+
+        XCTAssertEqual(resolver.resolveCodexBinaryURL()?.path, codexBinary.path)
+    }
+
+    func testBridgePortProcessRequiresCurrentShellOwnershipForManagedBridge() {
+        let bridgeBinaryURL = URL(fileURLWithPath: "/tmp/CodexMobileCompanion.app/Contents/Resources/bin/bridge-server")
+        let staleBridge = BridgePortProcess(
+            pid: 10,
+            parentPID: 20,
+            command: "\(bridgeBinaryURL.path) --host 127.0.0.1 --port 3110"
+        )
+
+        XCTAssertTrue(staleBridge.isManagedBridge(matching: bridgeBinaryURL))
+        XCTAssertFalse(staleBridge.isManagedBridge(matching: bridgeBinaryURL, ownedBy: 99))
+        XCTAssertTrue(staleBridge.isManagedBridge(matching: bridgeBinaryURL, ownedBy: 20))
+    }
+
     @MainActor
     func testPairingViewModelLoadsSessionAndCreatesQRCodeWhenUnpaired() async {
         let client = StubShellBridgeClient(
@@ -130,7 +227,10 @@ final class CodexMobileCompanionTests: XCTestCase {
             threadResults: [.success(Self.threadListResponse(statuses: []))],
             pairingResults: [.success(Self.samplePairingResponse)]
         )
-        let viewModel = PairingEntryViewModel(bridgeClient: client)
+        let viewModel = PairingEntryViewModel(
+            bridgeClient: client,
+            runtimeSupervisor: StubDesktopRuntimeSupervisor()
+        )
 
         await viewModel.refreshRuntimeState()
 
@@ -147,7 +247,10 @@ final class CodexMobileCompanionTests: XCTestCase {
             threadResults: [.success(Self.threadListResponse(statuses: []))],
             pairingResults: [.failure(StubError.bridgeUnavailable)]
         )
-        let viewModel = PairingEntryViewModel(bridgeClient: client)
+        let viewModel = PairingEntryViewModel(
+            bridgeClient: client,
+            runtimeSupervisor: StubDesktopRuntimeSupervisor()
+        )
 
         await viewModel.refreshRuntimeState()
 
@@ -167,7 +270,10 @@ final class CodexMobileCompanionTests: XCTestCase {
             threadResults: [.success(Self.threadListResponse(statuses: []))],
             pairingResults: []
         )
-        let viewModel = PairingEntryViewModel(bridgeClient: client)
+        let viewModel = PairingEntryViewModel(
+            bridgeClient: client,
+            runtimeSupervisor: StubDesktopRuntimeSupervisor()
+        )
 
         await viewModel.refreshRuntimeState()
         XCTAssertEqual(viewModel.shellState, .degraded)
@@ -191,6 +297,7 @@ final class CodexMobileCompanionTests: XCTestCase {
         )
         let viewModel = PairingEntryViewModel(
             bridgeClient: client,
+            runtimeSupervisor: StubDesktopRuntimeSupervisor(),
             startSupervisionOnInit: true,
             degradedPollIntervalNanoseconds: 10_000_000,
             healthyPollIntervalNanoseconds: 5_000_000_000
@@ -214,7 +321,10 @@ final class CodexMobileCompanionTests: XCTestCase {
             threadResults: [.success(Self.threadListResponse(statuses: [.running, .completed]))],
             pairingResults: []
         )
-        let viewModel = PairingEntryViewModel(bridgeClient: client)
+        let viewModel = PairingEntryViewModel(
+            bridgeClient: client,
+            runtimeSupervisor: StubDesktopRuntimeSupervisor()
+        )
 
         await viewModel.refreshRuntimeState()
 
@@ -237,7 +347,10 @@ final class CodexMobileCompanionTests: XCTestCase {
             pairingResults: [.success(Self.samplePairingResponse)],
             revokeResults: [.success(Self.sampleRevokeResponse)]
         )
-        let viewModel = PairingEntryViewModel(bridgeClient: client)
+        let viewModel = PairingEntryViewModel(
+            bridgeClient: client,
+            runtimeSupervisor: StubDesktopRuntimeSupervisor()
+        )
 
         await viewModel.refreshRuntimeState()
         XCTAssertEqual(viewModel.shellState, .pairedIdle)
@@ -258,7 +371,10 @@ final class CodexMobileCompanionTests: XCTestCase {
             pairingResults: [],
             revokeResults: [.failure(StubError.bridgeUnavailable)]
         )
-        let viewModel = PairingEntryViewModel(bridgeClient: client)
+        let viewModel = PairingEntryViewModel(
+            bridgeClient: client,
+            runtimeSupervisor: StubDesktopRuntimeSupervisor()
+        )
 
         await viewModel.refreshRuntimeState()
         XCTAssertEqual(viewModel.shellState, .pairedIdle)
@@ -267,6 +383,62 @@ final class CodexMobileCompanionTests: XCTestCase {
 
         XCTAssertEqual(viewModel.shellState, .pairedIdle)
         XCTAssertNotNil(viewModel.errorMessage)
+    }
+
+    @MainActor
+    func testPairingViewModelShowsStartupStateWhileBridgeLaunchIsInProgress() async {
+        let client = StubShellBridgeClient(
+            healthResults: [.failure(StubError.bridgeUnavailable)],
+            threadResults: [],
+            pairingResults: []
+        )
+        let viewModel = PairingEntryViewModel(
+            bridgeClient: client,
+            runtimeSupervisor: StubDesktopRuntimeSupervisor(
+                prepareResults: [
+                    .success(
+                        DesktopRuntimeLaunchSnapshot(
+                            statusLabel: "Launching bridge",
+                            detail: "Desktop shell launched bridge-server and is waiting for health.",
+                            isLaunching: true
+                        )
+                    )
+                ]
+            )
+        )
+
+        await viewModel.refreshRuntimeState()
+
+        XCTAssertEqual(viewModel.shellState, .starting)
+        XCTAssertEqual(viewModel.supervisorStatusLabel, "Launching bridge")
+        XCTAssertEqual(viewModel.bridgeRuntimeLabel, "Launching bridge")
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    @MainActor
+    func testPairingViewModelSurfacesRuntimeSupervisorLaunchFailure() async {
+        let client = StubShellBridgeClient(
+            healthResults: [],
+            threadResults: [],
+            pairingResults: []
+        )
+        let viewModel = PairingEntryViewModel(
+            bridgeClient: client,
+            runtimeSupervisor: StubDesktopRuntimeSupervisor(
+                prepareResults: [
+                    .failure(
+                        DesktopRuntimeSupervisorError.launchFailed("missing helper binary")
+                    )
+                ]
+            )
+        )
+
+        await viewModel.refreshRuntimeState()
+
+        XCTAssertEqual(viewModel.shellState, .degraded)
+        XCTAssertEqual(viewModel.bridgeRuntimeLabel, "Unavailable")
+        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertTrue(viewModel.runtimeDetail.contains("missing helper binary"))
     }
 
     private static func healthResponse(
@@ -405,6 +577,69 @@ private struct StubShellBridgeClient: ShellBridgeClient {
     }
 }
 
+private final class StubDesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
+    private let store: StubDesktopRuntimeSupervisorStore
+
+    init(
+        prepareResults: [Result<DesktopRuntimeLaunchSnapshot, Error>] = [
+            .success(
+                DesktopRuntimeLaunchSnapshot(
+                    statusLabel: "Attached to existing bridge",
+                    detail: "Stub desktop runtime supervisor is ready.",
+                    isLaunching: false
+                )
+            )
+        ],
+        restartResults: [Result<DesktopRuntimeLaunchSnapshot, Error>] = []
+    ) {
+        self.store = StubDesktopRuntimeSupervisorStore(
+            prepareResults: prepareResults,
+            restartResults: restartResults
+        )
+    }
+
+    func prepareBridgeForConnection() async throws -> DesktopRuntimeLaunchSnapshot {
+        try await store.nextPrepare()
+    }
+
+    func restartBridge() async throws -> DesktopRuntimeLaunchSnapshot {
+        try await store.nextRestart()
+    }
+}
+
+private actor StubDesktopRuntimeSupervisorStore {
+    private var prepareResults: [Result<DesktopRuntimeLaunchSnapshot, Error>]
+    private var restartResults: [Result<DesktopRuntimeLaunchSnapshot, Error>]
+
+    init(
+        prepareResults: [Result<DesktopRuntimeLaunchSnapshot, Error>],
+        restartResults: [Result<DesktopRuntimeLaunchSnapshot, Error>]
+    ) {
+        self.prepareResults = prepareResults
+        self.restartResults = restartResults
+    }
+
+    func nextPrepare() throws -> DesktopRuntimeLaunchSnapshot {
+        guard !prepareResults.isEmpty else {
+            throw StubError.missingRuntimePrepareResult
+        }
+        if prepareResults.count == 1 {
+            return try prepareResults[0].get()
+        }
+        return try prepareResults.removeFirst().get()
+    }
+
+    func nextRestart() throws -> DesktopRuntimeLaunchSnapshot {
+        guard !restartResults.isEmpty else {
+            throw StubError.missingRuntimeRestartResult
+        }
+        if restartResults.count == 1 {
+            return try restartResults[0].get()
+        }
+        return try restartResults.removeFirst().get()
+    }
+}
+
 private actor StubShellBridgeResponseStore {
     private var healthResults: [Result<BridgeHealthResponseDTO, Error>]
     private var threadResults: [Result<ThreadListResponseDTO, Error>]
@@ -464,6 +699,8 @@ private enum StubError: LocalizedError {
     case missingThreadResult
     case missingPairingResult
     case missingRevokeResult
+    case missingRuntimePrepareResult
+    case missingRuntimeRestartResult
 
     var errorDescription: String? {
         switch self {
@@ -477,6 +714,10 @@ private enum StubError: LocalizedError {
             return "missing stub pairing result"
         case .missingRevokeResult:
             return "missing stub revoke result"
+        case .missingRuntimePrepareResult:
+            return "missing runtime supervisor prepare result"
+        case .missingRuntimeRestartResult:
+            return "missing runtime supervisor restart result"
         }
     }
 }

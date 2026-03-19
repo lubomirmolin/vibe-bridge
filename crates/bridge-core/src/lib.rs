@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::env;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
@@ -55,6 +56,7 @@ struct Config {
 }
 
 const FALLBACK_PRIVATE_PAIRING_BASE_URL: &str = "https://bridge.ts.net";
+const TAILSCALE_BIN_OVERRIDE_ENV: &str = "CODEX_MOBILE_COMPANION_TAILSCALE_BIN";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PairingRouteContract {
@@ -387,10 +389,16 @@ fn discover_verified_tailscale_pairing_base_url(port: u16) -> Option<String> {
 
 fn ensure_tailscale_serve_mapping(port: u16) -> Result<(), String> {
     let port_value = port.to_string();
-    let output = std::process::Command::new("tailscale")
+    let tailscale_bin = resolve_tailscale_binary()?;
+    let output = std::process::Command::new(&tailscale_bin)
         .args(["serve", "--bg", port_value.as_str()])
         .output()
-        .map_err(|error| format!("tailscale CLI unavailable: {error}"))?;
+        .map_err(|error| {
+            format!(
+                "tailscale CLI unavailable at {}: {error}",
+                tailscale_bin.display()
+            )
+        })?;
 
     if output.status.success() {
         return Ok(());
@@ -410,7 +418,8 @@ fn ensure_tailscale_serve_mapping(port: u16) -> Result<(), String> {
 }
 
 fn read_tailscale_json<const N: usize>(args: [&str; N]) -> Option<Value> {
-    let output = std::process::Command::new("tailscale")
+    let tailscale_bin = resolve_tailscale_binary().ok()?;
+    let output = std::process::Command::new(tailscale_bin)
         .args(args)
         .output()
         .ok()?;
@@ -420,6 +429,52 @@ fn read_tailscale_json<const N: usize>(args: [&str; N]) -> Option<Value> {
     }
 
     serde_json::from_slice(&output.stdout).ok()
+}
+
+fn resolve_tailscale_binary() -> Result<PathBuf, String> {
+    resolve_cli_binary(
+        TAILSCALE_BIN_OVERRIDE_ENV,
+        "tailscale",
+        &[
+            "/opt/homebrew/bin/tailscale",
+            "/usr/local/bin/tailscale",
+            "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+        ],
+    )
+}
+
+fn resolve_cli_binary(
+    override_env_var: &str,
+    command_name: &str,
+    candidate_paths: &[&str],
+) -> Result<PathBuf, String> {
+    if let Some(path) = env::var_os(override_env_var) {
+        let candidate = PathBuf::from(path);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    if let Some(path_var) = env::var_os("PATH") {
+        for entry in env::split_paths(&path_var) {
+            let candidate = entry.join(command_name);
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    for path in candidate_paths {
+        let candidate = PathBuf::from(path);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(format!(
+        "{command_name} CLI unavailable: checked {override_env_var}, PATH, and {}",
+        candidate_paths.join(", ")
+    ))
 }
 
 fn pairing_base_url_from_tailscale_status(
@@ -2313,6 +2368,10 @@ struct ApiSurface {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
     use std::sync::mpsc::RecvTimeoutError;
     use std::time::Duration;
 
@@ -2323,8 +2382,8 @@ mod tests {
         InMemoryLogSink, PairingRouteContract, PairingRouteState, PairingSessionService,
         PendingApprovalAction, RepositoryContextDto, StreamRouter, StructuredLogger,
         build_foundations, pairing_base_url_from_tailscale_status, parse_args,
-        parse_args_with_pairing_route_resolver, resolve_default_pairing_route_contract_with,
-        route_request,
+        parse_args_with_pairing_route_resolver, resolve_cli_binary,
+        resolve_default_pairing_route_contract_with, route_request,
     };
     use crate::thread_api::ThreadApiService;
 
@@ -2665,6 +2724,33 @@ mod tests {
                 "Private pairing route is unavailable: `tailscale serve --bg 3110` ran, but no verified mapping to localhost:3110 was found in `tailscale serve status --json`."
             )
         );
+    }
+
+    #[test]
+    fn resolve_cli_binary_uses_fallback_candidates_for_custom_command() {
+        let binary = make_test_executable("codex-test-cli-explicit");
+        let resolved = resolve_cli_binary(
+            "CODEX_TEST_CLI_OVERRIDE",
+            "codex-test-cli-explicit",
+            &[binary.to_string_lossy().as_ref()],
+        )
+        .expect("fallback candidate should resolve");
+
+        assert_eq!(resolved, binary);
+        let _ = fs::remove_file(binary);
+    }
+
+    #[test]
+    fn resolve_cli_binary_reports_missing_command_with_checked_locations() {
+        let error = resolve_cli_binary(
+            "CODEX_TEST_MISSING_OVERRIDE",
+            "codex-test-cli-missing",
+            &["/tmp/does-not-exist/codex-test-cli-missing"],
+        )
+        .expect_err("missing command should return an error");
+
+        assert!(error.contains("codex-test-cli-missing CLI unavailable"));
+        assert!(error.contains("CODEX_TEST_MISSING_OVERRIDE"));
     }
 
     #[test]
@@ -3278,6 +3364,25 @@ mod tests {
         );
 
         std::env::temp_dir().join(unique)
+    }
+
+    fn make_test_executable(name: &str) -> PathBuf {
+        let path = unique_test_state_dir().join(name);
+        fs::create_dir_all(
+            path.parent()
+                .expect("test executable should have a parent directory"),
+        )
+        .expect("should create test executable directory");
+        fs::write(&path, b"#!/bin/sh\nexit 0\n").expect("should write test executable");
+        #[cfg(unix)]
+        {
+            let mut permissions = fs::metadata(&path)
+                .expect("test executable should exist")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&path, permissions).expect("should set executable permissions");
+        }
+        path
     }
 
     fn parse_json_body(response: &str) -> Value {

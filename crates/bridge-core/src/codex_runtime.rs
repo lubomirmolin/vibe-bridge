@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::env;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -94,7 +95,11 @@ impl CodexRuntimeSupervisor {
                 Ok(())
             }
             CodexRuntimeMode::Spawn => {
-                let child = spawn_managed_process(&self.config.command, &self.config.args)?;
+                let child = spawn_managed_process_with_endpoint(
+                    &self.config.command,
+                    &self.config.args,
+                    self.config.endpoint.as_deref(),
+                )?;
                 let pid = child.id();
                 self.state = RuntimeState::Managed { pid };
                 self.managed_process = Some(child);
@@ -108,7 +113,11 @@ impl CodexRuntimeSupervisor {
                             return Ok(());
                         }
                         Err(attach_error) => {
-                            match spawn_managed_process(&self.config.command, &self.config.args) {
+                            match spawn_managed_process_with_endpoint(
+                                &self.config.command,
+                                &self.config.args,
+                                self.config.endpoint.as_deref(),
+                            ) {
                                 Ok(child) => {
                                     let pid = child.id();
                                     self.state = RuntimeState::Managed { pid };
@@ -127,7 +136,11 @@ impl CodexRuntimeSupervisor {
                     }
                 }
 
-                match spawn_managed_process(&self.config.command, &self.config.args) {
+                match spawn_managed_process_with_endpoint(
+                    &self.config.command,
+                    &self.config.args,
+                    self.config.endpoint.as_deref(),
+                ) {
                     Ok(child) => {
                         let pid = child.id();
                         self.state = RuntimeState::Managed { pid };
@@ -197,15 +210,41 @@ impl Drop for CodexRuntimeSupervisor {
     }
 }
 
-fn spawn_managed_process(command: &str, args: &[String]) -> Result<Child, String> {
+fn spawn_managed_process_with_endpoint(
+    command: &str,
+    args: &[String],
+    endpoint: Option<&str>,
+) -> Result<Child, String> {
     let mut cmd = Command::new(command);
-    cmd.args(args)
-        .stdin(Stdio::null())
+    let spawn_args = build_spawn_args(args, endpoint);
+    if env::var_os("CODEX_MOBILE_COMPANION_DEBUG_RUNTIME_SPAWN").is_some() {
+        eprintln!(
+            "bridge-core runtime spawn: command={} endpoint={:?} args={:?}",
+            command, endpoint, spawn_args
+        );
+    }
+    cmd.args(&spawn_args)
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
     cmd.spawn()
-        .map_err(|error| format!("failed to spawn '{command} {}': {error}", args.join(" ")))
+        .map_err(|error| format!("failed to spawn '{command} {}': {error}", spawn_args.join(" ")))
+}
+
+fn build_spawn_args(args: &[String], endpoint: Option<&str>) -> Vec<String> {
+    let mut spawn_args = args.to_vec();
+
+    if let Some(endpoint) = endpoint {
+        if spawn_args.first().map(String::as_str) == Some("app-server")
+            && !spawn_args.iter().any(|arg| arg == "--listen")
+        {
+            spawn_args.push("--listen".to_string());
+            spawn_args.push(endpoint.to_string());
+        }
+    }
+
+    spawn_args
 }
 
 fn verify_endpoint_reachable(endpoint: &str) -> Result<(), String> {
@@ -247,9 +286,15 @@ fn verify_endpoint_reachable(endpoint: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::net::TcpListener;
+    use std::path::PathBuf;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+    use std::thread;
+    use std::time::Duration;
 
-    use super::{CodexRuntimeConfig, CodexRuntimeMode, CodexRuntimeSupervisor};
+    use super::{CodexRuntimeConfig, CodexRuntimeMode, CodexRuntimeSupervisor, build_spawn_args};
 
     #[test]
     fn attach_mode_reports_attached_state() {
@@ -352,5 +397,85 @@ mod tests {
         assert_eq!(snapshot.state, "degraded");
         assert!(snapshot.detail.contains("auto mode could not attach"));
         assert!(snapshot.detail.contains("or start codex runtime"));
+    }
+
+    #[test]
+    fn build_spawn_args_adds_listen_endpoint_for_app_server() {
+        let args = build_spawn_args(
+            &["app-server".to_string()],
+            Some("ws://127.0.0.1:4222"),
+        );
+
+        assert_eq!(
+            args,
+            vec![
+                "app-server".to_string(),
+                "--listen".to_string(),
+                "ws://127.0.0.1:4222".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_spawn_args_keeps_explicit_listen_override() {
+        let args = build_spawn_args(
+            &[
+                "app-server".to_string(),
+                "--listen".to_string(),
+                "ws://127.0.0.1:5000".to_string(),
+            ],
+            Some("ws://127.0.0.1:4222"),
+        );
+
+        assert_eq!(
+            args,
+            vec![
+                "app-server".to_string(),
+                "--listen".to_string(),
+                "ws://127.0.0.1:5000".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_spawn_args_does_not_modify_non_app_server_commands() {
+        let args = build_spawn_args(&["30".to_string()], Some("ws://127.0.0.1:4222"));
+
+        assert_eq!(args, vec!["30".to_string()]);
+    }
+
+    #[test]
+    fn spawn_mode_keeps_stdin_open_for_managed_app_server_processes() {
+        let script = make_stdin_blocking_test_script("codex-runtime-stdin");
+        let mut supervisor = CodexRuntimeSupervisor::new(CodexRuntimeConfig {
+            mode: CodexRuntimeMode::Spawn,
+            endpoint: Some("ws://127.0.0.1:4222".to_string()),
+            command: script.to_string_lossy().into_owned(),
+            args: vec!["app-server".to_string()],
+        });
+
+        supervisor
+            .initialize()
+            .expect("spawn mode should initialize with stdin-blocking helper");
+        thread::sleep(Duration::from_millis(100));
+
+        let snapshot = supervisor.snapshot();
+        assert_eq!(snapshot.state, "managed");
+        assert!(snapshot.pid.is_some());
+
+        let _ = fs::remove_file(script);
+    }
+
+    fn make_stdin_blocking_test_script(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        fs::write(
+            &path,
+            "#!/bin/sh\nif [ \"$1\" = \"app-server\" ]; then\n  shift\nfi\ncat >/dev/null\n",
+        )
+        .expect("test script should be written");
+        #[cfg(unix)]
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+            .expect("test script should be executable");
+        path
     }
 }

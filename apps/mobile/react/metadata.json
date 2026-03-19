@@ -1,0 +1,5 @@
+{
+  "name": "Codex Bridge Console",
+  "description": "Secure mobile companion app for monitoring and controlling a Mac-hosted OpenAI Codex bridge session.",
+  "requestFramePermissions": []
+}
