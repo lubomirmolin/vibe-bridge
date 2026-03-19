@@ -18,6 +18,20 @@ final threadListControllerProvider =
       },
     );
 
+class ThreadWorkspaceGroup {
+  const ThreadWorkspaceGroup({
+    required this.groupId,
+    required this.label,
+    required this.workspacePath,
+    required this.threads,
+  });
+
+  final String groupId;
+  final String label;
+  final String workspacePath;
+  final List<ThreadSummaryDto> threads;
+}
+
 class ThreadListState {
   const ThreadListState({
     required this.threads,
@@ -63,6 +77,28 @@ class ThreadListState {
   }
 
   bool get hasAnyThread => threads.isNotEmpty;
+
+  List<ThreadWorkspaceGroup> get visibleGroups {
+    final groups = <String, List<ThreadSummaryDto>>{};
+
+    for (final thread in visibleThreads) {
+      groups
+          .putIfAbsent(_workspaceGroupId(thread), () => <ThreadSummaryDto>[])
+          .add(thread);
+    }
+
+    return groups.entries
+        .map((entry) {
+          final representative = entry.value.first;
+          return ThreadWorkspaceGroup(
+            groupId: entry.key,
+            label: _workspaceGroupLabel(representative),
+            workspacePath: representative.workspace.trim(),
+            threads: List<ThreadSummaryDto>.unmodifiable(entry.value),
+          );
+        })
+        .toList(growable: false);
+  }
 
   bool get hasQuery => searchQuery.trim().isNotEmpty;
 
@@ -485,4 +521,37 @@ class ThreadListController extends StateNotifier<ThreadListState> {
     unawaited(_closeLiveSubscription());
     super.dispose();
   }
+}
+
+String _workspaceGroupId(ThreadSummaryDto thread) {
+  final workspacePath = thread.workspace.trim();
+  if (workspacePath.isNotEmpty) {
+    return workspacePath;
+  }
+
+  final repository = thread.repository.trim();
+  if (repository.isNotEmpty) {
+    return 'repository:$repository';
+  }
+
+  return 'thread:${thread.threadId}';
+}
+
+String _workspaceGroupLabel(ThreadSummaryDto thread) {
+  final workspacePath = thread.workspace.trim();
+  if (workspacePath.isEmpty) {
+    final repository = thread.repository.trim();
+    return repository.isNotEmpty ? repository : 'Unknown workspace';
+  }
+
+  final normalizedPath = workspacePath.replaceAll('\\', '/');
+  final segments = normalizedPath
+      .split('/')
+      .where((segment) => segment.isNotEmpty)
+      .toList(growable: false);
+  if (segments.isEmpty) {
+    return workspacePath;
+  }
+
+  return segments.last;
 }

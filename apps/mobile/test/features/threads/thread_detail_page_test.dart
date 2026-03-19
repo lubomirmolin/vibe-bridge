@@ -68,6 +68,387 @@ void main() {
     },
   );
 
+  testWidgets(
+    'assistant code blocks infer syntax highlighting from nearby file path',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            <ThreadTimelineEntryDto>[
+              _timelineEvent(
+                id: 'evt-code',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Assistant output',
+                payload: {
+                  'type': 'agentMessage',
+                  'text':
+                      'Updated `apps/mobile/lib/main.dart`:\n\n```\nvoid main() {\n  runApp(const Placeholder());\n}\n```',
+                },
+                occurredAt: '2026-03-18T10:02:00Z',
+              ),
+            ],
+          ],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+      );
+      await tester.pumpAndSettle();
+
+      await _scrollUntilVisible(
+        tester,
+        find.byKey(const Key('thread-code-file-main.dart')),
+      );
+      expect(
+        find.byKey(const Key('thread-code-file-main.dart')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('thread-code-language-dart')),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('runApp(const Placeholder())'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('message attachments render inline images', (tester) async {
+    const transparentPngDataUrl =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WnR6GsAAAAASUVORK5CYII=';
+
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-image',
+              kind: BridgeEventKind.messageDelta,
+              summary: 'Attached image',
+              payload: {
+                'type': 'userMessage',
+                'content': [
+                  {'type': 'text', 'text': 'Can you inspect this screenshot?'},
+                  {'type': 'image', 'image_url': transparentPngDataUrl},
+                ],
+              },
+              occurredAt: '2026-03-18T10:02:00Z',
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('thread-message-image-0')),
+    );
+    expect(find.byKey(const Key('thread-message-image-0')), findsOneWidget);
+  });
+
+  testWidgets('status-only changed file rows are hidden from the timeline', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-status-only',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Command output',
+              payload: {
+                'output': '''
+Command: /bin/zsh -lc "git status --short"
+Output:
+ M apps/mobile/lib/features/threads/presentation/thread_detail_page.dart
+ M apps/mobile/test/features/threads/thread_detail_page_test.dart
+''',
+              },
+              occurredAt: '2026-03-18T10:02:00Z',
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Edited thread_detail_page.dart'), findsNothing);
+    expect(
+      find.textContaining(
+        'apps/mobile/lib/features/threads/presentation/thread_detail_page.dart',
+      ),
+      findsNothing,
+    );
+    expect(
+      find.textContaining(
+        'apps/mobile/test/features/threads/thread_detail_page_test.dart',
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets('internal tool commands like write_stdin are hidden', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-tool-noise',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Called write_stdin',
+              payload: {'command': 'write_stdin'},
+              occurredAt: '2026-03-18T10:02:00Z',
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('\$ Unknown command'), findsNothing);
+    expect(find.text('write_stdin'), findsNothing);
+  });
+
+  testWidgets('apply_patch file changes render as a structured diff card', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-apply-patch',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Edited file',
+              payload: {
+                'output': '''
+*** Begin Patch
+*** Update File: /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile/lib/features/threads/presentation/thread_detail_page.dart
+@@
+-    return oldValue;
++    return newValue;
+*** End Patch
+''',
+              },
+              occurredAt: '2026-03-18T10:02:00Z',
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(
+        const Key('thread-file-change-toggle-thread_detail_page.dart'),
+      ),
+    );
+    await tester.tap(
+      find.byKey(
+        const Key('thread-file-change-toggle-thread_detail_page.dart'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('\$ Unknown command'), findsNothing);
+    expect(
+      find.byKey(const Key('thread-diff-file-thread_detail_page.dart')),
+      findsOneWidget,
+    );
+    expect(find.text('@@'), findsNothing);
+    expect(find.text('+1'), findsOneWidget);
+    expect(find.text('-1'), findsOneWidget);
+    expect(find.text('Modified'), findsOneWidget);
+  });
+
+  testWidgets('background terminal summaries render without raw JSON', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-exec-command',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Background terminal finished',
+              payload: {
+                'output':
+                    'Command: dart format apps/mobile/lib/features/threads/presentation/thread_detail_page.dart\n'
+                    'Output:\n'
+                    'Background terminal finished with dart format apps/mobile/lib/features/threads/presentation/thread_detail_page.dart\n'
+                    'Working directory: /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion',
+              },
+              occurredAt: '2026-03-18T10:02:00Z',
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('thread-terminal-background-summary')),
+    );
+    expect(find.text('\$ Unknown command'), findsNothing);
+    expect(
+      find.byKey(const Key('thread-terminal-background-summary')),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(const Key('thread-terminal-background-summary')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('thread-terminal-background-details')),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        'Working directory: /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('yield_time_ms'), findsNothing);
+  });
+
+  testWidgets('read-only inspection commands collapse into explored files', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-background-main',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Background terminal finished',
+              payload: {
+                'output':
+                    'Command: dart format apps/mobile/test/features/threads/thread_detail_page_test.dart\n'
+                    'Output:\n'
+                    'Background terminal finished with dart format apps/mobile/test/features/threads/thread_detail_page_test.dart',
+              },
+              occurredAt: '2026-03-18T10:02:00Z',
+            ),
+            _timelineEvent(
+              id: 'evt-read-1',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Background terminal finished',
+              payload: {
+                'output':
+                    'Command: nl -ba apps/mobile/lib/features/threads/domain/thread_activity_item.dart\n'
+                    'Output:\n'
+                    'Background terminal finished with nl -ba apps/mobile/lib/features/threads/domain/thread_activity_item.dart',
+              },
+              occurredAt: '2026-03-18T10:02:01Z',
+            ),
+            _timelineEvent(
+              id: 'evt-read-2',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Background terminal finished',
+              payload: {
+                'output':
+                    'Command: sed -n \'1,120p\' apps/mobile/lib/features/threads/domain/parsed_command_output.dart\n'
+                    'Output:\n'
+                    'Background terminal finished with sed -n \'1,120p\' apps/mobile/lib/features/threads/domain/parsed_command_output.dart',
+              },
+              occurredAt: '2026-03-18T10:02:02Z',
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('thread-explored-files-summary')),
+    );
+    expect(
+      find.byKey(const Key('thread-explored-files-summary')),
+      findsOneWidget,
+    );
+    expect(find.text('Explored 2 files'), findsOneWidget);
+    expect(find.text('Read thread_activity_item.dart'), findsOneWidget);
+    expect(find.text('Read parsed_command_output.dart'), findsOneWidget);
+    expect(
+      find.textContaining('Background terminal finished with nl -ba'),
+      findsNothing,
+    );
+    expect(
+      find.textContaining('Background terminal finished with sed -n'),
+      findsNothing,
+    );
+  });
+
   testWidgets('idle composer starts turn and transitions to active controls', (
     tester,
   ) async {
@@ -2318,7 +2699,9 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       throw scriptedResult;
     }
     if (scriptedResult != null) {
-      throw StateError('Unsupported open-on-Mac scripted result: $scriptedResult');
+      throw StateError(
+        'Unsupported open-on-Mac scripted result: $scriptedResult',
+      );
     }
 
     return _openOnMacResponse(threadId: threadId);

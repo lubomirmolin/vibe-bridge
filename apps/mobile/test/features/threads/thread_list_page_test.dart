@@ -45,14 +45,19 @@ void main() {
 
       expect(find.text('Implement shared contracts'), findsOneWidget);
       expect(find.text('Investigate reconnect dedup'), findsOneWidget);
-      expect(find.text('Running'), findsOneWidget);
-      expect(find.text('Completed'), findsOneWidget);
+      expect(find.text('ACTIVE'), findsOneWidget);
+      expect(find.text('COMPLETED'), findsOneWidget);
       expect(
-        find.textContaining('codex-mobile-companion • master'),
+        find.byKey(
+          const Key('thread-folder-group-/workspace/codex-mobile-companion'),
+        ),
         findsOneWidget,
       );
       expect(
-        find.textContaining('/workspace/codex-runtime-tools'),
+        find.descendant(
+          of: find.byKey(const Key('thread-summary-card-thread-456')),
+          matching: find.text('/workspace/codex-runtime-tools'),
+        ),
         findsOneWidget,
       );
     },
@@ -116,7 +121,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Couldn’t load threads'), findsOneWidget);
+    expect(find.text("Couldn't load threads"), findsOneWidget);
     expect(
       find.text('Cannot reach the bridge. Check your private route.'),
       findsOneWidget,
@@ -127,7 +132,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Implement shared contracts'), findsOneWidget);
-    expect(find.text('Couldn’t load threads'), findsNothing);
+    expect(find.text("Couldn't load threads"), findsNothing);
     expect(bridgeApi.fetchCallCount, 2);
   });
 
@@ -211,7 +216,7 @@ void main() {
         find.textContaining('Bridge is offline. Showing cached threads.'),
         findsOneWidget,
       );
-      expect(find.text('Couldn’t load threads'), findsNothing);
+      expect(find.text("Couldn't load threads"), findsNothing);
     },
   );
 
@@ -242,7 +247,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const Key('thread-summary-card-thread-456')),
-        matching: find.text('Completed'),
+        matching: find.text('COMPLETED'),
       ),
       findsOneWidget,
     );
@@ -262,10 +267,93 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const Key('thread-summary-card-thread-456')),
-        matching: find.text('Running'),
+        matching: find.text('ACTIVE'),
       ),
       findsOneWidget,
     );
+  });
+
+  testWidgets('groups threads by workspace folder and keeps matches scoped', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(430, 1400);
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final cacheRepository = _newCacheRepository();
+    final bridgeApi = FakeThreadListBridgeApi(
+      scriptedResults: [_groupedThreads()],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+          approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
+          threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+          threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
+        ],
+        child: const MaterialApp(
+          home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(
+        const Key('thread-folder-group-/workspace/codex-mobile-companion'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('thread-folder-group-/workspace/portable-client')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(
+          const Key('thread-folder-group-/workspace/codex-mobile-companion'),
+        ),
+        matching: find.text('Investigate reconnect dedup'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(
+          const Key('thread-folder-group-/workspace/codex-mobile-companion'),
+        ),
+        matching: find.text('Implement shared contracts'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('thread-folder-group-/workspace/portable-client')),
+      findsOneWidget,
+    );
+
+    await tester.enterText(
+      find.byKey(const Key('thread-search-input')),
+      'portable',
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(
+        const Key('thread-folder-group-/workspace/codex-mobile-companion'),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const Key('thread-folder-group-/workspace/portable-client')),
+      findsOneWidget,
+    );
+    expect(find.text('Add remote config to setup flow'), findsOneWidget);
+    expect(find.text('Implement shared contracts'), findsNothing);
   });
 }
 
@@ -297,6 +385,41 @@ List<ThreadSummaryDto> _sampleThreads() {
       repository: 'codex-runtime-tools',
       branch: 'develop',
       updatedAt: '2026-03-17T17:30:00Z',
+    ),
+  ];
+}
+
+List<ThreadSummaryDto> _groupedThreads() {
+  return const [
+    ThreadSummaryDto(
+      contractVersion: contractVersion,
+      threadId: 'thread-123',
+      title: 'Implement shared contracts',
+      status: ThreadStatus.running,
+      workspace: '/workspace/codex-mobile-companion',
+      repository: 'codex-mobile-companion',
+      branch: 'master',
+      updatedAt: '2026-03-17T18:00:00Z',
+    ),
+    ThreadSummaryDto(
+      contractVersion: contractVersion,
+      threadId: 'thread-456',
+      title: 'Investigate reconnect dedup',
+      status: ThreadStatus.completed,
+      workspace: '/workspace/codex-mobile-companion',
+      repository: 'codex-mobile-companion',
+      branch: 'develop',
+      updatedAt: '2026-03-17T17:30:00Z',
+    ),
+    ThreadSummaryDto(
+      contractVersion: contractVersion,
+      threadId: 'thread-789',
+      title: 'Add remote config to setup flow',
+      status: ThreadStatus.idle,
+      workspace: '/workspace/portable-client',
+      repository: 'portable-client',
+      branch: 'main',
+      updatedAt: '2026-03-17T16:30:00Z',
     ),
   ];
 }
