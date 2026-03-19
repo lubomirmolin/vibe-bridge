@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:codex_mobile_companion/features/threads/domain/parsed_command_output.dart';
 
 enum ThreadActivityItemType {
   userPrompt,
@@ -21,6 +24,8 @@ class ThreadActivityItem {
     required this.title,
     required this.body,
     required this.payload,
+    this.messageImageUrls = const <String>[],
+    this.parsedCommandOutput,
   });
 
   final String eventId;
@@ -30,6 +35,8 @@ class ThreadActivityItem {
   final String title;
   final String body;
   final Map<String, dynamic> payload;
+  final List<String> messageImageUrls;
+  final ParsedCommandOutput? parsedCommandOutput;
 
   factory ThreadActivityItem.fromTimelineEntry(ThreadTimelineEntryDto entry) {
     return ThreadActivityItem._fromEvent(
@@ -63,6 +70,13 @@ class ThreadActivityItem {
     final type = _mapType(kind, payload);
     final title = _titleForType(type);
     final body = _bodyForType(type, kind, payload, summary);
+    final messageImageUrls = _extractMessageImageUrls(payload);
+
+    ParsedCommandOutput? parsedCommandOutput;
+    if (type == ThreadActivityItemType.terminalOutput ||
+        type == ThreadActivityItemType.fileChange) {
+      parsedCommandOutput = ParsedCommandOutput.parse(body);
+    }
 
     return ThreadActivityItem(
       eventId: eventId,
@@ -72,6 +86,8 @@ class ThreadActivityItem {
       title: title,
       body: body,
       payload: payload,
+      messageImageUrls: messageImageUrls,
+      parsedCommandOutput: parsedCommandOutput,
     );
   }
 }
@@ -88,6 +104,9 @@ ThreadActivityItemType _mapType(
     case BridgeEventKind.planDelta:
       return ThreadActivityItemType.planUpdate;
     case BridgeEventKind.commandDelta:
+      if (_isCommandPayloadLikelyFileChange(payload)) {
+        return ThreadActivityItemType.fileChange;
+      }
       return ThreadActivityItemType.terminalOutput;
     case BridgeEventKind.fileChange:
       return ThreadActivityItemType.fileChange;
@@ -98,6 +117,38 @@ ThreadActivityItemType _mapType(
     case BridgeEventKind.securityAudit:
       return ThreadActivityItemType.securityEvent;
   }
+}
+
+bool _isCommandPayloadLikelyFileChange(Map<String, dynamic> payload) {
+  final output = _optionalString(payload, 'output');
+  if (output != null && output.isNotEmpty) {
+    if (output.contains('[diff_block_start]') ||
+        output.contains('*** Begin Patch') ||
+        output.contains('*** Update File:') ||
+        output.contains('diff --git ') ||
+        output.contains('Success. Updated the following files:')) {
+      return true;
+    }
+
+    if (RegExp(
+      r'^(?:\s?[MADRCU?]{1,2})\s+.+$',
+      multiLine: true,
+    ).hasMatch(output)) {
+      return true;
+    }
+  }
+
+  final arguments = _optionalString(payload, 'arguments');
+  if (arguments != null && arguments.isNotEmpty) {
+    if (arguments.contains('git diff') ||
+        arguments.contains('git status') ||
+        arguments.contains('apply_patch') ||
+        arguments.contains('*** Begin Patch')) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 bool _isUserMessagePayload(Map<String, dynamic> payload) {
@@ -151,10 +202,17 @@ String _bodyForType(
   switch (type) {
     case ThreadActivityItemType.userPrompt:
     case ThreadActivityItemType.assistantOutput:
-      return _extractMessageText(payload) ?? fallbackSummary;
+      return _extractMessageText(payload) ?? '';
     case ThreadActivityItemType.planUpdate:
       return _extractPlanText(payload) ?? fallbackSummary;
     case ThreadActivityItemType.terminalOutput:
+      final normalizedBackgroundTerminal = _normalizeBackgroundTerminalBody(
+        payload,
+        fallbackSummary,
+      );
+      if (normalizedBackgroundTerminal != null) {
+        return normalizedBackgroundTerminal;
+      }
       final command =
           _optionalString(payload, 'command') ??
           _optionalString(payload, 'action');
@@ -167,6 +225,17 @@ String _bodyForType(
       }
       return delta ?? command ?? fallbackSummary;
     case ThreadActivityItemType.fileChange:
+      if (kind == BridgeEventKind.commandDelta) {
+        final output = _optionalString(payload, 'output');
+        if (output != null && output.isNotEmpty) {
+          return output;
+        }
+        final arguments = _optionalString(payload, 'arguments');
+        if (arguments != null && arguments.isNotEmpty) {
+          return arguments;
+        }
+      }
+
       final path =
           _optionalString(payload, 'path') ??
           _optionalString(payload, 'file') ??
@@ -214,6 +283,96 @@ String _bodyForType(
   }
 }
 
+String? _normalizeBackgroundTerminalBody(
+  Map<String, dynamic> payload,
+  String fallbackSummary,
+) {
+  final invocation = _extractBackgroundTerminalInvocation(
+    payload,
+    fallbackSummary,
+  );
+  if (invocation == null) {
+    return null;
+  }
+
+  final details = <String>[
+    'Background terminal finished with ${invocation.cmd}',
+    if (invocation.workdir != null && invocation.workdir!.isNotEmpty)
+      'Working directory: ${invocation.workdir}',
+  ];
+
+  return 'Command: ${invocation.cmd}\nOutput:\n${details.join('\n')}';
+}
+
+_BackgroundTerminalInvocation? _extractBackgroundTerminalInvocation(
+  Map<String, dynamic> payload,
+  String fallbackSummary,
+) {
+  final toolName =
+      _optionalString(payload, 'command') ?? _optionalString(payload, 'action');
+  final arguments = payload['arguments'];
+  final input = payload['input'];
+
+  Map<String, dynamic>? decoded;
+  if (arguments is Map<String, dynamic>) {
+    decoded = arguments;
+  } else if (arguments is String) {
+    decoded = _tryDecodeJsonObject(arguments);
+  }
+
+  decoded ??= input is Map<String, dynamic>
+      ? input
+      : input is String
+      ? _tryDecodeJsonObject(input)
+      : null;
+
+  final cmd =
+      (decoded != null ? _optionalString(decoded, 'cmd') : null) ??
+      _optionalString(payload, 'cmd');
+  if (cmd == null || cmd.trim().isEmpty) {
+    return null;
+  }
+
+  final isExecCommand =
+      toolName == 'exec_command' ||
+      fallbackSummary.toLowerCase().contains('exec_command');
+  if (!isExecCommand && decoded == null) {
+    return null;
+  }
+
+  return _BackgroundTerminalInvocation(
+    cmd: cmd,
+    workdir:
+        (decoded != null ? _optionalString(decoded, 'workdir') : null) ??
+        _optionalString(payload, 'workdir'),
+  );
+}
+
+Map<String, dynamic>? _tryDecodeJsonObject(String raw) {
+  final trimmed = raw.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+    return null;
+  }
+
+  try {
+    final decoded = jsonDecode(trimmed);
+    if (decoded is Map<String, dynamic>) {
+      return decoded;
+    }
+  } catch (_) {
+    return null;
+  }
+
+  return null;
+}
+
+class _BackgroundTerminalInvocation {
+  const _BackgroundTerminalInvocation({required this.cmd, this.workdir});
+
+  final String cmd;
+  final String? workdir;
+}
+
 String _extractSummary(BridgeEventKind kind, Map<String, dynamic> payload) {
   return _extractMessageText(payload) ??
       _extractPlanText(payload) ??
@@ -236,17 +395,55 @@ String? _extractMessageText(Map<String, dynamic> payload) {
 
   final content = payload['content'];
   if (content is List) {
+    final texts = <String>[];
     for (final item in content) {
       if (item is Map<String, dynamic>) {
         final contentText = _optionalString(item, 'text');
         if (contentText != null) {
-          return contentText;
+          texts.add(contentText);
+        }
+      }
+    }
+    if (texts.isNotEmpty) {
+      return texts.join('\n');
+    }
+  }
+
+  return null;
+}
+
+List<String> _extractMessageImageUrls(Map<String, dynamic> payload) {
+  final urls = <String>[];
+
+  final content = payload['content'];
+  if (content is List) {
+    for (final item in content) {
+      if (item is! Map<String, dynamic>) {
+        continue;
+      }
+      final itemType = item['type'];
+      if (itemType is! String) {
+        continue;
+      }
+      if (itemType == 'image' || itemType == 'input_image') {
+        final imageUrl = _optionalString(item, 'image_url');
+        if (imageUrl != null) {
+          urls.add(imageUrl);
         }
       }
     }
   }
 
-  return null;
+  final images = payload['images'];
+  if (images is List) {
+    for (final item in images) {
+      if (item is String && item.trim().isNotEmpty) {
+        urls.add(item.trim());
+      }
+    }
+  }
+
+  return urls.toSet().toList(growable: false);
 }
 
 String? _extractPlanText(Map<String, dynamic> payload) {

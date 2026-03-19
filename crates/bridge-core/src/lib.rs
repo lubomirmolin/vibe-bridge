@@ -1076,10 +1076,12 @@ fn handle_websocket_connection(
 
     let mut thread_ids = parse_stream_thread_ids(target);
     if thread_ids.is_empty() {
-        thread_ids = app
+        let mut thread_api = app
             .thread_api
             .lock()
-            .expect("thread API mutex should not be poisoned")
+            .expect("thread API mutex should not be poisoned");
+        log_thread_sync_error(thread_api.sync_from_upstream());
+        thread_ids = thread_api
             .list_response()
             .threads
             .into_iter()
@@ -1161,6 +1163,12 @@ fn parse_stream_thread_ids(target: &str) -> Vec<String> {
     }
 
     thread_ids.into_iter().collect::<Vec<_>>()
+}
+
+fn log_thread_sync_error(result: Result<(), String>) {
+    if let Err(error) = result {
+        eprintln!("failed to refresh Codex thread snapshot: {error}");
+    }
 }
 
 fn route_request(request_line: &str, app: &BridgeApplication) -> String {
@@ -1316,11 +1324,12 @@ fn route_request(request_line: &str, app: &BridgeApplication) -> String {
             json_response("200 OK", &payload)
         }
         ("GET", "/threads") => {
-            let response = app
+            let mut thread_api = app
                 .thread_api
                 .lock()
-                .expect("thread API mutex should not be poisoned")
-                .list_response();
+                .expect("thread API mutex should not be poisoned");
+            log_thread_sync_error(thread_api.sync_from_upstream());
+            let response = thread_api.list_response();
             json_response("200 OK", &response)
         }
         (_, "/stream") => upgrade_required_response(),
@@ -1570,29 +1579,31 @@ fn route_thread_request(
 
     match (method, segments.as_slice()) {
         ("GET", [_]) => {
-            let mut detail = app
+            let mut thread_api = app
                 .thread_api
                 .lock()
-                .expect("thread API mutex should not be poisoned")
-                .detail_response(thread_id)?;
+                .expect("thread API mutex should not be poisoned");
+            log_thread_sync_error(thread_api.sync_from_upstream());
+            let mut detail = thread_api.detail_response(thread_id)?;
             detail.thread.access_mode = app.access_mode();
             Some(json_response("200 OK", &detail))
         }
         ("GET", [_, "timeline"]) => {
-            let timeline = app
+            let mut thread_api = app
                 .thread_api
                 .lock()
-                .expect("thread API mutex should not be poisoned")
-                .timeline_response(thread_id)?;
+                .expect("thread API mutex should not be poisoned");
+            log_thread_sync_error(thread_api.sync_from_upstream());
+            let timeline = thread_api.timeline_response(thread_id)?;
             Some(json_response("200 OK", &timeline))
         }
         ("POST", [_, "open-on-mac"]) => {
-            let thread_exists = app
+            let mut thread_api = app
                 .thread_api
                 .lock()
-                .expect("thread API mutex should not be poisoned")
-                .detail_response(thread_id)
-                .is_some();
+                .expect("thread API mutex should not be poisoned");
+            log_thread_sync_error(thread_api.sync_from_upstream());
+            let thread_exists = thread_api.detail_response(thread_id).is_some();
             if !thread_exists {
                 return None;
             }
@@ -1608,11 +1619,12 @@ fn route_thread_request(
             })
         }
         ("GET", [_, "git", "status"]) => {
-            let status = app
+            let mut thread_api = app
                 .thread_api
                 .lock()
-                .expect("thread API mutex should not be poisoned")
-                .git_status_response(thread_id)?;
+                .expect("thread API mutex should not be poisoned");
+            log_thread_sync_error(thread_api.sync_from_upstream());
+            let status = thread_api.git_status_response(thread_id)?;
             Some(json_response("200 OK", &status))
         }
         ("POST", [_, "turns", "start"]) => {

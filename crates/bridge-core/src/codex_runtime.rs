@@ -239,13 +239,12 @@ fn spawn_managed_process_with_endpoint(
 fn build_spawn_args(args: &[String], endpoint: Option<&str>) -> Vec<String> {
     let mut spawn_args = args.to_vec();
 
-    if let Some(endpoint) = endpoint {
-        if spawn_args.first().map(String::as_str) == Some("app-server")
-            && !spawn_args.iter().any(|arg| arg == "--listen")
-        {
-            spawn_args.push("--listen".to_string());
-            spawn_args.push(endpoint.to_string());
-        }
+    if let Some(endpoint) = endpoint
+        && spawn_args.first().map(String::as_str) == Some("app-server")
+        && !spawn_args.iter().any(|arg| arg == "--listen")
+    {
+        spawn_args.push("--listen".to_string());
+        spawn_args.push(endpoint.to_string());
     }
 
     spawn_args

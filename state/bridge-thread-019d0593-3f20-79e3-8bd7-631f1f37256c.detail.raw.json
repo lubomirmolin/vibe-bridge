@@ -1,0 +1,17 @@
+{
+  "contract_version": "2026-03-17",
+  "thread": {
+    "contract_version": "2026-03-17",
+    "thread_id": "019d0593-3f20-79e3-8bd7-631f1f37256c",
+    "title": "Update QR card mask effect",
+    "status": "completed",
+    "workspace": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion",
+    "repository": "codex-mobile-companion",
+    "branch": "master",
+    "created_at": "2026-03-19T10:10:29.291Z",
+    "updated_at": "2026-03-19T10:12:09.473788Z",
+    "source": "vscode",
+    "access_mode": "control_with_approvals",
+    "last_turn_summary": "The transition now keeps the full-screen wipe, but the wipe erases the foreground layout instead of filling with zinc. In [`/Users/lubomirm..."
+  }
+}

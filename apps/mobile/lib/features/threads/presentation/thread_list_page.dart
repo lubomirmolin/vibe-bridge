@@ -36,8 +36,13 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
     super.dispose();
   }
 
-  void _restoreSelectedThreadIfNeeded(ThreadListState state, ThreadListController controller) {
-    if (_didRestoreSelectedThread || !state.hasSelectedThread || state.isLoading) {
+  void _restoreSelectedThreadIfNeeded(
+    ThreadListState state,
+    ThreadListController controller,
+  ) {
+    if (_didRestoreSelectedThread ||
+        !state.hasSelectedThread ||
+        state.isLoading) {
       return;
     }
 
@@ -50,22 +55,32 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
     });
   }
 
-  Future<void> _openThreadDetail(ThreadListController controller, String threadId) async {
+  Future<void> _openThreadDetail(
+    ThreadListController controller,
+    String threadId,
+  ) async {
     _didRestoreSelectedThread = true;
     await controller.selectThread(threadId);
     if (!mounted) return;
 
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => ThreadDetailPage(bridgeApiBaseUrl: widget.bridgeApiBaseUrl, threadId: threadId),
+        builder: (context) => ThreadDetailPage(
+          bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+          threadId: threadId,
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(threadListControllerProvider(widget.bridgeApiBaseUrl));
-    final controller = ref.read(threadListControllerProvider(widget.bridgeApiBaseUrl).notifier);
+    final state = ref.watch(
+      threadListControllerProvider(widget.bridgeApiBaseUrl),
+    );
+    final controller = ref.read(
+      threadListControllerProvider(widget.bridgeApiBaseUrl).notifier,
+    );
 
     _restoreSelectedThreadIfNeeded(state, controller);
 
@@ -77,7 +92,7 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
             // Sticky Header matching React ThreadListScreen
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              color: AppTheme.background.withOpacity(0.8),
+              color: AppTheme.background.withValues(alpha: 0.8),
               child: Row(
                 children: [
                   IconButton(
@@ -92,9 +107,10 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                   Expanded(
                     child: Text(
                       'Threads',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w500, letterSpacing: -0.5),
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: -0.5,
+                      ),
                     ),
                   ),
                 ],
@@ -105,11 +121,17 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
               child: Container(
-                decoration: LiquidStyles.liquidGlass.copyWith(borderRadius: BorderRadius.circular(16)),
+                decoration: LiquidStyles.liquidGlass.copyWith(
+                  borderRadius: BorderRadius.circular(16),
+                ),
                 child: TextField(
+                  key: const Key('thread-search-input'),
                   controller: _searchController,
                   onChanged: controller.updateSearchQuery,
-                  style: const TextStyle(color: AppTheme.textMain, fontSize: 14),
+                  style: const TextStyle(
+                    color: AppTheme.textMain,
+                    fontSize: 14,
+                  ),
                   decoration: InputDecoration(
                     hintText: 'Search sessions...',
                     hintStyle: const TextStyle(color: AppTheme.textSubtle),
@@ -127,11 +149,18 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                               _searchController.clear();
                               controller.clearSearchQuery();
                             },
-                            icon: PhosphorIcon(PhosphorIcons.x(), size: 16, color: AppTheme.textSubtle),
+                            icon: PhosphorIcon(
+                              PhosphorIcons.x(),
+                              size: 16,
+                              color: AppTheme.textSubtle,
+                            ),
                           )
                         : null,
                     border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
                   ),
                 ),
               ),
@@ -160,7 +189,11 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
             SizedBox(height: 16),
             Text(
               'Loading threads...',
-              style: TextStyle(color: AppTheme.textMuted, fontSize: 13, fontFamily: 'JetBrains Mono'),
+              style: TextStyle(
+                color: AppTheme.textMuted,
+                fontSize: 13,
+                fontFamily: 'JetBrains Mono',
+              ),
             ),
           ],
         ),
@@ -174,11 +207,19 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              PhosphorIcon(PhosphorIcons.wifiX(), size: 48, color: AppTheme.rose),
+              PhosphorIcon(
+                PhosphorIcons.wifiX(),
+                size: 48,
+                color: AppTheme.rose,
+              ),
               const SizedBox(height: 16),
               const Text(
                 'Couldn\'t load threads',
-                style: TextStyle(color: AppTheme.textMain, fontSize: 16, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  color: AppTheme.textMain,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               const SizedBox(height: 8),
               Text(
@@ -209,19 +250,25 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               PhosphorIcon(
-                state.isEmptyState ? PhosphorIcons.chatTeardropText() : PhosphorIcons.magnifyingGlassMinus(),
+                state.isEmptyState
+                    ? PhosphorIcons.chatTeardropText()
+                    : PhosphorIcons.magnifyingGlassMinus(),
                 size: 48,
                 color: AppTheme.textSubtle,
               ),
               const SizedBox(height: 16),
               Text(
                 state.isEmptyState ? 'No threads yet' : 'No matching threads',
-                style: const TextStyle(color: AppTheme.textMain, fontSize: 16, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                  color: AppTheme.textMain,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               const SizedBox(height: 8),
               Text(
                 state.isEmptyState
-                    ? 'Start a turn on your Mac, then pull to refresh.'
+                    ? 'Start a turn on your Mac, then pull to refresh this list.'
                     : 'Try a different search term or clear the filter.',
                 textAlign: TextAlign.center,
                 style: const TextStyle(color: AppTheme.textMuted),
@@ -238,14 +285,17 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
       onRefresh: controller.loadThreads,
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-        physics: const AlwaysScrollableScrollPhysics(parent: const BouncingScrollPhysics()),
-        itemCount: state.visibleThreads.length,
-        separatorBuilder: (context, index) => const SizedBox(height: 16),
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
+        ),
+        itemCount: state.visibleGroups.length,
+        separatorBuilder: (context, index) => const SizedBox(height: 24),
         itemBuilder: (context, index) {
-          final thread = state.visibleThreads[index];
-          return _ThreadSummaryCard(
-            thread: thread,
-            onOpenDetail: () => unawaited(_openThreadDetail(controller, thread.threadId)),
+          final group = state.visibleGroups[index];
+          return _ThreadWorkspaceSection(
+            group: group,
+            onOpenDetail: (threadId) =>
+                unawaited(_openThreadDetail(controller, threadId)),
           );
         },
       ),
@@ -263,11 +313,69 @@ class _StaleDataBanner extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppTheme.rose.withOpacity(0.1),
+        color: AppTheme.rose.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.rose.withOpacity(0.3)),
+        border: Border.all(color: AppTheme.rose.withValues(alpha: 0.3)),
       ),
-      child: Text(message, style: const TextStyle(color: AppTheme.rose, fontSize: 13)),
+      child: Text(
+        message,
+        style: const TextStyle(color: AppTheme.rose, fontSize: 13),
+      ),
+    );
+  }
+}
+
+class _ThreadWorkspaceSection extends StatelessWidget {
+  const _ThreadWorkspaceSection({
+    required this.group,
+    required this.onOpenDetail,
+  });
+
+  final ThreadWorkspaceGroup group;
+  final ValueChanged<String> onOpenDetail;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      key: Key('thread-folder-group-${group.groupId}'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            PhosphorIcon(
+              PhosphorIcons.folderSimple(),
+              size: 18,
+              color: AppTheme.textMuted,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                group.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppTheme.textMuted,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: -0.3,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Column(
+          children: [
+            for (var index = 0; index < group.threads.length; index++) ...[
+              _ThreadSummaryCard(
+                thread: group.threads[index],
+                onOpenDetail: () => onOpenDetail(group.threads[index].threadId),
+              ),
+              if (index < group.threads.length - 1) const SizedBox(height: 12),
+            ],
+          ],
+        ),
+      ],
     );
   }
 }
@@ -301,17 +409,19 @@ class _ThreadSummaryCard extends StatelessWidget {
         statusText = 'COMPLETED';
         break;
       case ThreadStatus.idle:
-      default:
         variant = BadgeVariant.defaultVariant;
         statusText = 'IDLE';
         break;
     }
 
     return GestureDetector(
+      key: Key('thread-summary-card-${thread.threadId}'),
       onTap: onOpenDetail,
       child: Container(
         padding: const EdgeInsets.all(20),
-        decoration: LiquidStyles.liquidGlass.copyWith(borderRadius: BorderRadius.circular(24)),
+        decoration: LiquidStyles.liquidGlass.copyWith(
+          borderRadius: BorderRadius.circular(24),
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -340,28 +450,45 @@ class _ThreadSummaryCard extends StatelessWidget {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _DetailRow(icon: PhosphorIcons.folderSimple(), text: thread.repository),
+                _DetailRow(
+                  icon: PhosphorIcons.folderSimple(),
+                  text: thread.repository,
+                ),
                 const SizedBox(height: 8),
-                _DetailRow(icon: PhosphorIcons.gitBranch(), text: thread.branch),
+                _DetailRow(
+                  icon: PhosphorIcons.gitBranch(),
+                  text: thread.branch,
+                ),
                 const SizedBox(height: 8),
-                _DetailRow(icon: PhosphorIcons.terminalWindow(), text: thread.workspace),
+                _DetailRow(
+                  icon: PhosphorIcons.terminalWindow(),
+                  text: thread.workspace,
+                ),
               ],
             ),
 
             const SizedBox(height: 20),
-            Container(height: 1, color: Colors.white.withOpacity(0.05)),
+            Container(height: 1, color: Colors.white.withValues(alpha: 0.05)),
             const SizedBox(height: 16),
 
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  thread.threadId.length > 8 ? thread.threadId.substring(0, 8) : thread.threadId,
-                  style: GoogleFonts.jetBrainsMono(color: AppTheme.textSubtle, fontSize: 10),
+                  thread.threadId.length > 8
+                      ? thread.threadId.substring(0, 8)
+                      : thread.threadId,
+                  style: GoogleFonts.jetBrainsMono(
+                    color: AppTheme.textSubtle,
+                    fontSize: 10,
+                  ),
                 ),
                 Text(
                   _formatDate(DateTime.parse(thread.updatedAt)),
-                  style: GoogleFonts.jetBrainsMono(color: AppTheme.textSubtle, fontSize: 10),
+                  style: GoogleFonts.jetBrainsMono(
+                    color: AppTheme.textSubtle,
+                    fontSize: 10,
+                  ),
                 ),
               ],
             ),
@@ -395,7 +522,10 @@ class _DetailRow extends StatelessWidget {
         Expanded(
           child: Text(
             text,
-            style: GoogleFonts.jetBrainsMono(color: AppTheme.textSubtle, fontSize: 12),
+            style: GoogleFonts.jetBrainsMono(
+              color: AppTheme.textSubtle,
+              fontSize: 12,
+            ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
