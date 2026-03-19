@@ -2,7 +2,7 @@ import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_valida
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('accepts a valid pairing payload', () {
+  test('accepts a valid compact pairing payload', () {
     final result = validatePairingQrPayload(
       _validPayload(),
       nowUtc: DateTime.fromMillisecondsSinceEpoch(150 * 1000, isUtc: true),
@@ -12,6 +12,18 @@ void main() {
     expect(result.isValid, isTrue);
     expect(result.payload?.bridgeId, 'bridge-a1');
     expect(result.payload?.sessionId, 'session-1');
+  });
+
+  test('accepts a valid legacy pairing payload', () {
+    final result = validatePairingQrPayload(
+      _legacyPayload(),
+      nowUtc: DateTime.fromMillisecondsSinceEpoch(150 * 1000, isUtc: true),
+      consumedSessionIds: <String>{},
+    );
+
+    expect(result.isValid, isTrue);
+    expect(result.payload?.bridgeName, 'Codex Mobile Companion');
+    expect(result.payload?.expiresAtEpochSeconds, 200);
   });
 
   test('rejects malformed payload with rescan guidance', () {
@@ -28,7 +40,7 @@ void main() {
 
   test('rejects expired payload', () {
     final result = validatePairingQrPayload(
-      _validPayload(issuedAtEpochSeconds: 1, expiresAtEpochSeconds: 10),
+      _legacyPayload(issuedAtEpochSeconds: 1, expiresAtEpochSeconds: 10),
       nowUtc: DateTime.fromMillisecondsSinceEpoch(11 * 1000, isUtc: true),
       consumedSessionIds: <String>{},
     );
@@ -61,6 +73,22 @@ void main() {
 }
 
 String _validPayload({
+  String bridgeId = 'bridge-a1',
+  String bridgeApiBaseUrl = 'https://bridge.ts.net',
+  String sessionId = 'session-1',
+}) {
+  return '''
+{
+  "v": "2026-03-17",
+  "b": "$bridgeId",
+  "u": "$bridgeApiBaseUrl",
+  "s": "$sessionId",
+  "t": "ptk-abc"
+}
+''';
+}
+
+String _legacyPayload({
   String bridgeId = 'bridge-a1',
   String bridgeApiBaseUrl = 'https://bridge.ts.net',
   String sessionId = 'session-1',

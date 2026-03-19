@@ -48,6 +48,7 @@ struct Config {
     host: String,
     port: u16,
     admin_port: u16,
+    state_directory: PathBuf,
     pairing_base_url: String,
     pairing_route_reachable: bool,
     pairing_route_message: Option<String>,
@@ -152,7 +153,7 @@ where
     I: IntoIterator<Item = String>,
 {
     let config = parse_args(args)?;
-    let foundations = build_foundations(".");
+    let foundations = build_foundations(config.state_directory.clone());
 
     let mut runtime = CodexRuntimeSupervisor::new(config.codex_runtime.clone());
     runtime.initialize()?;
@@ -234,6 +235,7 @@ where
     let mut host = String::from("127.0.0.1");
     let mut port = 3110_u16;
     let mut admin_port = 3111_u16;
+    let mut state_directory = PathBuf::from(".");
 
     let mut codex_mode = CodexRuntimeMode::Auto;
     let mut codex_endpoint = Some("ws://127.0.0.1:4222".to_string());
@@ -265,6 +267,18 @@ where
                 admin_port = value
                     .parse()
                     .map_err(|_| format!("invalid --admin-port value: {value}"))?;
+            }
+            "--state-directory" => {
+                let value = args_iter
+                    .next()
+                    .ok_or_else(|| String::from("missing value for --state-directory"))?;
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    return Err(String::from(
+                        "invalid --state-directory value: path is empty",
+                    ));
+                }
+                state_directory = PathBuf::from(trimmed);
             }
             "--codex-mode" => {
                 let value = args_iter
@@ -302,7 +316,7 @@ where
             }
             "--help" | "-h" => {
                 return Err(String::from(
-                    "usage: bridge-server [--host <ip-or-hostname>] [--port <u16>] [--admin-port <u16>] [--pairing-base-url <https://bridge.ts.net>] [--codex-mode <auto|spawn|attach>] [--codex-endpoint <ws-url>] [--codex-command <binary>] [--codex-arg <arg>]",
+                    "usage: bridge-server [--host <ip-or-hostname>] [--port <u16>] [--admin-port <u16>] [--state-directory <path>] [--pairing-base-url <https://bridge.ts.net>] [--codex-mode <auto|spawn|attach>] [--codex-endpoint <ws-url>] [--codex-command <binary>] [--codex-arg <arg>]",
                 ));
             }
             _ => {
@@ -333,6 +347,7 @@ where
         host,
         port,
         admin_port,
+        state_directory,
         pairing_base_url: pairing_route.pairing_base_url,
         pairing_route_reachable: pairing_route.reachable,
         pairing_route_message: pairing_route.message,
@@ -2441,6 +2456,8 @@ mod tests {
                 "9999".to_string(),
                 "--admin-port".to_string(),
                 "9998".to_string(),
+                "--state-directory".to_string(),
+                "/tmp/bridge-state".to_string(),
                 "--codex-mode".to_string(),
                 "spawn".to_string(),
                 "--codex-command".to_string(),
@@ -2460,6 +2477,7 @@ mod tests {
                 host: "0.0.0.0".to_string(),
                 port: 9999,
                 admin_port: 9998,
+                state_directory: PathBuf::from("/tmp/bridge-state"),
                 pairing_base_url: "https://bridge.ts.net".to_string(),
                 pairing_route_reachable: true,
                 pairing_route_message: None,
@@ -3168,11 +3186,12 @@ mod tests {
         let qr_payload: Value =
             serde_json::from_str(qr_payload).expect("qr payload should decode as JSON");
 
-        assert_eq!(qr_payload["bridge_api_base_url"], "https://bridge.ts.net");
-        assert_eq!(
-            qr_payload["pairing_token"],
-            body["pairing_session"]["pairing_token"]
-        );
+        assert_eq!(qr_payload["u"], "https://bridge.ts.net");
+        assert_eq!(qr_payload["b"], body["bridge_identity"]["bridge_id"]);
+        assert_eq!(qr_payload["s"], body["pairing_session"]["session_id"]);
+        assert_eq!(qr_payload["t"], body["pairing_session"]["pairing_token"]);
+        assert!(qr_payload.get("bridge_name").is_none());
+        assert!(qr_payload.get("issued_at_epoch_seconds").is_none());
     }
 
     #[test]
