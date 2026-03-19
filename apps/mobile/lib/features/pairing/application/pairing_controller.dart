@@ -244,9 +244,13 @@ class PairingController extends StateNotifier<PairingState> {
       return;
     }
 
-    final trust = TrustedBridgeIdentity.fromPayload(
-      payload,
-      pairedAtUtc: _nowUtc(),
+    final pairedAtUtc = _nowUtc();
+    final trust = TrustedBridgeIdentity(
+      bridgeId: finalizeResult.bridgeId!,
+      bridgeName: finalizeResult.bridgeName!,
+      bridgeApiBaseUrl: finalizeResult.bridgeApiBaseUrl!,
+      sessionId: payload.sessionId,
+      pairedAtEpochSeconds: pairedAtUtc.millisecondsSinceEpoch ~/ 1000,
     );
 
     await _secureStore.writeSecret(

@@ -726,10 +726,12 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
     private let pathResolver: BridgeBinaryPathResolver
     private let portProcessInspector: BridgePortProcessInspecting
     private let processEnvironment: [String: String]
+    private let fileManager: FileManager
     private let bridgeHost: String
     private let bridgePort: Int
     private let adminPort: Int
     private let codexCommandOverride: String?
+    private let stateDirectoryURL: URL
     private let currentProcessID: Int32
 
     private var managedProcess: Process?
@@ -741,20 +743,24 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
         pathResolver: BridgeBinaryPathResolver = BridgeBinaryPathResolver(),
         portProcessInspector: BridgePortProcessInspecting = BridgePortProcessInspector(),
         processEnvironment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default,
         bridgeHost: String = "127.0.0.1",
         bridgePort: Int = 3110,
         adminPort: Int = 3111,
         codexCommandOverride: String? = ProcessInfo.processInfo.environment["CODEX_MOBILE_COMPANION_CODEX_BINARY"],
+        stateDirectoryURL: URL = DesktopRuntimeSupervisor.defaultStateDirectoryURL(),
         currentProcessID: Int32 = Int32(ProcessInfo.processInfo.processIdentifier)
     ) {
         self.healthProbe = healthProbe
         self.pathResolver = pathResolver
         self.portProcessInspector = portProcessInspector
         self.processEnvironment = processEnvironment
+        self.fileManager = fileManager
         self.bridgeHost = bridgeHost
         self.bridgePort = bridgePort
         self.adminPort = adminPort
         self.codexCommandOverride = codexCommandOverride
+        self.stateDirectoryURL = stateDirectoryURL
         self.currentProcessID = currentProcessID
     }
 
@@ -845,6 +851,19 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
         process.executableURL = bridgeBinaryURL
         process.arguments = bridgeArguments()
         process.environment = processEnvironment
+        process.currentDirectoryURL = stateDirectoryURL
+
+        do {
+            try fileManager.createDirectory(
+                at: stateDirectoryURL,
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+        } catch {
+            throw DesktopRuntimeSupervisorError.launchFailed(
+                "failed to prepare bridge state directory at \(stateDirectoryURL.path): \(error.localizedDescription)"
+            )
+        }
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -881,6 +900,7 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
             "--host", bridgeHost,
             "--port", "\(bridgePort)",
             "--admin-port", "\(adminPort)",
+            "--state-directory", stateDirectoryURL.path,
             "--codex-mode", "auto",
         ]
 
@@ -893,6 +913,16 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
         }
 
         return arguments
+    }
+
+    static func defaultStateDirectoryURL() -> URL {
+        let applicationSupportDirectory = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? URL(fileURLWithPath: NSHomeDirectory())
+        return applicationSupportDirectory
+            .appending(path: "CodexMobileCompanion", directoryHint: .isDirectory)
+            .appending(path: "bridge-core", directoryHint: .isDirectory)
     }
 
     private func terminateBridgeListener(_ listener: BridgePortProcess) throws {

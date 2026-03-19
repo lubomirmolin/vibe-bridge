@@ -843,7 +843,12 @@ class FakePairingBridgeApi implements PairingBridgeApi {
     required String phoneId,
     required String phoneName,
   }) async {
-    return const PairingFinalizeResult.success(sessionToken: 'session-token');
+    return PairingFinalizeResult.success(
+      sessionToken: 'session-token',
+      bridgeId: payload.bridgeId,
+      bridgeName: payload.bridgeName,
+      bridgeApiBaseUrl: payload.bridgeApiBaseUrl,
+    );
   }
 
   @override

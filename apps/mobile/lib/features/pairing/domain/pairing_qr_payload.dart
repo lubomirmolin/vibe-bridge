@@ -4,16 +4,18 @@ import 'dart:io';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart'
     as bridge_contracts;
 
+const String _defaultBridgeDisplayName = 'Codex Mobile Companion';
+
 class PairingQrPayload {
   const PairingQrPayload({
     required this.contractVersion,
     required this.bridgeId,
-    required this.bridgeName,
+    this.bridgeName = _defaultBridgeDisplayName,
     required this.bridgeApiBaseUrl,
     required this.sessionId,
     required this.pairingToken,
-    required this.issuedAtEpochSeconds,
-    required this.expiresAtEpochSeconds,
+    this.issuedAtEpochSeconds,
+    this.expiresAtEpochSeconds,
   });
 
   final String contractVersion;
@@ -22,29 +24,52 @@ class PairingQrPayload {
   final String bridgeApiBaseUrl;
   final String sessionId;
   final String pairingToken;
-  final int issuedAtEpochSeconds;
-  final int expiresAtEpochSeconds;
+  final int? issuedAtEpochSeconds;
+  final int? expiresAtEpochSeconds;
 
-  DateTime get issuedAtUtc => DateTime.fromMillisecondsSinceEpoch(
-    issuedAtEpochSeconds * 1000,
-    isUtc: true,
-  );
+  DateTime? get issuedAtUtc {
+    final issuedAtEpochSeconds = this.issuedAtEpochSeconds;
+    if (issuedAtEpochSeconds == null) {
+      return null;
+    }
 
-  DateTime get expiresAtUtc => DateTime.fromMillisecondsSinceEpoch(
-    expiresAtEpochSeconds * 1000,
-    isUtc: true,
-  );
+    return DateTime.fromMillisecondsSinceEpoch(
+      issuedAtEpochSeconds * 1000,
+      isUtc: true,
+    );
+  }
+
+  DateTime? get expiresAtUtc {
+    final expiresAtEpochSeconds = this.expiresAtEpochSeconds;
+    if (expiresAtEpochSeconds == null) {
+      return null;
+    }
+
+    return DateTime.fromMillisecondsSinceEpoch(
+      expiresAtEpochSeconds * 1000,
+      isUtc: true,
+    );
+  }
 
   factory PairingQrPayload.fromJson(Map<String, dynamic> json) {
     final parsed = PairingQrPayload(
-      contractVersion: _readRequiredString(json, 'contract_version'),
-      bridgeId: _readRequiredString(json, 'bridge_id'),
-      bridgeName: _readRequiredString(json, 'bridge_name'),
-      bridgeApiBaseUrl: _readRequiredString(json, 'bridge_api_base_url'),
-      sessionId: _readRequiredString(json, 'session_id'),
-      pairingToken: _readRequiredString(json, 'pairing_token'),
-      issuedAtEpochSeconds: _readRequiredInt(json, 'issued_at_epoch_seconds'),
-      expiresAtEpochSeconds: _readRequiredInt(json, 'expires_at_epoch_seconds'),
+      contractVersion: _readRequiredStringAny(json, ['contract_version', 'v']),
+      bridgeId: _readRequiredStringAny(json, ['bridge_id', 'b']),
+      bridgeName:
+          _readOptionalStringAny(json, ['bridge_name']) ??
+          _defaultBridgeDisplayName,
+      bridgeApiBaseUrl: _readRequiredStringAny(json, [
+        'bridge_api_base_url',
+        'u',
+      ]),
+      sessionId: _readRequiredStringAny(json, ['session_id', 's']),
+      pairingToken: _readRequiredStringAny(json, ['pairing_token', 't']),
+      issuedAtEpochSeconds: _readOptionalIntAny(json, [
+        'issued_at_epoch_seconds',
+      ]),
+      expiresAtEpochSeconds: _readOptionalIntAny(json, [
+        'expires_at_epoch_seconds',
+      ]),
     );
 
     if (parsed.contractVersion != bridge_contracts.contractVersion) {
@@ -56,7 +81,17 @@ class PairingQrPayload {
       throw const FormatException('Invalid bridge_api_base_url.');
     }
 
-    if (parsed.expiresAtEpochSeconds <= parsed.issuedAtEpochSeconds) {
+    final issuedAtEpochSeconds = parsed.issuedAtEpochSeconds;
+    final expiresAtEpochSeconds = parsed.expiresAtEpochSeconds;
+    if ((issuedAtEpochSeconds == null) != (expiresAtEpochSeconds == null)) {
+      throw const FormatException(
+        'Pairing timestamps must be supplied together.',
+      );
+    }
+
+    if (issuedAtEpochSeconds != null &&
+        expiresAtEpochSeconds != null &&
+        expiresAtEpochSeconds <= issuedAtEpochSeconds) {
       throw const FormatException('Pairing expiry must be after issue time.');
     }
 
@@ -140,6 +175,37 @@ int _readRequiredInt(Map<String, dynamic> json, String key) {
   throw FormatException('Missing or invalid field "$key".');
 }
 
+String _readRequiredStringAny(Map<String, dynamic> json, List<String> keys) {
+  final value = _readOptionalStringAny(json, keys);
+  if (value != null) {
+    return value;
+  }
+
+  throw FormatException('Missing or invalid field "${keys.first}".');
+}
+
+String? _readOptionalStringAny(Map<String, dynamic> json, List<String> keys) {
+  for (final key in keys) {
+    final value = json[key];
+    if (value is String && value.trim().isNotEmpty) {
+      return value.trim();
+    }
+  }
+
+  return null;
+}
+
+int? _readOptionalIntAny(Map<String, dynamic> json, List<String> keys) {
+  for (final key in keys) {
+    final value = json[key];
+    if (value is int) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
 bool isPrivateBridgeApiBaseUrl(String rawBaseUrl) {
   final uri = Uri.tryParse(rawBaseUrl);
   if (uri == null || uri.scheme.toLowerCase() != 'https' || uri.host.isEmpty) {
@@ -153,7 +219,8 @@ bool isPrivateBridgeApiBaseUrl(String rawBaseUrl) {
 
   final parsedAddress = InternetAddress.tryParse(host);
   if (parsedAddress != null) {
-    if (parsedAddress.isLoopback || parsedAddress.type == InternetAddressType.IPv6) {
+    if (parsedAddress.isLoopback ||
+        parsedAddress.type == InternetAddressType.IPv6) {
       return false;
     }
 

@@ -69,7 +69,7 @@ final class CodexMobileCompanionTests: XCTestCase {
             "issued_at_epoch_seconds": 1,
             "expires_at_epoch_seconds": 301
           },
-          "qr_payload": "bridge-74dbf8ad31e2af1b|pairing-session-1"
+          "qr_payload": "{\\"v\\":\\"2026-03-17\\",\\"b\\":\\"bridge-74dbf8ad31e2af1b\\",\\"u\\":\\"http://127.0.0.1:3110\\",\\"s\\":\\"pairing-session-1\\",\\"t\\":\\"ptk-aabbccdd\\"}"
         }
         """
 
@@ -82,6 +82,13 @@ final class CodexMobileCompanionTests: XCTestCase {
         XCTAssertEqual(decoded.bridgeIdentity.bridgeID, "bridge-74dbf8ad31e2af1b")
         XCTAssertEqual(decoded.pairingSession.sessionID, "pairing-session-1")
         XCTAssertEqual(decoded.bridgeIdentity.apiBaseURL, "http://127.0.0.1:3110")
+    }
+
+    func testDesktopRuntimeSupervisorDefaultStateDirectoryUsesApplicationSupport() {
+        let url = DesktopRuntimeSupervisor.defaultStateDirectoryURL()
+
+        XCTAssertTrue(url.path.contains("/Library/Application Support/"))
+        XCTAssertTrue(url.path.hasSuffix("/CodexMobileCompanion/bridge-core"))
     }
 
     func testShellStateResolverMapsUnpairedPairedIdleAndPairedActive() {

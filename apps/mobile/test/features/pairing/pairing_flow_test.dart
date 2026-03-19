@@ -711,14 +711,11 @@ String _validPayloadJson({
 }) {
   return '''
 {
-  "contract_version": "2026-03-17",
-  "bridge_id": "$bridgeId",
-  "bridge_name": "Codex Mobile Companion",
-  "bridge_api_base_url": "https://bridge.ts.net",
-  "session_id": "$sessionId",
-  "pairing_token": "ptk-abc",
-  "issued_at_epoch_seconds": 170,
-  "expires_at_epoch_seconds": 10000000000
+  "v": "2026-03-17",
+  "b": "$bridgeId",
+  "u": "https://bridge.ts.net",
+  "s": "$sessionId",
+  "t": "ptk-abc"
 }
 ''';
 }
@@ -752,8 +749,11 @@ class FakePairingBridgeApi implements PairingBridgeApi {
     }
 
     _consumedSessions.add(payload.sessionId);
-    return const PairingFinalizeResult.success(
+    return PairingFinalizeResult.success(
       sessionToken: 'bridge-session-token',
+      bridgeId: payload.bridgeId,
+      bridgeName: payload.bridgeName,
+      bridgeApiBaseUrl: payload.bridgeApiBaseUrl,
     );
   }
 

@@ -62,12 +62,9 @@ impl PairingSessionService {
         let qr_payload = PairingQrPayload {
             contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
             bridge_id: self.bridge_id.clone(),
-            bridge_name: self.bridge_name.clone(),
             bridge_api_base_url: self.api_base_url.clone(),
             session_id: session_id.clone(),
             pairing_token: pairing_token.clone(),
-            issued_at_epoch_seconds,
-            expires_at_epoch_seconds,
         };
 
         self.sessions.insert(
@@ -491,14 +488,16 @@ pub struct PairingActiveSessionSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct PairingQrPayload {
+    #[serde(rename = "v")]
     contract_version: String,
+    #[serde(rename = "b")]
     bridge_id: String,
-    bridge_name: String,
+    #[serde(rename = "u")]
     bridge_api_base_url: String,
+    #[serde(rename = "s")]
     session_id: String,
+    #[serde(rename = "t")]
     pairing_token: String,
-    issued_at_epoch_seconds: u64,
-    expires_at_epoch_seconds: u64,
 }
 
 #[derive(Debug)]

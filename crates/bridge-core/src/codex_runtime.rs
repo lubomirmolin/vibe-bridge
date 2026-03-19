@@ -228,8 +228,12 @@ fn spawn_managed_process_with_endpoint(
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    cmd.spawn()
-        .map_err(|error| format!("failed to spawn '{command} {}': {error}", spawn_args.join(" ")))
+    cmd.spawn().map_err(|error| {
+        format!(
+            "failed to spawn '{command} {}': {error}",
+            spawn_args.join(" ")
+        )
+    })
 }
 
 fn build_spawn_args(args: &[String], endpoint: Option<&str>) -> Vec<String> {
@@ -288,9 +292,9 @@ fn verify_endpoint_reachable(endpoint: &str) -> Result<(), String> {
 mod tests {
     use std::fs;
     use std::net::TcpListener;
-    use std::path::PathBuf;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
     use std::thread;
     use std::time::Duration;
 
@@ -401,10 +405,7 @@ mod tests {
 
     #[test]
     fn build_spawn_args_adds_listen_endpoint_for_app_server() {
-        let args = build_spawn_args(
-            &["app-server".to_string()],
-            Some("ws://127.0.0.1:4222"),
-        );
+        let args = build_spawn_args(&["app-server".to_string()], Some("ws://127.0.0.1:4222"));
 
         assert_eq!(
             args,

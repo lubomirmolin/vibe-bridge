@@ -46,11 +46,33 @@ class HttpPairingBridgeApi implements PairingBridgeApi {
 
       final response = await _post(uri);
       if (response.statusCode >= 200 && response.statusCode < 300) {
+        final bridgeIdentity = _readRequiredObject(
+          response.jsonBody,
+          'bridge_identity',
+        );
         final sessionToken = _readRequiredString(
           response.jsonBody,
           'session_token',
         );
-        return PairingFinalizeResult.success(sessionToken: sessionToken);
+        final bridgeId = _readRequiredString(bridgeIdentity, 'bridge_id');
+        final bridgeName = _readRequiredString(bridgeIdentity, 'display_name');
+        final bridgeApiBaseUrl = _readRequiredString(
+          bridgeIdentity,
+          'api_base_url',
+        );
+
+        if (bridgeId != payload.bridgeId) {
+          throw const FormatException(
+            'Bridge identity mismatch in finalize response.',
+          );
+        }
+
+        return PairingFinalizeResult.success(
+          sessionToken: sessionToken,
+          bridgeId: bridgeId,
+          bridgeName: bridgeName,
+          bridgeApiBaseUrl: bridgeApiBaseUrl,
+        );
       }
 
       final code = _readOptionalString(response.jsonBody, 'code');
@@ -198,13 +220,27 @@ class HttpPairingBridgeApi implements PairingBridgeApi {
 }
 
 class PairingFinalizeResult {
-  const PairingFinalizeResult._({this.sessionToken, this.code, this.message});
+  const PairingFinalizeResult._({
+    this.sessionToken,
+    this.bridgeId,
+    this.bridgeName,
+    this.bridgeApiBaseUrl,
+    this.code,
+    this.message,
+  });
 
   final String? sessionToken;
+  final String? bridgeId;
+  final String? bridgeName;
+  final String? bridgeApiBaseUrl;
   final String? code;
   final String? message;
 
-  bool get isSuccess => sessionToken != null;
+  bool get isSuccess =>
+      sessionToken != null &&
+      bridgeId != null &&
+      bridgeName != null &&
+      bridgeApiBaseUrl != null;
 
   bool get requiresRescan {
     return code == 'session_already_consumed' ||
@@ -213,8 +249,12 @@ class PairingFinalizeResult {
         code == 'invalid_pairing_token';
   }
 
-  const factory PairingFinalizeResult.success({required String sessionToken}) =
-      _PairingFinalizeSuccess;
+  const factory PairingFinalizeResult.success({
+    required String sessionToken,
+    required String bridgeId,
+    required String bridgeName,
+    required String bridgeApiBaseUrl,
+  }) = _PairingFinalizeSuccess;
 
   const factory PairingFinalizeResult.failure({
     required String? code,
@@ -223,7 +263,12 @@ class PairingFinalizeResult {
 }
 
 class _PairingFinalizeSuccess extends PairingFinalizeResult {
-  const _PairingFinalizeSuccess({required super.sessionToken}) : super._();
+  const _PairingFinalizeSuccess({
+    required super.sessionToken,
+    required super.bridgeId,
+    required super.bridgeName,
+    required super.bridgeApiBaseUrl,
+  }) : super._();
 }
 
 class _PairingFinalizeFailure extends PairingFinalizeResult {
@@ -347,6 +392,17 @@ String? _readOptionalString(Map<String, dynamic> json, String key) {
     return null;
   }
   return value.trim();
+}
+
+Map<String, dynamic> _readRequiredObject(
+  Map<String, dynamic> json,
+  String key,
+) {
+  final value = json[key];
+  if (value is! Map<String, dynamic>) {
+    throw FormatException('Missing or invalid "$key" in bridge response.');
+  }
+  return value;
 }
 
 class _HttpJsonResponse {

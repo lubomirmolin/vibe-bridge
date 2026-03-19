@@ -189,7 +189,12 @@ class FakePairingBridgeApi implements PairingBridgeApi {
     required String phoneId,
     required String phoneName,
   }) async {
-    return const PairingFinalizeResult.success(sessionToken: 'token-a1');
+    return PairingFinalizeResult.success(
+      sessionToken: 'token-a1',
+      bridgeId: payload.bridgeId,
+      bridgeName: payload.bridgeName,
+      bridgeApiBaseUrl: payload.bridgeApiBaseUrl,
+    );
   }
 
   @override

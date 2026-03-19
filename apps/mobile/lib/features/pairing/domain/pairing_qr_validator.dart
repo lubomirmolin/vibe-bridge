@@ -35,7 +35,8 @@ PairingValidationResult validatePairingQrPayload(
   try {
     final payload = decodePairingQrPayload(rawPayload);
 
-    if (!payload.expiresAtUtc.isAfter(nowUtc.toUtc())) {
+    final expiresAtUtc = payload.expiresAtUtc;
+    if (expiresAtUtc != null && !expiresAtUtc.isAfter(nowUtc.toUtc())) {
       return PairingValidationResult.invalid(PairingValidationError.expired);
     }
 
