@@ -207,6 +207,9 @@ where
     let admin_app = Arc::clone(&app);
     let admin_server = thread::spawn(move || serve_listener(admin_listener, admin_app));
 
+    let reconciler_app = Arc::clone(&app);
+    let _reconciler = thread::spawn(move || reconcile_upstream_loop(reconciler_app));
+
     api_server
         .join()
         .map_err(|_| "API server thread panicked".to_string())?;
@@ -1013,6 +1016,13 @@ impl BridgeApplication {
             .log_security_audit(severity, thread_id, audit_event);
         self.stream_router.publish(event);
     }
+
+    fn reconcile_upstream_activity(&self) -> Result<Vec<BridgeEventEnvelope<Value>>, String> {
+        self.thread_api
+            .lock()
+            .expect("thread API mutex should not be poisoned")
+            .reconcile_from_upstream()
+    }
 }
 
 fn serve_listener(listener: TcpListener, app: Arc<BridgeApplication>) {
@@ -1031,6 +1041,32 @@ fn serve_listener(listener: TcpListener, app: Arc<BridgeApplication>) {
                 break;
             }
         }
+    }
+}
+
+fn reconcile_upstream_loop(app: Arc<BridgeApplication>) {
+    const ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(750);
+    const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(1500);
+
+    loop {
+        let subscriber_count = app.stream_router.subscriber_count();
+        if subscriber_count == 0 {
+            thread::sleep(IDLE_POLL_INTERVAL);
+            continue;
+        }
+
+        match app.reconcile_upstream_activity() {
+            Ok(events) => {
+                for event in events {
+                    app.stream_router.publish(event);
+                }
+            }
+            Err(error) => {
+                eprintln!("failed to reconcile upstream thread activity: {error}");
+            }
+        }
+
+        thread::sleep(ACTIVE_POLL_INTERVAL);
     }
 }
 

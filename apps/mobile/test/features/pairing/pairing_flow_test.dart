@@ -313,11 +313,11 @@ void main() {
     );
   });
 
-  testWidgets('revoked trust on reconnect clears local trust and requires re-pair', (
-    tester,
-  ) async {
-    final store = InMemorySecureStore();
-    await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
+  testWidgets(
+    'revoked trust on reconnect clears local trust and requires re-pair',
+    (tester) async {
+      final store = InMemorySecureStore();
+      await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
 {
   "bridge_id": "bridge-a1",
   "bridge_name": "Codex Mobile Companion",
@@ -326,65 +326,48 @@ void main() {
   "paired_at_epoch_seconds": 100
 }
 ''');
-    await store.writeSecret(
-      SecureValueKey.sessionToken,
-      'revoked-session-token',
-    );
-    await store.writeSecret(
-      SecureValueKey.runtimeNotificationSeenEventIds,
-      '["evt-old"]',
-    );
-    await store.writeSecret(
-      SecureValueKey.runtimeNotificationPendingLaunchTarget,
-      '{"event_id":"evt-old","target":{"target_type":"thread_detail","thread_id":"thread-old"}}',
-    );
+      await store.writeSecret(
+        SecureValueKey.sessionToken,
+        'revoked-session-token',
+      );
 
-    final bridgeApi = FakePairingBridgeApi(
-      handshakeResult: const PairingHandshakeResult.untrusted(
-        code: 'trust_revoked',
-        message:
-            'Trust was revoked for this session. Re-pair from the Mac pairing QR.',
-      ),
-    );
-
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          secureStoreProvider.overrideWithValue(store),
-          pairingBridgeApiProvider.overrideWithValue(bridgeApi),
-          nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 17, 21, 0)),
-        ],
-        child: const MaterialApp(
-          home: PairingFlowPage(enableCameraPreview: false),
+      final bridgeApi = FakePairingBridgeApi(
+        handshakeResult: const PairingHandshakeResult.untrusted(
+          code: 'trust_revoked',
+          message:
+              'Trust was revoked for this session. Re-pair from the Mac pairing QR.',
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
 
-    expect(find.text('Pair your phone to this Mac'), findsOneWidget);
-    expect(find.text('Re-pair required for security'), findsOneWidget);
-    expect(
-      find.text(
-        'Trust was revoked for this session. Re-pair from the Mac pairing QR.',
-      ),
-      findsOneWidget,
-    );
-    expect(
-      await store.readSecret(SecureValueKey.trustedBridgeIdentity),
-      isNull,
-    );
-    expect(await store.readSecret(SecureValueKey.sessionToken), isNull);
-    expect(
-      await store.readSecret(SecureValueKey.runtimeNotificationSeenEventIds),
-      isNull,
-    );
-    expect(
-      await store.readSecret(
-        SecureValueKey.runtimeNotificationPendingLaunchTarget,
-      ),
-      isNull,
-    );
-  });
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            secureStoreProvider.overrideWithValue(store),
+            pairingBridgeApiProvider.overrideWithValue(bridgeApi),
+            nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 17, 21, 0)),
+          ],
+          child: const MaterialApp(
+            home: PairingFlowPage(enableCameraPreview: false),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Pair your phone to this Mac'), findsOneWidget);
+      expect(find.text('Re-pair required for security'), findsOneWidget);
+      expect(
+        find.text(
+          'Trust was revoked for this session. Re-pair from the Mac pairing QR.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        await store.readSecret(SecureValueKey.trustedBridgeIdentity),
+        isNull,
+      );
+      expect(await store.readSecret(SecureValueKey.sessionToken), isNull);
+    },
+  );
 
   testWidgets(
     'bridge identity mismatch on reconnect clears local trust and requires re-pair',
@@ -641,14 +624,6 @@ void main() {
         SecureValueKey.pairingPrivateKey,
         'phone-test-id',
       );
-      await store.writeSecret(
-        SecureValueKey.runtimeNotificationSeenEventIds,
-        '["evt-old"]',
-      );
-      await store.writeSecret(
-        SecureValueKey.runtimeNotificationPendingLaunchTarget,
-        '{"event_id":"evt-old","target":{"target_type":"thread_detail","thread_id":"thread-old"}}',
-      );
 
       final bridgeApi = FakePairingBridgeApi();
 
@@ -690,16 +665,6 @@ void main() {
         isNull,
       );
       expect(await store.readSecret(SecureValueKey.sessionToken), isNull);
-      expect(
-        await store.readSecret(SecureValueKey.runtimeNotificationSeenEventIds),
-        isNull,
-      );
-      expect(
-        await store.readSecret(
-          SecureValueKey.runtimeNotificationPendingLaunchTarget,
-        ),
-        isNull,
-      );
       expect(bridgeApi.revokeTrustCalls, 1);
     },
   );

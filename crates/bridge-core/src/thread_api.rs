@@ -162,6 +162,82 @@ impl ThreadApiService {
         Ok(())
     }
 
+    pub fn reconcile_from_upstream(&mut self) -> Result<Vec<BridgeEventEnvelope<Value>>, String> {
+        let Some(sync_config) = &self.sync_config else {
+            return Ok(Vec::new());
+        };
+
+        let (thread_records, timeline_by_thread_id) = load_thread_snapshot(
+            &sync_config.codex_command,
+            &sync_config.codex_args,
+            &sync_config.codex_home,
+        )?;
+
+        Ok(self.reconcile_snapshot(thread_records, timeline_by_thread_id))
+    }
+
+    pub fn reconcile_snapshot(
+        &mut self,
+        thread_records: Vec<UpstreamThreadRecord>,
+        timeline_by_thread_id: HashMap<String, Vec<UpstreamTimelineEvent>>,
+    ) -> Vec<BridgeEventEnvelope<Value>> {
+        let previous_threads = self
+            .thread_records
+            .iter()
+            .cloned()
+            .map(|thread| (thread.id.clone(), thread))
+            .collect::<HashMap<_, _>>();
+        let previous_timeline = self.timeline_by_thread_id.clone();
+        let mut events = Vec::new();
+
+        for thread in &thread_records {
+            if let Some(previous_thread) = previous_threads.get(&thread.id) {
+                if previous_thread.lifecycle_state != thread.lifecycle_state {
+                    events.push(self.next_event_with_occurred_at(
+                        &thread.id,
+                        BridgeEventKind::ThreadStatusChanged,
+                        thread.updated_at.as_str(),
+                        json!({
+                            "status": serde_json::to_value(map_thread_status(&thread.lifecycle_state))
+                                .expect("thread status should serialize"),
+                            "reason": "upstream_sync",
+                        }),
+                    ));
+                }
+            }
+
+            let previous_event_ids = previous_timeline
+                .get(&thread.id)
+                .map(|events| {
+                    events
+                        .iter()
+                        .map(|event| event.id.as_str())
+                        .collect::<HashSet<_>>()
+                })
+                .unwrap_or_default();
+
+            if let Some(next_events) = timeline_by_thread_id.get(&thread.id) {
+                for event in next_events {
+                    if previous_event_ids.contains(event.id.as_str()) {
+                        continue;
+                    }
+
+                    events.push(BridgeEventEnvelope::new(
+                        event.id.clone(),
+                        thread.id.clone(),
+                        map_event_kind(&event.event_type),
+                        event.happened_at.clone(),
+                        event.data.clone(),
+                    ));
+                }
+            }
+        }
+
+        self.thread_records = thread_records;
+        self.timeline_by_thread_id = timeline_by_thread_id;
+        events
+    }
+
     pub fn sample() -> Self {
         let thread_records = vec![
             UpstreamThreadRecord {
@@ -586,16 +662,31 @@ impl ThreadApiService {
         kind: BridgeEventKind,
         payload: Value,
     ) -> BridgeEventEnvelope<Value> {
-        let event_id = format!("evt-live-{}", self.next_event_sequence);
         let occurred_at = self.next_timestamp();
+        self.next_event_with_occurred_at(thread_id, kind, occurred_at.as_str(), payload)
+    }
 
-        BridgeEventEnvelope::new(event_id, thread_id.to_string(), kind, occurred_at, payload)
+    fn next_event_with_occurred_at(
+        &mut self,
+        thread_id: &str,
+        kind: BridgeEventKind,
+        occurred_at: &str,
+        payload: Value,
+    ) -> BridgeEventEnvelope<Value> {
+        let event_id = format!("evt-live-{}", self.next_event_sequence);
+        self.next_event_sequence += 1;
+
+        BridgeEventEnvelope::new(
+            event_id,
+            thread_id.to_string(),
+            kind,
+            occurred_at.to_string(),
+            payload,
+        )
     }
 
     fn next_timestamp(&mut self) -> String {
         let sequence = self.next_event_sequence;
-        self.next_event_sequence += 1;
-
         let minute = (sequence / 60) % 60;
         let second = sequence % 60;
         format!("2026-03-17T22:{minute:02}:{second:02}Z")
@@ -2662,6 +2753,120 @@ mod tests {
         assert_eq!(thread_timeline[1].data["type"], "agentMessage");
 
         let _ = fs::remove_dir_all(codex_home);
+    }
+
+    #[test]
+    fn reconcile_snapshot_publishes_status_and_new_timeline_events() {
+        let mut service = ThreadApiService::with_seed_data(
+            vec![UpstreamThreadRecord {
+                id: "thread-123".to_string(),
+                headline: "Investigate bridge sync".to_string(),
+                lifecycle_state: "active".to_string(),
+                workspace_path: "/workspace/codex-mobile-companion".to_string(),
+                repository_name: "codex-mobile-companion".to_string(),
+                branch_name: "main".to_string(),
+                remote_name: "origin".to_string(),
+                git_dirty: false,
+                git_ahead_by: 0,
+                git_behind_by: 0,
+                created_at: "2026-03-17T10:00:00Z".to_string(),
+                updated_at: "2026-03-17T10:05:00Z".to_string(),
+                source: "cli".to_string(),
+                approval_mode: "control_with_approvals".to_string(),
+                last_turn_summary: "Running".to_string(),
+            }],
+            HashMap::from([(
+                "thread-123".to_string(),
+                vec![UpstreamTimelineEvent {
+                    id: "evt-existing".to_string(),
+                    event_type: "agent_message_delta".to_string(),
+                    happened_at: "2026-03-17T10:05:00Z".to_string(),
+                    summary_text: "Existing assistant output".to_string(),
+                    data: json!({"delta": "existing"}),
+                }],
+            )]),
+        );
+
+        let events = service.reconcile_snapshot(
+            vec![UpstreamThreadRecord {
+                id: "thread-123".to_string(),
+                headline: "Investigate bridge sync".to_string(),
+                lifecycle_state: "done".to_string(),
+                workspace_path: "/workspace/codex-mobile-companion".to_string(),
+                repository_name: "codex-mobile-companion".to_string(),
+                branch_name: "main".to_string(),
+                remote_name: "origin".to_string(),
+                git_dirty: false,
+                git_ahead_by: 0,
+                git_behind_by: 0,
+                created_at: "2026-03-17T10:00:00Z".to_string(),
+                updated_at: "2026-03-17T10:06:00Z".to_string(),
+                source: "cli".to_string(),
+                approval_mode: "control_with_approvals".to_string(),
+                last_turn_summary: "Completed".to_string(),
+            }],
+            HashMap::from([(
+                "thread-123".to_string(),
+                vec![
+                    UpstreamTimelineEvent {
+                        id: "evt-existing".to_string(),
+                        event_type: "agent_message_delta".to_string(),
+                        happened_at: "2026-03-17T10:05:00Z".to_string(),
+                        summary_text: "Existing assistant output".to_string(),
+                        data: json!({"delta": "existing"}),
+                    },
+                    UpstreamTimelineEvent {
+                        id: "evt-new".to_string(),
+                        event_type: "command_output_delta".to_string(),
+                        happened_at: "2026-03-17T10:06:30Z".to_string(),
+                        summary_text: "New command output".to_string(),
+                        data: json!({"command": "pwd", "delta": "/workspace"}),
+                    },
+                ],
+            )]),
+        );
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].kind, BridgeEventKind::ThreadStatusChanged);
+        assert_eq!(events[0].payload["status"], "completed");
+        assert_eq!(events[1].event_id, "evt-new");
+        assert_eq!(events[1].kind, BridgeEventKind::CommandDelta);
+    }
+
+    #[test]
+    fn reconcile_snapshot_does_not_republish_existing_events() {
+        let thread = UpstreamThreadRecord {
+            id: "thread-123".to_string(),
+            headline: "Investigate bridge sync".to_string(),
+            lifecycle_state: "active".to_string(),
+            workspace_path: "/workspace/codex-mobile-companion".to_string(),
+            repository_name: "codex-mobile-companion".to_string(),
+            branch_name: "main".to_string(),
+            remote_name: "origin".to_string(),
+            git_dirty: false,
+            git_ahead_by: 0,
+            git_behind_by: 0,
+            created_at: "2026-03-17T10:00:00Z".to_string(),
+            updated_at: "2026-03-17T10:05:00Z".to_string(),
+            source: "cli".to_string(),
+            approval_mode: "control_with_approvals".to_string(),
+            last_turn_summary: "Running".to_string(),
+        };
+        let timeline = HashMap::from([(
+            "thread-123".to_string(),
+            vec![UpstreamTimelineEvent {
+                id: "evt-existing".to_string(),
+                event_type: "agent_message_delta".to_string(),
+                happened_at: "2026-03-17T10:05:00Z".to_string(),
+                summary_text: "Existing assistant output".to_string(),
+                data: json!({"delta": "existing"}),
+            }],
+        )]);
+        let mut service = ThreadApiService::with_seed_data(vec![thread.clone()], timeline.clone());
+
+        let events = service.reconcile_snapshot(vec![thread], timeline);
+
+        assert!(events.is_empty());
     }
 
     #[test]

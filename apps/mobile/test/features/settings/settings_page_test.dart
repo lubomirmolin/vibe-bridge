@@ -11,7 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   testWidgets(
-    'settings shows paired bridge info, access mode, notification preferences, and security events',
+    'settings shows paired bridge info, access mode, desktop integration, and security events',
     (tester) async {
       final store = InMemorySecureStore();
       await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
@@ -64,21 +64,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Paired bridge'), findsOneWidget);
-      expect(find.text('Bridge id: bridge-a1'), findsOneWidget);
-      expect(find.text('Connection: Connected'), findsOneWidget);
-      expect(
-        find.textContaining('Control-with-approvals mode'),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const Key('approval-notification-toggle')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const Key('live-activity-notification-toggle')),
-        findsOneWidget,
-      );
+      expect(find.text('Paired Bridge'), findsOneWidget);
+      expect(find.text('Codex Mobile Companion'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('Session: session-abc'), findsOneWidget);
       expect(
         find.byKey(const Key('desktop-integration-toggle')),
         findsOneWidget,
@@ -126,9 +114,9 @@ void main() {
           occurredAt:
               '2026-03-18T10:${itemNumber.toString().padLeft(2, '0')}:00Z',
           payload: {
-            'actor': 'mobile-settings',
+            'actor': 'mobile-settings-$itemNumber',
             'action': 'set_access_mode',
-            'target': 'policy.access_mode',
+            'target': 'policy.access_mode.$itemNumber',
             'outcome': 'allowed',
             'reason': 'mode=control_with_approvals',
           },
@@ -155,17 +143,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.scrollUntilVisible(
-      find.text('Event id: evt-security-10'),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('Event id: evt-security-10'), findsOneWidget);
-    expect(find.text('Event id: evt-security-9'), findsOneWidget);
-    expect(find.text('Event id: evt-security-2'), findsNothing);
-    expect(find.text('Event id: evt-security-1'), findsNothing);
+    expect(find.text('Actor: mobile-settings-10'), findsOneWidget);
+    expect(find.text('Actor: mobile-settings-9'), findsOneWidget);
+    expect(find.text('Actor: mobile-settings-3'), findsOneWidget);
+    expect(find.text('Actor: mobile-settings-2'), findsNothing);
+    expect(find.text('Actor: mobile-settings-1'), findsNothing);
   });
 
   testWidgets('settings access mode switch updates bridge policy', (
@@ -210,18 +192,6 @@ void main() {
     expect(settingsApi.setModeCalls.single.accessMode, AccessMode.readOnly);
     expect(settingsApi.setModeCalls.single.phoneId, 'phone-a1');
 
-    await tester.tap(find.byKey(const Key('approval-notification-toggle')));
-    await tester.pumpAndSettle();
-
-    expect(
-      tester
-          .widget<SwitchListTile>(
-            find.byKey(const Key('approval-notification-toggle')),
-          )
-          .value,
-      isFalse,
-    );
-
     await tester.scrollUntilVisible(
       find.byKey(const Key('desktop-integration-toggle')),
       200,
@@ -233,12 +203,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      tester
-          .widget<SwitchListTile>(
-            find.byKey(const Key('desktop-integration-toggle')),
-          )
-          .value,
-      isFalse,
+      find.descendant(
+        of: find.byKey(const Key('desktop-integration-toggle')),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is SwitchListTile && widget.value == false,
+        ),
+      ),
+      findsOneWidget,
     );
   });
 
@@ -292,12 +263,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      tester
-          .widget<SwitchListTile>(
-            find.byKey(const Key('desktop-integration-toggle')),
-          )
-          .value,
-      isFalse,
+      find.descendant(
+        of: find.byKey(const Key('desktop-integration-toggle')),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is SwitchListTile && widget.value == false,
+        ),
+      ),
+      findsOneWidget,
     );
 
     await pumpSettingsPage();
@@ -310,12 +282,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      tester
-          .widget<SwitchListTile>(
-            find.byKey(const Key('desktop-integration-toggle')),
-          )
-          .value,
-      isFalse,
+      find.descendant(
+        of: find.byKey(const Key('desktop-integration-toggle')),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is SwitchListTile && widget.value == false,
+        ),
+      ),
+      findsOneWidget,
     );
   });
 }

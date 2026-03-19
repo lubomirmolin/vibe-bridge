@@ -616,6 +616,20 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
     if (event.kind == BridgeEventKind.threadStatusChanged) {
       _applyLifecycleStatusUpdate(event);
+    } else {
+      final thread = state.thread;
+      if (thread != null) {
+        _updateThreadStatus(
+          status: thread.status,
+          updatedAt: event.occurredAt,
+          lastTurnSummary: thread.lastTurnSummary,
+        );
+        _threadListController.applyThreadStatusUpdate(
+          threadId: event.threadId,
+          status: thread.status,
+          updatedAt: event.occurredAt,
+        );
+      }
     }
 
     final nextItems = List<ThreadActivityItem>.from(state.items)
