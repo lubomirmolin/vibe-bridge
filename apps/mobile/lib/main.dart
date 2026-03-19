@@ -3,7 +3,7 @@ import 'package:codex_mobile_companion/features/settings/presentation/runtime_no
 import 'package:codex_mobile_companion/foundation/navigation/app_navigator.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-
+import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
 void main() {
   runApp(const ProviderScope(child: CodexMobileApp()));
 }
@@ -16,9 +16,7 @@ class CodexMobileApp extends StatelessWidget {
     return MaterialApp(
       navigatorKey: appNavigatorKey,
       title: 'Codex Mobile Companion',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-      ),
+      theme: AppTheme.darkTheme,
       builder: (context, child) {
         return RuntimeNotificationDeliverySurface(
           child: child ?? const SizedBox.shrink(),

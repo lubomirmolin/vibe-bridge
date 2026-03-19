@@ -11,6 +11,11 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: Sources
+    postBuildScripts:
+      - name: Embed bridge-server
+        path: scripts/embed-bridge-server.sh
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/bin/bridge-server
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.codex.mobile.companion.shell

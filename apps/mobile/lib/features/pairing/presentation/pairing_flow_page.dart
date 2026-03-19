@@ -1,9 +1,14 @@
 import 'package:codex_mobile_companion/features/pairing/application/pairing_controller.dart';
 import 'package:codex_mobile_companion/features/settings/presentation/settings_page.dart';
-import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
+import 'package:codex_mobile_companion/features/home/presentation/home_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
+import 'package:codex_mobile_companion/foundation/theme/liquid_styles.dart';
+import 'package:codex_mobile_companion/shared/widgets/magnetic_button.dart';
+import 'package:codex_mobile_companion/shared/widgets/animated_bridge_background.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 enum PairingScannerIssueType { permissionDenied, scannerFailure }
 
@@ -26,9 +31,7 @@ class PairingScannerIssue {
 
     final details = error.errorDetails?.message;
     return PairingScannerIssue.failure(
-      details: details == null || details.trim().isEmpty
-          ? null
-          : details.trim(),
+      details: details == null || details.trim().isEmpty ? null : details.trim(),
     );
   }
 
@@ -95,41 +98,24 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
   }
 
   void _setScannerIssue(PairingScannerIssue issue) {
-    if (_scannerIssue == issue || !mounted) {
-      return;
-    }
+    if (_scannerIssue == issue || !mounted) return;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _scannerIssue == issue) {
-        return;
-      }
-      setState(() {
-        _scannerIssue = issue;
-      });
+      if (!mounted || _scannerIssue == issue) return;
+      setState(() => _scannerIssue = issue);
     });
   }
 
   Future<void> _retryCamera() async {
-    setState(() {
-      _scannerIssue = null;
-    });
-
+    setState(() => _scannerIssue = null);
     try {
       await _cameraController.start();
     } on MobileScannerException catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _scannerIssue = PairingScannerIssue.fromScannerException(error);
-      });
+      if (!mounted) return;
+      setState(() => _scannerIssue = PairingScannerIssue.fromScannerException(error));
     } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _scannerIssue = const PairingScannerIssue.failure();
-      });
+      if (!mounted) return;
+      setState(() => _scannerIssue = const PairingScannerIssue.failure());
     }
   }
 
@@ -137,47 +123,14 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
     _manualPayloadFocusNode.requestFocus();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final pairingState = ref.watch(pairingControllerProvider);
-    final pairingController = ref.read(pairingControllerProvider.notifier);
-    _maybeAutoOpenThreadList(pairingState);
-
-    final body = switch (pairingState.step) {
-      PairingStep.unpaired => _buildUnpairedView(
-        pairingController,
-        errorMessage: pairingState.errorMessage,
-        rePairRequiredForSecurity: pairingState.rePairRequiredForSecurity,
-      ),
-      PairingStep.scanning => _buildScannerView(
-        pairingState,
-        pairingController,
-      ),
-      PairingStep.review => _buildReviewView(pairingState, pairingController),
-      PairingStep.paired => _buildPairedView(pairingState, pairingController),
-    };
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Codex Mobile Companion')),
-      body: SafeArea(child: body),
-    );
-  }
-
   void _maybeAutoOpenThreadList(PairingState pairingState) {
-    if (!widget.autoOpenThreadsOnPairing ||
-        pairingState.step != PairingStep.paired) {
-      return;
-    }
+    if (!widget.autoOpenThreadsOnPairing || pairingState.step != PairingStep.paired) return;
 
     final bridge = pairingState.trustedBridge;
-    if (bridge == null || _isAutoOpeningThreadList) {
-      return;
-    }
+    if (bridge == null || _isAutoOpeningThreadList) return;
 
     final sessionId = bridge.sessionId.trim();
-    if (sessionId.isEmpty || _autoOpenedThreadSessionIds.contains(sessionId)) {
-      return;
-    }
+    if (sessionId.isEmpty || _autoOpenedThreadSessionIds.contains(sessionId)) return;
 
     _isAutoOpeningThreadList = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -185,13 +138,15 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
         _isAutoOpeningThreadList = false;
         return;
       }
-
       _autoOpenedThreadSessionIds.add(sessionId);
       try {
         await Navigator.of(context).push(
           MaterialPageRoute<void>(
-            builder: (context) =>
-                ThreadListPage(bridgeApiBaseUrl: bridge.bridgeApiBaseUrl),
+            builder: (context) => HomeScreen(
+              bridgeApiBaseUrl: bridge.bridgeApiBaseUrl,
+              bridgeName: bridge.bridgeName,
+              bridgeId: bridge.bridgeId,
+            ),
           ),
         );
       } finally {
@@ -200,218 +155,228 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
     });
   }
 
+  @override
+  Widget build(BuildContext context) {
+    final pairingState = ref.watch(pairingControllerProvider);
+    final pairingController = ref.read(pairingControllerProvider.notifier);
+    _maybeAutoOpenThreadList(pairingState);
+
+    Widget body = switch (pairingState.step) {
+      PairingStep.unpaired => _buildUnpairedView(
+        pairingController,
+        errorMessage: pairingState.errorMessage,
+        rePairRequiredForSecurity: pairingState.rePairRequiredForSecurity,
+      ),
+      PairingStep.scanning => _buildScannerView(pairingState, pairingController),
+      PairingStep.review => _buildReviewView(pairingState, pairingController),
+      PairingStep.paired => _buildPairedView(pairingState, pairingController),
+    };
+
+    return Scaffold(
+      backgroundColor: AppTheme.background,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          const AnimatedBridgeBackground(),
+          
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(32.0),
+              child: Column(
+                children: [
+                  Expanded(
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 400),
+                      switchInCurve: Curves.easeOutBack,
+                      switchOutCurve: Curves.easeIn,
+                      child: body,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildUnpairedView(
     PairingController pairingController, {
     String? errorMessage,
     required bool rePairRequiredForSecurity,
   }) {
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Pair your phone to this Mac',
-            style: Theme.of(context).textTheme.headlineSmall,
+    return Column(
+      key: const ValueKey('unpaired'),
+      mainAxisAlignment: MainAxisAlignment.end,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Codex\nBridge',
+          style: Theme.of(context).textTheme.displayLarge?.copyWith(
+            fontWeight: FontWeight.w500,
+            height: 1.1,
           ),
-          const SizedBox(height: 12),
-          const Text(
-            'Scan the QR code shown in the macOS shell to start pairing securely.',
-          ),
-          const SizedBox(height: 24),
-          FilledButton(
-            onPressed: () => _openScanner(pairingController),
-            child: const Text('Scan pairing QR'),
-          ),
-          if (rePairRequiredForSecurity) ...[
-            const SizedBox(height: 12),
-            _SecurityRePairRequiredBanner(message: errorMessage),
-          ],
-          if (errorMessage != null) ...[
-            const SizedBox(height: 12),
-            if (!rePairRequiredForSecurity)
-              Text(
-                errorMessage,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-          ],
+        ),
+        const SizedBox(height: 16),
+        Text(
+          'Secure operator console for remote monitoring and control.',
+          style: TextStyle(color: AppTheme.textMuted, fontSize: 14),
+        ),
+        const SizedBox(height: 48),
+
+        if (rePairRequiredForSecurity) ...[
+          _SecurityRePairRequiredBanner(message: errorMessage),
+          const SizedBox(height: 16),
+        ] else if (errorMessage != null) ...[
+          Text(errorMessage, style: const TextStyle(color: AppTheme.rose)),
+          const SizedBox(height: 16),
         ],
-      ),
+
+        SizedBox(
+          width: double.infinity,
+          child: MagneticButton(
+            variant: MagneticButtonVariant.primary,
+            onClick: () => _openScanner(pairingController),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Text('Initialize Pairing'),
+                const SizedBox(width: 8),
+                PhosphorIcon(PhosphorIcons.arrowRight(PhosphorIconsStyle.bold), size: 16),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 32),
+      ],
     );
   }
 
-  Widget _buildScannerView(
-    PairingState pairingState,
-    PairingController pairingController,
-  ) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Scan pairing QR',
-            style: Theme.of(context).textTheme.headlineSmall,
-          ),
-          const SizedBox(height: 12),
-          const Text('Point your camera at the desktop pairing QR code.'),
-          if (_scannerIssue != null) ...[
-            const SizedBox(height: 16),
-            _ScannerIssueBanner(
-              issue: _scannerIssue!,
-              onRetryCamera: () {
-                _retryCamera();
-              },
-              onUseManualFallback: _focusManualFallback,
-            ),
-          ],
-          const SizedBox(height: 16),
-          if (widget.enableCameraPreview)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: SizedBox(
-                height: 260,
-                child: MobileScanner(
-                  key: const Key('camera-scanner'),
-                  controller: _cameraController,
-                  onDetect: (capture) {
-                    for (final barcode in capture.barcodes) {
-                      final rawValue = barcode.rawValue;
-                      if (rawValue != null && rawValue.trim().isNotEmpty) {
-                        setState(() {
-                          _scannerIssue = null;
-                        });
-                        pairingController.submitScannedPayload(rawValue);
-                        break;
-                      }
-                    }
-                  },
-                  errorBuilder: (context, error) {
-                    _setScannerIssue(
-                      PairingScannerIssue.fromScannerException(error),
-                    );
-                    return DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.surfaceContainerLow,
-                      ),
-                      child: const Center(
-                        child: Icon(Icons.camera_alt_outlined, size: 48),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-          const SizedBox(height: 16),
-          const Text(
-            'Manual fallback (use when camera scanning is unavailable):',
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            key: const Key('manual-payload-input'),
-            controller: _manualPayloadController,
-            focusNode: _manualPayloadFocusNode,
-            maxLines: 6,
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              hintText: 'Paste scanned QR payload JSON',
-            ),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 8,
-            children: [
-              FilledButton(
-                onPressed: () => pairingController.submitScannedPayload(
-                  _manualPayloadController.text,
-                ),
-                child: const Text('Submit scanned payload'),
-              ),
-              TextButton(
-                onPressed: pairingController.cancelReview,
-                child: const Text('Cancel scan'),
-              ),
-            ],
-          ),
-          if (pairingState.errorMessage != null) ...[
-            const SizedBox(height: 12),
-            Text(
-              pairingState.errorMessage!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
+  Widget _buildScannerView(PairingState pairingState, PairingController pairingController) {
+    return Column(
+      key: const ValueKey('scanning'),
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        const SizedBox(height: 40),
+        Text('Scan QR Code', style: Theme.of(context).textTheme.headlineMedium),
+        const SizedBox(height: 8),
+        Text('Display code on desktop bridge app', style: TextStyle(color: AppTheme.textMuted)),
+        const SizedBox(height: 40),
 
-  Widget _buildReviewView(
-    PairingState pairingState,
-    PairingController pairingController,
-  ) {
-    final payload = pairingState.pendingPayload;
-    if (payload == null) {
-      return const SizedBox.shrink();
-    }
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Confirm bridge trust',
-            style: Theme.of(context).textTheme.headlineSmall,
-          ),
-          const SizedBox(height: 12),
-          const Text('Review bridge identity details before saving trust.'),
-          const SizedBox(height: 20),
-          _IdentityRow(label: 'Bridge name', value: payload.bridgeName),
-          _IdentityRow(label: 'Bridge id', value: payload.bridgeId),
-          _IdentityRow(label: 'Bridge URL', value: payload.bridgeApiBaseUrl),
-          _IdentityRow(label: 'Session id', value: payload.sessionId),
-          _IdentityRow(
-            label: 'Expires at (UTC)',
-            value: payload.expiresAtUtc.toIso8601String(),
-          ),
-          const SizedBox(height: 20),
-          Wrap(
-            spacing: 12,
-            runSpacing: 8,
-            children: [
-              FilledButton(
-                onPressed: pairingState.isPersistingTrust
-                    ? null
-                    : () {
-                        pairingController.confirmTrust();
+        if (_scannerIssue != null)
+          _ScannerIssueBanner(
+            issue: _scannerIssue!,
+            onRetryCamera: _retryCamera,
+            onUseManualFallback: _focusManualFallback,
+          )
+        else
+          Container(
+            width: 250,
+            height: 250,
+            decoration: LiquidStyles.liquidGlass,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(32),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Container(color: const Color(0xFF09090B)), // Solid background while loading
+                  if (widget.enableCameraPreview)
+                    MobileScanner(
+                      key: const Key('camera-scanner'),
+                      controller: _cameraController,
+                      onDetect: (capture) {
+                        for (final barcode in capture.barcodes) {
+                          if (barcode.rawValue?.trim().isNotEmpty == true) {
+                            setState(() => _scannerIssue = null);
+                            pairingController.submitScannedPayload(barcode.rawValue!);
+                            break;
+                          }
+                        }
                       },
-                child: const Text('Confirm trust'),
+                      errorBuilder: (context, error) {
+                        _setScannerIssue(PairingScannerIssue.fromScannerException(error));
+                        return const Center(child: Icon(Icons.videocam_off, color: AppTheme.textMuted));
+                      },
+                    ),
+                  
+                  // Scanning animation overlay
+                  Center(
+                    child: PhosphorIcon(PhosphorIcons.qrCode(PhosphorIconsStyle.thin), size: 48, color: AppTheme.emerald),
+                  ),
+                ],
               ),
-              TextButton(
-                onPressed: pairingController.cancelReview,
-                child: const Text('Cancel'),
-              ),
-            ],
-          ),
-          if (pairingState.errorMessage != null) ...[
-            const SizedBox(height: 12),
-            Text(
-              pairingState.errorMessage!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
-          ],
-        ],
-      ),
+          ),
+
+        const SizedBox(height: 40),
+        
+        MagneticButton(
+          variant: MagneticButtonVariant.secondary,
+          onClick: pairingController.cancelReview,
+          child: const Text('Cancel'),
+        ),
+      ],
     );
   }
 
-  Widget _buildPairedView(
-    PairingState pairingState,
-    PairingController pairingController,
-  ) {
+  Widget _buildReviewView(PairingState pairingState, PairingController pairingController) {
+    final payload = pairingState.pendingPayload;
+    if (payload == null) return const SizedBox.shrink();
+
+    return Column(
+      key: const ValueKey('review'),
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Verify Identity', style: Theme.of(context).textTheme.headlineMedium),
+        const SizedBox(height: 8),
+        Text('Confirm desktop fingerprint before connecting.', style: TextStyle(color: AppTheme.textMuted)),
+        const SizedBox(height: 32),
+
+        Container(
+          padding: const EdgeInsets.all(24),
+          decoration: LiquidStyles.liquidGlass,
+          child: Column(
+            children: [
+              _IdentityRow(label: 'Bridge', value: payload.bridgeName),
+              const Divider(color: Colors.white10, height: 24),
+              _IdentityRow(label: 'Host URL', value: payload.bridgeApiBaseUrl),
+              const Divider(color: Colors.white10, height: 24),
+              _IdentityRow(label: 'Identity', value: payload.bridgeId, valueColor: AppTheme.emerald),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 40),
+
+        if (pairingState.errorMessage != null) ...[
+          Text(pairingState.errorMessage!, style: const TextStyle(color: AppTheme.rose)),
+          const SizedBox(height: 16),
+        ],
+
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            MagneticButton(
+              variant: MagneticButtonVariant.primary,
+              onClick: pairingState.isPersistingTrust ? () {} : () => pairingController.confirmTrust(),
+              child: const Text('Trust & Connect'),
+            ),
+            const SizedBox(height: 12),
+            MagneticButton(
+              variant: MagneticButtonVariant.secondary,
+              onClick: pairingController.cancelReview,
+              child: const Text('Reject'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPairedView(PairingState pairingState, PairingController pairingController) {
     final bridge = pairingState.trustedBridge;
     if (bridge == null) {
       return _buildUnpairedView(
@@ -421,110 +386,116 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage> {
       );
     }
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Paired with ${bridge.bridgeName}',
-            style: Theme.of(context).textTheme.headlineSmall,
+    return Column(
+      key: const ValueKey('paired'),
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Paired with ${bridge.bridgeName}', style: Theme.of(context).textTheme.headlineMedium),
+        const SizedBox(height: 8),
+        Text('A trusted connection is established.', style: TextStyle(color: AppTheme.textMuted)),
+        const SizedBox(height: 32),
+
+        if (pairingState.bridgeConnectionState == BridgeConnectionState.disconnected) ...[
+          _ConnectionWarningBanner(
+            message: pairingState.errorMessage ?? 'Bridge unreachable. Offline cache readable.',
+            onRetry: pairingController.retryTrustedBridgeConnection,
           ),
-          const SizedBox(height: 12),
-          _IdentityRow(label: 'Bridge id', value: bridge.bridgeId),
-          _IdentityRow(label: 'Bridge URL', value: bridge.bridgeApiBaseUrl),
-          _IdentityRow(label: 'Trusted session', value: bridge.sessionId),
-          if (pairingState.bridgeConnectionState ==
-              BridgeConnectionState.disconnected) ...[
-            const SizedBox(height: 12),
-            _ConnectionWarningBanner(
-              message:
-                  pairingState.errorMessage ??
-                  'Bridge is currently unreachable. Cached data stays readable, but mutating actions are blocked until reconnect.',
-              onRetry: pairingController.retryTrustedBridgeConnection,
-            ),
-          ],
-          const SizedBox(height: 24),
-          FilledButton.icon(
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (context) =>
-                      ThreadListPage(bridgeApiBaseUrl: bridge.bridgeApiBaseUrl),
-                ),
-              );
-            },
-            icon: const Icon(Icons.forum_outlined),
-            label: const Text('Open threads'),
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            key: const Key('open-device-settings'),
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (context) =>
-                      SettingsPage(bridgeApiBaseUrl: bridge.bridgeApiBaseUrl),
-                ),
-              );
-            },
-            icon: const Icon(Icons.settings_outlined),
-            label: const Text('Device settings'),
-          ),
-          const SizedBox(height: 12),
-          FilledButton(
-            onPressed: () => _openScanner(pairingController),
-            child: const Text('Scan another QR'),
-          ),
-          if (pairingState.errorMessage != null &&
-              pairingState.bridgeConnectionState !=
-                  BridgeConnectionState.disconnected) ...[
-            const SizedBox(height: 12),
-            Text(
-              pairingState.errorMessage!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ],
+          const SizedBox(height: 32),
         ],
-      ),
+
+        Column(
+           crossAxisAlignment: CrossAxisAlignment.stretch,
+           children: [
+             MagneticButton(
+               variant: MagneticButtonVariant.primary,
+               onClick: () => Navigator.of(context).push(
+                 MaterialPageRoute<void>(
+                   builder: (context) => HomeScreen(
+                     bridgeApiBaseUrl: bridge.bridgeApiBaseUrl,
+                     bridgeName: bridge.bridgeName,
+                     bridgeId: bridge.bridgeId,
+                   ),
+                 ),
+               ),
+               child: const Text('Open sessions'),
+             ),
+             const SizedBox(height: 12),
+             MagneticButton(
+               variant: MagneticButtonVariant.secondary,
+               onClick: () => Navigator.of(context).push(
+                 MaterialPageRoute<void>(
+                   builder: (context) => SettingsPage(bridgeApiBaseUrl: bridge.bridgeApiBaseUrl),
+                 ),
+               ),
+               child: const Text('Device Settings'),
+             ),
+           ],
+        ),
+      ],
+    );
+  }
+}
+
+class _IdentityRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? valueColor;
+
+  const _IdentityRow({required this.label, required this.value, this.valueColor});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: const TextStyle(color: AppTheme.textSubtle, fontSize: 13, fontFamily: 'JetBrains Mono')),
+        Flexible(
+          child: Text(
+            value,
+            style: TextStyle(color: valueColor ?? AppTheme.textMain, fontSize: 13, fontFamily: 'JetBrains Mono'),
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.right,
+          ),
+        ),
+      ],
     );
   }
 }
 
 class _ConnectionWarningBanner extends StatelessWidget {
-  const _ConnectionWarningBanner({
-    required this.message,
-    required this.onRetry,
-  });
-
   final String message;
   final VoidCallback onRetry;
 
+  const _ConnectionWarningBanner({required this.message, required this.onRetry});
+
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        color: colorScheme.errorContainer.withValues(alpha: 0.28),
-        border: Border.all(color: colorScheme.error),
+        color: AppTheme.amber.withOpacity(0.1),
+        border: Border.all(color: AppTheme.amber.withOpacity(0.3)),
+        borderRadius: BorderRadius.circular(20),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Bridge disconnected',
-            style: Theme.of(context).textTheme.titleMedium,
+          Row(
+            children: [
+              PhosphorIcon(PhosphorIcons.warningCircle(PhosphorIconsStyle.duotone), color: AppTheme.amber),
+              const SizedBox(width: 8),
+              const Text('Disconnected', style: TextStyle(color: AppTheme.amber, fontWeight: FontWeight.w600)),
+            ],
           ),
-          const SizedBox(height: 6),
-          Text(message),
           const SizedBox(height: 8),
-          FilledButton(
-            onPressed: onRetry,
-            child: const Text('Retry connection'),
+          Text(message, style: const TextStyle(color: AppTheme.amber, fontSize: 13)),
+          const SizedBox(height: 16),
+          MagneticButton(
+            variant: MagneticButtonVariant.secondary,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            onClick: onRetry,
+            child: const Text('Retry connection', style: TextStyle(color: AppTheme.amber)),
           ),
         ],
       ),
@@ -533,34 +504,24 @@ class _ConnectionWarningBanner extends StatelessWidget {
 }
 
 class _SecurityRePairRequiredBanner extends StatelessWidget {
-  const _SecurityRePairRequiredBanner({this.message});
-
   final String? message;
+  const _SecurityRePairRequiredBanner({this.message});
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        color: colorScheme.errorContainer.withValues(alpha: 0.28),
-        border: Border.all(color: colorScheme.error),
+        color: AppTheme.rose.withOpacity(0.1),
+        border: Border.all(color: AppTheme.rose.withOpacity(0.3)),
+        borderRadius: BorderRadius.circular(20),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Re-pair required for security',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 6),
-          Text(
-            message ??
-                'Stored trust no longer matches the active bridge identity. Scan a fresh pairing QR from your Mac before reconnecting.',
-          ),
+          const Text('Re-pair required', style: TextStyle(color: AppTheme.rose, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          Text(message ?? 'Stored trust no longer matches.', style: const TextStyle(color: AppTheme.rose, fontSize: 13)),
         ],
       ),
     );
@@ -568,103 +529,33 @@ class _SecurityRePairRequiredBanner extends StatelessWidget {
 }
 
 class _ScannerIssueBanner extends StatelessWidget {
-  const _ScannerIssueBanner({
-    required this.issue,
-    required this.onRetryCamera,
-    required this.onUseManualFallback,
-  });
-
   final PairingScannerIssue issue;
   final VoidCallback onRetryCamera;
   final VoidCallback onUseManualFallback;
 
+  const _ScannerIssueBanner({required this.issue, required this.onRetryCamera, required this.onUseManualFallback});
+
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    final (title, message) = switch (issue.type) {
-      PairingScannerIssueType.permissionDenied => (
-        'Camera permission is blocked',
-        'Enable camera access in system Settings, then retry scanning. You can still pair by pasting the QR payload below.',
-      ),
-      PairingScannerIssueType.scannerFailure => (
-        'Scanner is unavailable right now',
-        'We could not read from the camera. Retry scanning or continue with the manual payload fallback.',
-      ),
-    };
-
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: 24),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        color: colorScheme.errorContainer.withValues(alpha: 0.3),
-        border: Border.all(color: colorScheme.error),
+        color: AppTheme.rose.withOpacity(0.1),
+        border: Border.all(color: AppTheme.rose.withOpacity(0.3)),
+        borderRadius: BorderRadius.circular(20),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Icon(Icons.warning_amber_rounded, color: colorScheme.error),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(message),
-          if (issue.details != null) ...[
-            const SizedBox(height: 6),
-            Text(issue.details!, style: Theme.of(context).textTheme.bodySmall),
-          ],
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 12,
-            runSpacing: 8,
-            children: [
-              FilledButton(
-                onPressed: onRetryCamera,
-                child: const Text('Retry camera'),
-              ),
-              TextButton(
-                onPressed: onUseManualFallback,
-                child: const Text('Use manual payload'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _IdentityRow extends StatelessWidget {
-  const _IdentityRow({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 120,
-            child: Text(
-              label,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-          ),
-          Expanded(child: Text(value)),
-        ],
+           Text('Scanner Issue', style: const TextStyle(color: AppTheme.rose, fontWeight: FontWeight.bold)),
+           const SizedBox(height: 8),
+           MagneticButton(
+             variant: MagneticButtonVariant.danger,
+             onClick: onRetryCamera,
+             child: const Text('Retry Camera'),
+           )
+        ]
       ),
     );
   }
