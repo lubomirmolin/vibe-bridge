@@ -300,11 +300,6 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         threadId: state.threadId,
       );
 
-      await _cacheRepository.saveThreadDetail(
-        detail: detail,
-        timeline: timeline,
-      );
-
       final items = timeline
           .map(ThreadActivityItem.fromTimelineEntry)
           .toList(growable: false);
@@ -336,6 +331,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       );
 
       _threadListController.syncThreadDetail(detail);
+      unawaited(
+        _persistThreadDetailSnapshot(detail: detail, timeline: timeline),
+      );
       await refreshGitStatus(showLoading: true);
       await _startLiveSubscription();
     } on ThreadDetailBridgeException catch (error) {
@@ -460,11 +458,6 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
       final mergedItems = _mergeTimeline(timeline);
 
-      await _cacheRepository.saveThreadDetail(
-        detail: detail,
-        timeline: timeline,
-      );
-
       state = state.copyWith(
         thread: detail,
         items: mergedItems,
@@ -484,6 +477,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       );
 
       _threadListController.syncThreadDetail(detail);
+      unawaited(
+        _persistThreadDetailSnapshot(detail: detail, timeline: timeline),
+      );
       await refreshGitStatus(showLoading: false);
       await _startLiveSubscription();
     } on ThreadDetailBridgeException catch (error) {
@@ -548,6 +544,20 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
     _threadListController.syncThreadDetail(cachedSnapshot.detail);
     return true;
+  }
+
+  Future<void> _persistThreadDetailSnapshot({
+    required ThreadDetailDto detail,
+    required List<ThreadTimelineEntryDto> timeline,
+  }) async {
+    try {
+      await _cacheRepository.saveThreadDetail(
+        detail: detail,
+        timeline: timeline,
+      );
+    } catch (_) {
+      // Cache persistence is best-effort. Live thread content should still load.
+    }
   }
 
   List<ThreadActivityItem> _mergeTimeline(

@@ -528,10 +528,7 @@ class _ExplorationSummaryBuilder {
 }
 
 class _ExplorationSummary {
-  const _ExplorationSummary({
-    required this.files,
-    required this.searchCount,
-  });
+  const _ExplorationSummary({required this.files, required this.searchCount});
 
   final List<String> files;
   final int searchCount;
@@ -1446,10 +1443,7 @@ class _ThreadApprovalsCard extends StatelessWidget {
 }
 
 class _ThreadActivityCard extends StatelessWidget {
-  const _ThreadActivityCard({
-    required this.item,
-    this.exploration,
-  });
+  const _ThreadActivityCard({required this.item, this.exploration});
 
   final ThreadActivityItem item;
   final _ExplorationSummary? exploration;
@@ -2056,7 +2050,13 @@ class _CollapsibleFileChangeCardState
     final fileName = widget.parsed.diffPath ?? 'unknown file';
     final adds = widget.parsed.diffAdditions;
     final dels = widget.parsed.diffDeletions;
-    final titlePrefix = fileCount > 1 ? 'Edited files' : 'Edited file';
+    final primaryChangeType = fileCount == 1
+        ? diffDocument?.files.first.changeType
+        : null;
+    final titlePrefix = _titleForSummary(
+      fileCount: fileCount,
+      changeType: primaryChangeType,
+    );
 
     return Container(
       decoration: BoxDecoration(
@@ -2107,20 +2107,18 @@ class _CollapsibleFileChangeCardState
                                 color: AppTheme.textMuted,
                               ),
                             ),
-                          if (adds > 0)
-                            TextSpan(
-                              text: '  +$adds',
-                              style: GoogleFonts.jetBrainsMono(
-                                color: AppTheme.emerald,
-                              ),
+                          TextSpan(
+                            text: '  +$adds',
+                            style: GoogleFonts.jetBrainsMono(
+                              color: AppTheme.emerald,
                             ),
-                          if (dels > 0)
-                            TextSpan(
-                              text: ' -$dels',
-                              style: GoogleFonts.jetBrainsMono(
-                                color: AppTheme.rose,
-                              ),
+                          ),
+                          TextSpan(
+                            text: ' -$dels',
+                            style: GoogleFonts.jetBrainsMono(
+                              color: AppTheme.rose,
                             ),
+                          ),
                         ],
                       ),
                     ),
@@ -2164,6 +2162,25 @@ class _CollapsibleFileChangeCardState
         ],
       ),
     );
+  }
+
+  String _titleForSummary({
+    required int fileCount,
+    required ParsedDiffChangeType? changeType,
+  }) {
+    if (fileCount > 1) {
+      return 'Edited files';
+    }
+
+    switch (changeType) {
+      case ParsedDiffChangeType.added:
+        return 'Created file';
+      case ParsedDiffChangeType.deleted:
+        return 'Deleted file';
+      case ParsedDiffChangeType.modified:
+      case null:
+        return 'Edited file';
+    }
   }
 }
 

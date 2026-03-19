@@ -225,7 +225,23 @@ String _bodyForType(
       }
       return delta ?? command ?? fallbackSummary;
     case ThreadActivityItemType.fileChange:
+      final resolvedUnifiedDiff = _optionalString(
+        payload,
+        'resolved_unified_diff',
+      );
+      if (resolvedUnifiedDiff != null && resolvedUnifiedDiff.isNotEmpty) {
+        return resolvedUnifiedDiff;
+      }
+
       if (kind == BridgeEventKind.commandDelta) {
+        final normalizedBackgroundTerminal = _normalizeBackgroundTerminalBody(
+          payload,
+          fallbackSummary,
+        );
+        if (normalizedBackgroundTerminal != null) {
+          return normalizedBackgroundTerminal;
+        }
+
         final output = _optionalString(payload, 'output');
         if (output != null && output.isNotEmpty) {
           return output;

@@ -1,3 +1,4 @@
+import 'package:codex_mobile_companion/features/threads/domain/parsed_command_output.dart';
 import 'package:codex_mobile_companion/features/threads/domain/thread_activity_item.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -91,7 +92,96 @@ index 1111111..2222222 100644
     expect(item.parsedCommandOutput!.diffDeletions, 1);
     expect(item.parsedCommandOutput!.diffDocument, isNotNull);
     expect(item.parsedCommandOutput!.diffDocument!.files, hasLength(1));
+    final diffLines = item.parsedCommandOutput!.diffDocument!.files.first.lines;
+    final deletedLine = diffLines.firstWhere(
+      (line) => line.kind == ParsedDiffLineKind.deletion,
+    );
+    final addedLine = diffLines.firstWhere(
+      (line) => line.kind == ParsedDiffLineKind.addition,
+    );
+    expect(deletedLine.oldLineNumber, 1);
+    expect(addedLine.newLineNumber, 1);
   });
+
+  test('resolved unified diff payload uses real hunk line numbers', () {
+    final entry = ThreadTimelineEntryDto(
+      eventId: 'event-3b',
+      kind: BridgeEventKind.fileChange,
+      occurredAt: '2026-03-19T17:35:04.000Z',
+      summary: 'Edited file',
+      payload: <String, dynamic>{
+        'change': '''
+*** Begin Patch
+*** Update File: /tmp/thread_activity_item_test.dart
+@@
+-oldValue
++newValue
+*** End Patch
+''',
+        'resolved_unified_diff': '''
+diff --git a/apps/mobile/test/features/threads/thread_activity_item_test.dart b/apps/mobile/test/features/threads/thread_activity_item_test.dart
+--- a/apps/mobile/test/features/threads/thread_activity_item_test.dart
++++ b/apps/mobile/test/features/threads/thread_activity_item_test.dart
+@@ -95,1 +95,1 @@
+-oldValue
++newValue
+''',
+      },
+    );
+
+    final item = ThreadActivityItem.fromTimelineEntry(entry);
+
+    expect(item.type, ThreadActivityItemType.fileChange);
+    expect(item.body, startsWith('diff --git '));
+    expect(item.parsedCommandOutput, isNotNull);
+    final diffLines = item.parsedCommandOutput!.diffDocument!.files.first.lines;
+    final deletedLine = diffLines.firstWhere(
+      (line) => line.kind == ParsedDiffLineKind.deletion,
+    );
+    final addedLine = diffLines.firstWhere(
+      (line) => line.kind == ParsedDiffLineKind.addition,
+    );
+    expect(deletedLine.oldLineNumber, 95);
+    expect(addedLine.newLineNumber, 95);
+  });
+
+  test(
+    'resolved deleted-file diff preserves zero additions and deletion count',
+    () {
+      final entry = ThreadTimelineEntryDto(
+        eventId: 'event-3c',
+        kind: BridgeEventKind.fileChange,
+        occurredAt: '2026-03-19T17:35:04.000Z',
+        summary: 'Deleted file',
+        payload: <String, dynamic>{
+          'resolved_unified_diff': '''
+diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_test.dart b/apps/mobile/test/features/threads/thread_live_timeline_regression_test.dart
+--- a/apps/mobile/test/features/threads/thread_live_timeline_regression_test.dart
++++ /dev/null
+@@ -1,3 +0,0 @@
+-alpha
+-beta
+-gamma
+''',
+        },
+      );
+
+      final item = ThreadActivityItem.fromTimelineEntry(entry);
+
+      expect(item.type, ThreadActivityItemType.fileChange);
+      expect(item.parsedCommandOutput, isNotNull);
+      expect(
+        item.parsedCommandOutput!.diffPath,
+        'thread_live_timeline_regression_test.dart',
+      );
+      expect(item.parsedCommandOutput!.diffAdditions, 0);
+      expect(item.parsedCommandOutput!.diffDeletions, 3);
+      expect(
+        item.parsedCommandOutput!.diffDocument!.files.first.changeType,
+        ParsedDiffChangeType.deleted,
+      );
+    },
+  );
 
   test('exec_command arguments are normalized into a background terminal card', () {
     final entry = ThreadTimelineEntryDto(
@@ -113,6 +203,39 @@ index 1111111..2222222 100644
     expect(
       item.parsedCommandOutput!.terminalDisplayTitle,
       'Background terminal finished with dart format apps/mobile/lib/features/threads/presentation/thread_detail_page.dart',
+    );
+    expect(
+      item.parsedCommandOutput!.terminalDisplayBody,
+      contains(
+        'Working directory: /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion',
+      ),
+    );
+  });
+
+  test('file-change exec_command arguments do not render as unknown command', () {
+    final entry = ThreadTimelineEntryDto(
+      eventId: 'event-4b',
+      kind: BridgeEventKind.commandDelta,
+      occurredAt: '2026-03-19T17:35:04.000Z',
+      summary: 'Called exec_command',
+      payload: <String, dynamic>{
+        'command': 'exec_command',
+        'arguments':
+            '{"cmd":"git diff -- apps/mobile/lib/features/threads/application/thread_detail_controller.dart apps/mobile/test/features/threads/thread_detail_cache_failure_test.dart","workdir":"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion","yield_time_ms":1000,"max_output_tokens":12000}',
+      },
+    );
+
+    final item = ThreadActivityItem.fromTimelineEntry(entry);
+
+    expect(item.type, ThreadActivityItemType.fileChange);
+    expect(item.parsedCommandOutput, isNotNull);
+    expect(
+      item.parsedCommandOutput!.terminalDisplayTitle,
+      startsWith('Background terminal finished with git diff -- '),
+    );
+    expect(
+      item.parsedCommandOutput!.terminalDisplayTitle,
+      isNot('Unknown command'),
     );
     expect(
       item.parsedCommandOutput!.terminalDisplayBody,

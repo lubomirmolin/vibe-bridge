@@ -309,6 +309,63 @@ Output:
     expect(find.text('Modified'), findsOneWidget);
   });
 
+  testWidgets('delete-only file changes render as deleted file summaries', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-delete-file',
+              kind: BridgeEventKind.fileChange,
+              summary: 'Deleted file',
+              payload: {
+                'change': '''
+*** Begin Patch
+*** Delete File: /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile/test/features/threads/thread_live_timeline_regression_test.dart
+*** End Patch
+''',
+                'resolved_unified_diff': '''
+diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_test.dart b/apps/mobile/test/features/threads/thread_live_timeline_regression_test.dart
+--- a/apps/mobile/test/features/threads/thread_live_timeline_regression_test.dart
++++ /dev/null
+@@ -1,3 +0,0 @@
+-alpha
+-beta
+-gamma
+''',
+              },
+              occurredAt: '2026-03-18T10:02:00Z',
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('\$ Unknown command'), findsNothing);
+    final toggle = find.byKey(
+      const Key(
+        'thread-file-change-toggle-thread_live_timeline_regression_test.dart',
+      ),
+    );
+    await _scrollUntilVisible(tester, toggle);
+    expect(toggle, findsOneWidget);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(find.text('Deleted'), findsOneWidget);
+  });
+
   testWidgets('background terminal summaries render without raw JSON', (
     tester,
   ) async {
@@ -387,6 +444,7 @@ Output:
               payload: {
                 'output':
                     'Command: dart format apps/mobile/test/features/threads/thread_detail_page_test.dart\n'
+                    'Wall time: 49.2 seconds\n'
                     'Output:\n'
                     'Background terminal finished with dart format apps/mobile/test/features/threads/thread_detail_page_test.dart',
               },
@@ -416,6 +474,18 @@ Output:
               },
               occurredAt: '2026-03-18T10:02:02Z',
             ),
+            _timelineEvent(
+              id: 'evt-search-1',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Background terminal finished',
+              payload: {
+                'output':
+                    'Command: rg -n "thread-detail" apps/mobile/lib/features/threads\n'
+                    'Output:\n'
+                    'Background terminal finished with rg -n "thread-detail" apps/mobile/lib/features/threads',
+              },
+              occurredAt: '2026-03-18T10:02:03Z',
+            ),
           ],
         ],
       },
@@ -436,7 +506,9 @@ Output:
       find.byKey(const Key('thread-explored-files-summary')),
       findsOneWidget,
     );
-    expect(find.text('Explored 2 files'), findsOneWidget);
+    expect(find.text('Explored 2 files, 1 search'), findsOneWidget);
+    expect(find.byKey(const Key('thread-worked-for-summary')), findsOneWidget);
+    expect(find.text('Worked for 49s'), findsOneWidget);
     expect(find.text('Read thread_activity_item.dart'), findsOneWidget);
     expect(find.text('Read parsed_command_output.dart'), findsOneWidget);
     expect(
@@ -445,6 +517,10 @@ Output:
     );
     expect(
       find.textContaining('Background terminal finished with sed -n'),
+      findsNothing,
+    );
+    expect(
+      find.textContaining('Background terminal finished with rg -n'),
       findsNothing,
     );
   });
