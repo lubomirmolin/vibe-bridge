@@ -290,6 +290,8 @@ class ParsedDiffDocument {
     final lines = raw.split('\n');
     final files = <ParsedDiffFile>[];
     _ParsedDiffFileBuilder? current;
+    int oldLineNumber = 1;
+    int newLineNumber = 1;
 
     void finishCurrent() {
       final built = current?.build();
@@ -297,6 +299,8 @@ class ParsedDiffDocument {
         files.add(built);
       }
       current = null;
+      oldLineNumber = 1;
+      newLineNumber = 1;
     }
 
     for (final line in lines) {
@@ -306,6 +310,8 @@ class ParsedDiffDocument {
           path: line.substring('*** Update File: '.length).trim(),
           changeType: ParsedDiffChangeType.modified,
         );
+        oldLineNumber = 1;
+        newLineNumber = 1;
         continue;
       }
       if (line.startsWith('*** Add File: ')) {
@@ -314,6 +320,8 @@ class ParsedDiffDocument {
           path: line.substring('*** Add File: '.length).trim(),
           changeType: ParsedDiffChangeType.added,
         );
+        oldLineNumber = 1;
+        newLineNumber = 1;
         continue;
       }
       if (line.startsWith('*** Delete File: ')) {
@@ -322,6 +330,8 @@ class ParsedDiffDocument {
           path: line.substring('*** Delete File: '.length).trim(),
           changeType: ParsedDiffChangeType.deleted,
         );
+        oldLineNumber = 1;
+        newLineNumber = 1;
         continue;
       }
       if (line.startsWith('*** Move to: ')) {
@@ -340,7 +350,37 @@ class ParsedDiffDocument {
 
       final kind = _kindForDiffLine(line);
       if (kind != null) {
-        current?.addCodeLine(kind, _trimDiffPrefix(line));
+        switch (kind) {
+          case ParsedDiffLineKind.context:
+            current?.addCodeLine(
+              kind,
+              _trimDiffPrefix(line),
+              oldLineNumber: oldLineNumber,
+              newLineNumber: newLineNumber,
+            );
+            oldLineNumber += 1;
+            newLineNumber += 1;
+            break;
+          case ParsedDiffLineKind.deletion:
+            current?.addCodeLine(
+              kind,
+              _trimDiffPrefix(line),
+              oldLineNumber: oldLineNumber,
+            );
+            oldLineNumber += 1;
+            break;
+          case ParsedDiffLineKind.addition:
+            current?.addCodeLine(
+              kind,
+              _trimDiffPrefix(line),
+              newLineNumber: newLineNumber,
+            );
+            newLineNumber += 1;
+            break;
+          case ParsedDiffLineKind.hunk:
+            current?.addHunk(line);
+            break;
+        }
       }
     }
 
@@ -393,6 +433,14 @@ class ParsedDiffDocument {
         continue;
       }
       if (line.startsWith('deleted file mode ')) {
+        currentFile.changeType = ParsedDiffChangeType.deleted;
+        continue;
+      }
+      if (line == '--- /dev/null') {
+        currentFile.changeType = ParsedDiffChangeType.added;
+        continue;
+      }
+      if (line == '+++ /dev/null') {
         currentFile.changeType = ParsedDiffChangeType.deleted;
         continue;
       }

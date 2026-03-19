@@ -862,6 +862,7 @@ fn parse_archived_session(
             record_type,
             &payload,
             timeline.len() as u64 + 1,
+            cwd.as_deref(),
         ) {
             if let Some(fingerprint) = archived_message_fingerprint(&event)
                 && !visible_message_fingerprints.insert(fingerprint)
@@ -939,6 +940,7 @@ fn map_archived_session_event(
     record_type: &str,
     payload: &Value,
     sequence: u64,
+    workspace_path: Option<&str>,
 ) -> Option<UpstreamTimelineEvent> {
     match record_type {
         "event_msg" => {
@@ -1072,6 +1074,14 @@ fn map_archived_session_event(
                     if let Some(object) = data.as_object_mut() {
                         if is_file_change {
                             object.insert("change".to_string(), Value::String(input_text.clone()));
+                            if let Some(resolved_diff) =
+                                resolve_apply_patch_to_unified_diff(&input_text, workspace_path)
+                            {
+                                object.insert(
+                                    "resolved_unified_diff".to_string(),
+                                    Value::String(resolved_diff),
+                                );
+                            }
                         } else {
                             object.insert("arguments".to_string(), input.clone());
                         }
@@ -1200,6 +1210,341 @@ fn is_file_change_custom_tool(tool_name: &str) -> bool {
         tool_name,
         "apply_patch" | "replace_file_content" | "multi_replace_file_content"
     ) || tool_name.contains("edit_file")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ApplyPatchFile {
+    path: String,
+    output_path: String,
+    change_type: ApplyPatchChangeType,
+    hunks: Vec<ApplyPatchHunk>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApplyPatchChangeType {
+    Modified,
+    Added,
+    Deleted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ApplyPatchHunk {
+    lines: Vec<ApplyPatchLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ApplyPatchLine {
+    kind: ApplyPatchLineKind,
+    text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApplyPatchLineKind {
+    Context,
+    Addition,
+    Deletion,
+}
+
+fn resolve_apply_patch_to_unified_diff(
+    patch_text: &str,
+    workspace_path: Option<&str>,
+) -> Option<String> {
+    if !patch_text.contains("*** Begin Patch") {
+        return None;
+    }
+
+    let patch_files = parse_apply_patch(patch_text);
+    if patch_files.is_empty() {
+        return None;
+    }
+
+    let mut rendered_files = Vec::new();
+    for patch_file in patch_files {
+        let rendered =
+            render_resolved_apply_patch_file_as_unified_diff(&patch_file, workspace_path)?;
+        rendered_files.push(rendered);
+    }
+
+    Some(rendered_files.join("\n"))
+}
+
+fn parse_apply_patch(patch_text: &str) -> Vec<ApplyPatchFile> {
+    let mut files = Vec::new();
+    let mut current_file: Option<ApplyPatchFile> = None;
+    let mut current_hunk: Option<ApplyPatchHunk> = None;
+
+    fn finish_hunk(
+        current_file: &mut Option<ApplyPatchFile>,
+        current_hunk: &mut Option<ApplyPatchHunk>,
+    ) {
+        if let Some(hunk) = current_hunk.take()
+            && let Some(file) = current_file.as_mut()
+            && !hunk.lines.is_empty()
+        {
+            file.hunks.push(hunk);
+        }
+    }
+
+    fn finish_file(
+        files: &mut Vec<ApplyPatchFile>,
+        current_file: &mut Option<ApplyPatchFile>,
+        current_hunk: &mut Option<ApplyPatchHunk>,
+    ) {
+        finish_hunk(current_file, current_hunk);
+        if let Some(file) = current_file.take() {
+            files.push(file);
+        }
+    }
+
+    for raw_line in patch_text.lines() {
+        if raw_line == "*** Begin Patch"
+            || raw_line == "*** End Patch"
+            || raw_line == "*** End of File"
+        {
+            continue;
+        }
+
+        if let Some(path) = raw_line.strip_prefix("*** Update File: ") {
+            finish_file(&mut files, &mut current_file, &mut current_hunk);
+            let normalized_path = path.trim().to_string();
+            current_file = Some(ApplyPatchFile {
+                output_path: normalized_path.clone(),
+                path: normalized_path,
+                change_type: ApplyPatchChangeType::Modified,
+                hunks: Vec::new(),
+            });
+            continue;
+        }
+
+        if let Some(path) = raw_line.strip_prefix("*** Add File: ") {
+            finish_file(&mut files, &mut current_file, &mut current_hunk);
+            let normalized_path = path.trim().to_string();
+            current_file = Some(ApplyPatchFile {
+                output_path: normalized_path.clone(),
+                path: normalized_path,
+                change_type: ApplyPatchChangeType::Added,
+                hunks: Vec::new(),
+            });
+            continue;
+        }
+
+        if let Some(path) = raw_line.strip_prefix("*** Delete File: ") {
+            finish_file(&mut files, &mut current_file, &mut current_hunk);
+            let normalized_path = path.trim().to_string();
+            current_file = Some(ApplyPatchFile {
+                output_path: normalized_path.clone(),
+                path: normalized_path,
+                change_type: ApplyPatchChangeType::Deleted,
+                hunks: Vec::new(),
+            });
+            continue;
+        }
+
+        if let Some(path) = raw_line.strip_prefix("*** Move to: ") {
+            if let Some(file) = current_file.as_mut() {
+                file.output_path = path.trim().to_string();
+            }
+            continue;
+        }
+
+        if raw_line.starts_with("@@") {
+            finish_hunk(&mut current_file, &mut current_hunk);
+            current_hunk = Some(ApplyPatchHunk { lines: Vec::new() });
+            continue;
+        }
+
+        let Some(file) = current_file.as_ref() else {
+            continue;
+        };
+        let _ = file;
+
+        let kind = if raw_line.starts_with('+') {
+            Some(ApplyPatchLineKind::Addition)
+        } else if raw_line.starts_with('-') {
+            Some(ApplyPatchLineKind::Deletion)
+        } else if raw_line.starts_with(' ') || raw_line.is_empty() {
+            Some(ApplyPatchLineKind::Context)
+        } else {
+            None
+        };
+
+        if let Some(kind) = kind {
+            let text = if raw_line.is_empty() {
+                String::new()
+            } else {
+                raw_line[1..].to_string()
+            };
+            current_hunk
+                .get_or_insert_with(|| ApplyPatchHunk { lines: Vec::new() })
+                .lines
+                .push(ApplyPatchLine { kind, text });
+        }
+    }
+
+    finish_file(&mut files, &mut current_file, &mut current_hunk);
+    files
+}
+
+fn render_resolved_apply_patch_file_as_unified_diff(
+    patch_file: &ApplyPatchFile,
+    workspace_path: Option<&str>,
+) -> Option<String> {
+    let old_lines = match patch_file.change_type {
+        ApplyPatchChangeType::Added => Vec::new(),
+        ApplyPatchChangeType::Modified | ApplyPatchChangeType::Deleted => {
+            read_workspace_lines(workspace_path, &patch_file.path)?
+        }
+    };
+
+    let mut rendered = Vec::new();
+    rendered.push(format!(
+        "diff --git a/{} b/{}",
+        patch_file.path, patch_file.output_path
+    ));
+    rendered.push(match patch_file.change_type {
+        ApplyPatchChangeType::Added => "--- /dev/null".to_string(),
+        ApplyPatchChangeType::Modified | ApplyPatchChangeType::Deleted => {
+            format!("--- a/{}", patch_file.path)
+        }
+    });
+    rendered.push(match patch_file.change_type {
+        ApplyPatchChangeType::Deleted => "+++ /dev/null".to_string(),
+        ApplyPatchChangeType::Modified | ApplyPatchChangeType::Added => {
+            format!("+++ b/{}", patch_file.output_path)
+        }
+    });
+
+    if patch_file.hunks.is_empty() {
+        match patch_file.change_type {
+            ApplyPatchChangeType::Deleted => {
+                let deleted_count = old_lines.len();
+                if deleted_count > 0 {
+                    rendered.push(format!("@@ -1,{} +0,0 @@", deleted_count));
+                    for line in &old_lines {
+                        rendered.push(format!("-{line}"));
+                    }
+                }
+                return Some(rendered.join("\n"));
+            }
+            ApplyPatchChangeType::Added | ApplyPatchChangeType::Modified => {
+                return None;
+            }
+        }
+    }
+
+    let mut search_start = 0usize;
+    let mut line_delta: isize = 0;
+    for hunk in &patch_file.hunks {
+        let old_pattern = hunk
+            .lines
+            .iter()
+            .filter(|line| line.kind != ApplyPatchLineKind::Addition)
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>();
+
+        let match_index = match patch_file.change_type {
+            ApplyPatchChangeType::Added => 0,
+            ApplyPatchChangeType::Modified | ApplyPatchChangeType::Deleted => {
+                locate_hunk_in_old_lines(&old_lines, &old_pattern, search_start)?
+            }
+        };
+
+        let old_count = hunk
+            .lines
+            .iter()
+            .filter(|line| line.kind != ApplyPatchLineKind::Addition)
+            .count();
+        let new_count = hunk
+            .lines
+            .iter()
+            .filter(|line| line.kind != ApplyPatchLineKind::Deletion)
+            .count();
+
+        let old_start = match patch_file.change_type {
+            ApplyPatchChangeType::Added => 0,
+            ApplyPatchChangeType::Modified | ApplyPatchChangeType::Deleted => match_index + 1,
+        };
+        let new_start = match patch_file.change_type {
+            ApplyPatchChangeType::Added => 1,
+            ApplyPatchChangeType::Modified | ApplyPatchChangeType::Deleted => {
+                (match_index as isize + line_delta + 1).max(0) as usize
+            }
+        };
+
+        rendered.push(format!(
+            "@@ -{},{} +{},{} @@",
+            old_start, old_count, new_start, new_count
+        ));
+        for line in &hunk.lines {
+            let prefix = match line.kind {
+                ApplyPatchLineKind::Context => ' ',
+                ApplyPatchLineKind::Addition => '+',
+                ApplyPatchLineKind::Deletion => '-',
+            };
+            rendered.push(format!("{prefix}{}", line.text));
+        }
+
+        search_start = match_index.saturating_add(old_count);
+        line_delta += new_count as isize - old_count as isize;
+    }
+
+    Some(rendered.join("\n"))
+}
+
+fn read_workspace_lines(workspace_path: Option<&str>, raw_path: &str) -> Option<Vec<String>> {
+    let resolved_path = resolve_workspace_file_path(workspace_path, raw_path)?;
+    let contents = fs::read_to_string(&resolved_path).ok()?;
+    Some(contents.lines().map(normalize_line_ending).collect())
+}
+
+fn resolve_workspace_file_path(workspace_path: Option<&str>, raw_path: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(raw_path.trim());
+    if path.is_absolute() {
+        return Some(path);
+    }
+
+    let workspace = workspace_path?.trim();
+    if workspace.is_empty() {
+        return None;
+    }
+
+    Some(Path::new(workspace).join(path))
+}
+
+fn normalize_line_ending(line: &str) -> String {
+    line.strip_suffix('\r').unwrap_or(line).to_string()
+}
+
+fn locate_hunk_in_old_lines(
+    old_lines: &[String],
+    old_pattern: &[&str],
+    search_start: usize,
+) -> Option<usize> {
+    if old_pattern.is_empty() {
+        return Some(search_start.min(old_lines.len()));
+    }
+
+    if old_pattern.len() > old_lines.len() {
+        return None;
+    }
+
+    let normalized_pattern = old_pattern
+        .iter()
+        .map(|line| normalize_line_ending(line))
+        .collect::<Vec<_>>();
+
+    let max_start = old_lines.len().saturating_sub(normalized_pattern.len());
+    for index in search_start..=max_start {
+        if old_lines[index..index + normalized_pattern.len()]
+            .iter()
+            .zip(normalized_pattern.iter())
+            .all(|(left, right)| left == right)
+        {
+            return Some(index);
+        }
+    }
+
+    None
 }
 
 fn archived_text_content(message: &str, text_type: &str) -> Vec<Value> {
@@ -2040,6 +2385,18 @@ mod tests {
     #[test]
     fn archived_custom_tool_file_changes_map_to_file_change_events() {
         let codex_home = unique_test_codex_home();
+        let workspace_directory = codex_home.join("workspace");
+        fs::create_dir_all(workspace_directory.join("lib"))
+            .expect("test workspace directory should exist");
+        let workspace_file = workspace_directory.join("lib/main.dart");
+        let mut workspace_lines = (1..95)
+            .map(|index| format!("line {index}"))
+            .collect::<Vec<_>>();
+        workspace_lines.push("old".to_string());
+        workspace_lines.push("line 96".to_string());
+        fs::write(&workspace_file, format!("{}\n", workspace_lines.join("\n")))
+            .expect("workspace file should be writable");
+
         let sessions_directory = codex_home.join("sessions/2026/03/19");
         fs::create_dir_all(&sessions_directory).expect("test sessions directory should exist");
         fs::write(
@@ -2057,7 +2414,7 @@ mod tests {
                 "payload":{
                     "id":"thread-archive-tools",
                     "timestamp":"2026-03-19T09:55:00Z",
-                    "cwd":"/Users/test/workspace",
+                    "cwd":workspace_directory,
                     "source":"cli",
                     "git":{"branch":"main","repository_url":"git@github.com:example/project.git"}
                 }
@@ -2069,7 +2426,10 @@ mod tests {
                     "type":"custom_tool_call",
                     "name":"apply_patch",
                     "call_id":"call-1",
-                    "input":"*** Begin Patch\n*** Update File: /Users/test/workspace/lib/main.dart\n@@\n-old\n+new\n*** End Patch\n"
+                    "input":format!(
+                        "*** Begin Patch\n*** Update File: {}\n@@\n-old\n+new\n*** End Patch\n",
+                        workspace_file.display()
+                    )
                 }
             }),
             json!({
@@ -2078,7 +2438,10 @@ mod tests {
                 "payload":{
                     "type":"custom_tool_call_output",
                     "call_id":"call-1",
-                    "output":"{\"output\":\"Success. Updated the following files:\\nM /Users/test/workspace/lib/main.dart\\n\",\"metadata\":{\"exit_code\":0}}"
+                    "output":format!(
+                        "{{\"output\":\"Success. Updated the following files:\\nM {}\\n\",\"metadata\":{{\"exit_code\":0}}}}",
+                        workspace_file.display()
+                    )
                 }
             }),
         ];
@@ -2099,12 +2462,102 @@ mod tests {
         assert_eq!(thread_timeline[0].event_type, "file_change_delta");
         assert_eq!(thread_timeline[1].event_type, "file_change_delta");
         assert_eq!(
+            thread_timeline[0]
+                .data
+                .get("resolved_unified_diff")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            format!(
+                "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -95,1 +95,1 @@\n-old\n+new",
+                path = workspace_file.display()
+            )
+        );
+        assert_eq!(
             thread_timeline[1]
                 .data
                 .get("output")
                 .and_then(Value::as_str)
                 .unwrap_or_default(),
-            "Success. Updated the following files:\nM /Users/test/workspace/lib/main.dart\n"
+            format!(
+                "Success. Updated the following files:\nM {}\n",
+                workspace_file.display()
+            )
+        );
+
+        let _ = fs::remove_dir_all(codex_home);
+    }
+
+    #[test]
+    fn archived_delete_file_patch_resolves_to_deleted_unified_diff() {
+        let codex_home = unique_test_codex_home();
+        let workspace_directory = codex_home.join("workspace");
+        let target_directory = workspace_directory.join("apps/mobile/test/features/threads");
+        fs::create_dir_all(&target_directory).expect("test workspace directory should exist");
+        let deleted_file = target_directory.join("thread_live_timeline_regression_test.dart");
+        fs::write(&deleted_file, "alpha\nbeta\ngamma\n")
+            .expect("deleted file fixture should be writable");
+
+        let sessions_directory = codex_home.join("sessions/2026/03/19");
+        fs::create_dir_all(&sessions_directory).expect("test sessions directory should exist");
+        fs::write(
+            codex_home.join("session_index.jsonl"),
+            r#"{"id":"thread-archive-delete","thread_name":"Delete file fallback","updated_at":"2026-03-19T10:00:00Z"}"#,
+        )
+        .expect("session index should be writable");
+
+        let session_path =
+            sessions_directory.join("rollout-2026-03-19T10-00-00-thread-archive-delete.jsonl");
+        let entries = vec![
+            json!({
+                "timestamp":"2026-03-19T09:55:00Z",
+                "type":"session_meta",
+                "payload":{
+                    "id":"thread-archive-delete",
+                    "timestamp":"2026-03-19T09:55:00Z",
+                    "cwd":workspace_directory,
+                    "source":"cli",
+                    "git":{"branch":"main","repository_url":"git@github.com:example/project.git"}
+                }
+            }),
+            json!({
+                "timestamp":"2026-03-19T09:56:00Z",
+                "type":"response_item",
+                "payload":{
+                    "type":"custom_tool_call",
+                    "name":"apply_patch",
+                    "call_id":"call-delete",
+                    "input":format!(
+                        "*** Begin Patch\n*** Delete File: {}\n*** End Patch\n",
+                        deleted_file.display()
+                    )
+                }
+            }),
+        ];
+        let content = entries
+            .into_iter()
+            .map(|entry| entry.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(session_path, format!("{content}\n")).expect("session log should be writable");
+
+        let (_, timeline) = super::load_thread_snapshot_from_codex_archive(&codex_home)
+            .expect("archive fallback should load");
+
+        let thread_timeline = timeline
+            .get("thread-archive-delete")
+            .expect("timeline should exist for archived thread");
+        assert_eq!(thread_timeline.len(), 1);
+        assert_eq!(thread_timeline[0].event_type, "file_change_delta");
+        assert_eq!(
+            thread_timeline[0]
+                .data
+                .get("resolved_unified_diff")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            format!(
+                "diff --git a/{path} b/{path}\n--- a/{path}\n+++ /dev/null\n@@ -1,3 +0,0 @@\n-alpha\n-beta\n-gamma",
+                path = deleted_file.display()
+            )
         );
 
         let _ = fs::remove_dir_all(codex_home);
