@@ -21,15 +21,15 @@ void main() {
       storage: const FlutterSecureStorage(),
     );
     await firstStore.writeSecret(SecureValueKey.sessionToken, 'session-1');
-    await firstStore.writeSecret(
-      SecureValueKey.selectedThreadId,
-      'thread-123',
-    );
+    await firstStore.writeSecret(SecureValueKey.selectedThreadId, 'thread-123');
 
     final secondStore = PersistedSecureStore(
       storage: const FlutterSecureStorage(),
     );
-    expect(await secondStore.readSecret(SecureValueKey.sessionToken), 'session-1');
+    expect(
+      await secondStore.readSecret(SecureValueKey.sessionToken),
+      'session-1',
+    );
     expect(
       await secondStore.readSecret(SecureValueKey.selectedThreadId),
       'thread-123',
@@ -54,16 +54,8 @@ void main() {
     expect(SecureValueKey.threadDetailsCache.wireValue, 'thread_details_cache');
     expect(SecureValueKey.selectedThreadId.wireValue, 'selected_thread_id');
     expect(
-      SecureValueKey.notificationPreferences.wireValue,
-      'notification_preferences',
-    );
-    expect(
-      SecureValueKey.runtimeNotificationSeenEventIds.wireValue,
-      'runtime_notification_seen_event_ids',
-    );
-    expect(
-      SecureValueKey.runtimeNotificationPendingLaunchTarget.wireValue,
-      'runtime_notification_pending_launch_target',
+      SecureValueKey.desktopIntegrationEnabled.wireValue,
+      'desktop_integration_enabled',
     );
   });
 

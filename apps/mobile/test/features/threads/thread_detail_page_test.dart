@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
-import 'package:codex_mobile_companion/features/settings/application/notification_preferences_controller.dart';
+import 'package:codex_mobile_companion/features/settings/application/desktop_integration_controller.dart';
 import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
 import 'package:codex_mobile_companion/features/settings/data/settings_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
@@ -553,9 +553,6 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       threadId: 'thread-456',
     );
 
-    expect(find.text('Start turn'), findsOneWidget);
-    expect(find.byKey(const Key('turn-interrupt-button')), findsNothing);
-
     await tester.enterText(
       find.byKey(const Key('turn-composer-input')),
       'Draft release notes for today\'s bridge changes.',
@@ -566,12 +563,10 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(detailApi.startTurnPromptsByThreadId['thread-456'], [
       'Draft release notes for today\'s bridge changes.',
     ]);
-    expect(find.text('Steer turn'), findsOneWidget);
-    expect(find.byKey(const Key('turn-interrupt-button')), findsOneWidget);
     expect(find.text('Running'), findsOneWidget);
   });
 
-  testWidgets('active composer steers and interrupt stops the active turn', (
+  testWidgets('active composer primary button stops the active turn', (
     tester,
   ) async {
     final detailApi = FakeThreadDetailBridgeApi(
@@ -580,16 +575,6 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       },
       timelineScriptByThreadId: {
         'thread-123': [<ThreadTimelineEntryDto>[]],
-      },
-      steerTurnScriptByThreadId: {
-        'thread-123': [
-          _turnMutationResult(
-            threadId: 'thread-123',
-            operation: 'turn_steer',
-            status: ThreadStatus.running,
-            message: 'Steer instruction applied to active turn',
-          ),
-        ],
       },
       interruptTurnScriptByThreadId: {
         'thread-123': [
@@ -609,27 +594,11 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       threadId: 'thread-123',
     );
 
-    expect(find.text('Steer turn'), findsOneWidget);
-    expect(find.byKey(const Key('turn-interrupt-button')), findsOneWidget);
-
-    await tester.enterText(
-      find.byKey(const Key('turn-composer-input')),
-      'Focus on reconnect deduplication details.',
-    );
     await tester.tap(find.byKey(const Key('turn-composer-submit')));
-    await tester.pumpAndSettle();
-
-    expect(detailApi.steerTurnInstructionsByThreadId['thread-123'], [
-      'Focus on reconnect deduplication details.',
-    ]);
-
-    await tester.tap(find.byKey(const Key('turn-interrupt-button')));
     await tester.pumpAndSettle();
 
     expect(detailApi.interruptTurnCallsByThreadId['thread-123'], 1);
     expect(find.text('Interrupted'), findsOneWidget);
-    expect(find.text('Start turn'), findsOneWidget);
-    expect(find.byKey(const Key('turn-interrupt-button')), findsNothing);
   });
 
   testWidgets('start failure surfaces clear error and keeps thread usable', (
@@ -674,7 +643,6 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       find.text('Turn start failed: bridge rejected prompt payload.'),
       findsOneWidget,
     );
-    expect(find.text('Start turn'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('turn-composer-submit')));
     await tester.pumpAndSettle();
@@ -684,73 +652,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       findsNothing,
     );
     expect(find.text('Running'), findsOneWidget);
-    expect(find.text('Steer turn'), findsOneWidget);
   });
-
-  testWidgets(
-    'steer failure surfaces clear error and keeps active thread usable',
-    (tester) async {
-      final detailApi = FakeThreadDetailBridgeApi(
-        detailScriptByThreadId: {
-          'thread-123': [_thread123Detail()],
-        },
-        timelineScriptByThreadId: {
-          'thread-123': [<ThreadTimelineEntryDto>[]],
-        },
-        steerTurnScriptByThreadId: {
-          'thread-123': [
-            const ThreadTurnBridgeException(
-              message: 'Steer failed: bridge rejected steering payload.',
-            ),
-            _turnMutationResult(
-              threadId: 'thread-123',
-              operation: 'turn_steer',
-              status: ThreadStatus.running,
-              message: 'Steer instruction applied to active turn',
-            ),
-          ],
-        },
-      );
-
-      await _pumpThreadDetailApp(
-        tester,
-        detailApi: detailApi,
-        threadId: 'thread-123',
-      );
-
-      await tester.enterText(
-        find.byKey(const Key('turn-composer-input')),
-        'Keep summarizing reconnect state transitions.',
-      );
-      await tester.tap(find.byKey(const Key('turn-composer-submit')));
-      await tester.pumpAndSettle();
-
-      expect(
-        find.text('Steer failed: bridge rejected steering payload.'),
-        findsOneWidget,
-      );
-      expect(find.text('Running'), findsOneWidget);
-      expect(find.text('Steer turn'), findsOneWidget);
-      expect(find.byKey(const Key('turn-interrupt-button')), findsOneWidget);
-
-      await tester.enterText(
-        find.byKey(const Key('turn-composer-input')),
-        'Retry steer after failure with a shorter instruction.',
-      );
-      await tester.tap(find.byKey(const Key('turn-composer-submit')));
-      await tester.pumpAndSettle();
-
-      expect(
-        find.text('Steer failed: bridge rejected steering payload.'),
-        findsNothing,
-      );
-      expect(find.text('Running'), findsOneWidget);
-      expect(
-        detailApi.steerTurnInstructionsByThreadId['thread-123'],
-        hasLength(2),
-      );
-    },
-  );
 
   testWidgets('interrupt failure keeps active status and reports clear error', (
     tester,
@@ -777,7 +679,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       threadId: 'thread-123',
     );
 
-    await tester.tap(find.byKey(const Key('turn-interrupt-button')));
+    await tester.tap(find.byKey(const Key('turn-composer-submit')));
     await tester.pumpAndSettle();
 
     expect(
@@ -785,9 +687,34 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       findsOneWidget,
     );
     expect(find.text('Running'), findsOneWidget);
-    expect(find.text('Steer turn'), findsOneWidget);
-    expect(find.byKey(const Key('turn-interrupt-button')), findsOneWidget);
   });
+
+  testWidgets(
+    'active turn disables composer input while stop action is shown',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+      );
+
+      final input = tester.widget<TextField>(
+        find.byKey(const Key('turn-composer-input')),
+      );
+
+      expect(input.enabled, isFalse);
+      expect(find.byKey(const Key('turn-interrupt-button')), findsNothing);
+    },
+  );
 
   testWidgets('git status and mutations show context and refresh state', (
     tester,
@@ -906,10 +833,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       approvalApi: approvalApi,
     );
 
-    await _scrollUntilVisible(
-      tester,
-      find.byKey(const Key('git-controls-card')),
-    );
+    await _openGitBranchSheet(tester);
     expect(find.text('Repository: codex-mobile-companion'), findsOneWidget);
     expect(find.text('Branch: master'), findsOneWidget);
     expect(find.text('Remote: origin'), findsOneWidget);
@@ -925,7 +849,9 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(detailApi.branchSwitchRequestsByThreadId['thread-123'], [
       'release/2026',
     ]);
+    await _openGitBranchSheet(tester);
     expect(find.text('Branch: master'), findsOneWidget);
+    await _closeModalSheet(tester);
     expect(find.text('Switched branch to release/2026'), findsNothing);
     expect(
       find.text(
@@ -933,11 +859,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       ),
       findsOneWidget,
     );
-    expect(
-      find.byKey(const Key('thread-approval-status-approval-branch-switch')),
-      findsOneWidget,
-    );
-
+    await _openGitSyncSheet(tester);
     await tester.tap(find.byKey(const Key('git-pull-button')));
     await tester.pumpAndSettle();
     expect(detailApi.pullCallsByThreadId['thread-123'], 1);
@@ -947,11 +869,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       ),
       findsOneWidget,
     );
-    expect(
-      find.byKey(const Key('thread-approval-status-approval-pull')),
-      findsOneWidget,
-    );
-
+    await _openGitSyncSheet(tester);
     await tester.tap(find.byKey(const Key('git-push-button')));
     await tester.pumpAndSettle();
     expect(detailApi.pushCallsByThreadId['thread-123'], 1);
@@ -961,11 +879,9 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       ),
       findsOneWidget,
     );
-    expect(
-      find.byKey(const Key('thread-approval-status-approval-push')),
-      findsOneWidget,
-    );
+    await _openGitSyncSheet(tester);
     expect(find.text('Status: Dirty • Ahead 2 • Behind 3'), findsOneWidget);
+    await _closeModalSheet(tester);
     expect(detailApi.gitStatusFetchCountByThreadId['thread-123'], 4);
   });
 
@@ -1073,10 +989,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       settingsApi: FakeSettingsBridgeApi(accessMode: AccessMode.fullControl),
     );
 
-    await _scrollUntilVisible(
-      tester,
-      find.byKey(const Key('git-controls-card')),
-    );
+    await _openGitBranchSheet(tester);
     await tester.enterText(
       find.byKey(const Key('git-branch-input')),
       'release/2026',
@@ -1086,6 +999,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
 
     expect(find.text('Switched branch to release/2026'), findsOneWidget);
 
+    await _openGitSyncSheet(tester);
     await tester.tap(find.byKey(const Key('git-pull-button')));
     await tester.pumpAndSettle();
     expect(
@@ -1093,9 +1007,12 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       findsOneWidget,
     );
 
+    await _openGitSyncSheet(tester);
     await tester.tap(find.byKey(const Key('git-push-button')));
     await tester.pumpAndSettle();
+    await _openGitSyncSheet(tester);
     expect(find.text('Status: Clean • Ahead 0 • Behind 0'), findsOneWidget);
+    await _closeModalSheet(tester);
   });
 
   testWidgets('open-on-Mac success and failure are surfaced clearly', (
@@ -1126,11 +1043,6 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       tester,
       detailApi: detailApi,
       threadId: 'thread-123',
-    );
-
-    await _scrollUntilVisible(
-      tester,
-      find.byKey(const Key('desktop-integration-card')),
     );
 
     await tester.tap(find.byKey(const Key('open-on-mac-button')));
@@ -1168,11 +1080,6 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       threadId: 'thread-123',
     );
 
-    await _scrollUntilVisible(
-      tester,
-      find.byKey(const Key('desktop-integration-card')),
-    );
-
     var openButton = tester.widget<FilledButton>(
       find.byKey(const Key('open-on-mac-button')),
     );
@@ -1183,8 +1090,8 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     );
 
     await container
-        .read(notificationPreferencesControllerProvider.notifier)
-        .setDesktopIntegrationEnabled(false);
+        .read(desktopIntegrationControllerProvider.notifier)
+        .setEnabled(false);
     await tester.pumpAndSettle();
 
     openButton = tester.widget<FilledButton>(
@@ -1197,8 +1104,8 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     );
 
     await container
-        .read(notificationPreferencesControllerProvider.notifier)
-        .setDesktopIntegrationEnabled(true);
+        .read(desktopIntegrationControllerProvider.notifier)
+        .setEnabled(true);
     await tester.pumpAndSettle();
 
     openButton = tester.widget<FilledButton>(
@@ -1231,15 +1138,13 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
         threadId: 'thread-123',
       );
 
-      await _scrollUntilVisible(
-        tester,
-        find.byKey(const Key('git-controls-card')),
-      );
+      await _openGitSyncSheet(tester);
 
       final pullBefore = tester.widget<OutlinedButton>(
         find.byKey(const Key('git-pull-button')),
       );
       expect(pullBefore.onPressed, isNotNull);
+      await _closeModalSheet(tester);
 
       final container = ProviderScope.containerOf(
         tester.element(find.byType(ThreadDetailPage)),
@@ -1259,10 +1164,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
         find.byKey(const Key('turn-composer-submit')),
       );
 
-      await _scrollUntilVisible(
-        tester,
-        find.byKey(const Key('git-pull-button')),
-      );
+      await _openGitSyncSheet(tester);
       final pullAfter = tester.widget<OutlinedButton>(
         find.byKey(const Key('git-pull-button')),
       );
@@ -1298,10 +1200,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       threadId: 'thread-123',
     );
 
-    await _scrollUntilVisible(
-      tester,
-      find.byKey(const Key('git-controls-card')),
-    );
+    await _openGitBranchSheet(tester);
     await tester.enterText(find.byKey(const Key('git-branch-input')), '   ');
     await tester.tap(find.byKey(const Key('git-branch-switch-button')));
     await tester.pumpAndSettle();
@@ -1340,14 +1239,12 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       threadId: 'thread-123',
     );
 
-    await _scrollUntilVisible(
-      tester,
-      find.byKey(const Key('git-controls-card')),
-    );
-
+    await _openGitBranchSheet(tester);
     final switchButton = tester.widget<FilledButton>(
       find.byKey(const Key('git-branch-switch-button')),
     );
+    await _closeModalSheet(tester);
+    await _openGitSyncSheet(tester);
     final pullButton = tester.widget<OutlinedButton>(
       find.byKey(const Key('git-pull-button')),
     );
@@ -1405,18 +1302,17 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       threadId: 'thread-no-repo',
     );
 
-    await _scrollUntilVisible(
-      tester,
-      find.byKey(const Key('git-controls-card')),
-    );
     expect(
       find.byKey(const Key('git-controls-unavailable-message')),
       findsOneWidget,
     );
 
+    await _openGitBranchSheet(tester);
     final switchButton = tester.widget<FilledButton>(
       find.byKey(const Key('git-branch-switch-button')),
     );
+    await _closeModalSheet(tester);
+    await _openGitSyncSheet(tester);
     final pullButton = tester.widget<OutlinedButton>(
       find.byKey(const Key('git-pull-button')),
     );
@@ -1480,22 +1376,17 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
     await tester.pumpAndSettle();
 
-    await _scrollUntilVisible(
-      tester,
-      find.byKey(const Key('git-controls-card')),
-    );
+    await _openGitBranchSheet(tester);
     expect(find.text('Repository: codex-mobile-companion'), findsOneWidget);
-    await tester.pageBack();
-    await tester.pumpAndSettle();
+    await _closeModalSheet(tester);
 
     await tester.tap(find.byKey(const Key('thread-summary-card-thread-456')));
     await tester.pumpAndSettle();
 
-    await _scrollUntilVisible(
-      tester,
-      find.byKey(const Key('git-controls-card')),
-    );
+    await _openGitBranchSheet(tester);
     expect(find.text('Repository: codex-runtime-tools'), findsOneWidget);
+    await _closeModalSheet(tester);
+    await _openGitSyncSheet(tester);
     await tester.tap(find.byKey(const Key('git-pull-button')));
     await tester.pumpAndSettle();
 
@@ -1542,10 +1433,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       threadId: 'thread-123',
     );
 
-    await _scrollUntilVisible(
-      tester,
-      find.byKey(const Key('git-controls-card')),
-    );
+    await _openGitSyncSheet(tester);
     await tester.tap(find.byKey(const Key('git-pull-button')));
     await tester.pumpAndSettle();
 
@@ -1553,7 +1441,9 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       find.text('Pull failed: remote rejected fetch request.'),
       findsOneWidget,
     );
+    await _openGitSyncSheet(tester);
     expect(find.text('Status: Clean • Ahead 0 • Behind 1'), findsOneWidget);
+    await _closeModalSheet(tester);
     expect(detailApi.gitStatusFetchCountByThreadId['thread-123'], 2);
   });
 
@@ -2135,6 +2025,24 @@ Future<void> _scrollUntilVisible(WidgetTester tester, Finder finder) async {
     240,
     scrollable: find.byType(Scrollable).first,
   );
+  await tester.pumpAndSettle();
+}
+
+Future<void> _openGitBranchSheet(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('git-header-branch-button')));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _openGitSyncSheet(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('git-header-sync-button')));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _closeModalSheet(WidgetTester tester) async {
+  final navigatorState = tester.state<NavigatorState>(
+    find.byType(Navigator).first,
+  );
+  navigatorState.pop();
   await tester.pumpAndSettle();
 }
 

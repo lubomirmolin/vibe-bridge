@@ -157,11 +157,17 @@ void main() {
       );
       expect(find.textContaining('resumed after approval'), findsNothing);
 
-      await tester.pageBack();
+      final rootNavigatorState = tester.state<NavigatorState>(
+        find.byType(Navigator).first,
+      );
+      rootNavigatorState.pop();
       await tester.pumpAndSettle();
       expect(find.text('Rejected'), findsAtLeastNWidgets(1));
 
-      await tester.pageBack();
+      final threadNavigatorState = tester.state<NavigatorState>(
+        find.byType(Navigator).first,
+      );
+      threadNavigatorState.pop();
       await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
@@ -278,25 +284,25 @@ void main() {
 
       expect(find.text('Implement shared contracts'), findsOneWidget);
 
-      final steerButton = tester.widget<FilledButton>(
+      final steerButton = tester.widget<ElevatedButton>(
         find.byKey(const Key('turn-composer-submit')),
       );
-      final interruptButton = tester.widget<OutlinedButton>(
-        find.byKey(const Key('turn-interrupt-button')),
-      );
       expect(steerButton.onPressed, isNull);
-      expect(interruptButton.onPressed, isNull);
+      expect(find.byKey(const Key('turn-interrupt-button')), findsNothing);
 
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('git-controls-card')),
-        260,
-        scrollable: find.byType(Scrollable).first,
-      );
+      await tester.tap(find.byKey(const Key('git-header-branch-button')));
       await tester.pumpAndSettle();
 
       final switchButton = tester.widget<FilledButton>(
         find.byKey(const Key('git-branch-switch-button')),
       );
+      final navigatorState = tester.state<NavigatorState>(
+        find.byType(Navigator).first,
+      );
+      navigatorState.pop();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('git-header-sync-button')));
+      await tester.pumpAndSettle();
       final pullButton = tester.widget<OutlinedButton>(
         find.byKey(const Key('git-pull-button')),
       );
@@ -307,7 +313,12 @@ void main() {
       expect(pullButton.onPressed, isNull);
       expect(pushButton.onPressed, isNull);
 
-      await tester.pageBack();
+      final detailNavigatorState = tester.state<NavigatorState>(
+        find.byType(Navigator).first,
+      );
+      detailNavigatorState.pop();
+      await tester.pumpAndSettle();
+      detailNavigatorState.pop();
       await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const Key('open-approvals-queue')));

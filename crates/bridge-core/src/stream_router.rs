@@ -70,6 +70,13 @@ impl StreamRouter {
             .remove(&id);
     }
 
+    pub fn subscriber_count(&self) -> usize {
+        self.subscribers
+            .lock()
+            .expect("stream router mutex should not be poisoned")
+            .len()
+    }
+
     pub fn publish(&self, event: BridgeEventEnvelope<Value>) {
         let mut stale_subscribers = Vec::new();
 

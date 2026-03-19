@@ -463,12 +463,6 @@ class PairingController extends StateNotifier<PairingState> {
   Future<void> _clearLocalTrust({bool clearCachedThreadState = false}) async {
     await _secureStore.removeSecret(SecureValueKey.trustedBridgeIdentity);
     await _secureStore.removeSecret(SecureValueKey.sessionToken);
-    await _secureStore.removeSecret(
-      SecureValueKey.runtimeNotificationSeenEventIds,
-    );
-    await _secureStore.removeSecret(
-      SecureValueKey.runtimeNotificationPendingLaunchTarget,
-    );
 
     if (clearCachedThreadState) {
       await _secureStore.removeSecret(SecureValueKey.threadListCache);

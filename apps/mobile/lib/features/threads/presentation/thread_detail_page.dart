@@ -1,8 +1,12 @@
+import 'dart:io';
+
 import 'package:codex_mobile_companion/features/approvals/application/approvals_queue_controller.dart';
 import 'package:codex_mobile_companion/features/approvals/presentation/approval_presenter.dart';
-import 'package:codex_mobile_companion/features/settings/application/notification_preferences_controller.dart';
+import 'package:codex_mobile_companion/features/pairing/application/pairing_controller.dart';
+import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
+import 'package:codex_mobile_companion/features/settings/application/desktop_integration_controller.dart';
+import 'package:codex_mobile_companion/features/settings/application/device_settings_controller.dart';
 import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
-import 'package:codex_mobile_companion/features/settings/presentation/settings_page.dart';
 import 'package:codex_mobile_companion/features/threads/application/thread_detail_controller.dart';
 import 'package:codex_mobile_companion/features/threads/domain/parsed_command_output.dart';
 import 'package:codex_mobile_companion/features/threads/domain/thread_activity_item.dart';
@@ -10,10 +14,10 @@ import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dar
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
-import 'package:codex_mobile_companion/foundation/theme/liquid_styles.dart';
 import 'package:codex_mobile_companion/shared/widgets/badges.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:syntax_highlight/syntax_highlight.dart';
 
 class ThreadDetailPage extends ConsumerStatefulWidget {
@@ -33,21 +37,135 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
 }
 
 class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
+  static const List<String> _modelOptions = <String>[
+    'GPT-5',
+    'GPT-5 Mini',
+    'o4-mini',
+  ];
+  static const List<String> _reasoningOptions = <String>[
+    'Low',
+    'Medium',
+    'High',
+  ];
+
   late final TextEditingController _composerController;
   late final TextEditingController _gitBranchController;
+  late final ScrollController _timelineScrollController;
+  final ImagePicker _imagePicker = ImagePicker();
+  List<XFile> _attachedImages = const <XFile>[];
+  String _selectedModel = _modelOptions.first;
+  String _selectedReasoning = _reasoningOptions[1];
+  bool _didInitialScrollToBottom = false;
 
   @override
   void initState() {
     super.initState();
     _composerController = TextEditingController();
     _gitBranchController = TextEditingController();
+    _timelineScrollController = ScrollController();
+  }
+
+  @override
+  void didUpdateWidget(covariant ThreadDetailPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.threadId != widget.threadId) {
+      _didInitialScrollToBottom = false;
+    }
   }
 
   @override
   void dispose() {
     _composerController.dispose();
     _gitBranchController.dispose();
+    _timelineScrollController.dispose();
     super.dispose();
+  }
+
+  void _scheduleInitialScrollToBottom() {
+    if (_didInitialScrollToBottom) {
+      return;
+    }
+    _didInitialScrollToBottom = true;
+    _jumpToTimelineBottom(attempt: 0);
+  }
+
+  void _jumpToTimelineBottom({required int attempt}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_timelineScrollController.hasClients) {
+        if (attempt < 6) {
+          _jumpToTimelineBottom(attempt: attempt + 1);
+        }
+        return;
+      }
+
+      final position = _timelineScrollController.position;
+      _timelineScrollController.jumpTo(position.maxScrollExtent);
+
+      if (attempt < 2) {
+        _jumpToTimelineBottom(attempt: attempt + 1);
+      }
+    });
+  }
+
+  Future<void> _pickImages() async {
+    final images = await _imagePicker.pickMultiImage(
+      imageQuality: 90,
+      maxWidth: 2048,
+    );
+    if (!mounted || images.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _attachedImages = List<XFile>.unmodifiable(<XFile>[
+        ..._attachedImages,
+        ...images,
+      ]);
+    });
+  }
+
+  void _removeAttachedImage(XFile image) {
+    setState(() {
+      _attachedImages = List<XFile>.unmodifiable(
+        _attachedImages.where((candidate) => candidate.path != image.path),
+      );
+    });
+  }
+
+  Future<void> _showGitBranchSheet(
+    BuildContext context, {
+    required _ResolvedGitControls gitControls,
+    required Future<bool> Function(String rawBranch) onSwitchBranch,
+  }) {
+    return showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppTheme.background,
+      isScrollControlled: true,
+      builder: (context) => _GitBranchSheet(
+        gitControls: gitControls,
+        gitBranchController: _gitBranchController,
+        onSwitchBranch: onSwitchBranch,
+      ),
+    );
+  }
+
+  Future<void> _showGitSyncSheet(
+    BuildContext context, {
+    required _ResolvedGitControls gitControls,
+    required Future<void> Function({bool showLoading}) onRefreshGitStatus,
+    required Future<bool> Function() onPullRepository,
+    required Future<bool> Function() onPushRepository,
+  }) {
+    return showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppTheme.background,
+      builder: (context) => _GitSyncSheet(
+        gitControls: gitControls,
+        onRefreshGitStatus: onRefreshGitStatus,
+        onPullRepository: onPullRepository,
+        onPushRepository: onPushRepository,
+      ),
+    );
   }
 
   @override
@@ -65,12 +183,19 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     final runtimeAccessMode = ref.watch(
       runtimeAccessModeProvider(widget.bridgeApiBaseUrl),
     );
-    final notificationPreferences = ref.watch(
-      notificationPreferencesControllerProvider,
+    final desktopIntegrationState = ref.watch(
+      desktopIntegrationControllerProvider,
+    );
+    final pairingState = ref.watch(pairingControllerProvider);
+    final deviceSettingsState = ref.watch(
+      deviceSettingsControllerProvider(widget.bridgeApiBaseUrl),
     );
 
     final approvalsController = ref.read(
       approvalsQueueControllerProvider(widget.bridgeApiBaseUrl).notifier,
+    );
+    final deviceSettingsController = ref.read(
+      deviceSettingsControllerProvider(widget.bridgeApiBaseUrl).notifier,
     );
 
     final effectiveAccessMode =
@@ -80,6 +205,19 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     final isReadOnlyMode = effectiveAccessMode == AccessMode.readOnly;
     final controlsEnabled = state.canRunMutatingActions && !isReadOnlyMode;
     final desktopIntegrationControlsEnabled = state.canRunMutatingActions;
+    final gitControls = _ResolvedGitControls.resolve(
+      thread: state.thread,
+      gitStatus: state.gitStatus,
+      controlsEnabled: controlsEnabled,
+      isReadOnlyMode: isReadOnlyMode,
+      isGitStatusLoading: state.isGitStatusLoading,
+      isGitMutationInFlight: state.isGitMutationInFlight,
+      gitControlsUnavailableReason: state.gitControlsUnavailableReason,
+    );
+
+    if (state.hasThread && !_didInitialScrollToBottom) {
+      _scheduleInitialScrollToBottom();
+    }
 
     return Scaffold(
       backgroundColor: AppTheme.background,
@@ -87,44 +225,347 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         child: Column(
           children: [
             // Sticky Header
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              decoration: const BoxDecoration(
-                border: Border(bottom: BorderSide(color: Colors.white10)),
-              ),
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: PhosphorIcon(
-                      PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
-                      size: 20,
-                      color: AppTheme.textMuted,
+            if (state.thread != null)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 16,
+                ),
+                decoration: const BoxDecoration(
+                  border: Border(bottom: BorderSide(color: Colors.white10)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Row 1: CONNECTED & CODEX_BRIDGE
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: const BoxDecoration(
+                                color: AppTheme.emerald,
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: AppTheme.emerald,
+                                    blurRadius: 10,
+                                    spreadRadius: 2,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              !state.isConnectivityUnavailable
+                                  ? 'CONNECTED'
+                                  : 'DISCONNECTED',
+                              style: GoogleFonts.jetBrainsMono(
+                                color: !state.isConnectivityUnavailable
+                                    ? AppTheme.textSubtle
+                                    : AppTheme.rose,
+                                fontSize: 10,
+                                letterSpacing: 1.0,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          'CODEX_BRIDGE',
+                          style: GoogleFonts.jetBrainsMono(
+                            color: AppTheme.textSubtle,
+                            fontSize: 10,
+                            letterSpacing: 1.0,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Session Details',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w500,
-                        letterSpacing: -0.5,
+                    const SizedBox(height: 16),
+                    // Row 2: < Title ACTIVE
+                    Row(
+                      children: [
+                        IconButton(
+                          onPressed: () => Navigator.of(context).maybePop(),
+                          icon: PhosphorIcon(
+                            PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
+                            size: 24,
+                            color: AppTheme.textMuted,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            state.thread!.title,
+                            key: const Key('thread-detail-title'),
+                            style: Theme.of(context).textTheme.titleLarge
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w500,
+                                  letterSpacing: -0.5,
+                                ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        StatusBadge(
+                          text: _threadStatusLabel(state.thread!.status),
+                          variant: state.thread!.status == ThreadStatus.running
+                              ? BadgeVariant.active
+                              : BadgeVariant.defaultVariant,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    // Row 3: Repo • Approvals
+                    Padding(
+                      padding: const EdgeInsets.only(left: 36),
+                      child: Row(
+                        children: [
+                          PhosphorIcon(
+                            PhosphorIcons.folderSimple(),
+                            size: 14,
+                            color: AppTheme.textSubtle,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            state.thread!.repository,
+                            style: GoogleFonts.jetBrainsMono(
+                              color: AppTheme.textSubtle,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          const Text(
+                            '•',
+                            style: TextStyle(color: AppTheme.textSubtle),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            state.thread!.threadId,
+                            key: const Key('thread-detail-thread-id'),
+                            style: GoogleFonts.jetBrainsMono(
+                              color: AppTheme.textSubtle,
+                              fontSize: 12,
+                            ),
+                          ),
+                          if (approvalsState
+                              .forThread(widget.threadId)
+                              .isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            const Text(
+                              '•',
+                              style: TextStyle(color: AppTheme.textSubtle),
+                            ),
+                            const SizedBox(width: 8),
+                            PhosphorIcon(
+                              PhosphorIcons.shieldWarning(),
+                              size: 14,
+                              color: AppTheme.amber,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Approvals Req.',
+                              style: GoogleFonts.jetBrainsMono(
+                                color: AppTheme.amber,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (context) => SettingsPage(
-                          bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+                    const SizedBox(height: 16),
+                    // Row 4: Controls
+                    Padding(
+                      padding: const EdgeInsets.only(left: 36),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            flex: 3,
+                            child: FilledButton.tonalIcon(
+                              key: const Key('git-header-branch-button'),
+                              style: FilledButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                                backgroundColor: AppTheme.surfaceZinc800
+                                    .withOpacity(0.5),
+                                foregroundColor: AppTheme.textMain,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  side: BorderSide(
+                                    color: Colors.white.withOpacity(0.05),
+                                  ),
+                                ),
+                              ),
+                              onPressed: () async {
+                                await _showGitBranchSheet(
+                                  context,
+                                  gitControls: gitControls,
+                                  onSwitchBranch: (rawBranch) async {
+                                    final accepted = await controller
+                                        .switchBranch(rawBranch);
+                                    await approvalsController.loadApprovals(
+                                      showLoading: false,
+                                    );
+                                    return accepted;
+                                  },
+                                );
+                              },
+                              icon: PhosphorIcon(
+                                PhosphorIcons.gitBranch(),
+                                size: 16,
+                                color: gitControls.hasDirtyWorkingTree
+                                    ? AppTheme.amber
+                                    : AppTheme.textSubtle,
+                              ),
+                              label: Text(
+                                gitControls.repositoryContext.branch,
+                                style: const TextStyle(fontSize: 13),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 2,
+                            child: FilledButton.tonalIcon(
+                              key: const Key('git-header-sync-button'),
+                              style: FilledButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                                backgroundColor: AppTheme.surfaceZinc800
+                                    .withOpacity(0.5),
+                                foregroundColor: AppTheme.textMain,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  side: BorderSide(
+                                    color: Colors.white.withOpacity(0.05),
+                                  ),
+                                ),
+                              ),
+                              onPressed: () async {
+                                await _showGitSyncSheet(
+                                  context,
+                                  gitControls: gitControls,
+                                  onRefreshGitStatus:
+                                      controller.refreshGitStatus,
+                                  onPullRepository: () async {
+                                    final accepted = await controller
+                                        .pullRepository();
+                                    await approvalsController.loadApprovals(
+                                      showLoading: false,
+                                    );
+                                    return accepted;
+                                  },
+                                  onPushRepository: () async {
+                                    final accepted = await controller
+                                        .pushRepository();
+                                    await approvalsController.loadApprovals(
+                                      showLoading: false,
+                                    );
+                                    return accepted;
+                                  },
+                                );
+                              },
+                              icon: PhosphorIcon(
+                                PhosphorIcons.arrowsClockwise(),
+                                size: 16,
+                                color: AppTheme.textSubtle,
+                              ),
+                              label: Text(
+                                gitControls.syncLabel,
+                                style: const TextStyle(fontSize: 13),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton.tonal(
+                            key: const Key('open-on-mac-button'),
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size(44, 44),
+                              padding: const EdgeInsets.all(10),
+                              backgroundColor: AppTheme.surfaceZinc800
+                                  .withOpacity(0.5),
+                              foregroundColor: AppTheme.textMain,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                side: BorderSide(
+                                  color: Colors.white.withOpacity(0.05),
+                                ),
+                              ),
+                            ),
+                            onPressed:
+                                desktopIntegrationControlsEnabled &&
+                                    desktopIntegrationState.isEnabled &&
+                                    !state.isOpenOnMacInFlight
+                                ? () async {
+                                    await controller.openOnMac();
+                                  }
+                                : null,
+                            child: state.isOpenOnMacInFlight
+                                ? const SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: AppTheme.textMain,
+                                    ),
+                                  )
+                                : PhosphorIcon(
+                                    PhosphorIcons.monitor(),
+                                    size: 18,
+                                    color: AppTheme.textMain,
+                                  ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 16,
+                ),
+                decoration: const BoxDecoration(
+                  border: Border(bottom: BorderSide(color: Colors.white10)),
+                ),
+                child: Row(
+                  children: [
+                    IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: PhosphorIcon(
+                        PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
+                        size: 20,
+                        color: AppTheme.textMuted,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Session Details',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: -0.5,
                         ),
                       ),
                     ),
-                    icon: PhosphorIcon(PhosphorIcons.gear()),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
 
             Expanded(
               child: _buildBody(
@@ -132,54 +573,74 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                 state: state,
                 accessMode: effectiveAccessMode,
                 controlsEnabled: controlsEnabled,
-                desktopIntegrationControlsEnabled:
-                    desktopIntegrationControlsEnabled,
-                desktopIntegrationEnabled:
-                    notificationPreferences.desktopIntegrationEnabled,
-                showLiveNotificationSuppressedBanner:
-                    !notificationPreferences.liveActivityNotificationsEnabled,
+                desktopIntegrationEnabled: desktopIntegrationState.isEnabled,
                 onRetry: controller.loadThread,
                 onLoadEarlier: controller.loadEarlierHistory,
                 onRetryReconnect: controller.retryReconnectCatchUp,
-                onOpenOnMac: controller.openOnMac,
                 composerController: _composerController,
-                gitBranchController: _gitBranchController,
                 onSubmitComposer: controller.submitComposerInput,
                 onInterruptActiveTurn: controller.interruptActiveTurn,
-                onRefreshGitStatus: controller.refreshGitStatus,
-                onSwitchBranch: (rawBranch) async {
-                  final accepted = await controller.switchBranch(rawBranch);
-                  await approvalsController.loadApprovals(showLoading: false);
-                  return accepted;
-                },
-                onPullRepository: () async {
-                  final accepted = await controller.pullRepository();
-                  await approvalsController.loadApprovals(showLoading: false);
-                  return accepted;
-                },
-                onPushRepository: () async {
-                  final accepted = await controller.pushRepository();
-                  await approvalsController.loadApprovals(showLoading: false);
-                  return accepted;
-                },
                 threadApprovals: approvalsState.forThread(widget.threadId),
                 approvalsErrorMessage: approvalsState.errorMessage,
                 canResolveApprovals: approvalsState.canResolveApprovals,
-                gitStatus: state.gitStatus,
-                isGitStatusLoading: state.isGitStatusLoading,
-                isGitMutationInFlight: state.isGitMutationInFlight,
                 gitErrorMessage: state.gitErrorMessage,
                 gitMutationMessage: state.gitMutationMessage,
                 gitControlsUnavailableReason:
                     state.gitControlsUnavailableReason,
-                isOpenOnMacInFlight: state.isOpenOnMacInFlight,
                 openOnMacMessage: state.openOnMacMessage,
                 openOnMacErrorMessage: state.openOnMacErrorMessage,
+                hasPinnedComposer: state.thread != null,
                 onRefreshApprovals: () {
                   approvalsController.loadApprovals(showLoading: false);
                 },
+                scrollController: _timelineScrollController,
               ),
             ),
+            if (state.thread != null)
+              SafeArea(
+                top: false,
+                child: _PinnedTurnComposer(
+                  composerController: _composerController,
+                  isTurnActive: state.isTurnActive,
+                  controlsEnabled: controlsEnabled,
+                  isComposerMutationInFlight: state.isComposerMutationInFlight,
+                  isInterruptMutationInFlight:
+                      state.isInterruptMutationInFlight,
+                  attachedImages: _attachedImages,
+                  selectedModel: _selectedModel,
+                  selectedReasoning: _selectedReasoning,
+                  accessMode: effectiveAccessMode,
+                  trustedBridge: pairingState.trustedBridge,
+                  isAccessModeUpdating:
+                      deviceSettingsState.isAccessModeUpdating,
+                  accessModeErrorMessage:
+                      deviceSettingsState.accessModeErrorMessage,
+                  onPickImages: _pickImages,
+                  onRemoveImage: _removeAttachedImage,
+                  onModelChanged: (value) {
+                    setState(() {
+                      _selectedModel = value;
+                    });
+                  },
+                  onReasoningChanged: (value) {
+                    setState(() {
+                      _selectedReasoning = value;
+                    });
+                  },
+                  onAccessModeChanged: (mode) async {
+                    final trustedBridge = pairingState.trustedBridge;
+                    if (trustedBridge == null) {
+                      return;
+                    }
+                    await deviceSettingsController.setAccessMode(
+                      accessMode: mode,
+                      trustedBridge: trustedBridge,
+                    );
+                  },
+                  onSubmitComposer: controller.submitComposerInput,
+                  onInterruptActiveTurn: controller.interruptActiveTurn,
+                ),
+              ),
           ],
         ),
       ),
@@ -192,34 +653,24 @@ Widget _buildBody(
   required ThreadDetailState state,
   required AccessMode accessMode,
   required bool controlsEnabled,
-  required bool desktopIntegrationControlsEnabled,
   required bool desktopIntegrationEnabled,
-  required bool showLiveNotificationSuppressedBanner,
   required Future<void> Function() onRetry,
   required VoidCallback onLoadEarlier,
   required Future<void> Function() onRetryReconnect,
-  required Future<bool> Function() onOpenOnMac,
   required TextEditingController composerController,
-  required TextEditingController gitBranchController,
   required Future<bool> Function(String rawInput) onSubmitComposer,
   required Future<bool> Function() onInterruptActiveTurn,
-  required Future<void> Function({bool showLoading}) onRefreshGitStatus,
-  required Future<bool> Function(String rawBranch) onSwitchBranch,
-  required Future<bool> Function() onPullRepository,
-  required Future<bool> Function() onPushRepository,
   required List<ApprovalItemState> threadApprovals,
   required String? approvalsErrorMessage,
   required bool canResolveApprovals,
-  required GitStatusResponseDto? gitStatus,
-  required bool isGitStatusLoading,
-  required bool isGitMutationInFlight,
   required String? gitErrorMessage,
   required String? gitMutationMessage,
   required String? gitControlsUnavailableReason,
-  required bool isOpenOnMacInFlight,
   required String? openOnMacMessage,
   required String? openOnMacErrorMessage,
+  required bool hasPinnedComposer,
   required VoidCallback onRefreshApprovals,
+  required ScrollController scrollController,
 }) {
   if (state.isLoading && !state.hasThread) {
     return const Center(
@@ -252,12 +703,13 @@ Widget _buildBody(
     backgroundColor: AppTheme.surfaceZinc800,
     onRefresh: onRetry,
     child: ListView(
+      controller: scrollController,
+      key: const Key('thread-detail-scroll-view'),
       physics: const AlwaysScrollableScrollPhysics(
         parent: BouncingScrollPhysics(),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
       children: [
-        _ThreadDetailHeader(thread: thread),
         const SizedBox(height: 16),
         _AccessModeBanner(accessMode: accessMode),
 
@@ -274,51 +726,53 @@ Widget _buildBody(
             onRetryReconnect: isReadOnlyMode ? null : onRetryReconnect,
           ),
         ],
-        if (showLiveNotificationSuppressedBanner) ...[
-          const SizedBox(height: 12),
-          const _InlineInfo(
-            message: 'Live activity notifications are disabled.',
-          ),
-        ],
         if (state.streamErrorMessage != null) ...[
           const SizedBox(height: 12),
           _InlineWarning(message: state.streamErrorMessage!),
         ],
 
-        const SizedBox(height: 16),
-        _TurnControlsCard(
-          composerController: composerController,
-          isTurnActive: state.isTurnActive,
-          controlsEnabled: controlsEnabled,
-          isReadOnlyMode: isReadOnlyMode,
-          isComposerMutationInFlight: state.isComposerMutationInFlight,
-          isInterruptMutationInFlight: state.isInterruptMutationInFlight,
-          onSubmitComposer: onSubmitComposer,
-          onInterruptActiveTurn: onInterruptActiveTurn,
-        ),
-
         if (state.turnControlErrorMessage != null) ...[
           const SizedBox(height: 12),
           _InlineWarning(message: state.turnControlErrorMessage!),
         ],
-
-        const SizedBox(height: 16),
-        _GitControlsCard(
-          thread: thread,
-          gitStatus: gitStatus,
-          gitBranchController: gitBranchController,
-          controlsEnabled: controlsEnabled,
-          isReadOnlyMode: isReadOnlyMode,
-          isGitStatusLoading: isGitStatusLoading,
-          isGitMutationInFlight: isGitMutationInFlight,
-          gitErrorMessage: gitErrorMessage,
-          gitMutationMessage: gitMutationMessage,
-          gitControlsUnavailableReason: gitControlsUnavailableReason,
-          onRefreshGitStatus: onRefreshGitStatus,
-          onSwitchBranch: onSwitchBranch,
-          onPullRepository: onPullRepository,
-          onPushRepository: onPushRepository,
-        ),
+        if (gitControlsUnavailableReason != null) ...[
+          const SizedBox(height: 12),
+          KeyedSubtree(
+            key: const Key('git-controls-unavailable-message'),
+            child: _InlineWarning(message: gitControlsUnavailableReason),
+          ),
+        ],
+        if (gitErrorMessage != null) ...[
+          const SizedBox(height: 12),
+          _InlineWarning(message: gitErrorMessage),
+        ],
+        if (gitMutationMessage != null) ...[
+          const SizedBox(height: 12),
+          _InlineInfo(message: gitMutationMessage),
+        ],
+        if (!desktopIntegrationEnabled) ...[
+          const SizedBox(height: 12),
+          const KeyedSubtree(
+            key: Key('desktop-integration-disabled-message'),
+            child: _InlineWarning(
+              message: 'Desktop integration is disabled in settings.',
+            ),
+          ),
+        ],
+        if (openOnMacMessage != null) ...[
+          const SizedBox(height: 12),
+          KeyedSubtree(
+            key: const Key('open-on-mac-success-message'),
+            child: _InlineInfo(message: openOnMacMessage),
+          ),
+        ],
+        if (openOnMacErrorMessage != null) ...[
+          const SizedBox(height: 12),
+          KeyedSubtree(
+            key: const Key('open-on-mac-error-message'),
+            child: _InlineWarning(message: openOnMacErrorMessage),
+          ),
+        ],
 
         if (threadApprovals.isNotEmpty || approvalsErrorMessage != null) ...[
           const SizedBox(height: 16),
@@ -329,16 +783,6 @@ Widget _buildBody(
             onRefresh: onRefreshApprovals,
           ),
         ],
-
-        const SizedBox(height: 16),
-        _DesktopIntegrationCard(
-          desktopIntegrationEnabled: desktopIntegrationEnabled,
-          openOnMacEnabled: desktopIntegrationControlsEnabled,
-          isOpeningOnMac: isOpenOnMacInFlight,
-          openOnMacMessage: openOnMacMessage,
-          openOnMacErrorMessage: openOnMacErrorMessage,
-          onOpenOnMac: onOpenOnMac,
-        ),
 
         const SizedBox(height: 32),
         const Text(
@@ -380,6 +824,7 @@ Widget _buildBody(
                     : _ExploredFilesCard(exploration: block.exploration!),
               )
               .expand((widget) => [widget, const SizedBox(height: 12)]),
+        if (hasPinnedComposer) const SizedBox(height: 220),
       ],
     ),
   );
@@ -571,105 +1016,6 @@ String? _workedForLabel(double? wallTimeSeconds) {
   return 'Worked for ${minutes}m ${seconds}s';
 }
 
-class _DesktopIntegrationCard extends StatelessWidget {
-  const _DesktopIntegrationCard({
-    required this.desktopIntegrationEnabled,
-    required this.openOnMacEnabled,
-    required this.isOpeningOnMac,
-    required this.openOnMacMessage,
-    required this.openOnMacErrorMessage,
-    required this.onOpenOnMac,
-  });
-
-  final bool desktopIntegrationEnabled;
-  final bool openOnMacEnabled;
-  final bool isOpeningOnMac;
-  final String? openOnMacMessage;
-  final String? openOnMacErrorMessage;
-  final Future<bool> Function() onOpenOnMac;
-
-  @override
-  Widget build(BuildContext context) {
-    final canOpenOnMac =
-        desktopIntegrationEnabled && openOnMacEnabled && !isOpeningOnMac;
-
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: LiquidStyles.liquidGlass.copyWith(
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              PhosphorIcon(
-                PhosphorIcons.monitor(),
-                color: AppTheme.textMain,
-                size: 20,
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'Desktop integration',
-                style: TextStyle(
-                  color: AppTheme.textMain,
-                  fontWeight: FontWeight.w500,
-                  fontSize: 16,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Open this thread in Codex.app on Mac.',
-            style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
-          ),
-          const SizedBox(height: 16),
-
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.surfaceZinc800,
-              foregroundColor: AppTheme.textMain,
-              elevation: 0,
-            ),
-            onPressed: canOpenOnMac
-                ? () async {
-                    await onOpenOnMac();
-                  }
-                : null,
-            icon: isOpeningOnMac
-                ? const SizedBox.square(
-                    dimension: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppTheme.textMain,
-                    ),
-                  )
-                : PhosphorIcon(PhosphorIcons.arrowSquareOut()),
-            label: const Text('Open on Mac'),
-          ),
-
-          if (!desktopIntegrationEnabled) ...[
-            const SizedBox(height: 12),
-            const Text(
-              'Desktop integration is disabled in settings.',
-              style: TextStyle(color: AppTheme.rose, fontSize: 13),
-            ),
-          ],
-          if (openOnMacMessage != null) ...[
-            const SizedBox(height: 12),
-            _InlineInfo(message: openOnMacMessage!),
-          ],
-          if (openOnMacErrorMessage != null) ...[
-            const SizedBox(height: 12),
-            _InlineWarning(message: openOnMacErrorMessage!),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
 class _ThreadDetailErrorState extends StatelessWidget {
   const _ThreadDetailErrorState({
     required this.isUnavailable,
@@ -721,117 +1067,6 @@ class _ThreadDetailErrorState extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _ThreadDetailHeader extends StatelessWidget {
-  const _ThreadDetailHeader({required this.thread});
-
-  final ThreadDetailDto thread;
-
-  @override
-  Widget build(BuildContext context) {
-    BadgeVariant variant = BadgeVariant.defaultVariant;
-    String statusText = 'IDLE';
-
-    switch (thread.status) {
-      case ThreadStatus.running:
-        variant = BadgeVariant.active;
-        statusText = 'ACTIVE';
-        break;
-      case ThreadStatus.failed:
-        variant = BadgeVariant.danger;
-        statusText = 'FAILED';
-        break;
-      case ThreadStatus.interrupted:
-        variant = BadgeVariant.warning;
-        statusText = 'INTERRUPTED';
-        break;
-      case ThreadStatus.completed:
-        variant = BadgeVariant.defaultVariant;
-        statusText = 'COMPLETED';
-        break;
-      case ThreadStatus.idle:
-        break;
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: LiquidStyles.liquidGlass.copyWith(
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text(
-                  thread.title,
-                  style: const TextStyle(
-                    color: AppTheme.textMain,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: -0.5,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              StatusBadge(text: statusText, variant: variant),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _DetailRow(
-            icon: PhosphorIcons.folderSimple(),
-            text: thread.repository,
-          ),
-          const SizedBox(height: 8),
-          _DetailRow(icon: PhosphorIcons.gitBranch(), text: thread.branch),
-          const SizedBox(height: 8),
-          _DetailRow(
-            icon: PhosphorIcons.terminalWindow(),
-            text: thread.workspace,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            thread.threadId,
-            style: GoogleFonts.jetBrainsMono(
-              color: AppTheme.textSubtle,
-              fontSize: 10,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DetailRow extends StatelessWidget {
-  final IconData icon;
-  final String text;
-
-  const _DetailRow({required this.icon, required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        PhosphorIcon(icon, size: 14, color: AppTheme.textSubtle),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            text,
-            style: GoogleFonts.jetBrainsMono(
-              color: AppTheme.textSubtle,
-              fontSize: 12,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      ],
     );
   }
 }
@@ -893,14 +1128,25 @@ class _AccessModeBanner extends StatelessWidget {
   }
 }
 
-class _TurnControlsCard extends StatelessWidget {
-  const _TurnControlsCard({
+class _PinnedTurnComposer extends StatelessWidget {
+  const _PinnedTurnComposer({
     required this.composerController,
     required this.isTurnActive,
     required this.controlsEnabled,
-    required this.isReadOnlyMode,
     required this.isComposerMutationInFlight,
     required this.isInterruptMutationInFlight,
+    required this.attachedImages,
+    required this.selectedModel,
+    required this.selectedReasoning,
+    required this.accessMode,
+    required this.trustedBridge,
+    required this.isAccessModeUpdating,
+    required this.accessModeErrorMessage,
+    required this.onPickImages,
+    required this.onRemoveImage,
+    required this.onModelChanged,
+    required this.onReasoningChanged,
+    required this.onAccessModeChanged,
     required this.onSubmitComposer,
     required this.onInterruptActiveTurn,
   });
@@ -908,16 +1154,29 @@ class _TurnControlsCard extends StatelessWidget {
   final TextEditingController composerController;
   final bool isTurnActive;
   final bool controlsEnabled;
-  final bool isReadOnlyMode;
   final bool isComposerMutationInFlight;
   final bool isInterruptMutationInFlight;
+  final List<XFile> attachedImages;
+  final String selectedModel;
+  final String selectedReasoning;
+  final AccessMode accessMode;
+  final TrustedBridgeIdentity? trustedBridge;
+  final bool isAccessModeUpdating;
+  final String? accessModeErrorMessage;
+  final Future<void> Function() onPickImages;
+  final ValueChanged<XFile> onRemoveImage;
+  final ValueChanged<String> onModelChanged;
+  final ValueChanged<String> onReasoningChanged;
+  final ValueChanged<AccessMode> onAccessModeChanged;
   final Future<bool> Function(String rawInput) onSubmitComposer;
   final Future<bool> Function() onInterruptActiveTurn;
 
   @override
   Widget build(BuildContext context) {
+    final showStopAction = isTurnActive || isInterruptMutationInFlight;
     final canSubmitComposer =
         controlsEnabled &&
+        !isTurnActive &&
         !isComposerMutationInFlight &&
         !isInterruptMutationInFlight;
     final canInterrupt =
@@ -925,183 +1184,379 @@ class _TurnControlsCard extends StatelessWidget {
         isTurnActive &&
         !isInterruptMutationInFlight &&
         !isComposerMutationInFlight;
+    final canRunPrimaryAction = showStopAction
+        ? canInterrupt
+        : canSubmitComposer;
+    final canEditPinnedControls =
+        !isComposerMutationInFlight && !isInterruptMutationInFlight;
 
     return Container(
-      padding: const EdgeInsets.all(20),
+      key: const Key('pinned-turn-composer'),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
       decoration: BoxDecoration(
-        color: AppTheme.surfaceZinc800.withOpacity(0.5),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.05)),
+        color: AppTheme.background.withOpacity(0.96),
+        border: const Border(top: BorderSide(color: Colors.white10)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.45),
+            blurRadius: 24,
+            offset: const Offset(0, -8),
+          ),
+        ],
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              PhosphorIcon(
-                PhosphorIcons.keyboard(),
-                color: AppTheme.textMain,
-                size: 20,
+          if (attachedImages.isNotEmpty) ...[
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: attachedImages
+                    .map(
+                      (image) => _ComposerImagePreview(
+                        image: image,
+                        onRemove: () => onRemoveImage(image),
+                      ),
+                    )
+                    .toList(growable: false),
               ),
-              const SizedBox(width: 8),
-              Text(
-                isTurnActive ? 'Steer active turn' : 'Start new turn',
-                style: const TextStyle(
-                  color: AppTheme.textMain,
-                  fontWeight: FontWeight.w500,
-                  fontSize: 16,
+            ),
+          ],
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              SizedBox(
+                width: 56,
+                height: 56,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceZinc800.withOpacity(0.86),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white.withOpacity(0.06)),
+                  ),
+                  child: IconButton(
+                    icon: PhosphorIcon(
+                      PhosphorIcons.plus(),
+                      size: 24,
+                      color: AppTheme.textMain,
+                    ),
+                    onPressed: canEditPinnedControls
+                        ? () async {
+                            await onPickImages();
+                          }
+                        : null,
+                  ),
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          TextField(
-            controller: composerController,
-            enabled: canSubmitComposer,
-            minLines: 1,
-            maxLines: 4,
-            textInputAction: TextInputAction.newline,
-            style: const TextStyle(color: AppTheme.textMain, fontSize: 14),
-            decoration: InputDecoration(
-              hintText: isTurnActive
-                  ? 'Guide the agent...'
-                  : 'Describe task...',
-              hintStyle: const TextStyle(color: AppTheme.textSubtle),
-              filled: true,
-              fillColor: Colors.black26,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 56,
+                height: 56,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceZinc800.withOpacity(0.86),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white.withOpacity(0.06)),
+                  ),
+                  child: PopupMenuButton<dynamic>(
+                    enabled: canEditPinnedControls,
+                    tooltip: '',
+                    icon: PhosphorIcon(
+                      PhosphorIcons.cpu(),
+                      size: 24,
+                      color: AppTheme.textMain,
+                    ),
+                    onSelected: (value) {
+                      if (value is String &&
+                          ['GPT-5', 'GPT-5 Mini', 'o4-mini'].contains(value)) {
+                        onModelChanged(value);
+                      } else if (value is String &&
+                          ['Low', 'Medium', 'High'].contains(value)) {
+                        onReasoningChanged(value);
+                      } else if (value is AccessMode) {
+                        onAccessModeChanged(value);
+                      }
+                    },
+                    itemBuilder: (context) {
+                      return [
+                        const PopupMenuItem(
+                          enabled: false,
+                          child: Text(
+                            'Model',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        ...[
+                          'GPT-5',
+                          'GPT-5 Mini',
+                          'o4-mini',
+                        ].map((m) => PopupMenuItem(value: m, child: Text(m))),
+                        const PopupMenuDivider(),
+                        const PopupMenuItem(
+                          enabled: false,
+                          child: Text(
+                            'Reasoning',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        ...[
+                          'Low',
+                          'Medium',
+                          'High',
+                        ].map((r) => PopupMenuItem(value: r, child: Text(r))),
+                        const PopupMenuDivider(),
+                        const PopupMenuItem(
+                          enabled: false,
+                          child: Text(
+                            'Access Mode',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        ...AccessMode.values.map(
+                          (a) => PopupMenuItem(
+                            value: a,
+                            child: Text(_accessModeChipLabel(a)),
+                          ),
+                        ),
+                      ];
+                    },
+                  ),
+                ),
               ),
-              contentPadding: const EdgeInsets.all(16),
-            ),
-          ),
-
-          const SizedBox(height: 16),
-          Row(
-            children: [
+              const SizedBox(width: 8),
               Expanded(
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: isTurnActive
-                        ? AppTheme.surfaceZinc800
-                        : AppTheme.emerald,
-                    foregroundColor: isTurnActive
-                        ? AppTheme.textMain
-                        : Colors.black,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceZinc800.withOpacity(0.86),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: Colors.white.withOpacity(0.06)),
+                  ),
+                  child: TextField(
+                    key: const Key('turn-composer-input'),
+                    controller: composerController,
+                    enabled: canSubmitComposer,
+                    minLines: 1,
+                    maxLines: 4,
+                    textInputAction: TextInputAction.newline,
+                    style: const TextStyle(
+                      color: AppTheme.textMain,
+                      fontSize: 15,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: isTurnActive
+                          ? 'Guide the agent...'
+                          : 'Message Codex...',
+                      hintStyle: const TextStyle(color: AppTheme.textSubtle),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 16,
+                      ),
                     ),
                   ),
-                  onPressed: canSubmitComposer
+                ),
+              ),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 56,
+                height: 56,
+                child: ElevatedButton(
+                  key: const Key('turn-composer-submit'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: showStopAction
+                        ? (canRunPrimaryAction
+                              ? AppTheme.rose
+                              : AppTheme.rose.withOpacity(0.35))
+                        : (canRunPrimaryAction ? Colors.white : Colors.white24),
+                    foregroundColor: showStopAction
+                        ? Colors.white
+                        : Colors.black,
+                    padding: EdgeInsets.zero,
+                    elevation: 0,
+                    shape: const CircleBorder(),
+                  ),
+                  onPressed: canRunPrimaryAction
                       ? () async {
+                          if (showStopAction) {
+                            await onInterruptActiveTurn();
+                            return;
+                          }
                           final success = await onSubmitComposer(
                             composerController.text,
                           );
-                          if (success) composerController.clear();
+                          if (success) {
+                            composerController.clear();
+                          }
                         }
                       : null,
-                  icon: isComposerMutationInFlight
-                      ? const SizedBox.square(
-                          dimension: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.black,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    child: isComposerMutationInFlight
+                        ? const SizedBox.square(
+                            key: ValueKey('composer-loading'),
+                            dimension: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.black,
+                            ),
+                          )
+                        : isInterruptMutationInFlight
+                        ? const SizedBox.square(
+                            key: ValueKey('interrupt-loading'),
+                            dimension: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : PhosphorIcon(
+                            showStopAction
+                                ? PhosphorIcons.stop()
+                                : PhosphorIcons.arrowUp(),
+                            key: ValueKey(showStopAction ? 'stop' : 'send'),
+                            size: 24,
+                            color: showStopAction ? Colors.white : Colors.black,
                           ),
-                        )
-                      : PhosphorIcon(
-                          isTurnActive
-                              ? PhosphorIcons.chatTeardrop()
-                              : PhosphorIcons.play(),
-                        ),
-                  label: Text(isTurnActive ? 'Steer' : 'Start turn'),
+                  ),
                 ),
               ),
-              if (isTurnActive) ...[
-                const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.rose.withOpacity(0.2),
-                    foregroundColor: AppTheme.rose,
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 14,
-                      horizontal: 16,
-                    ),
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  onPressed: canInterrupt
-                      ? () async {
-                          await onInterruptActiveTurn();
-                        }
-                      : null,
-                  icon: isInterruptMutationInFlight
-                      ? const SizedBox.square(
-                          dimension: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppTheme.rose,
-                          ),
-                        )
-                      : PhosphorIcon(PhosphorIcons.stopCircle()),
-                  label: const Text('Interrupt'),
-                ),
-              ],
             ],
           ),
+          if (trustedBridge == null) ...[
+            const SizedBox(height: 8),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Pair with a Mac to change access mode from here.',
+                style: TextStyle(color: AppTheme.textSubtle, fontSize: 12),
+              ),
+            ),
+          ],
+          if (accessModeErrorMessage != null) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                accessModeErrorMessage!,
+                style: const TextStyle(color: AppTheme.rose, fontSize: 12),
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 }
 
-class _GitControlsCard extends StatelessWidget {
-  const _GitControlsCard({
-    required this.thread,
-    required this.gitStatus,
-    required this.gitBranchController,
-    required this.controlsEnabled,
-    required this.isReadOnlyMode,
-    required this.isGitStatusLoading,
-    required this.isGitMutationInFlight,
-    required this.gitErrorMessage,
-    required this.gitMutationMessage,
-    required this.gitControlsUnavailableReason,
-    required this.onRefreshGitStatus,
-    required this.onSwitchBranch,
-    required this.onPullRepository,
-    required this.onPushRepository,
-  });
+class _ComposerImagePreview extends StatelessWidget {
+  const _ComposerImagePreview({required this.image, required this.onRemove});
 
-  final ThreadDetailDto thread;
-  final GitStatusResponseDto? gitStatus;
-  final TextEditingController gitBranchController;
-  final bool controlsEnabled;
-  final bool isReadOnlyMode;
-  final bool isGitStatusLoading;
-  final bool isGitMutationInFlight;
-  final String? gitErrorMessage;
-  final String? gitMutationMessage;
-  final String? gitControlsUnavailableReason;
-  final Future<void> Function({bool showLoading}) onRefreshGitStatus;
-  final Future<bool> Function(String rawBranch) onSwitchBranch;
-  final Future<bool> Function() onPullRepository;
-  final Future<bool> Function() onPushRepository;
+  final XFile image;
+  final VoidCallback onRemove;
 
   @override
   Widget build(BuildContext context) {
-    // Determine git state
+    return Stack(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: SizedBox(
+            width: 74,
+            height: 74,
+            child: Image.file(
+              File(image.path),
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => Container(
+                color: AppTheme.surfaceZinc800,
+                alignment: Alignment.center,
+                child: PhosphorIcon(
+                  PhosphorIcons.imageBroken(),
+                  color: AppTheme.textSubtle,
+                ),
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          top: 4,
+          right: 4,
+          child: GestureDetector(
+            onTap: onRemove,
+            child: Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.72),
+                shape: BoxShape.circle,
+              ),
+              child: PhosphorIcon(
+                PhosphorIcons.x(),
+                size: 14,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+String _accessModeChipLabel(AccessMode value) {
+  switch (value) {
+    case AccessMode.readOnly:
+      return 'Read-only';
+    case AccessMode.controlWithApprovals:
+      return 'Approvals';
+    case AccessMode.fullControl:
+      return 'Full access';
+  }
+}
+
+String _threadStatusLabel(ThreadStatus value) {
+  switch (value) {
+    case ThreadStatus.running:
+      return 'Running';
+    case ThreadStatus.interrupted:
+      return 'Interrupted';
+    case ThreadStatus.idle:
+      return 'Idle';
+    case ThreadStatus.completed:
+      return 'Completed';
+    case ThreadStatus.failed:
+      return 'Failed';
+  }
+}
+
+class _ResolvedGitControls {
+  const _ResolvedGitControls({
+    required this.repositoryContext,
+    required this.status,
+    required this.hasResolvedGitStatus,
+    required this.canRunGitMutations,
+    required this.unavailableMessage,
+  });
+
+  factory _ResolvedGitControls.resolve({
+    required ThreadDetailDto? thread,
+    required GitStatusResponseDto? gitStatus,
+    required bool controlsEnabled,
+    required bool isReadOnlyMode,
+    required bool isGitStatusLoading,
+    required bool isGitMutationInFlight,
+    required String? gitControlsUnavailableReason,
+  }) {
     final repositoryContext =
         gitStatus?.repository ??
         RepositoryContextDto(
-          workspace: thread.workspace,
-          repository: thread.repository,
-          branch: thread.branch,
+          workspace: thread?.workspace ?? '',
+          repository: thread?.repository ?? 'unknown',
+          branch: thread?.branch ?? 'unknown',
           remote: 'unknown',
         );
     final status = gitStatus?.status;
@@ -1129,203 +1584,286 @@ class _GitControlsCard extends StatelessWidget {
         ? 'Git controls unavailable (offline).'
         : gitControlsUnavailableReason;
 
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceZinc800.withOpacity(0.3),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.05)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              PhosphorIcon(
-                PhosphorIcons.gitBranch(),
+    return _ResolvedGitControls(
+      repositoryContext: repositoryContext,
+      status: status,
+      hasResolvedGitStatus: hasResolvedGitStatus,
+      canRunGitMutations: canRunGitMutations,
+      unavailableMessage: unavailableMessage,
+    );
+  }
+
+  final RepositoryContextDto repositoryContext;
+  final GitStatusDto? status;
+  final bool hasResolvedGitStatus;
+  final bool canRunGitMutations;
+  final String? unavailableMessage;
+
+  bool get hasDirtyWorkingTree => status?.dirty ?? false;
+
+  String get syncLabel {
+    if (status == null) {
+      return 'Sync';
+    }
+    final aheadBy = status!.aheadBy;
+    final behindBy = status!.behindBy;
+    if (aheadBy == 0 && behindBy == 0) {
+      return 'Up to date';
+    }
+    return '↑$aheadBy ↓$behindBy';
+  }
+
+  String get statusLabel {
+    if (status == null) {
+      return hasResolvedGitStatus
+          ? 'Status unavailable'
+          : 'Resolving git status';
+    }
+    final dirty = status!.dirty ? 'Dirty' : 'Clean';
+    return 'Status: $dirty • Ahead ${status!.aheadBy} • Behind ${status!.behindBy}';
+  }
+}
+
+class _GitBranchSheet extends StatelessWidget {
+  const _GitBranchSheet({
+    required this.gitControls,
+    required this.gitBranchController,
+    required this.onSwitchBranch,
+  });
+
+  final _ResolvedGitControls gitControls;
+  final TextEditingController gitBranchController;
+  final Future<bool> Function(String rawBranch) onSwitchBranch;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 24,
+          top: 24,
+          right: 24,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Git',
+              style: TextStyle(
                 color: AppTheme.textMain,
-                size: 20,
+                fontWeight: FontWeight.w600,
+                fontSize: 18,
               ),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'Git Status',
-                  style: TextStyle(
-                    color: AppTheme.textMain,
-                    fontWeight: FontWeight.w500,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-              IconButton(
-                onPressed: isGitMutationInFlight
-                    ? null
-                    : () async {
-                        await onRefreshGitStatus(showLoading: true);
-                      },
-                icon: PhosphorIcon(
-                  PhosphorIcons.arrowsClockwise(),
-                  color: AppTheme.textSubtle,
-                  size: 20,
-                ),
-              ),
-            ],
-          ),
-
-          if (isGitStatusLoading)
-            const LinearProgressIndicator(
-              color: AppTheme.emerald,
-              backgroundColor: Colors.transparent,
             ),
-
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.black26,
-              borderRadius: BorderRadius.circular(12),
+            const SizedBox(height: 16),
+            Text(
+              'Repository: ${gitControls.repositoryContext.repository}',
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 13),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            const SizedBox(height: 4),
+            Text(
+              'Branch: ${gitControls.repositoryContext.branch}',
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 13),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Remote: ${gitControls.repositoryContext.remote}',
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 13),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              gitControls.statusLabel,
+              style: TextStyle(
+                color: gitControls.hasDirtyWorkingTree
+                    ? AppTheme.amber
+                    : AppTheme.textMuted,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
               children: [
-                _DetailRow(
-                  icon: PhosphorIcons.gitBranch(),
-                  text: repositoryContext.branch,
-                ),
-                if (status != null) ...[
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      PhosphorIcon(
-                        status.dirty
-                            ? PhosphorIcons.warningCircle()
-                            : PhosphorIcons.checkCircle(),
-                        size: 14,
-                        color: status.dirty ? AppTheme.amber : AppTheme.emerald,
+                Expanded(
+                  child: TextField(
+                    key: const Key('git-branch-input'),
+                    controller: gitBranchController,
+                    enabled: gitControls.canRunGitMutations,
+                    style: const TextStyle(
+                      color: AppTheme.textMain,
+                      fontSize: 14,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: 'Branch name...',
+                      hintStyle: const TextStyle(color: AppTheme.textSubtle),
+                      filled: true,
+                      fillColor: Colors.black26,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
                       ),
-                      const SizedBox(width: 8),
-                      Text(
-                        status.dirty
-                            ? 'Uncommitted changes'
-                            : 'Clean working tree',
-                        style: TextStyle(
-                          color: status.dirty
-                              ? AppTheme.amber
-                              : AppTheme.emerald,
-                          fontSize: 12,
-                        ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 0,
                       ),
-                    ],
+                    ),
                   ),
-                ],
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  key: const Key('git-branch-switch-button'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTheme.surfaceZinc800,
+                    foregroundColor: AppTheme.textMain,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
+                  ),
+                  onPressed: gitControls.canRunGitMutations
+                      ? () async {
+                          final success = await onSwitchBranch(
+                            gitBranchController.text,
+                          );
+                          if (success) {
+                            gitBranchController.clear();
+                            if (context.mounted) {
+                              Navigator.of(context).pop();
+                            }
+                          }
+                        }
+                      : null,
+                  child: const Text('Checkout'),
+                ),
               ],
             ),
-          ),
-
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: gitBranchController,
-                  enabled: canRunGitMutations,
-                  style: const TextStyle(
-                    color: AppTheme.textMain,
-                    fontSize: 14,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: 'Branch name...',
-                    hintStyle: const TextStyle(color: AppTheme.textSubtle),
-                    filled: true,
-                    fillColor: Colors.black26,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 0,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.surfaceZinc800,
-                  foregroundColor: AppTheme.textMain,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                onPressed: canRunGitMutations
-                    ? () async {
-                        final success = await onSwitchBranch(
-                          gitBranchController.text,
-                        );
-                        if (success) gitBranchController.clear();
-                      }
-                    : null,
-                child: const Text('Checkout'),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: Colors.white12),
-                    foregroundColor: AppTheme.textMain,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  onPressed: canRunGitMutations ? onPullRepository : null,
-                  icon: PhosphorIcon(PhosphorIcons.downloadSimple(), size: 16),
-                  label: const Text('Pull'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: Colors.white12),
-                    foregroundColor: AppTheme.textMain,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  onPressed: canRunGitMutations ? onPushRepository : null,
-                  icon: PhosphorIcon(PhosphorIcons.uploadSimple(), size: 16),
-                  label: const Text('Push'),
-                ),
-              ),
-            ],
-          ),
-
-          if (unavailableMessage != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(
-                unavailableMessage,
+            if (gitControls.unavailableMessage != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                gitControls.unavailableMessage!,
                 style: const TextStyle(color: AppTheme.rose, fontSize: 13),
               ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GitSyncSheet extends StatelessWidget {
+  const _GitSyncSheet({
+    required this.gitControls,
+    required this.onRefreshGitStatus,
+    required this.onPullRepository,
+    required this.onPushRepository,
+  });
+
+  final _ResolvedGitControls gitControls;
+  final Future<void> Function({bool showLoading}) onRefreshGitStatus;
+  final Future<bool> Function() onPullRepository;
+  final Future<bool> Function() onPushRepository;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Sync',
+              style: TextStyle(
+                color: AppTheme.textMain,
+                fontWeight: FontWeight.w600,
+                fontSize: 18,
+              ),
             ),
-          if (gitErrorMessage != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: _InlineWarning(message: gitErrorMessage!),
+            const SizedBox(height: 16),
+            Text(
+              gitControls.statusLabel,
+              style: TextStyle(
+                color: gitControls.hasDirtyWorkingTree
+                    ? AppTheme.amber
+                    : AppTheme.textMuted,
+                fontSize: 13,
+              ),
             ),
-          if (gitMutationMessage != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: _InlineInfo(message: gitMutationMessage!),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              key: const Key('git-refresh-button'),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Colors.white12),
+                foregroundColor: AppTheme.textMain,
+              ),
+              onPressed: () async {
+                await onRefreshGitStatus(showLoading: true);
+                if (context.mounted) {
+                  Navigator.of(context).pop();
+                }
+              },
+              icon: PhosphorIcon(PhosphorIcons.arrowsClockwise(), size: 16),
+              label: const Text('Refresh status'),
             ),
-        ],
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    key: const Key('git-pull-button'),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Colors.white12),
+                      foregroundColor: AppTheme.textMain,
+                    ),
+                    onPressed: gitControls.canRunGitMutations
+                        ? () async {
+                            await onPullRepository();
+                            if (context.mounted) {
+                              Navigator.of(context).pop();
+                            }
+                          }
+                        : null,
+                    icon: PhosphorIcon(
+                      PhosphorIcons.downloadSimple(),
+                      size: 16,
+                    ),
+                    label: const Text('Pull'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    key: const Key('git-push-button'),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Colors.white12),
+                      foregroundColor: AppTheme.textMain,
+                    ),
+                    onPressed: gitControls.canRunGitMutations
+                        ? () async {
+                            await onPushRepository();
+                            if (context.mounted) {
+                              Navigator.of(context).pop();
+                            }
+                          }
+                        : null,
+                    icon: PhosphorIcon(PhosphorIcons.uploadSimple(), size: 16),
+                    label: const Text('Push'),
+                  ),
+                ),
+              ],
+            ),
+            if (gitControls.unavailableMessage != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                gitControls.unavailableMessage!,
+                style: const TextStyle(color: AppTheme.rose, fontSize: 13),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
