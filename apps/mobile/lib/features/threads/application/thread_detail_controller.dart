@@ -122,27 +122,34 @@ class ThreadDetailState {
 
   bool get isTurnActive => thread?.status == ThreadStatus.running;
 
+  List<ThreadActivityItem> get conversationItems =>
+      List<ThreadActivityItem>.unmodifiable(
+        items.where(_isConversationTimelineItem),
+      );
+
   int get hiddenHistoryCount {
-    if (items.length <= visibleItemCount) {
+    final conversationItemCount = conversationItems.length;
+    if (conversationItemCount <= visibleItemCount) {
       return 0;
     }
 
-    return items.length - visibleItemCount;
+    return conversationItemCount - visibleItemCount;
   }
 
   bool get canLoadEarlierHistory => hiddenHistoryCount > 0;
 
   List<ThreadActivityItem> get visibleItems {
-    if (items.isEmpty) {
+    final visibleSource = conversationItems;
+    if (visibleSource.isEmpty) {
       return const <ThreadActivityItem>[];
     }
 
-    if (visibleItemCount <= 0 || visibleItemCount >= items.length) {
-      return List<ThreadActivityItem>.unmodifiable(items);
+    if (visibleItemCount <= 0 || visibleItemCount >= visibleSource.length) {
+      return visibleSource;
     }
 
     return List<ThreadActivityItem>.unmodifiable(
-      items.sublist(items.length - visibleItemCount),
+      visibleSource.sublist(visibleSource.length - visibleItemCount),
     );
   }
 
@@ -228,6 +235,16 @@ class ThreadDetailState {
           ? null
           : (openOnMacErrorMessage ?? this.openOnMacErrorMessage),
     );
+  }
+}
+
+bool _isConversationTimelineItem(ThreadActivityItem item) {
+  switch (item.type) {
+    case ThreadActivityItemType.lifecycleUpdate:
+    case ThreadActivityItemType.securityEvent:
+      return false;
+    default:
+      return true;
   }
 }
 

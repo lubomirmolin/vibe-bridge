@@ -125,6 +125,61 @@ void main() {
     },
   );
 
+  testWidgets(
+    'thread detail hides lifecycle and security noise from the conversation timeline',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            <ThreadTimelineEntryDto>[
+              _timelineEvent(
+                id: 'evt-status',
+                kind: BridgeEventKind.threadStatusChanged,
+                summary: 'Thread lifecycle',
+                payload: {'status': 'idle', 'reason': 'upstream_sync'},
+                occurredAt: '2026-03-18T10:00:00Z',
+              ),
+              _timelineEvent(
+                id: 'evt-security',
+                kind: BridgeEventKind.securityAudit,
+                summary: 'Security event',
+                payload: {'outcome': 'allowed', 'reason': 'policy_allow'},
+                occurredAt: '2026-03-18T10:00:01Z',
+              ),
+              _timelineEvent(
+                id: 'evt-user',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'User prompt',
+                payload: {
+                  'type': 'userMessage',
+                  'content': [
+                    {'text': 'reply test123'},
+                  ],
+                },
+                occurredAt: '2026-03-18T10:00:02Z',
+              ),
+            ],
+          ],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('reply test123'), findsOneWidget);
+      expect(find.text('Thread lifecycle'), findsNothing);
+      expect(find.text('Security event'), findsNothing);
+      expect(find.text('policy_allow'), findsNothing);
+    },
+  );
+
   testWidgets('message attachments render inline images', (tester) async {
     const transparentPngDataUrl =
         'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WnR6GsAAAAASUVORK5CYII=';
