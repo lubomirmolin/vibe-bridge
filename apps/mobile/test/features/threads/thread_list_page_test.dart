@@ -355,6 +355,58 @@ void main() {
     expect(find.text('Add remote config to setup flow'), findsOneWidget);
     expect(find.text('Implement shared contracts'), findsNothing);
   });
+
+  testWidgets('workspace groups can collapse and search re-expands matches', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(430, 1400);
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final cacheRepository = _newCacheRepository();
+    final bridgeApi = FakeThreadListBridgeApi(
+      scriptedResults: [_groupedThreads()],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+          approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
+          threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+          threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
+        ],
+        child: const MaterialApp(
+          home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Implement shared contracts'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(
+        const Key('thread-folder-toggle-/workspace/codex-mobile-companion'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Implement shared contracts'), findsNothing);
+    expect(find.text('Investigate reconnect dedup'), findsNothing);
+    expect(find.text('Add remote config to setup flow'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('thread-search-input')),
+      'shared contracts',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Implement shared contracts'), findsOneWidget);
+  });
 }
 
 ThreadCacheRepository _newCacheRepository() {

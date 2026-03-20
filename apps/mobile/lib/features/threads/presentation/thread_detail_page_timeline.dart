@@ -538,7 +538,6 @@ class _CollapsibleFileChangeCardState extends State<_CollapsibleFileChangeCard> 
             const Divider(height: 1, color: Colors.white10),
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: Colors.black.withOpacity(0.3),
                 borderRadius: const BorderRadius.only(
@@ -615,6 +614,10 @@ class _ThreadDiffFileSection extends StatelessWidget {
     final language = _CodeLanguageResolver.fromFilePath(file.path);
     final fileName = _CodeLanguageResolver.displayName(file.path) ?? file.path;
     final changeLabel = _labelForChangeType(file.changeType);
+    final visibleLines = file.lines
+        .where((line) => line.kind != ParsedDiffLineKind.hunk)
+        .toList(growable: false);
+    final gutterWidth = _gutterWidthForLines(visibleLines);
 
     return Container(
       decoration: BoxDecoration(
@@ -690,11 +693,15 @@ class _ThreadDiffFileSection extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 6),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: file.lines
-                    .where((line) => line.kind != ParsedDiffLineKind.hunk)
+                children: visibleLines
                     .map(
-                      (line) =>
-                          _ThreadDiffLineRow(line: line, language: language, highlighterSet: highlighterSet),
+                      (line) => _ThreadDiffLineRow(
+                        line: line,
+                        language: language,
+                        highlighterSet: highlighterSet,
+                        displayLineNumber: _displayLineNumber(line),
+                        gutterWidth: gutterWidth,
+                      ),
                     )
                     .toList(growable: false),
               ),
@@ -715,14 +722,46 @@ class _ThreadDiffFileSection extends StatelessWidget {
         return 'Modified';
     }
   }
+
+  int? _displayLineNumber(ParsedDiffLine line) {
+    if (file.changeType == ParsedDiffChangeType.deleted) {
+      return line.oldLineNumber;
+    }
+    return line.newLineNumber;
+  }
+
+  double _gutterWidthForLines(List<ParsedDiffLine> lines) {
+    var digits = 1;
+    for (final line in lines) {
+      final length = _displayLineNumber(line)?.toString().length ?? 0;
+      if (length > digits) {
+        digits = length;
+      }
+    }
+    if (digits <= 1) {
+      return 22;
+    }
+    if (digits == 2) {
+      return 30;
+    }
+    return (digits * 8 + 12).toDouble();
+  }
 }
 
 class _ThreadDiffLineRow extends StatelessWidget {
-  const _ThreadDiffLineRow({required this.line, required this.language, required this.highlighterSet});
+  const _ThreadDiffLineRow({
+    required this.line,
+    required this.language,
+    required this.highlighterSet,
+    required this.displayLineNumber,
+    required this.gutterWidth,
+  });
 
   final ParsedDiffLine line;
   final String? language;
   final _ThreadCodeHighlighterSet? highlighterSet;
+  final int? displayLineNumber;
+  final double gutterWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -741,10 +780,9 @@ class _ThreadDiffLineRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(width: 3, height: 24, color: accentColor),
-          _DiffLineNumberCell(number: line.oldLineNumber),
-          _DiffLineNumberCell(number: line.newLineNumber),
+          _DiffLineNumberCell(number: displayLineNumber, width: gutterWidth),
           Container(width: 1, height: 24, color: Colors.white.withOpacity(0.06)),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 8),
             child: line.kind == ParsedDiffLineKind.hunk
@@ -805,16 +843,17 @@ class _ThreadDiffLineRow extends StatelessWidget {
 }
 
 class _DiffLineNumberCell extends StatelessWidget {
-  const _DiffLineNumberCell({required this.number});
+  const _DiffLineNumberCell({required this.number, required this.width});
 
   final int? number;
+  final double width;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 46,
+      width: width,
       child: Padding(
-        padding: const EdgeInsets.only(top: 4, right: 8),
+        padding: const EdgeInsets.only(top: 4, right: 6),
         child: Text(
           number?.toString() ?? '',
           textAlign: TextAlign.right,

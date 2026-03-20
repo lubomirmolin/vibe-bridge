@@ -435,6 +435,61 @@ Output:
     expect(find.text('Modified'), findsOneWidget);
   });
 
+  testWidgets('structured diffs show one result-side line number column', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-git-diff-lines',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Edited file',
+              payload: {
+                'output': '''
+diff --git a/apps/mobile/lib/l10n/en.json b/apps/mobile/lib/l10n/en.json
+index 1111111..2222222 100644
+--- a/apps/mobile/lib/l10n/en.json
++++ b/apps/mobile/lib/l10n/en.json
+@@ -10,3 +10,4 @@
+ "alpha": "A",
+ "beta": "B",
++"gamma": "C",
+ "delta": "D",
+''',
+              },
+              occurredAt: '2026-03-18T10:02:00Z',
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
+
+    final toggle = find.byKey(const Key('thread-file-change-toggle-en.json'));
+    await _scrollUntilVisible(tester, toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+
+    final lineTen = find.byWidgetPredicate(
+      (widget) =>
+          widget is Text &&
+          widget.data == '10' &&
+          widget.textAlign == TextAlign.right,
+    );
+    expect(lineTen, findsOneWidget);
+  });
+
   testWidgets('delete-only file changes render as deleted file summaries', (
     tester,
   ) async {
@@ -1920,6 +1975,72 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       await tester.pumpAndSettle();
       await _scrollUntilVisible(tester, find.text('Visible on thread 456'));
       expect(find.text('Visible on thread 456'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'live message updates replace the existing activity card when the event id stays stable',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+      );
+      final liveStream = FakeThreadLiveStream();
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+        liveStream: liveStream,
+      );
+      await tester.pumpAndSettle();
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-stable-stream',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:30:00Z',
+          payload: {'type': 'agentMessage', 'text': 'Hel'},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Hel'), findsOneWidget);
+      expect(
+        find.byKey(const Key('thread-message-card-evt-stable-stream')),
+        findsOneWidget,
+      );
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-stable-stream',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:30:01Z',
+          payload: {
+            'type': 'agentMessage',
+            'text': 'Hello from the updated streamed message',
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Hel'), findsNothing);
+      expect(
+        find.text('Hello from the updated streamed message'),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('thread-message-card-evt-stable-stream')),
+        findsOneWidget,
+      );
     },
   );
 

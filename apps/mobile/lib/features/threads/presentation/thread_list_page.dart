@@ -22,6 +22,7 @@ class ThreadListPage extends ConsumerStatefulWidget {
 
 class _ThreadListPageState extends ConsumerState<ThreadListPage> {
   late final TextEditingController _searchController;
+  final Set<String> _collapsedGroupIds = <String>{};
   bool _didRestoreSelectedThread = false;
 
   @override
@@ -71,6 +72,23 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
         ),
       ),
     );
+  }
+
+  bool _isGroupCollapsed(ThreadListState state, String groupId) {
+    if (state.hasQuery) {
+      return false;
+    }
+    return _collapsedGroupIds.contains(groupId);
+  }
+
+  void _toggleGroupCollapsed(String groupId) {
+    setState(() {
+      if (_collapsedGroupIds.contains(groupId)) {
+        _collapsedGroupIds.remove(groupId);
+      } else {
+        _collapsedGroupIds.add(groupId);
+      }
+    });
   }
 
   @override
@@ -294,6 +312,8 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
           final group = state.visibleGroups[index];
           return _ThreadWorkspaceSection(
             group: group,
+            isCollapsed: _isGroupCollapsed(state, group.groupId),
+            onToggleCollapsed: () => _toggleGroupCollapsed(group.groupId),
             onOpenDetail: (threadId) =>
                 unawaited(_openThreadDetail(controller, threadId)),
           );
@@ -328,10 +348,14 @@ class _StaleDataBanner extends StatelessWidget {
 class _ThreadWorkspaceSection extends StatelessWidget {
   const _ThreadWorkspaceSection({
     required this.group,
+    required this.isCollapsed,
+    required this.onToggleCollapsed,
     required this.onOpenDetail,
   });
 
   final ThreadWorkspaceGroup group;
+  final bool isCollapsed;
+  final VoidCallback onToggleCollapsed;
   final ValueChanged<String> onOpenDetail;
 
   @override
@@ -340,40 +364,77 @@ class _ThreadWorkspaceSection extends StatelessWidget {
       key: Key('thread-folder-group-${group.groupId}'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            PhosphorIcon(
-              PhosphorIcons.folderSimple(),
-              size: 18,
-              color: AppTheme.textMuted,
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                group.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+        InkWell(
+          key: Key('thread-folder-toggle-${group.groupId}'),
+          onTap: onToggleCollapsed,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                PhosphorIcon(
+                  PhosphorIcons.folderSimple(),
+                  size: 18,
                   color: AppTheme.textMuted,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: -0.3,
                 ),
-              ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    group.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -0.3,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  '${group.threads.length}',
+                  style: GoogleFonts.jetBrainsMono(
+                    color: AppTheme.textSubtle,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                PhosphorIcon(
+                  isCollapsed
+                      ? PhosphorIcons.caretRight(PhosphorIconsStyle.bold)
+                      : PhosphorIcons.caretDown(PhosphorIconsStyle.bold),
+                  size: 14,
+                  color: AppTheme.textSubtle,
+                ),
+              ],
             ),
-          ],
+          ),
         ),
         const SizedBox(height: 12),
-        Column(
-          children: [
-            for (var index = 0; index < group.threads.length; index++) ...[
-              _ThreadSummaryCard(
-                thread: group.threads[index],
-                onOpenDetail: () => onOpenDetail(group.threads[index].threadId),
-              ),
-              if (index < group.threads.length - 1) const SizedBox(height: 12),
-            ],
-          ],
+        AnimatedSize(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          child: isCollapsed
+              ? const SizedBox.shrink()
+              : Column(
+                  children: [
+                    for (
+                      var index = 0;
+                      index < group.threads.length;
+                      index++
+                    ) ...[
+                      _ThreadSummaryCard(
+                        thread: group.threads[index],
+                        onOpenDetail: () =>
+                            onOpenDetail(group.threads[index].threadId),
+                      ),
+                      if (index < group.threads.length - 1)
+                        const SizedBox(height: 12),
+                    ],
+                  ],
+                ),
         ),
       ],
     );

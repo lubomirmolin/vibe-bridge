@@ -14,7 +14,7 @@ class _ChatMessageCard extends StatelessWidget {
       occurredAt: item.occurredAt,
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: isUser ? const EdgeInsets.fromLTRB(16, 12, 16, 14) : null,
         decoration: isUser
             ? BoxDecoration(
                 color: AppTheme.surfaceZinc800.withOpacity(0.4),
@@ -376,7 +376,7 @@ class _ThreadCodeBlockViewer extends StatelessWidget {
   Widget build(BuildContext context) {
     final lineCount = '\n'.allMatches(code).length + 1;
     final digits = lineCount.toString().length;
-    final gutterWidth = ((digits * 10) + 24).toDouble();
+    final gutterWidth = _gutterWidthForDigits(digits);
     final language =
         _CodeLanguageResolver.normalize(languageHint) ??
         _CodeLanguageResolver.fromFilePath(filePathHint);
@@ -460,7 +460,7 @@ class _ThreadCodeBlockViewer extends StatelessWidget {
 
               return SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -476,13 +476,13 @@ class _ThreadCodeBlockViewer extends StatelessWidget {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
                     Container(
                       width: 1,
                       height: 18.0 * lineCount,
                       color: Colors.white.withOpacity(0.08),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
                     SelectableText.rich(
                       highlighted == null
                           ? TextSpan(text: code, style: codeStyle)
@@ -496,6 +496,16 @@ class _ThreadCodeBlockViewer extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  double _gutterWidthForDigits(int digits) {
+    if (digits <= 1) {
+      return 20;
+    }
+    if (digits == 2) {
+      return 28;
+    }
+    return (digits * 8 + 12).toDouble();
   }
 
   String _lineNumbers(int lineCount) {
