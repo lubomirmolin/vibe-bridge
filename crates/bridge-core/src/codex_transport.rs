@@ -181,7 +181,7 @@ impl CodexJsonTransport {
                 })
             }
             CodexConnection::WebSocket { socket } => socket
-                .send(Message::Text(line.to_string().into()))
+                .send(Message::Text(line.to_string()))
                 .map_err(|error| {
                     format!("failed to send codex rpc request '{method}' over websocket: {error}")
                 }),
@@ -200,8 +200,8 @@ impl Drop for CodexJsonTransport {
 
 fn connect_to_codex_websocket(
     endpoint: &str,
-) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, tungstenite::Error> {
-    let (socket, _) = connect(endpoint)?;
+) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, Box<tungstenite::Error>> {
+    let (socket, _) = connect(endpoint).map_err(Box::new)?;
     Ok(socket)
 }
 
