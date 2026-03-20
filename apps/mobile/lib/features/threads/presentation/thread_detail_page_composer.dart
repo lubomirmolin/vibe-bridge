@@ -49,23 +49,11 @@ class _PinnedTurnComposer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final showStopAction = isTurnActive || isInterruptMutationInFlight;
-    final canSubmitComposer =
-        controlsEnabled &&
-        !isTurnActive &&
-        !isComposerMutationInFlight &&
-        !isInterruptMutationInFlight;
-    final canInterrupt =
-        controlsEnabled &&
-        isTurnActive &&
-        !isInterruptMutationInFlight &&
-        !isComposerMutationInFlight;
-    final canRunPrimaryAction = showStopAction
-        ? canInterrupt
-        : canSubmitComposer;
     final canEditPinnedControls =
         !isComposerMutationInFlight && !isInterruptMutationInFlight;
-    if (!canSubmitComposer && composerFocusNode.hasFocus) {
+    final composerEnabled = controlsEnabled && !isComposerMutationInFlight && !isInterruptMutationInFlight;
+
+    if (!composerEnabled && composerFocusNode.hasFocus) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (composerFocusNode.hasFocus) {
           composerFocusNode.unfocus();
@@ -198,7 +186,7 @@ class _PinnedTurnComposer extends StatelessWidget {
                     key: const Key('turn-composer-input'),
                     controller: composerController,
                     focusNode: composerFocusNode,
-                    enabled: canSubmitComposer,
+                    enabled: composerEnabled,
                     minLines: 1,
                     maxLines: 4,
                     keyboardType: TextInputType.multiline,
@@ -226,67 +214,55 @@ class _PinnedTurnComposer extends StatelessWidget {
               SizedBox(
                 width: 56,
                 height: 56,
-                child: ElevatedButton(
-                  key: const Key('turn-composer-submit'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: showStopAction
-                        ? (canRunPrimaryAction
-                              ? AppTheme.rose
-                              : AppTheme.rose.withValues(alpha: 0.35))
-                        : (canRunPrimaryAction ? Colors.white : Colors.white24),
-                    foregroundColor: showStopAction
-                        ? Colors.white
-                        : Colors.black,
-                    padding: EdgeInsets.zero,
-                    elevation: 0,
-                    shape: const CircleBorder(),
-                  ),
-                  onPressed: canRunPrimaryAction
-                      ? () async {
-                          if (showStopAction) {
-                            await onInterruptActiveTurn();
-                            return;
-                          }
+                child: ListenableBuilder(
+                  listenable: composerController,
+                  builder: (context, _) {
+                    final hasInput = composerController.text.trim().isNotEmpty;
+                    final showStopAction = (isTurnActive || isInterruptMutationInFlight) && !hasInput;
+                    final canRunPrimaryAction = showStopAction
+                        ? (controlsEnabled && isTurnActive && !isInterruptMutationInFlight && !isComposerMutationInFlight)
+                        : (controlsEnabled && !isComposerMutationInFlight && !isInterruptMutationInFlight);
 
-                          final success = await onSubmitComposer(
-                            composerController.text,
-                          );
-                          if (success) {
-                            composerController.clear();
-                          }
+                    return MagneticButton(
+                      isCircle: true,
+                      variant: showStopAction ? MagneticButtonVariant.secondary : MagneticButtonVariant.primary,
+                      onClick: canRunPrimaryAction ? () async {
+                        if (showStopAction) {
+                          await onInterruptActiveTurn();
+                          return;
                         }
-                      : null,
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    switchInCurve: Curves.easeOutCubic,
-                    switchOutCurve: Curves.easeInCubic,
-                    child: isComposerMutationInFlight
-                        ? const SizedBox.square(
-                            key: ValueKey('composer-loading'),
-                            dimension: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.black,
-                            ),
-                          )
-                        : isInterruptMutationInFlight
-                        ? const SizedBox.square(
-                            key: ValueKey('interrupt-loading'),
-                            dimension: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : PhosphorIcon(
-                            showStopAction
-                                ? PhosphorIcons.stop()
-                                : PhosphorIcons.arrowUp(),
-                            key: ValueKey(showStopAction ? 'stop' : 'send'),
-                            size: 24,
-                            color: showStopAction ? Colors.white : Colors.black,
-                          ),
-                  ),
+
+                        if (!hasInput) return;
+
+                        final success = await onSubmitComposer(composerController.text);
+                        if (success) {
+                          composerController.clear();
+                        }
+                      } : () {},
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 180),
+                        switchInCurve: Curves.easeOutCubic,
+                        switchOutCurve: Curves.easeInCubic,
+                        child: isComposerMutationInFlight
+                            ? const SizedBox.square(
+                                key: ValueKey('composer-loading'),
+                                dimension: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.background),
+                              )
+                            : isInterruptMutationInFlight
+                            ? const SizedBox.square(
+                                key: ValueKey('interrupt-loading'),
+                                dimension: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.textMain),
+                              )
+                            : PhosphorIcon(
+                                showStopAction ? PhosphorIcons.stop() : PhosphorIcons.arrowUp(),
+                                key: ValueKey(showStopAction ? 'stop' : 'send'),
+                                size: 24,
+                              ),
+                      ),
+                    );
+                  },
                 ),
               ),
             ],
@@ -394,26 +370,16 @@ class _ComposerModelSheetState extends State<_ComposerModelSheet> {
   Widget build(BuildContext context) {
     return SafeArea(
       top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.82,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.82,
+        ),
+        child: DecoratedBox(
+          decoration: const BoxDecoration(
+            color: AppTheme.surfaceZinc900,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
           ),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: AppTheme.surfaceZinc900,
-              borderRadius: BorderRadius.circular(28),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.26),
-                  blurRadius: 32,
-                  offset: const Offset(0, 18),
-                ),
-              ],
-            ),
-            child: SingleChildScrollView(
+          child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -434,7 +400,7 @@ class _ComposerModelSheetState extends State<_ComposerModelSheet> {
                     children: [
                       Expanded(
                         child: Text(
-                          'Model Setup',
+                          'Settings for the chat',
                           style: Theme.of(context).textTheme.titleMedium
                               ?.copyWith(
                                 fontWeight: FontWeight.w600,
@@ -544,7 +510,6 @@ class _ComposerModelSheetState extends State<_ComposerModelSheet> {
             ),
           ),
         ),
-      ),
     );
   }
 }
