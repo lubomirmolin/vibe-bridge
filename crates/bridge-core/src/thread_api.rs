@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use shared_contracts::{
     AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ThreadDetailDto,
-    ThreadStatus, ThreadSummaryDto, ThreadTimelineEntryDto,
+    ThreadStatus, ThreadSummaryDto, ThreadTimelineAnnotationsDto, ThreadTimelineEntryDto,
+    ThreadTimelineExplorationKind, ThreadTimelineGroupKind, ThreadTimelinePageDto,
 };
 
 use crate::codex_transport::CodexJsonTransport;
@@ -65,13 +66,6 @@ pub struct ThreadListResponse {
 pub struct ThreadDetailResponse {
     pub contract_version: String,
     pub thread: ThreadDetailDto,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ThreadTimelineResponse {
-    pub contract_version: String,
-    pub thread_id: String,
-    pub events: Vec<ThreadTimelineEntryDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -199,6 +193,8 @@ impl ThreadApiService {
         let previous_timeline = self.timeline_by_thread_id.clone();
         let mut events = Vec::new();
 
+        let mut merged_timeline_by_thread_id = HashMap::new();
+
         for thread in &thread_records {
             if let Some(previous_thread) = previous_threads.get(&thread.id) {
                 if previous_thread.lifecycle_state != thread.lifecycle_state {
@@ -220,32 +216,44 @@ impl ThreadApiService {
                 .map(|events| {
                     events
                         .iter()
-                        .map(|event| (event.id.as_str(), event))
+                        .cloned()
+                        .map(|event| (event.id.clone(), event))
                         .collect::<HashMap<_, _>>()
                 })
                 .unwrap_or_default();
 
-            if let Some(next_events) = timeline_by_thread_id.get(&thread.id) {
-                for event in next_events {
-                    if let Some(previous_event) = previous_event_ids.get(event.id.as_str())
-                        && *previous_event == event
-                    {
-                        continue;
-                    }
+            let merged_timeline = merge_snapshot_timeline(
+                previous_timeline
+                    .get(&thread.id)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
+                timeline_by_thread_id
+                    .get(&thread.id)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
+            );
 
-                    events.push(BridgeEventEnvelope::new(
-                        event.id.clone(),
-                        thread.id.clone(),
-                        map_event_kind(&event.event_type),
-                        event.happened_at.clone(),
-                        event.data.clone(),
-                    ));
+            for event in &merged_timeline {
+                if let Some(previous_event) = previous_event_ids.get(&event.id)
+                    && previous_event == event
+                {
+                    continue;
                 }
+
+                events.push(build_timeline_event_envelope(
+                    event.id.clone(),
+                    thread.id.clone(),
+                    map_event_kind(&event.event_type),
+                    event.happened_at.clone(),
+                    event.data.clone(),
+                ));
             }
+
+            merged_timeline_by_thread_id.insert(thread.id.clone(), merged_timeline);
         }
 
         self.thread_records = thread_records;
-        self.timeline_by_thread_id = timeline_by_thread_id;
+        self.timeline_by_thread_id = merged_timeline_by_thread_id;
         events
     }
 
@@ -378,25 +386,46 @@ impl ThreadApiService {
             })
     }
 
-    pub fn timeline_response(&self, thread_id: &str) -> Option<ThreadTimelineResponse> {
-        if !self
+    pub fn timeline_page_response(
+        &self,
+        thread_id: &str,
+        before: Option<&str>,
+        limit: usize,
+    ) -> Option<ThreadTimelinePageDto> {
+        let thread = self
             .thread_records
             .iter()
-            .any(|thread| thread.id == thread_id)
-        {
-            return None;
-        }
-
+            .find(|thread| thread.id == thread_id)?;
         let events = self
             .timeline_by_thread_id
             .get(thread_id)
-            .cloned()
-            .unwrap_or_default();
-        Some(ThreadTimelineResponse {
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+
+        let normalized_limit = limit.max(1);
+        let end_index = before
+            .and_then(|cursor| events.iter().position(|event| event.id == cursor))
+            .unwrap_or(events.len());
+        let start_index = end_index.saturating_sub(normalized_limit);
+        let page_events = &events[start_index..end_index];
+        let has_more_before = start_index > 0;
+        let next_before = has_more_before.then(|| events[start_index].id.clone());
+
+        Some(ThreadTimelinePageDto {
             contract_version: CONTRACT_VERSION.to_string(),
-            thread_id: thread_id.to_string(),
-            events: events.iter().map(map_timeline_entry).collect::<Vec<_>>(),
+            thread: map_thread_detail(thread),
+            entries: page_events
+                .iter()
+                .map(map_timeline_entry)
+                .collect::<Vec<_>>(),
+            next_before,
+            has_more_before,
         })
+    }
+
+    pub fn timeline_cursor_exists(&self, thread_id: &str, cursor: &str) -> Option<bool> {
+        let events = self.timeline_by_thread_id.get(thread_id)?;
+        Some(events.iter().any(|event| event.id == cursor))
     }
 
     pub fn git_status_response(&self, thread_id: &str) -> Option<GitStatusResponse> {
@@ -919,8 +948,7 @@ impl ThreadApiService {
     ) -> BridgeEventEnvelope<Value> {
         let event_id = format!("evt-live-{}", self.next_event_sequence);
         self.next_event_sequence += 1;
-
-        BridgeEventEnvelope::new(
+        build_timeline_event_envelope(
             event_id,
             thread_id.to_string(),
             kind,
@@ -974,14 +1002,20 @@ fn load_thread_snapshot(
     codex_home: &Path,
 ) -> Result<ThreadSnapshot, String> {
     let rpc_result = load_thread_snapshot_from_codex_rpc(command, args, endpoint);
-    if let Ok((thread_records, timeline_by_thread_id)) = &rpc_result
-        && !thread_records.is_empty()
-    {
-        return Ok((thread_records.clone(), timeline_by_thread_id.clone()));
-    }
-
-    let archive_result = load_thread_snapshot_from_codex_archive(codex_home);
+    let archive_result = match &rpc_result {
+        Ok((thread_records, _)) if !thread_records.is_empty() => {
+            let requested_ids = thread_records
+                .iter()
+                .map(|record| record.id.clone())
+                .collect::<HashSet<_>>();
+            load_thread_snapshot_from_codex_archive_for_ids(codex_home, Some(&requested_ids))
+        }
+        _ => load_thread_snapshot_from_codex_archive(codex_home),
+    };
     match (rpc_result, archive_result) {
+        (Ok(rpc_snapshot), Ok(archive_snapshot)) if !rpc_snapshot.0.is_empty() => {
+            Ok(merge_thread_snapshots(rpc_snapshot, archive_snapshot))
+        }
         (_, Ok((thread_records, timeline_by_thread_id))) if !thread_records.is_empty() => {
             Ok((thread_records, timeline_by_thread_id))
         }
@@ -993,6 +1027,130 @@ fn load_thread_snapshot(
             "failed to load Codex threads from app-server ({rpc_error}) and local archive was empty"
         )),
     }
+}
+
+fn merge_thread_snapshots(
+    rpc_snapshot: ThreadSnapshot,
+    archive_snapshot: ThreadSnapshot,
+) -> ThreadSnapshot {
+    let (rpc_records, rpc_timeline_by_thread_id) = rpc_snapshot;
+    let (archive_records, archive_timeline_by_thread_id) = archive_snapshot;
+
+    let mut merged_records = Vec::with_capacity(rpc_records.len() + archive_records.len());
+    let mut merged_timeline_by_thread_id = HashMap::new();
+    let mut seen_thread_ids = HashSet::new();
+    let mut archive_records_by_id = archive_records
+        .into_iter()
+        .map(|record| (record.id.clone(), record))
+        .collect::<HashMap<_, _>>();
+
+    for rpc_record in rpc_records {
+        let thread_id = rpc_record.id.clone();
+        seen_thread_ids.insert(thread_id.clone());
+        let archive_timeline = archive_timeline_by_thread_id
+            .get(&thread_id)
+            .cloned()
+            .unwrap_or_default();
+        let merged_timeline = merge_rpc_timeline_with_archive(
+            rpc_timeline_by_thread_id
+                .get(&thread_id)
+                .cloned()
+                .unwrap_or_default(),
+            archive_timeline,
+        );
+
+        merged_timeline_by_thread_id.insert(thread_id.clone(), merged_timeline);
+        merged_records.push(rpc_record);
+        archive_records_by_id.remove(&thread_id);
+    }
+
+    for (thread_id, archive_record) in archive_records_by_id {
+        if !seen_thread_ids.insert(thread_id.clone()) {
+            continue;
+        }
+
+        merged_timeline_by_thread_id.insert(
+            thread_id.clone(),
+            archive_timeline_by_thread_id
+                .get(&thread_id)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        merged_records.push(archive_record);
+    }
+
+    (merged_records, merged_timeline_by_thread_id)
+}
+
+fn merge_rpc_timeline_with_archive(
+    rpc_events: Vec<UpstreamTimelineEvent>,
+    archive_events: Vec<UpstreamTimelineEvent>,
+) -> Vec<UpstreamTimelineEvent> {
+    if rpc_events.is_empty() {
+        return sort_timeline_events(archive_events);
+    }
+
+    let mut merged_events = rpc_events;
+    let mut existing_fingerprints = merged_events
+        .iter()
+        .map(timeline_event_fingerprint)
+        .collect::<HashSet<_>>();
+
+    for archive_event in archive_events {
+        if !should_supplement_archive_event(&archive_event) {
+            continue;
+        }
+
+        let fingerprint = timeline_event_fingerprint(&archive_event);
+        if existing_fingerprints.insert(fingerprint) {
+            merged_events.push(archive_event);
+        }
+    }
+
+    sort_timeline_events(merged_events)
+}
+
+fn merge_snapshot_timeline(
+    previous_events: &[UpstreamTimelineEvent],
+    next_events: &[UpstreamTimelineEvent],
+) -> Vec<UpstreamTimelineEvent> {
+    let mut merged_events = previous_events.to_vec();
+
+    for next_event in next_events {
+        if let Some(existing_index) = merged_events
+            .iter()
+            .position(|event| event.id == next_event.id)
+        {
+            merged_events[existing_index] = next_event.clone();
+        } else {
+            merged_events.push(next_event.clone());
+        }
+    }
+
+    sort_timeline_events(merged_events)
+}
+
+fn sort_timeline_events(mut events: Vec<UpstreamTimelineEvent>) -> Vec<UpstreamTimelineEvent> {
+    // Keep equal-timestamp entries in source order so mixed event kinds from the
+    // same snapshot stay grouped deterministically across pagination boundaries.
+    events.sort_by(|left, right| left.happened_at.cmp(&right.happened_at));
+    events
+}
+
+fn should_supplement_archive_event(event: &UpstreamTimelineEvent) -> bool {
+    !matches!(
+        event.event_type.as_str(),
+        "agent_message_delta" | "plan_delta"
+    )
+}
+
+fn timeline_event_fingerprint(event: &UpstreamTimelineEvent) -> String {
+    let serialized_payload =
+        serde_json::to_string(&event.data).unwrap_or_else(|_| event.summary_text.clone());
+    format!(
+        "{}\u{1f}|{}\u{1f}|{}",
+        event.event_type, event.summary_text, serialized_payload
+    )
 }
 
 fn load_thread_snapshot_from_codex_rpc(
@@ -1022,6 +1180,13 @@ fn load_thread_snapshot_from_codex_rpc(
 }
 
 fn load_thread_snapshot_from_codex_archive(codex_home: &Path) -> Result<ThreadSnapshot, String> {
+    load_thread_snapshot_from_codex_archive_for_ids(codex_home, None)
+}
+
+fn load_thread_snapshot_from_codex_archive_for_ids(
+    codex_home: &Path,
+    requested_ids: Option<&HashSet<String>>,
+) -> Result<ThreadSnapshot, String> {
     let session_index_path = codex_home.join("session_index.jsonl");
     let sessions_root = codex_home.join("sessions");
     let raw_index = fs::read_to_string(&session_index_path).map_err(|error| {
@@ -1041,7 +1206,11 @@ fn load_thread_snapshot_from_codex_archive(codex_home: &Path) -> Result<ThreadSn
         .collect::<Result<Vec<_>, _>>()?;
 
     entries.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
-    entries.truncate(CodexRpcClient::MAX_THREADS_TO_FETCH);
+    if let Some(requested_ids) = requested_ids {
+        entries.retain(|entry| requested_ids.contains(&entry.id));
+    } else {
+        entries.truncate(CodexRpcClient::MAX_THREADS_TO_FETCH);
+    }
 
     let requested_ids = entries
         .iter()
@@ -2438,31 +2607,8 @@ impl CodexNotificationNormalizer {
                     serde_json::from_value(params.clone()).ok()?;
                 self.normalize_item_added(notification)
             }
-            "item/agentMessage/delta" => self.normalize_delta(
-                params,
-                BridgeEventKind::MessageDelta,
-                "agentMessage",
-                DeltaTarget::Text,
-            ),
-            "item/plan/delta" => self.normalize_delta(
-                params,
-                BridgeEventKind::PlanDelta,
-                "plan",
-                DeltaTarget::Text,
-            ),
-            "item/commandExecution/outputDelta" => self.normalize_delta(
-                params,
-                BridgeEventKind::CommandDelta,
-                "commandExecution",
-                DeltaTarget::CommandOutput,
-            ),
-            "item/fileChange/outputDelta" => self.normalize_delta(
-                params,
-                BridgeEventKind::FileChange,
-                "fileChange",
-                DeltaTarget::FileDiff,
-            ),
-            _ => None,
+            _ => parse_item_delta_method(method)
+                .and_then(|(item_type, target)| self.normalize_delta(params, item_type, target)),
         }
     }
 
@@ -2483,8 +2629,7 @@ impl CodexNotificationNormalizer {
         if !should_publish_live_payload(kind, &payload) {
             return None;
         }
-
-        Some(BridgeEventEnvelope::new(
+        Some(build_timeline_event_envelope(
             event_id,
             notification.thread_id,
             kind,
@@ -2496,7 +2641,6 @@ impl CodexNotificationNormalizer {
     fn normalize_delta(
         &mut self,
         params: &Value,
-        kind: BridgeEventKind,
         item_type: &str,
         target: DeltaTarget,
     ) -> Option<BridgeEventEnvelope<Value>> {
@@ -2509,12 +2653,16 @@ impl CodexNotificationNormalizer {
 
         apply_delta_to_item_payload(payload, &notification.delta, target);
 
-        Some(BridgeEventEnvelope::new(
+        let (kind, normalized_payload) = normalize_realtime_item_payload(payload)?;
+        if !should_publish_live_payload(kind, &normalized_payload) {
+            return None;
+        }
+        Some(build_timeline_event_envelope(
             event_id,
             notification.thread_id,
             kind,
             current_timestamp_string(),
-            payload.clone(),
+            normalized_payload,
         ))
     }
 
@@ -2592,11 +2740,9 @@ fn map_codex_thread_to_timeline_events(thread: &CodexThread) -> Vec<UpstreamTime
     let mut events = Vec::new();
     for turn in &thread.turns {
         for (index, item) in turn.items.iter().enumerate() {
-            let item_type = item
-                .get("type")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            let Some(event_type) = map_codex_item_type_to_event_type(item_type) else {
+            let Some((kind, payload)) =
+                normalize_codex_item_payload(item, Some(thread.cwd.as_str()))
+            else {
                 continue;
             };
             let item_id = item
@@ -2607,10 +2753,10 @@ fn map_codex_thread_to_timeline_events(thread: &CodexThread) -> Vec<UpstreamTime
 
             events.push(UpstreamTimelineEvent {
                 id: format!("{}-{item_id}", turn.id),
-                event_type: event_type.to_string(),
+                event_type: map_bridge_kind_to_event_type(kind).to_string(),
                 happened_at: unix_timestamp_to_iso8601(thread.updated_at),
-                summary_text: summarize_codex_item(item_type, item),
-                data: item.clone(),
+                summary_text: summarize_live_payload(kind, &payload),
+                data: payload,
             });
         }
     }
@@ -2622,42 +2768,6 @@ fn map_codex_status_to_lifecycle_state(status_kind: &str) -> String {
         "active" => "active".to_string(),
         "systemError" => "error".to_string(),
         _ => "idle".to_string(),
-    }
-}
-
-fn map_codex_item_type_to_event_type(item_type: &str) -> Option<&'static str> {
-    match item_type {
-        "agentMessage" | "userMessage" => Some("agent_message_delta"),
-        "plan" => Some("plan_delta"),
-        "commandExecution" => Some("command_output_delta"),
-        "fileChange" => Some("file_change_delta"),
-        _ => None,
-    }
-}
-
-fn summarize_codex_item(item_type: &str, item: &Value) -> String {
-    match item_type {
-        "agentMessage" => item
-            .get("text")
-            .and_then(Value::as_str)
-            .unwrap_or("Agent message")
-            .to_string(),
-        "userMessage" => item
-            .get("content")
-            .and_then(Value::as_array)
-            .and_then(|content| content.first())
-            .and_then(|first| first.get("text"))
-            .and_then(Value::as_str)
-            .unwrap_or("User message")
-            .to_string(),
-        "plan" => item
-            .get("text")
-            .and_then(Value::as_str)
-            .unwrap_or("Plan update")
-            .to_string(),
-        "commandExecution" => "Command output update".to_string(),
-        "fileChange" => "File change update".to_string(),
-        _ => format!("{item_type} event"),
     }
 }
 
@@ -2725,13 +2835,186 @@ fn map_git_status(upstream: &UpstreamThreadRecord) -> GitStatusDto {
 }
 
 fn map_timeline_entry(upstream: &UpstreamTimelineEvent) -> ThreadTimelineEntryDto {
+    let kind = map_event_kind(&upstream.event_type);
+
     ThreadTimelineEntryDto {
         event_id: upstream.id.clone(),
-        kind: map_event_kind(&upstream.event_type),
+        kind,
         occurred_at: upstream.happened_at.clone(),
         summary: upstream.summary_text.clone(),
         payload: upstream.data.clone(),
+        annotations: timeline_annotations_for_event(&upstream.id, kind, &upstream.data),
     }
+}
+
+fn build_timeline_event_envelope(
+    event_id: impl Into<String>,
+    thread_id: impl Into<String>,
+    kind: BridgeEventKind,
+    occurred_at: impl Into<String>,
+    payload: Value,
+) -> BridgeEventEnvelope<Value> {
+    let event_id = event_id.into();
+    let annotations = timeline_annotations_for_event(&event_id, kind, &payload);
+
+    BridgeEventEnvelope::new(event_id, thread_id, kind, occurred_at, payload)
+        .with_annotations(annotations)
+}
+
+fn timeline_annotations_for_event(
+    event_id: &str,
+    kind: BridgeEventKind,
+    payload: &Value,
+) -> Option<ThreadTimelineAnnotationsDto> {
+    let exploration_kind = classify_exploration_kind(kind, payload)?;
+    let command = extract_exploration_command(payload)?;
+
+    Some(ThreadTimelineAnnotationsDto {
+        group_kind: Some(ThreadTimelineGroupKind::Exploration),
+        group_id: derive_exploration_group_id(event_id, payload),
+        exploration_kind: Some(exploration_kind),
+        entry_label: exploration_entry_label(exploration_kind, command.as_str()),
+    })
+}
+
+fn classify_exploration_kind(
+    kind: BridgeEventKind,
+    payload: &Value,
+) -> Option<ThreadTimelineExplorationKind> {
+    if kind != BridgeEventKind::CommandDelta {
+        return None;
+    }
+
+    let command = extract_exploration_command(payload)?;
+    let normalized_command = command.trim().to_lowercase();
+    if is_exploration_read_command(&normalized_command) {
+        Some(ThreadTimelineExplorationKind::Read)
+    } else if is_exploration_search_command(&normalized_command) {
+        Some(ThreadTimelineExplorationKind::Search)
+    } else {
+        None
+    }
+}
+
+fn extract_exploration_command(payload: &Value) -> Option<String> {
+    [
+        payload.get("command"),
+        payload.get("action"),
+        payload.get("arguments"),
+        payload.get("input"),
+        payload.get("output"),
+        payload.get("aggregatedOutput"),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(extract_shell_like_command)
+    .find(|command| {
+        let normalized = command.trim().to_lowercase();
+        is_exploration_read_command(&normalized) || is_exploration_search_command(&normalized)
+    })
+}
+
+fn extract_shell_like_command(value: &Value) -> Option<String> {
+    match value {
+        Value::Null => None,
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+
+            if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
+                return extract_shell_like_command(&parsed)
+                    .or_else(|| parse_background_command(trimmed));
+            }
+
+            parse_background_command(trimmed).or_else(|| Some(trimmed.to_string()))
+        }
+        Value::Object(object) => object
+            .get("cmd")
+            .or_else(|| object.get("command"))
+            .or_else(|| object.get("action"))
+            .and_then(extract_shell_like_command)
+            .or_else(|| object.get("input").and_then(extract_shell_like_command))
+            .or_else(|| object.get("arguments").and_then(extract_shell_like_command)),
+        Value::Array(values) => values.iter().find_map(extract_shell_like_command),
+        other => {
+            value_to_text(other).and_then(|text| extract_shell_like_command(&Value::String(text)))
+        }
+    }
+}
+
+fn parse_background_command(raw: &str) -> Option<String> {
+    raw.lines()
+        .find_map(|line| line.strip_prefix("Command:"))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn is_exploration_read_command(command: &str) -> bool {
+    command.starts_with("nl -ba ")
+        || command.starts_with("cat ")
+        || command.starts_with("bat ")
+        || command.starts_with("sed -n ")
+        || command.starts_with("head ")
+        || command.starts_with("tail ")
+        || command.starts_with("git diff ")
+        || command.starts_with("git show ")
+        || command == "git status"
+        || command.starts_with("git status ")
+        || command == "pwd"
+}
+
+fn is_exploration_search_command(command: &str) -> bool {
+    command == "ls"
+        || command.starts_with("ls ")
+        || command == "tree"
+        || command.starts_with("tree ")
+        || command.starts_with("fd ")
+        || command.starts_with("git grep ")
+        || command.starts_with("git ls-files")
+        || command.starts_with("rg -n ")
+        || command.starts_with("rg --files ")
+        || command == "rg"
+        || command.starts_with("rg ")
+        || command.starts_with("find ")
+        || command.starts_with("grep ")
+        || command.starts_with("search_query ")
+}
+
+fn derive_exploration_group_id(event_id: &str, payload: &Value) -> Option<String> {
+    let item_id = payload.get("id").and_then(Value::as_str)?.trim();
+    let turn_prefix = event_id.strip_suffix(&format!("-{item_id}"))?.trim();
+    if turn_prefix.is_empty() {
+        return None;
+    }
+
+    Some(format!("exploration:{turn_prefix}"))
+}
+
+fn exploration_entry_label(
+    exploration_kind: ThreadTimelineExplorationKind,
+    command: &str,
+) -> Option<String> {
+    match exploration_kind {
+        ThreadTimelineExplorationKind::Read => {
+            extract_file_name_from_command(command).map(|file_name| format!("Read {file_name}"))
+        }
+        ThreadTimelineExplorationKind::Search => Some("Search".to_string()),
+    }
+}
+
+fn extract_file_name_from_command(command: &str) -> Option<String> {
+    command
+        .split_whitespace()
+        .map(|segment| segment.trim_matches(|ch| ch == '"' || ch == '\'' || ch == '`'))
+        .filter(|segment| segment.contains('/') || segment.contains('.'))
+        .last()
+        .and_then(|path| path.rsplit('/').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn map_thread_status(raw: &str) -> ThreadStatus {
@@ -2853,22 +3136,7 @@ fn unix_timestamp_to_iso8601(timestamp: i64) -> String {
 }
 
 fn normalize_realtime_item_payload(item: &Value) -> Option<(BridgeEventKind, Value)> {
-    let item_type = item.get("type").and_then(Value::as_str)?;
-    match item_type {
-        "userMessage" | "agentMessage" => Some((BridgeEventKind::MessageDelta, item.clone())),
-        "plan" => Some((BridgeEventKind::PlanDelta, item.clone())),
-        "commandExecution" => {
-            let mut payload = item.clone();
-            if let Some(output) = item.get("aggregatedOutput").and_then(Value::as_str) {
-                if let Some(object) = payload.as_object_mut() {
-                    object.insert("output".to_string(), Value::String(output.to_string()));
-                }
-            }
-            Some((BridgeEventKind::CommandDelta, payload))
-        }
-        "fileChange" => Some((BridgeEventKind::FileChange, item.clone())),
-        _ => None,
-    }
+    normalize_codex_item_payload(item, None)
 }
 
 fn should_publish_live_payload(kind: BridgeEventKind, payload: &Value) -> bool {
@@ -2883,15 +3151,20 @@ fn should_publish_live_payload(kind: BridgeEventKind, payload: &Value) -> bool {
                     .and_then(Value::as_array)
                     .is_some_and(|content| !content.is_empty())
         }
-        BridgeEventKind::CommandDelta => payload
-            .get("output")
-            .or_else(|| payload.get("aggregatedOutput"))
-            .and_then(Value::as_str)
-            .is_some_and(|text| !text.trim().is_empty()),
+        BridgeEventKind::CommandDelta => {
+            payload
+                .get("output")
+                .or_else(|| payload.get("aggregatedOutput"))
+                .or_else(|| payload.get("command"))
+                .and_then(Value::as_str)
+                .is_some_and(|text| !text.trim().is_empty())
+                || payload.get("arguments").is_some()
+        }
         BridgeEventKind::FileChange => {
             payload
                 .get("resolved_unified_diff")
                 .or_else(|| payload.get("output"))
+                .or_else(|| payload.get("change"))
                 .and_then(Value::as_str)
                 .is_some_and(|text| !text.trim().is_empty())
                 || payload
@@ -2900,6 +3173,136 @@ fn should_publish_live_payload(kind: BridgeEventKind, payload: &Value) -> bool {
                     .is_some_and(|changes| !changes.is_empty())
         }
         _ => true,
+    }
+}
+
+fn normalize_codex_item_payload(
+    item: &Value,
+    workspace_path: Option<&str>,
+) -> Option<(BridgeEventKind, Value)> {
+    let item_type = canonicalize_codex_item_type(item.get("type").and_then(Value::as_str)?);
+    match item_type {
+        "userMessage" | "agentMessage" => Some((BridgeEventKind::MessageDelta, item.clone())),
+        "plan" => Some((BridgeEventKind::PlanDelta, item.clone())),
+        "commandExecution" => {
+            let mut payload = item.clone();
+            if let Some(output) = item.get("aggregatedOutput").and_then(Value::as_str) {
+                if let Some(object) = payload.as_object_mut() {
+                    object.insert("output".to_string(), Value::String(output.to_string()));
+                }
+            }
+            Some((BridgeEventKind::CommandDelta, payload))
+        }
+        "fileChange" => Some((BridgeEventKind::FileChange, item.clone())),
+        "functionCall" | "customToolCall" => {
+            normalize_codex_tool_invocation_item(item, workspace_path)
+        }
+        "functionCallOutput" | "customToolCallOutput" => normalize_codex_tool_output_item(item),
+        _ => None,
+    }
+}
+
+fn canonicalize_codex_item_type(item_type: &str) -> &str {
+    match item_type {
+        "function_call" => "functionCall",
+        "function_call_output" => "functionCallOutput",
+        "custom_tool_call" => "customToolCall",
+        "custom_tool_call_output" => "customToolCallOutput",
+        other => other,
+    }
+}
+
+fn normalize_codex_tool_invocation_item(
+    item: &Value,
+    workspace_path: Option<&str>,
+) -> Option<(BridgeEventKind, Value)> {
+    let tool_name = item
+        .get("name")
+        .and_then(Value::as_str)
+        .or_else(|| item.get("command").and_then(Value::as_str))
+        .unwrap_or("command");
+    let input = item
+        .get("input")
+        .cloned()
+        .or_else(|| item.get("arguments").cloned())
+        .unwrap_or(Value::Null);
+    let input_text = value_to_text(&input).unwrap_or_default();
+    let is_file_change = is_file_change_custom_tool(tool_name) || is_file_change_text(&input_text);
+
+    let mut payload = item.clone();
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("command".to_string(), Value::String(tool_name.to_string()));
+        if is_file_change {
+            if !input_text.trim().is_empty() {
+                object.insert("change".to_string(), Value::String(input_text.clone()));
+            }
+            if !object.contains_key("resolved_unified_diff") {
+                if let Some(resolved_diff) =
+                    resolve_apply_patch_to_unified_diff(&input_text, workspace_path)
+                {
+                    object.insert(
+                        "resolved_unified_diff".to_string(),
+                        Value::String(resolved_diff),
+                    );
+                }
+            }
+        } else if !object.contains_key("arguments") {
+            object.insert("arguments".to_string(), input);
+        }
+    }
+
+    Some((
+        if is_file_change {
+            BridgeEventKind::FileChange
+        } else {
+            BridgeEventKind::CommandDelta
+        },
+        payload,
+    ))
+}
+
+fn normalize_codex_tool_output_item(item: &Value) -> Option<(BridgeEventKind, Value)> {
+    let output = item
+        .get("output")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let normalized_output = normalize_custom_tool_output(output);
+    let is_file_change = is_file_change_text(&normalized_output);
+
+    let mut payload = item.clone();
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("output".to_string(), Value::String(normalized_output));
+    }
+
+    Some((
+        if is_file_change {
+            BridgeEventKind::FileChange
+        } else {
+            BridgeEventKind::CommandDelta
+        },
+        payload,
+    ))
+}
+
+fn parse_item_delta_method(method: &str) -> Option<(&str, DeltaTarget)> {
+    let mut parts = method.split('/');
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some("item"), Some(item_type), Some("delta"), None) => Some((
+            item_type,
+            match canonicalize_codex_item_type(item_type) {
+                "agentMessage" | "userMessage" | "plan" => DeltaTarget::Text,
+                "fileChange" => DeltaTarget::FileDiff,
+                _ => DeltaTarget::Text,
+            },
+        )),
+        (Some("item"), Some(item_type), Some("outputDelta"), None) => Some((
+            item_type,
+            match canonicalize_codex_item_type(item_type) {
+                "fileChange" => DeltaTarget::FileDiff,
+                _ => DeltaTarget::CommandOutput,
+            },
+        )),
+        _ => None,
     }
 }
 
@@ -2984,7 +3387,7 @@ fn apply_delta_to_item_payload(item: &mut Value, delta: &str, target: DeltaTarge
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::fs;
     use std::path::PathBuf;
 
@@ -2995,6 +3398,7 @@ mod tests {
     use serde_json::{Value, json};
     use shared_contracts::{
         AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ThreadStatus,
+        ThreadTimelineExplorationKind, ThreadTimelineGroupKind,
     };
 
     #[test]
@@ -3033,7 +3437,7 @@ mod tests {
     }
 
     #[test]
-    fn timeline_response_normalizes_event_kinds() {
+    fn timeline_page_response_normalizes_event_kinds() {
         let service = ThreadApiService::with_seed_data(
             vec![UpstreamThreadRecord {
                 id: "thread-abc".to_string(),
@@ -3065,16 +3469,104 @@ mod tests {
         );
 
         let timeline = service
-            .timeline_response("thread-abc")
+            .timeline_page_response("thread-abc", None, 50)
             .expect("timeline response should exist");
 
         assert_eq!(timeline.contract_version, CONTRACT_VERSION);
-        assert_eq!(timeline.events.len(), 1);
-        assert_eq!(timeline.events[0].kind, BridgeEventKind::CommandDelta);
+        assert_eq!(timeline.entries.len(), 1);
+        assert_eq!(timeline.entries[0].kind, BridgeEventKind::CommandDelta);
+        assert_eq!(timeline.thread.thread_id, "thread-abc");
     }
 
     #[test]
-    fn timeline_response_for_existing_thread_without_events_returns_empty_payload() {
+    fn timeline_page_response_adds_exploration_annotations_without_mutating_payload() {
+        let service = ThreadApiService::with_seed_data(
+            vec![UpstreamThreadRecord {
+                id: "thread-abc".to_string(),
+                headline: "Normalize stream payloads".to_string(),
+                lifecycle_state: "active".to_string(),
+                workspace_path: "/workspace/codex-mobile-companion".to_string(),
+                repository_name: "codex-mobile-companion".to_string(),
+                branch_name: "master".to_string(),
+                remote_name: "origin".to_string(),
+                git_dirty: false,
+                git_ahead_by: 0,
+                git_behind_by: 0,
+                created_at: "2026-03-17T10:00:00Z".to_string(),
+                updated_at: "2026-03-17T10:05:00Z".to_string(),
+                source: "cli".to_string(),
+                approval_mode: "control_with_approvals".to_string(),
+                last_turn_summary: "streaming".to_string(),
+            }],
+            HashMap::from([(
+                "thread-abc".to_string(),
+                vec![
+                    UpstreamTimelineEvent {
+                        id: "turn-123-tool-1".to_string(),
+                        event_type: "command_output_delta".to_string(),
+                        happened_at: "2026-03-17T10:06:00Z".to_string(),
+                        summary_text: "search output".to_string(),
+                        data: json!({
+                            "id": "tool-1",
+                            "command": "exec_command",
+                            "arguments": {"cmd": "rg -n timeline crates/bridge-core/src/thread_api.rs"},
+                        }),
+                    },
+                    UpstreamTimelineEvent {
+                        id: "turn-123-tool-2".to_string(),
+                        event_type: "command_output_delta".to_string(),
+                        happened_at: "2026-03-17T10:06:01Z".to_string(),
+                        summary_text: "read output".to_string(),
+                        data: json!({
+                            "id": "tool-2",
+                            "command": "exec_command",
+                            "arguments": {"cmd": "sed -n 1,20p crates/bridge-core/src/thread_api.rs"},
+                        }),
+                    },
+                ],
+            )]),
+        );
+
+        let timeline = service
+            .timeline_page_response("thread-abc", None, 50)
+            .expect("timeline response should exist");
+
+        let search_annotations = timeline.entries[0]
+            .annotations
+            .as_ref()
+            .expect("search entry should include annotations");
+        assert_eq!(
+            search_annotations.group_kind,
+            Some(ThreadTimelineGroupKind::Exploration)
+        );
+        assert_eq!(
+            search_annotations.group_id.as_deref(),
+            Some("exploration:turn-123")
+        );
+        assert_eq!(
+            search_annotations.exploration_kind,
+            Some(ThreadTimelineExplorationKind::Search)
+        );
+        assert_eq!(search_annotations.entry_label.as_deref(), Some("Search"));
+        assert!(timeline.entries[0].payload.get("presentation").is_none());
+
+        let read_annotations = timeline.entries[1]
+            .annotations
+            .as_ref()
+            .expect("read entry should include annotations");
+        assert_eq!(
+            read_annotations.exploration_kind,
+            Some(ThreadTimelineExplorationKind::Read)
+        );
+        assert_eq!(
+            read_annotations.entry_label.as_deref(),
+            Some("Read thread_api.rs")
+        );
+        assert!(timeline.entries[1].payload.get("presentation").is_none());
+    }
+
+    #[test]
+    fn timeline_page_response_for_existing_thread_without_events_returns_empty_payload() {
         let service = ThreadApiService::with_seed_data(
             vec![UpstreamThreadRecord {
                 id: "thread-empty".to_string(),
@@ -3097,11 +3589,258 @@ mod tests {
         );
 
         let timeline = service
-            .timeline_response("thread-empty")
+            .timeline_page_response("thread-empty", None, 50)
             .expect("existing thread should return timeline payload");
 
-        assert_eq!(timeline.thread_id, "thread-empty");
-        assert!(timeline.events.is_empty());
+        assert_eq!(timeline.thread.thread_id, "thread-empty");
+        assert!(timeline.entries.is_empty());
+        assert_eq!(timeline.next_before, None);
+        assert!(!timeline.has_more_before);
+    }
+
+    #[test]
+    fn timeline_page_response_applies_before_cursor_and_limit() {
+        let service = ThreadApiService::with_seed_data(
+            vec![UpstreamThreadRecord {
+                id: "thread-page".to_string(),
+                headline: "Paged timeline".to_string(),
+                lifecycle_state: "active".to_string(),
+                workspace_path: "/workspace/codex-mobile-companion".to_string(),
+                repository_name: "codex-mobile-companion".to_string(),
+                branch_name: "main".to_string(),
+                remote_name: "origin".to_string(),
+                git_dirty: false,
+                git_ahead_by: 0,
+                git_behind_by: 0,
+                created_at: "2026-03-17T10:00:00Z".to_string(),
+                updated_at: "2026-03-17T10:05:00Z".to_string(),
+                source: "cli".to_string(),
+                approval_mode: "control_with_approvals".to_string(),
+                last_turn_summary: "streaming".to_string(),
+            }],
+            HashMap::from([(
+                "thread-page".to_string(),
+                vec![
+                    UpstreamTimelineEvent {
+                        id: "evt-1".to_string(),
+                        event_type: "agent_message_delta".to_string(),
+                        happened_at: "2026-03-17T10:01:00Z".to_string(),
+                        summary_text: "one".to_string(),
+                        data: json!({"delta": "one"}),
+                    },
+                    UpstreamTimelineEvent {
+                        id: "evt-2".to_string(),
+                        event_type: "agent_message_delta".to_string(),
+                        happened_at: "2026-03-17T10:02:00Z".to_string(),
+                        summary_text: "two".to_string(),
+                        data: json!({"delta": "two"}),
+                    },
+                    UpstreamTimelineEvent {
+                        id: "evt-3".to_string(),
+                        event_type: "agent_message_delta".to_string(),
+                        happened_at: "2026-03-17T10:03:00Z".to_string(),
+                        summary_text: "three".to_string(),
+                        data: json!({"delta": "three"}),
+                    },
+                ],
+            )]),
+        );
+
+        let newest_page = service
+            .timeline_page_response("thread-page", None, 2)
+            .expect("timeline page should exist");
+        assert_eq!(
+            newest_page
+                .entries
+                .iter()
+                .map(|entry| entry.event_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["evt-2", "evt-3"]
+        );
+        assert_eq!(newest_page.next_before.as_deref(), Some("evt-2"));
+        assert!(newest_page.has_more_before);
+
+        let older_page = service
+            .timeline_page_response("thread-page", newest_page.next_before.as_deref(), 2)
+            .expect("older page should exist");
+        assert_eq!(
+            older_page
+                .entries
+                .iter()
+                .map(|entry| entry.event_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["evt-1"]
+        );
+        assert_eq!(older_page.next_before, None);
+        assert!(!older_page.has_more_before);
+    }
+
+    #[test]
+    fn reconcile_snapshot_preserves_mixed_event_order_for_equal_timestamps() {
+        let thread = UpstreamThreadRecord {
+            id: "thread-mixed".to_string(),
+            headline: "Mixed events".to_string(),
+            lifecycle_state: "active".to_string(),
+            workspace_path: "/workspace/codex-mobile-companion".to_string(),
+            repository_name: "codex-mobile-companion".to_string(),
+            branch_name: "main".to_string(),
+            remote_name: "origin".to_string(),
+            git_dirty: false,
+            git_ahead_by: 0,
+            git_behind_by: 0,
+            created_at: "2026-03-17T10:00:00Z".to_string(),
+            updated_at: "2026-03-17T10:05:00Z".to_string(),
+            source: "cli".to_string(),
+            approval_mode: "control_with_approvals".to_string(),
+            last_turn_summary: "mixed".to_string(),
+        };
+
+        let mut service = ThreadApiService::with_seed_data(vec![thread.clone()], HashMap::new());
+        let _ = service.reconcile_snapshot(
+            vec![thread],
+            HashMap::from([(
+                "thread-mixed".to_string(),
+                vec![
+                    UpstreamTimelineEvent {
+                        id: "evt-2".to_string(),
+                        event_type: "agent_message_delta".to_string(),
+                        happened_at: "2026-03-17T10:06:00Z".to_string(),
+                        summary_text: "message".to_string(),
+                        data: json!({"delta": "message"}),
+                    },
+                    UpstreamTimelineEvent {
+                        id: "evt-10".to_string(),
+                        event_type: "file_change_delta".to_string(),
+                        happened_at: "2026-03-17T10:06:00Z".to_string(),
+                        summary_text: "file".to_string(),
+                        data: json!({"change": "file"}),
+                    },
+                    UpstreamTimelineEvent {
+                        id: "evt-1".to_string(),
+                        event_type: "command_output_delta".to_string(),
+                        happened_at: "2026-03-17T10:06:00Z".to_string(),
+                        summary_text: "command".to_string(),
+                        data: json!({"output": "command"}),
+                    },
+                ],
+            )]),
+        );
+
+        let page = service
+            .timeline_page_response("thread-mixed", None, 50)
+            .expect("timeline page should exist");
+        assert_eq!(
+            page.entries
+                .iter()
+                .map(|entry| entry.event_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["evt-2", "evt-10", "evt-1"]
+        );
+        assert_eq!(
+            page.entries
+                .iter()
+                .map(|entry| entry.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                BridgeEventKind::MessageDelta,
+                BridgeEventKind::FileChange,
+                BridgeEventKind::CommandDelta,
+            ]
+        );
+    }
+
+    #[test]
+    fn equal_timestamp_pagination_cursors_advance_past_internal_only_window() {
+        let thread = UpstreamThreadRecord {
+            id: "thread-page-stability".to_string(),
+            headline: "Cursor stability".to_string(),
+            lifecycle_state: "active".to_string(),
+            workspace_path: "/workspace/codex-mobile-companion".to_string(),
+            repository_name: "codex-mobile-companion".to_string(),
+            branch_name: "main".to_string(),
+            remote_name: "origin".to_string(),
+            git_dirty: false,
+            git_ahead_by: 0,
+            git_behind_by: 0,
+            created_at: "2026-03-17T10:00:00Z".to_string(),
+            updated_at: "2026-03-17T10:05:00Z".to_string(),
+            source: "cli".to_string(),
+            approval_mode: "control_with_approvals".to_string(),
+            last_turn_summary: "cursor".to_string(),
+        };
+
+        let mut service = ThreadApiService::with_seed_data(vec![thread.clone()], HashMap::new());
+        let _ = service.reconcile_snapshot(
+            vec![thread],
+            HashMap::from([(
+                "thread-page-stability".to_string(),
+                vec![
+                    UpstreamTimelineEvent {
+                        id: "evt-1".to_string(),
+                        event_type: "agent_message_delta".to_string(),
+                        happened_at: "2026-03-17T10:06:00Z".to_string(),
+                        summary_text: "oldest visible".to_string(),
+                        data: json!({"delta": "oldest visible"}),
+                    },
+                    UpstreamTimelineEvent {
+                        id: "evt-2".to_string(),
+                        event_type: "command_output_delta".to_string(),
+                        happened_at: "2026-03-17T10:06:00Z".to_string(),
+                        summary_text: "internal-only-1".to_string(),
+                        data: json!({"internal": true}),
+                    },
+                    UpstreamTimelineEvent {
+                        id: "evt-10".to_string(),
+                        event_type: "command_output_delta".to_string(),
+                        happened_at: "2026-03-17T10:06:00Z".to_string(),
+                        summary_text: "internal-only-2".to_string(),
+                        data: json!({"internal": true}),
+                    },
+                    UpstreamTimelineEvent {
+                        id: "evt-11".to_string(),
+                        event_type: "file_change_delta".to_string(),
+                        happened_at: "2026-03-17T10:06:00Z".to_string(),
+                        summary_text: "newest visible".to_string(),
+                        data: json!({"change": "newest visible"}),
+                    },
+                ],
+            )]),
+        );
+
+        let newest_page = service
+            .timeline_page_response("thread-page-stability", None, 1)
+            .expect("newest page should exist");
+        assert_eq!(newest_page.entries[0].event_id, "evt-11");
+        assert_eq!(newest_page.next_before.as_deref(), Some("evt-11"));
+
+        let internal_only_page = service
+            .timeline_page_response(
+                "thread-page-stability",
+                newest_page.next_before.as_deref(),
+                2,
+            )
+            .expect("internal page should exist");
+        assert_eq!(
+            internal_only_page
+                .entries
+                .iter()
+                .map(|entry| entry.event_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["evt-2", "evt-10"]
+        );
+        assert_eq!(internal_only_page.next_before.as_deref(), Some("evt-2"));
+
+        let oldest_visible_page = service
+            .timeline_page_response(
+                "thread-page-stability",
+                internal_only_page.next_before.as_deref(),
+                2,
+            )
+            .expect("oldest visible page should exist");
+        assert_eq!(oldest_visible_page.entries.len(), 1);
+        assert_eq!(oldest_visible_page.entries[0].event_id, "evt-1");
+        assert_eq!(oldest_visible_page.next_before, None);
+        assert!(!oldest_visible_page.has_more_before);
     }
 
     #[test]
@@ -3485,6 +4224,227 @@ mod tests {
     }
 
     #[test]
+    fn archive_loader_can_fetch_requested_thread_outside_latest_archive_window() {
+        let codex_home = unique_test_codex_home();
+        let sessions_directory = codex_home.join("sessions/2026/03/19");
+        fs::create_dir_all(&sessions_directory).expect("test sessions directory should exist");
+
+        let mut session_index_entries = Vec::new();
+        for index in 0..12 {
+            let thread_id = if index == 11 {
+                "thread-target".to_string()
+            } else {
+                format!("thread-{index}")
+            };
+            session_index_entries.push(format!(
+                "{{\"id\":\"{thread_id}\",\"thread_name\":\"Thread {index}\",\"updated_at\":\"2026-03-19T10:{index:02}:00Z\"}}"
+            ));
+
+            fs::write(
+                sessions_directory.join(format!(
+                    "rollout-2026-03-19T10-{index:02}-00-{thread_id}.jsonl"
+                )),
+                format!(
+                    "{{\"timestamp\":\"2026-03-19T10:{index:02}:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{thread_id}\",\"timestamp\":\"2026-03-19T10:{index:02}:00Z\",\"cwd\":\"/Users/test/workspace\",\"source\":\"cli\",\"git\":{{\"branch\":\"main\",\"repository_url\":\"git@github.com:example/project.git\"}}}}}}\n\
+{{\"timestamp\":\"2026-03-19T10:{index:02}:30Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call_output\",\"output\":\"Command: echo target-{index}\\nOutput:\\ntarget-{index}\"}}}}\n",
+                ),
+            )
+            .expect("session log should be writable");
+        }
+
+        fs::write(
+            codex_home.join("session_index.jsonl"),
+            session_index_entries.join("\n"),
+        )
+        .expect("session index should be writable");
+
+        let requested_ids = HashSet::from(["thread-target".to_string()]);
+        let (_, timeline_by_thread_id) = super::load_thread_snapshot_from_codex_archive_for_ids(
+            &codex_home,
+            Some(&requested_ids),
+        )
+        .expect("requested archive snapshot should load");
+
+        let timeline = timeline_by_thread_id
+            .get("thread-target")
+            .expect("requested thread timeline should be present");
+        assert_eq!(timeline.len(), 1);
+        assert_eq!(timeline[0].event_type, "command_output_delta");
+        assert!(
+            timeline[0]
+                .data
+                .get("output")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .contains("target-11")
+        );
+
+        let _ = fs::remove_dir_all(codex_home);
+    }
+
+    #[test]
+    #[ignore]
+    fn debug_local_archive_thread_event_mix() {
+        let codex_home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .expect("HOME should be set")
+            .join(".codex");
+        let requested_ids = HashSet::from(["019d0b18-30e3-7240-9e27-e6766967d061".to_string()]);
+        let (_, timeline_by_thread_id) = super::load_thread_snapshot_from_codex_archive_for_ids(
+            &codex_home,
+            Some(&requested_ids),
+        )
+        .expect("archive snapshot should load");
+
+        let timeline = timeline_by_thread_id
+            .get("019d0b18-30e3-7240-9e27-e6766967d061")
+            .expect("timeline should exist");
+        let mut counts = HashMap::new();
+        for event in timeline {
+            *counts.entry(event.event_type.clone()).or_insert(0usize) += 1;
+        }
+        eprintln!("timeline count={} counts={counts:?}", timeline.len());
+        for event in timeline
+            .iter()
+            .filter(|event| event.event_type != "agent_message_delta")
+            .take(5)
+        {
+            eprintln!(
+                "non-message event: {} {}",
+                event.event_type, event.summary_text
+            );
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn debug_live_snapshot_thread_event_mix() {
+        let service = ThreadApiService::from_codex_app_server(
+            "/Users/lubomirmolin/.bun/bin/codex",
+            &[],
+            None,
+        )
+        .expect("live snapshot should load");
+        let timeline = service
+            .timeline_by_thread_id
+            .get("019d0b18-30e3-7240-9e27-e6766967d061")
+            .expect("timeline should exist");
+        let mut counts = HashMap::new();
+        for event in timeline {
+            *counts.entry(event.event_type.clone()).or_insert(0usize) += 1;
+        }
+        eprintln!("live snapshot count={} counts={counts:?}", timeline.len());
+        for event in timeline
+            .iter()
+            .filter(|event| event.event_type != "agent_message_delta")
+            .take(5)
+        {
+            eprintln!(
+                "live non-message event: {} {}",
+                event.event_type, event.summary_text
+            );
+        }
+    }
+
+    #[test]
+    fn merge_thread_snapshots_supplements_rpc_with_archive_tool_events() {
+        let rpc_snapshot = (
+            vec![UpstreamThreadRecord {
+                id: "thread-123".to_string(),
+                headline: "Inspect snapshot merge".to_string(),
+                lifecycle_state: "active".to_string(),
+                workspace_path: "/workspace/codex-mobile-companion".to_string(),
+                repository_name: "codex-mobile-companion".to_string(),
+                branch_name: "main".to_string(),
+                remote_name: "origin".to_string(),
+                git_dirty: false,
+                git_ahead_by: 0,
+                git_behind_by: 0,
+                created_at: "2026-03-17T10:00:00Z".to_string(),
+                updated_at: "2026-03-17T10:05:00Z".to_string(),
+                source: "cli".to_string(),
+                approval_mode: "control_with_approvals".to_string(),
+                last_turn_summary: "Inspecting".to_string(),
+            }],
+            HashMap::from([(
+                "thread-123".to_string(),
+                vec![
+                    UpstreamTimelineEvent {
+                        id: "evt-user".to_string(),
+                        event_type: "agent_message_delta".to_string(),
+                        happened_at: "2026-03-17T10:01:00Z".to_string(),
+                        summary_text: "Check the timeline".to_string(),
+                        data: json!({"type": "userMessage", "content": [{"text": "Check the timeline"}]}),
+                    },
+                    UpstreamTimelineEvent {
+                        id: "evt-agent".to_string(),
+                        event_type: "agent_message_delta".to_string(),
+                        happened_at: "2026-03-17T10:02:00Z".to_string(),
+                        summary_text: "Tracing now".to_string(),
+                        data: json!({"type": "agentMessage", "text": "Tracing now"}),
+                    },
+                ],
+            )]),
+        );
+        let archive_snapshot = (
+            vec![UpstreamThreadRecord {
+                id: "thread-123".to_string(),
+                headline: "Inspect snapshot merge".to_string(),
+                lifecycle_state: "done".to_string(),
+                workspace_path: "/workspace/codex-mobile-companion".to_string(),
+                repository_name: "codex-mobile-companion".to_string(),
+                branch_name: "main".to_string(),
+                remote_name: "origin".to_string(),
+                git_dirty: false,
+                git_ahead_by: 0,
+                git_behind_by: 0,
+                created_at: "2026-03-17T10:00:00Z".to_string(),
+                updated_at: "2026-03-17T10:07:00Z".to_string(),
+                source: "archive".to_string(),
+                approval_mode: "control_with_approvals".to_string(),
+                last_turn_summary: "Edited files".to_string(),
+            }],
+            HashMap::from([(
+                "thread-123".to_string(),
+                vec![
+                    UpstreamTimelineEvent {
+                        id: "archive-user".to_string(),
+                        event_type: "agent_message_delta".to_string(),
+                        happened_at: "2026-03-17T10:01:00Z".to_string(),
+                        summary_text: "Check the timeline".to_string(),
+                        data: json!({"type": "userMessage", "content": [{"text": "Check the timeline"}]}),
+                    },
+                    UpstreamTimelineEvent {
+                        id: "archive-file-change".to_string(),
+                        event_type: "file_change_delta".to_string(),
+                        happened_at: "2026-03-17T10:03:00Z".to_string(),
+                        summary_text: "Edited files via apply_patch".to_string(),
+                        data: json!({
+                            "change": "*** Begin Patch\n*** Update File: /workspace/codex-mobile-companion/lib/main.dart\n*** End Patch",
+                            "resolved_unified_diff": "diff --git a/lib/main.dart b/lib/main.dart\n--- a/lib/main.dart\n+++ b/lib/main.dart",
+                        }),
+                    },
+                ],
+            )]),
+        );
+
+        let (_, timeline_by_thread_id) =
+            super::merge_thread_snapshots(rpc_snapshot, archive_snapshot);
+        let timeline = timeline_by_thread_id
+            .get("thread-123")
+            .expect("merged timeline should exist");
+
+        assert_eq!(timeline.len(), 3);
+        assert_eq!(timeline[0].id, "evt-user");
+        assert_eq!(timeline[1].id, "evt-agent");
+        assert_eq!(timeline[2].event_type, "file_change_delta");
+        assert_eq!(
+            timeline[2].data["resolved_unified_diff"],
+            "diff --git a/lib/main.dart b/lib/main.dart\n--- a/lib/main.dart\n+++ b/lib/main.dart"
+        );
+    }
+
+    #[test]
     fn reconcile_snapshot_publishes_status_and_new_timeline_events() {
         let mut service = ThreadApiService::with_seed_data(
             vec![UpstreamThreadRecord {
@@ -3560,6 +4520,80 @@ mod tests {
         assert_eq!(events[0].payload["status"], "completed");
         assert_eq!(events[1].event_id, "evt-new");
         assert_eq!(events[1].kind, BridgeEventKind::CommandDelta);
+    }
+
+    #[test]
+    fn reconcile_snapshot_preserves_live_only_events_missing_from_snapshot() {
+        let thread = UpstreamThreadRecord {
+            id: "thread-123".to_string(),
+            headline: "Inspect reconcile merge".to_string(),
+            lifecycle_state: "active".to_string(),
+            workspace_path: "/workspace/codex-mobile-companion".to_string(),
+            repository_name: "codex-mobile-companion".to_string(),
+            branch_name: "main".to_string(),
+            remote_name: "origin".to_string(),
+            git_dirty: false,
+            git_ahead_by: 0,
+            git_behind_by: 0,
+            created_at: "2026-03-17T10:00:00Z".to_string(),
+            updated_at: "2026-03-17T10:05:00Z".to_string(),
+            source: "cli".to_string(),
+            approval_mode: "control_with_approvals".to_string(),
+            last_turn_summary: "Inspecting".to_string(),
+        };
+        let mut service = ThreadApiService::with_seed_data(
+            vec![thread.clone()],
+            HashMap::from([(
+                "thread-123".to_string(),
+                vec![
+                    UpstreamTimelineEvent {
+                        id: "evt-message".to_string(),
+                        event_type: "agent_message_delta".to_string(),
+                        happened_at: "2026-03-17T10:01:00Z".to_string(),
+                        summary_text: "Tracing now".to_string(),
+                        data: json!({"type": "agentMessage", "text": "Tracing now"}),
+                    },
+                    UpstreamTimelineEvent {
+                        id: "evt-file-change".to_string(),
+                        event_type: "file_change_delta".to_string(),
+                        happened_at: "2026-03-17T10:02:00Z".to_string(),
+                        summary_text: "Edited lib/main.dart".to_string(),
+                        data: json!({
+                            "resolved_unified_diff": "diff --git a/lib/main.dart b/lib/main.dart\n--- a/lib/main.dart\n+++ b/lib/main.dart",
+                        }),
+                    },
+                ],
+            )]),
+        );
+
+        let events = service.reconcile_snapshot(
+            vec![UpstreamThreadRecord {
+                updated_at: "2026-03-17T10:06:00Z".to_string(),
+                ..thread
+            }],
+            HashMap::from([(
+                "thread-123".to_string(),
+                vec![UpstreamTimelineEvent {
+                    id: "evt-message".to_string(),
+                    event_type: "agent_message_delta".to_string(),
+                    happened_at: "2026-03-17T10:01:00Z".to_string(),
+                    summary_text: "Tracing now".to_string(),
+                    data: json!({"type": "agentMessage", "text": "Tracing now"}),
+                }],
+            )]),
+        );
+
+        assert!(events.is_empty());
+
+        let timeline = service
+            .timeline_page_response("thread-123", None, 50)
+            .expect("timeline response should exist");
+        assert_eq!(timeline.entries.len(), 2);
+        assert_eq!(timeline.entries[1].kind, BridgeEventKind::FileChange);
+        assert_eq!(
+            timeline.entries[1].payload["resolved_unified_diff"],
+            "diff --git a/lib/main.dart b/lib/main.dart\n--- a/lib/main.dart\n+++ b/lib/main.dart"
+        );
     }
 
     #[test]
@@ -3725,6 +4759,231 @@ mod tests {
     }
 
     #[test]
+    fn codex_notification_normalizer_maps_custom_tool_item_added_to_file_change() {
+        let mut normalizer = CodexNotificationNormalizer::default();
+
+        let event = normalizer
+            .normalize(
+                "thread/realtime/itemAdded",
+                &json!({
+                    "threadId": "thread-123",
+                    "item": {
+                        "id": "tool-1",
+                        "type": "customToolCall",
+                        "name": "apply_patch",
+                        "input": "*** Begin Patch\n*** Update File: lib/main.dart\n@@\n-old\n+new\n*** End Patch\n",
+                    }
+                }),
+            )
+            .expect("custom tool call should produce a file change event");
+
+        assert_eq!(event.kind, BridgeEventKind::FileChange);
+        assert_eq!(event.payload["command"], "apply_patch");
+        assert!(
+            event.payload["change"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("*** Update File: lib/main.dart")
+        );
+    }
+
+    #[test]
+    fn codex_notification_normalizer_adds_exploration_annotations_for_tool_invocations() {
+        let mut normalizer = CodexNotificationNormalizer::default();
+
+        assert!(
+            normalizer
+                .normalize(
+                    "turn/started",
+                    &json!({
+                        "threadId": "thread-123",
+                        "turn": {
+                            "id": "turn-123",
+                            "status": "inProgress",
+                            "items": [],
+                        }
+                    }),
+                )
+                .is_none()
+        );
+
+        let event = normalizer
+            .normalize(
+                "thread/realtime/itemAdded",
+                &json!({
+                    "threadId": "thread-123",
+                    "item": {
+                        "id": "tool-1",
+                        "type": "functionCall",
+                        "name": "exec_command",
+                        "arguments": "{\"cmd\":\"rg -n websocket crates/bridge-core/src/thread_api.rs\"}"
+                    }
+                }),
+            )
+            .expect("tool invocation should produce a command event");
+
+        let annotations = event
+            .annotations
+            .as_ref()
+            .expect("live command event should include annotations");
+        assert_eq!(
+            annotations.group_kind,
+            Some(ThreadTimelineGroupKind::Exploration)
+        );
+        assert_eq!(
+            annotations.group_id.as_deref(),
+            Some("exploration:turn-123")
+        );
+        assert_eq!(
+            annotations.exploration_kind,
+            Some(ThreadTimelineExplorationKind::Search)
+        );
+        assert_eq!(annotations.entry_label.as_deref(), Some("Search"));
+        assert!(event.payload.get("presentation").is_none());
+    }
+
+    #[test]
+    fn codex_notification_normalizer_maps_custom_tool_output_deltas() {
+        let mut normalizer = CodexNotificationNormalizer::default();
+
+        let event = normalizer
+            .normalize(
+                "item/customToolCallOutput/outputDelta",
+                &json!({
+                    "delta": "Success. Updated the following files:\nM lib/main.dart\n",
+                    "itemId": "tool-2",
+                    "threadId": "thread-123",
+                    "turnId": "turn-123",
+                }),
+            )
+            .expect("custom tool output delta should produce an event");
+
+        assert_eq!(event.kind, BridgeEventKind::FileChange);
+        assert_eq!(
+            event.payload["output"],
+            "Success. Updated the following files:\nM lib/main.dart\n"
+        );
+    }
+
+    #[test]
+    fn timeline_page_response_adds_exploration_annotations_for_background_commands() {
+        let service = ThreadApiService::with_seed_data(
+            vec![UpstreamThreadRecord {
+                id: "thread-123".to_string(),
+                headline: "Investigate bridge sync".to_string(),
+                lifecycle_state: "active".to_string(),
+                workspace_path: "/workspace/codex-mobile-companion".to_string(),
+                repository_name: "codex-mobile-companion".to_string(),
+                branch_name: "main".to_string(),
+                remote_name: "origin".to_string(),
+                git_dirty: false,
+                git_ahead_by: 0,
+                git_behind_by: 0,
+                created_at: "2026-03-17T10:00:00Z".to_string(),
+                updated_at: "2026-03-17T10:05:00Z".to_string(),
+                source: "cli".to_string(),
+                approval_mode: "control_with_approvals".to_string(),
+                last_turn_summary: "Reading files".to_string(),
+            }],
+            HashMap::from([(
+                "thread-123".to_string(),
+                vec![UpstreamTimelineEvent {
+                    id: "evt-read".to_string(),
+                    event_type: "command_output_delta".to_string(),
+                    happened_at: "2026-03-17T10:01:00Z".to_string(),
+                    summary_text: "Background terminal finished".to_string(),
+                    data: json!({
+                        "output": "Command: sed -n '1,120p' apps/mobile/lib/features/threads/domain/parsed_command_output.dart\nOutput:\nBackground terminal finished with sed -n '1,120p' apps/mobile/lib/features/threads/domain/parsed_command_output.dart",
+                    }),
+                }],
+            )]),
+        );
+
+        let page = service
+            .timeline_page_response("thread-123", None, 50)
+            .expect("timeline page should exist");
+
+        let annotations = page.entries[0]
+            .annotations
+            .as_ref()
+            .expect("background command should include annotations");
+        assert_eq!(
+            annotations.group_kind,
+            Some(ThreadTimelineGroupKind::Exploration)
+        );
+        assert_eq!(
+            annotations.exploration_kind,
+            Some(ThreadTimelineExplorationKind::Read)
+        );
+        assert_eq!(
+            annotations.entry_label.as_deref(),
+            Some("Read parsed_command_output.dart")
+        );
+        assert!(page.entries[0].payload.get("presentation").is_none());
+    }
+
+    #[test]
+    fn codex_notification_normalizer_keeps_exploration_annotations_on_command_output_deltas() {
+        let mut normalizer = CodexNotificationNormalizer::default();
+
+        assert!(
+            normalizer
+                .normalize(
+                    "turn/started",
+                    &json!({
+                        "threadId": "thread-123",
+                        "turn": {
+                            "id": "turn-123",
+                            "status": "inProgress",
+                            "items": [],
+                        }
+                    }),
+                )
+                .is_none()
+        );
+        let _ = normalizer.normalize(
+            "thread/realtime/itemAdded",
+            &json!({
+                "threadId": "thread-123",
+                "item": {
+                    "id": "cmd-1",
+                    "type": "commandExecution",
+                    "command": "rg -n \"thread-detail\" apps/mobile/lib/features/threads",
+                    "aggregatedOutput": "",
+                    "output": "",
+                }
+            }),
+        );
+
+        let event = normalizer
+            .normalize(
+                "item/commandExecution/outputDelta",
+                &json!({
+                    "delta": "apps/mobile/lib/features/threads/presentation/thread_detail_page.dart:143: _maybeAutoLoadEarlierHistory()",
+                    "itemId": "cmd-1",
+                    "threadId": "thread-123",
+                    "turnId": "turn-123",
+                }),
+            )
+            .expect("command output delta should produce an event");
+
+        let annotations = event
+            .annotations
+            .as_ref()
+            .expect("command output delta should keep annotations");
+        assert_eq!(event.kind, BridgeEventKind::CommandDelta);
+        assert_eq!(
+            annotations.group_kind,
+            Some(ThreadTimelineGroupKind::Exploration)
+        );
+        assert_eq!(
+            annotations.exploration_kind,
+            Some(ThreadTimelineExplorationKind::Search)
+        );
+        assert!(event.payload.get("presentation").is_none());
+    }
+
+    #[test]
     fn apply_live_event_replaces_existing_timeline_entry_with_same_event_id() {
         let mut service = ThreadApiService::with_seed_data(
             vec![UpstreamThreadRecord {
@@ -3771,11 +5030,11 @@ mod tests {
         ));
 
         let timeline = service
-            .timeline_response("thread-123")
+            .timeline_page_response("thread-123", None, 50)
             .expect("timeline response should exist");
-        assert_eq!(timeline.events.len(), 1);
-        assert_eq!(timeline.events[0].event_id, "turn-123-msg-1");
-        assert_eq!(timeline.events[0].payload["text"], "Hello");
+        assert_eq!(timeline.entries.len(), 1);
+        assert_eq!(timeline.entries[0].event_id, "turn-123-msg-1");
+        assert_eq!(timeline.entries[0].payload["text"], "Hello");
 
         let detail = service
             .detail_response("thread-123")
@@ -3853,6 +5112,56 @@ mod tests {
         assert_eq!(timeline.len(), 2);
         assert_eq!(timeline[0].data["type"], "userMessage");
         assert_eq!(timeline[1].data["type"], "agentMessage");
+    }
+
+    #[test]
+    fn codex_rpc_timeline_maps_tool_calls_to_command_and_file_change_events() {
+        let timeline = super::map_codex_thread_to_timeline_events(&CodexThread {
+            id: "thread-123".to_string(),
+            name: Some("Inspect RPC timeline".to_string()),
+            preview: Some("Preview".to_string()),
+            status: CodexThreadStatus {
+                kind: "active".to_string(),
+            },
+            cwd: "/Users/test/workspace".to_string(),
+            git_info: None,
+            created_at: 1,
+            updated_at: 2,
+            source: json!("cli"),
+            turns: vec![CodexTurn {
+                id: "turn-123".to_string(),
+                items: vec![
+                    json!({
+                        "id":"tool-1",
+                        "type":"functionCall",
+                        "name":"exec_command",
+                        "arguments":"{\"cmd\":\"pwd\"}"
+                    }),
+                    json!({
+                        "id":"tool-2",
+                        "type":"customToolCall",
+                        "name":"apply_patch",
+                        "input":"*** Begin Patch\n*** Update File: lib/main.dart\n@@\n-old\n+new\n*** End Patch\n"
+                    }),
+                    json!({
+                        "id":"tool-3",
+                        "type":"customToolCallOutput",
+                        "output":"Success. Updated the following files:\nM lib/main.dart\n"
+                    }),
+                ],
+            }],
+        });
+
+        assert_eq!(timeline.len(), 3);
+        assert_eq!(timeline[0].event_type, "command_output_delta");
+        assert_eq!(timeline[0].data["command"], "exec_command");
+        assert_eq!(timeline[1].event_type, "file_change_delta");
+        assert_eq!(timeline[1].data["command"], "apply_patch");
+        assert_eq!(timeline[2].event_type, "file_change_delta");
+        assert_eq!(
+            timeline[2].data["output"],
+            "Success. Updated the following files:\nM lib/main.dart\n"
+        );
     }
 
     fn unique_test_codex_home() -> PathBuf {

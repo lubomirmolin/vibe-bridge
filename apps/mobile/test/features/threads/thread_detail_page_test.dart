@@ -663,7 +663,112 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(find.textContaining('yield_time_ms'), findsNothing);
   });
 
-  testWidgets('read-only inspection commands collapse into explored files', (
+  testWidgets(
+    'read-only inspection commands collapse into an exploration summary',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            <ThreadTimelineEntryDto>[
+              _timelineEvent(
+                id: 'evt-background-main',
+                kind: BridgeEventKind.commandDelta,
+                summary: 'Background terminal finished',
+                payload: {
+                  'output':
+                      'Command: dart format apps/mobile/test/features/threads/thread_detail_page_test.dart\n'
+                      'Wall time: 49.2 seconds\n'
+                      'Output:\n'
+                      'Background terminal finished with dart format apps/mobile/test/features/threads/thread_detail_page_test.dart',
+                },
+                occurredAt: '2026-03-18T10:02:00Z',
+              ),
+              _timelineEvent(
+                id: 'evt-read-1',
+                kind: BridgeEventKind.commandDelta,
+                summary: 'Background terminal finished',
+                payload: {'output': 'Background terminal finished'},
+                occurredAt: '2026-03-18T10:02:01Z',
+                annotations: _explorationAnnotations(
+                  explorationKind: ThreadTimelineExplorationKind.read,
+                  entryLabel: 'Read thread_activity_item.dart',
+                ),
+              ),
+              _timelineEvent(
+                id: 'evt-read-2',
+                kind: BridgeEventKind.commandDelta,
+                summary: 'Background terminal finished',
+                payload: {'output': 'Background terminal finished'},
+                occurredAt: '2026-03-18T10:02:02Z',
+                annotations: _explorationAnnotations(
+                  explorationKind: ThreadTimelineExplorationKind.read,
+                  entryLabel: 'Read parsed_command_output.dart',
+                ),
+              ),
+              _timelineEvent(
+                id: 'evt-search-1',
+                kind: BridgeEventKind.commandDelta,
+                summary: 'Background terminal finished',
+                payload: {'output': 'Background terminal finished'},
+                occurredAt: '2026-03-18T10:02:03Z',
+                annotations: _explorationAnnotations(
+                  explorationKind: ThreadTimelineExplorationKind.search,
+                  entryLabel: 'Search',
+                ),
+              ),
+            ],
+          ],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+      );
+      await tester.pumpAndSettle();
+
+      await _scrollUntilVisible(
+        tester,
+        find.byKey(const Key('thread-explored-files-summary')),
+      );
+      expect(
+        find.byKey(const Key('thread-explored-files-summary')),
+        findsOneWidget,
+      );
+      expect(find.text('Explored 2 files, 1 search'), findsOneWidget);
+      expect(
+        find.byKey(const Key('thread-worked-for-summary')),
+        findsOneWidget,
+      );
+      expect(find.text('Worked for 49s'), findsOneWidget);
+      expect(
+        find.textContaining('Background terminal finished with nl -ba'),
+        findsNothing,
+      );
+      expect(
+        find.textContaining('Background terminal finished with sed -n'),
+        findsNothing,
+      );
+      expect(
+        find.textContaining('Background terminal finished with rg -n'),
+        findsNothing,
+      );
+      expect(
+        find.textContaining('Read thread_activity_item.dart'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Read parsed_command_output.dart'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('older history keeps loading until a new grouped block appears', (
     tester,
   ) async {
     final detailApi = FakeThreadDetailBridgeApi(
@@ -672,19 +777,13 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       },
       timelineScriptByThreadId: {
         'thread-123': [
-          <ThreadTimelineEntryDto>[
+          [
             _timelineEvent(
-              id: 'evt-background-main',
-              kind: BridgeEventKind.commandDelta,
-              summary: 'Background terminal finished',
-              payload: {
-                'output':
-                    'Command: dart format apps/mobile/test/features/threads/thread_detail_page_test.dart\n'
-                    'Wall time: 49.2 seconds\n'
-                    'Output:\n'
-                    'Background terminal finished with dart format apps/mobile/test/features/threads/thread_detail_page_test.dart',
-              },
-              occurredAt: '2026-03-18T10:02:00Z',
+              id: 'evt-old-msg',
+              kind: BridgeEventKind.messageDelta,
+              summary: 'Oldest visible after hydration',
+              payload: {'delta': 'Oldest event before exploration'},
+              occurredAt: '2026-03-18T09:59:00Z',
             ),
             _timelineEvent(
               id: 'evt-read-1',
@@ -696,7 +795,11 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
                     'Output:\n'
                     'Background terminal finished with nl -ba apps/mobile/lib/features/threads/domain/thread_activity_item.dart',
               },
-              occurredAt: '2026-03-18T10:02:01Z',
+              occurredAt: '2026-03-18T10:01:00Z',
+              annotations: _explorationAnnotations(
+                explorationKind: ThreadTimelineExplorationKind.read,
+                entryLabel: 'Read thread_activity_item.dart',
+              ),
             ),
             _timelineEvent(
               id: 'evt-read-2',
@@ -708,19 +811,57 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
                     'Output:\n'
                     'Background terminal finished with sed -n \'1,120p\' apps/mobile/lib/features/threads/domain/parsed_command_output.dart',
               },
-              occurredAt: '2026-03-18T10:02:02Z',
+              occurredAt: '2026-03-18T10:02:00Z',
+              annotations: _explorationAnnotations(
+                explorationKind: ThreadTimelineExplorationKind.read,
+                entryLabel: 'Read parsed_command_output.dart',
+              ),
             ),
             _timelineEvent(
-              id: 'evt-search-1',
+              id: 'evt-read-3',
               kind: BridgeEventKind.commandDelta,
               summary: 'Background terminal finished',
               payload: {
                 'output':
-                    'Command: rg -n "thread-detail" apps/mobile/lib/features/threads\n'
+                    'Command: head -n 40 apps/mobile/lib/features/threads/presentation/thread_detail_page.dart\n'
                     'Output:\n'
-                    'Background terminal finished with rg -n "thread-detail" apps/mobile/lib/features/threads',
+                    'Background terminal finished with head -n 40 apps/mobile/lib/features/threads/presentation/thread_detail_page.dart',
               },
-              occurredAt: '2026-03-18T10:02:03Z',
+              occurredAt: '2026-03-18T10:02:30Z',
+              annotations: _explorationAnnotations(
+                explorationKind: ThreadTimelineExplorationKind.read,
+                entryLabel: 'Read thread_detail_page.dart',
+              ),
+            ),
+            _timelineEvent(
+              id: 'evt-read-4',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Background terminal finished',
+              payload: {
+                'output':
+                    'Command: rg -n \"thread-detail\" apps/mobile/lib/features/threads\n'
+                    'Output:\n'
+                    'Background terminal finished with rg -n \"thread-detail\" apps/mobile/lib/features/threads',
+              },
+              occurredAt: '2026-03-18T10:02:45Z',
+              annotations: _explorationAnnotations(
+                explorationKind: ThreadTimelineExplorationKind.search,
+                entryLabel: 'Search',
+              ),
+            ),
+            _timelineEvent(
+              id: 'evt-msg-1',
+              kind: BridgeEventKind.messageDelta,
+              summary: 'Recent event one',
+              payload: {'delta': 'Recent event A'},
+              occurredAt: '2026-03-18T10:03:00Z',
+            ),
+            _timelineEvent(
+              id: 'evt-msg-2',
+              kind: BridgeEventKind.messageDelta,
+              summary: 'Recent event two',
+              payload: {'delta': 'Recent event B'},
+              occurredAt: '2026-03-18T10:04:00Z',
             ),
           ],
         ],
@@ -731,34 +872,28 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       tester,
       detailApi: detailApi,
       threadId: 'thread-123',
+      initialVisibleTimelineEntries: 3,
     );
     await tester.pumpAndSettle();
 
-    await _scrollUntilVisible(
-      tester,
-      find.byKey(const Key('thread-explored-files-summary')),
+    expect(find.text('Oldest event before exploration'), findsNothing);
+    expect(find.text('1 search'), findsOneWidget);
+
+    await tester.drag(
+      find.byKey(const Key('thread-detail-scroll-view')),
+      const Offset(0, 800),
     );
-    expect(
-      find.byKey(const Key('thread-explored-files-summary')),
-      findsOneWidget,
-    );
-    expect(find.text('Explored 2 files, 1 search'), findsOneWidget);
-    expect(find.byKey(const Key('thread-worked-for-summary')), findsOneWidget);
-    expect(find.text('Worked for 49s'), findsOneWidget);
-    expect(find.text('Read thread_activity_item.dart'), findsOneWidget);
-    expect(find.text('Read parsed_command_output.dart'), findsOneWidget);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.text('Oldest event before exploration'), findsOneWidget);
+    expect(find.text('Explored 3 files, 1 search'), findsOneWidget);
     expect(
       find.textContaining('Background terminal finished with nl -ba'),
       findsNothing,
     );
-    expect(
-      find.textContaining('Background terminal finished with sed -n'),
-      findsNothing,
-    );
-    expect(
-      find.textContaining('Background terminal finished with rg -n'),
-      findsNothing,
-    );
+    expect(find.text('New messages'), findsNothing);
+    expect(detailApi.timelineFetchCount, 3);
   });
 
   testWidgets('idle composer starts turn and transitions to active controls', (
@@ -1939,10 +2074,66 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
 
     expect(find.text('Oldest event'), findsOneWidget);
     expect(find.text('Older event'), findsOneWidget);
+    expect(find.text('New messages'), findsNothing);
     final oldestY = tester.getTopLeft(find.text('Oldest event')).dy;
     final olderY = tester.getTopLeft(find.text('Older event')).dy;
     expect(oldestY, lessThan(olderY));
   });
+
+  testWidgets(
+    'new live messages still surface the badge when scrolled away from the bottom',
+    (tester) async {
+      final timeline = List<ThreadTimelineEntryDto>.generate(
+        24,
+        (index) => _timelineEvent(
+          id: 'evt-live-$index',
+          kind: BridgeEventKind.messageDelta,
+          summary: 'Assistant output $index',
+          payload: {'delta': 'Existing event $index'},
+          occurredAt:
+              '2026-03-18T09:${(index % 60).toString().padLeft(2, '0')}:00Z',
+        ),
+      );
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [timeline],
+        },
+      );
+      final liveStream = FakeThreadLiveStream();
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+        liveStream: liveStream,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.drag(
+        find.byKey(const Key('thread-detail-scroll-view')),
+        const Offset(0, 900),
+      );
+      await tester.pumpAndSettle();
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-live-new',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:30:00Z',
+          payload: {'type': 'agentMessage', 'text': 'Newest streamed event'},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('New messages'), findsOneWidget);
+      expect(find.text('Newest streamed event'), findsNothing);
+    },
+  );
 
   testWidgets(
     'switching threads keeps live updates scoped to selected thread',
@@ -2172,73 +2363,59 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(find.text('Implement shared contracts'), findsOneWidget);
   });
 
-  testWidgets(
-    'offline mode keeps cached thread detail readable and blocks mutating actions',
-    (tester) async {
-      final cacheRepository = _newCacheRepository();
-      await cacheRepository.saveThreadList(_threadSummaries());
-      await cacheRepository.saveThreadDetail(
-        detail: _thread123Detail(),
-        timeline: _mixedTimelineEvents(),
-      );
+  testWidgets('offline mode without a loaded thread shows the bridge error', (
+    tester,
+  ) async {
+    final cacheRepository = _newCacheRepository();
+    await cacheRepository.saveThreadList(_threadSummaries());
 
-      final detailApi = FakeThreadDetailBridgeApi(
-        detailScriptByThreadId: {
-          'thread-123': [
-            const ThreadDetailBridgeException(
-              message: 'Cannot reach the bridge. Check your private route.',
-              isConnectivityError: true,
-            ),
-          ],
-        },
-        timelineScriptByThreadId: {
-          'thread-123': [
-            const ThreadDetailBridgeException(
-              message: 'Cannot reach the bridge. Check your private route.',
-              isConnectivityError: true,
-            ),
-          ],
-        },
-      );
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [
+          const ThreadDetailBridgeException(
+            message: 'Cannot reach the bridge. Check your private route.',
+            isConnectivityError: true,
+          ),
+        ],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          const ThreadDetailBridgeException(
+            message: 'Cannot reach the bridge. Check your private route.',
+            isConnectivityError: true,
+          ),
+        ],
+      },
+    );
 
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            threadListBridgeApiProvider.overrideWithValue(
-              FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]),
-            ),
-            approvalBridgeApiProvider.overrideWithValue(
-              EmptyApprovalBridgeApi(),
-            ),
-            threadDetailBridgeApiProvider.overrideWithValue(detailApi),
-            threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
-            threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
-          ],
-          child: const MaterialApp(
-            home: ThreadDetailPage(
-              bridgeApiBaseUrl: _bridgeApiBaseUrl,
-              threadId: 'thread-123',
-            ),
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          threadListBridgeApiProvider.overrideWithValue(
+            FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]),
+          ),
+          approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
+          threadDetailBridgeApiProvider.overrideWithValue(detailApi),
+          threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+          threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
+        ],
+        child: const MaterialApp(
+          home: ThreadDetailPage(
+            bridgeApiBaseUrl: _bridgeApiBaseUrl,
+            threadId: 'thread-123',
           ),
         ),
-      );
-      await tester.pumpAndSettle();
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(find.text('Implement shared contracts'), findsOneWidget);
-      expect(
-        find.textContaining(
-          'Bridge is offline. Showing cached thread content.',
-        ),
-        findsOneWidget,
-      );
-      expect(
-        find.text(
-          'Mutating actions are blocked while the bridge or private route is unavailable.',
-        ),
-        findsOneWidget,
-      );
-    },
-  );
+    expect(find.text('Implement shared contracts'), findsNothing);
+    expect(
+      find.text('Cannot reach the bridge. Check your private route.'),
+      findsOneWidget,
+    );
+    expect(find.text('Retry'), findsOneWidget);
+  });
 
   testWidgets('disconnect reconnects and keeps items deduplicated', (
     tester,
@@ -2311,33 +2488,28 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     );
     await tester.pumpAndSettle();
 
-    await _scrollUntilVisible(
-      tester,
-      find.byKey(const Key('thread-activity-evt-live-1')),
+    expect(
+      find.byKey(const Key('thread-message-card-evt-live-1')),
+      findsOneWidget,
     );
-
-    expect(find.byKey(const Key('thread-activity-evt-live-1')), findsOneWidget);
 
     await tester.fling(
       find.byType(Scrollable).first,
       const Offset(0, 600),
       1000,
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
 
     liveStream.emitError('thread-123');
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump(const Duration(milliseconds: 250));
 
-    expect(find.byKey(const Key('retry-reconnect-catchup')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('retry-reconnect-catchup')));
-    await tester.pumpAndSettle();
-
-    await _scrollUntilVisible(
-      tester,
-      find.byKey(const Key('thread-activity-evt-live-1')),
+    expect(
+      find.byKey(const Key('thread-message-card-evt-live-1')),
+      findsOneWidget,
     );
-
-    expect(find.byKey(const Key('thread-activity-evt-live-1')), findsOneWidget);
   });
 }
 
@@ -2380,6 +2552,7 @@ Future<void> _pumpThreadDetailApp(
   WidgetTester tester, {
   required ThreadDetailBridgeApi detailApi,
   required String threadId,
+  int initialVisibleTimelineEntries = 20,
   ThreadListBridgeApi? listApi,
   ThreadLiveStream? liveStream,
   ApprovalBridgeApi? approvalApi,
@@ -2412,6 +2585,7 @@ Future<void> _pumpThreadDetailApp(
         home: ThreadDetailPage(
           bridgeApiBaseUrl: _bridgeApiBaseUrl,
           threadId: threadId,
+          initialVisibleTimelineEntries: initialVisibleTimelineEntries,
         ),
       ),
     ),
@@ -2579,6 +2753,7 @@ ThreadTimelineEntryDto _timelineEvent({
   required String summary,
   required Map<String, dynamic> payload,
   required String occurredAt,
+  ThreadTimelineAnnotationsDto? annotations,
 }) {
   return ThreadTimelineEntryDto(
     eventId: id,
@@ -2586,6 +2761,18 @@ ThreadTimelineEntryDto _timelineEvent({
     occurredAt: occurredAt,
     summary: summary,
     payload: payload,
+    annotations: annotations,
+  );
+}
+
+ThreadTimelineAnnotationsDto _explorationAnnotations({
+  required ThreadTimelineExplorationKind explorationKind,
+  required String entryLabel,
+}) {
+  return ThreadTimelineAnnotationsDto(
+    groupKind: ThreadTimelineGroupKind.exploration,
+    explorationKind: explorationKind,
+    entryLabel: entryLabel,
   );
 }
 
@@ -2798,6 +2985,44 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     }
 
     throw StateError('Unsupported timeline scripted result: $scriptedResult');
+  }
+
+  @override
+  Future<ThreadTimelinePageDto> fetchThreadTimelinePage({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? before,
+    int limit = 50,
+  }) async {
+    final thread = _peekThreadDetail(threadId);
+    if (thread == null) {
+      final detailError = _peekThreadDetailError(threadId);
+      if (detailError != null) {
+        throw detailError;
+      }
+      throw StateError('Missing scripted detail for thread "$threadId".');
+    }
+
+    final entries = await fetchThreadTimeline(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+    );
+    final endIndex = before == null
+        ? entries.length
+        : entries.indexWhere((entry) => entry.eventId == before);
+    final normalizedEndIndex = endIndex < 0 ? entries.length : endIndex;
+    final startIndex = normalizedEndIndex - limit < 0
+        ? 0
+        : normalizedEndIndex - limit;
+    final pageEntries = entries.sublist(startIndex, normalizedEndIndex);
+    final hasMoreBefore = startIndex > 0;
+    return ThreadTimelinePageDto(
+      contractVersion: contractVersion,
+      thread: thread,
+      entries: pageEntries,
+      nextBefore: hasMoreBefore ? entries[startIndex].eventId : null,
+      hasMoreBefore: hasMoreBefore,
+    );
   }
 
   @override
@@ -3120,6 +3345,21 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
 
     for (final entry in script) {
       if (entry is ThreadDetailDto) {
+        return entry;
+      }
+    }
+
+    return null;
+  }
+
+  ThreadDetailBridgeException? _peekThreadDetailError(String threadId) {
+    final script = _detailScriptByThreadId[threadId];
+    if (script == null) {
+      return null;
+    }
+
+    for (final entry in script) {
+      if (entry is ThreadDetailBridgeException) {
         return entry;
       }
     }

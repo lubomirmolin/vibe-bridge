@@ -51,7 +51,6 @@ void main() {
       'trusted_bridge_identity',
     );
     expect(SecureValueKey.threadListCache.wireValue, 'thread_list_cache');
-    expect(SecureValueKey.threadDetailsCache.wireValue, 'thread_details_cache');
     expect(SecureValueKey.selectedThreadId.wireValue, 'selected_thread_id');
     expect(
       SecureValueKey.desktopIntegrationEnabled.wireValue,

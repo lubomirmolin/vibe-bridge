@@ -46,17 +46,75 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.textContaining('Workspace: /workspace/codex-mobile-companion'),
+        find.textContaining('/workspace/codex-mobile-companion'),
         findsAtLeastNWidgets(1),
       );
       expect(
-        find.textContaining('Repository: codex-mobile-companion'),
+        find.textContaining('codex-mobile-companion'),
         findsAtLeastNWidgets(1),
       );
-      expect(find.textContaining('Current branch: master'), findsOneWidget);
-      expect(find.textContaining('Remote: origin'), findsOneWidget);
+      expect(find.textContaining('master (remote: origin)'), findsOneWidget);
       expect(find.textContaining('tail -n 100 app.log'), findsOneWidget);
       expect(find.textContaining('lib/main.dart'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'approval detail loads command and file context from paginated timeline pages without full timeline fetch',
+    (tester) async {
+      final paginatedTimeline = <ThreadTimelineEntryDto>[
+        const ThreadTimelineEntryDto(
+          eventId: 'evt-command',
+          kind: BridgeEventKind.commandDelta,
+          occurredAt: '2026-03-18T10:01:00Z',
+          summary: 'Command output',
+          payload: {
+            'command': 'tail -n 100 app.log',
+            'delta': 'running diagnostics...',
+          },
+        ),
+        const ThreadTimelineEntryDto(
+          eventId: 'evt-file',
+          kind: BridgeEventKind.fileChange,
+          occurredAt: '2026-03-18T10:02:00Z',
+          summary: 'File change',
+          payload: {
+            'path': 'lib/main.dart',
+            'summary': 'Adjusted parser mapping',
+          },
+        ),
+        for (var index = 0; index < 30; index += 1)
+          ThreadTimelineEntryDto(
+            eventId: 'evt-message-$index',
+            kind: BridgeEventKind.messageDelta,
+            occurredAt:
+                '2026-03-18T10:${(index + 3).toString().padLeft(2, '0')}:00Z',
+            summary: 'Assistant output',
+            payload: {'type': 'agentMessage', 'text': 'message-$index'},
+          ),
+      ];
+
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailByThreadId: {'thread-123': _threadDetail()},
+        timelineByThreadId: {'thread-123': paginatedTimeline},
+      );
+
+      await _pumpApprovalsApp(
+        tester,
+        approvalApi: FakeApprovalBridgeApi(
+          accessMode: AccessMode.fullControl,
+          approvals: [_pendingApproval()],
+        ),
+        detailApi: detailApi,
+      );
+
+      await tester.tap(find.byKey(const Key('approval-card-approval-1')));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('tail -n 100 app.log'), findsOneWidget);
+      expect(find.textContaining('lib/main.dart'), findsOneWidget);
+      expect(detailApi.fetchThreadTimelineCallCount, 0);
+      expect(detailApi.fetchThreadTimelinePageCallCount, greaterThan(1));
     },
   );
 
@@ -112,77 +170,44 @@ void main() {
     await tester.tap(find.byKey(const Key('approve-approval-button')));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('approved'), findsAtLeastNWidgets(1));
     expect(
-      find.textContaining('already resolved as approved'),
-      findsAtLeastNWidgets(1),
+      find.text('Approval was already resolved as approved.'),
+      findsOneWidget,
     );
   });
 
-  testWidgets(
-    'full-control mode can reject pending approvals and sync queue/thread status',
-    (tester) async {
-      final approvalApi = FakeApprovalBridgeApi(
-        accessMode: AccessMode.fullControl,
-        approvals: [_pendingApproval()],
-      );
+  testWidgets('full-control mode can reject pending approvals', (tester) async {
+    final approvalApi = FakeApprovalBridgeApi(
+      accessMode: AccessMode.fullControl,
+      approvals: [_pendingApproval()],
+    );
 
-      await _pumpThreadListApp(
-        tester,
-        approvalApi: approvalApi,
-        detailApi: FakeThreadDetailBridgeApi(
-          detailByThreadId: {'thread-123': _threadDetail()},
-          timelineByThreadId: {'thread-123': _threadTimeline()},
-        ),
-        listApi: FakeThreadListBridgeApi(threads: [_threadSummary()]),
-      );
+    await _pumpApprovalsApp(
+      tester,
+      approvalApi: approvalApi,
+      detailApi: FakeThreadDetailBridgeApi(
+        detailByThreadId: {'thread-123': _threadDetail()},
+        timelineByThreadId: {'thread-123': _threadTimeline()},
+      ),
+    );
 
-      await tester.tap(find.byKey(const Key('open-approvals-queue')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('approval-card-approval-1')));
-      await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('approval-card-approval-1')));
+    await tester.pumpAndSettle();
 
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('reject-approval-button')),
-        300,
-      );
-      await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('reject-approval-button')),
+      300,
+    );
+    await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const Key('reject-approval-button')));
-      await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('reject-approval-button')));
+    await tester.pumpAndSettle();
 
-      expect(
-        find.textContaining('already resolved as rejected'),
-        findsAtLeastNWidgets(1),
-      );
-      expect(find.textContaining('resumed after approval'), findsNothing);
-
-      final rootNavigatorState = tester.state<NavigatorState>(
-        find.byType(Navigator).first,
-      );
-      rootNavigatorState.pop();
-      await tester.pumpAndSettle();
-      expect(find.text('Rejected'), findsAtLeastNWidgets(1));
-
-      final threadNavigatorState = tester.state<NavigatorState>(
-        find.byType(Navigator).first,
-      );
-      threadNavigatorState.pop();
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
-      await tester.pumpAndSettle();
-
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('thread-approval-status-approval-1')),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.text('Rejected'), findsAtLeastNWidgets(1));
-    },
-  );
+    expect(
+      find.text('Approval was already resolved as rejected.'),
+      findsOneWidget,
+    );
+  });
 
   testWidgets('lower-permission mode keeps approve/reject disabled', (
     tester,
@@ -210,10 +235,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final approveButton = tester.widget<FilledButton>(
+    final approveButton = tester.widget<ElevatedButton>(
       find.byKey(const Key('approve-approval-button')),
     );
-    final rejectButton = tester.widget<OutlinedButton>(
+    final rejectButton = tester.widget<ElevatedButton>(
       find.byKey(const Key('reject-approval-button')),
     );
 
@@ -248,10 +273,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final approveButton = tester.widget<FilledButton>(
+      final approveButton = tester.widget<ElevatedButton>(
         find.byKey(const Key('approve-approval-button')),
       );
-      final rejectButton = tester.widget<OutlinedButton>(
+      final rejectButton = tester.widget<ElevatedButton>(
         find.byKey(const Key('reject-approval-button')),
       );
 
@@ -262,7 +287,7 @@ void main() {
   );
 
   testWidgets(
-    'read-only mode allows viewing while blocking steer, interrupt, approve, reject, switch, pull, and push',
+    'read-only mode blocks git switch, pull, and push while thread approvals remain visible',
     (tester) async {
       final approvalApi = FakeApprovalBridgeApi(
         accessMode: AccessMode.readOnly,
@@ -283,12 +308,15 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Implement shared contracts'), findsOneWidget);
-
-      final steerButton = tester.widget<ElevatedButton>(
-        find.byKey(const Key('turn-composer-submit')),
+      await tester.scrollUntilVisible(
+        find.text('Pending Approvals'),
+        300,
+        scrollable: find.byType(Scrollable).first,
       );
-      expect(steerButton.onPressed, isNull);
-      expect(find.byKey(const Key('turn-interrupt-button')), findsNothing);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Git pull'), findsOneWidget);
+      expect(find.text('Pending'), findsAtLeastNWidgets(1));
 
       await tester.tap(find.byKey(const Key('git-header-branch-button')));
       await tester.pumpAndSettle();
@@ -312,34 +340,6 @@ void main() {
       expect(switchButton.onPressed, isNull);
       expect(pullButton.onPressed, isNull);
       expect(pushButton.onPressed, isNull);
-
-      final detailNavigatorState = tester.state<NavigatorState>(
-        find.byType(Navigator).first,
-      );
-      detailNavigatorState.pop();
-      await tester.pumpAndSettle();
-      detailNavigatorState.pop();
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byKey(const Key('open-approvals-queue')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('approval-card-approval-1')));
-      await tester.pumpAndSettle();
-
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('approve-approval-button')),
-        300,
-      );
-      await tester.pumpAndSettle();
-
-      final approveButton = tester.widget<FilledButton>(
-        find.byKey(const Key('approve-approval-button')),
-      );
-      final rejectButton = tester.widget<OutlinedButton>(
-        find.byKey(const Key('reject-approval-button')),
-      );
-      expect(approveButton.onPressed, isNull);
-      expect(rejectButton.onPressed, isNull);
     },
   );
 
@@ -369,10 +369,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      var approveButton = tester.widget<FilledButton>(
+      var approveButton = tester.widget<ElevatedButton>(
         find.byKey(const Key('approve-approval-button')),
       );
-      var rejectButton = tester.widget<OutlinedButton>(
+      var rejectButton = tester.widget<ElevatedButton>(
         find.byKey(const Key('reject-approval-button')),
       );
 
@@ -394,10 +394,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      approveButton = tester.widget<FilledButton>(
+      approveButton = tester.widget<ElevatedButton>(
         find.byKey(const Key('approve-approval-button')),
       );
-      rejectButton = tester.widget<OutlinedButton>(
+      rejectButton = tester.widget<ElevatedButton>(
         find.byKey(const Key('reject-approval-button')),
       );
 
@@ -417,10 +417,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      approveButton = tester.widget<FilledButton>(
+      approveButton = tester.widget<ElevatedButton>(
         find.byKey(const Key('approve-approval-button')),
       );
-      rejectButton = tester.widget<OutlinedButton>(
+      rejectButton = tester.widget<ElevatedButton>(
         find.byKey(const Key('reject-approval-button')),
       );
 
@@ -480,73 +480,51 @@ void main() {
     },
   );
 
-  testWidgets(
-    'live approval events refresh queue and originating thread surfaces',
-    (tester) async {
-      final approvalApi = FakeApprovalBridgeApi(
-        accessMode: AccessMode.fullControl,
-        approvals: const <ApprovalRecordDto>[],
-      );
-      final liveStream = FakeThreadLiveStream();
-
-      await _pumpThreadListApp(
-        tester,
-        approvalApi: approvalApi,
-        detailApi: FakeThreadDetailBridgeApi(
-          detailByThreadId: {'thread-123': _threadDetail()},
-          timelineByThreadId: {'thread-123': _threadTimeline()},
-        ),
-        listApi: FakeThreadListBridgeApi(threads: [_threadSummary()]),
-        liveStream: liveStream,
-      );
-
-      expect(find.text('No approvals yet'), findsNothing);
-
-      await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
-      await tester.pumpAndSettle();
-
-      await tester.scrollUntilVisible(
-        find.text('No approvals currently linked to this thread.'),
-        240,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
-
-      approvalApi.upsertApproval(_pendingApproval());
-      liveStream.emit(
-        BridgeEventEnvelope<Map<String, dynamic>>(
-          contractVersion: contractVersion,
-          eventId: 'evt-approval-live-1',
-          threadId: 'thread-123',
-          kind: BridgeEventKind.approvalRequested,
-          occurredAt: '2026-03-18T10:15:00Z',
-          payload: _pendingApproval().toJson(),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      expect(
-        find.byKey(const Key('thread-approval-status-approval-1')),
-        findsOneWidget,
-      );
-      expect(find.text('Pending'), findsAtLeastNWidgets(1));
-
-      await tester.pageBack();
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('open-approvals-queue')));
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const Key('approval-card-approval-1')), findsOneWidget);
-    },
-  );
-
-  testWidgets('resolved approvals sync from queue to thread context panel', (
+  testWidgets('live approval events refresh the approvals queue', (
     tester,
   ) async {
     final approvalApi = FakeApprovalBridgeApi(
       accessMode: AccessMode.fullControl,
-      approvals: [_pendingApproval()],
+      approvals: const <ApprovalRecordDto>[],
     );
+    final liveStream = FakeThreadLiveStream();
+
+    await _pumpApprovalsApp(
+      tester,
+      approvalApi: approvalApi,
+      detailApi: FakeThreadDetailBridgeApi(
+        detailByThreadId: {'thread-123': _threadDetail()},
+        timelineByThreadId: {'thread-123': _threadTimeline()},
+      ),
+      liveStream: liveStream,
+    );
+
+    expect(find.text('No approvals pending'), findsOneWidget);
+
+    approvalApi.upsertApproval(_pendingApproval());
+    liveStream.emit(
+      BridgeEventEnvelope<Map<String, dynamic>>(
+        contractVersion: contractVersion,
+        eventId: 'evt-approval-live-queue',
+        threadId: 'thread-123',
+        kind: BridgeEventKind.approvalRequested,
+        occurredAt: '2026-03-18T10:15:00Z',
+        payload: _pendingApproval().toJson(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('approval-card-approval-1')), findsOneWidget);
+  });
+
+  testWidgets('live approval events refresh the originating thread surface', (
+    tester,
+  ) async {
+    final approvalApi = FakeApprovalBridgeApi(
+      accessMode: AccessMode.fullControl,
+      approvals: const <ApprovalRecordDto>[],
+    );
+    final liveStream = FakeThreadLiveStream();
 
     await _pumpThreadListApp(
       tester,
@@ -556,42 +534,63 @@ void main() {
         timelineByThreadId: {'thread-123': _threadTimeline()},
       ),
       listApi: FakeThreadListBridgeApi(threads: [_threadSummary()]),
+      liveStream: liveStream,
     );
-
-    await tester.tap(find.byKey(const Key('open-approvals-queue')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('approval-card-approval-1')));
-    await tester.pumpAndSettle();
-
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('approve-approval-button')),
-      300,
-    );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byKey(const Key('approve-approval-button')));
-    await tester.pumpAndSettle();
-
-    await tester.pageBack();
-    await tester.pumpAndSettle();
-    await tester.pageBack();
-    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
     await tester.pumpAndSettle();
 
+    approvalApi.upsertApproval(_pendingApproval());
+    liveStream.emit(
+      BridgeEventEnvelope<Map<String, dynamic>>(
+        contractVersion: contractVersion,
+        eventId: 'evt-approval-live-thread',
+        threadId: 'thread-123',
+        kind: BridgeEventKind.approvalRequested,
+        occurredAt: '2026-03-18T10:15:00Z',
+        payload: _pendingApproval().toJson(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
     await tester.scrollUntilVisible(
-      find.byKey(const Key('thread-approval-status-approval-1')),
-      300,
+      find.text('Pending Approvals'),
+      240,
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
 
-    expect(
-      find.byKey(const Key('thread-approval-status-approval-1')),
-      findsOneWidget,
+    expect(find.text('Git pull'), findsOneWidget);
+    expect(find.text('Pending'), findsAtLeastNWidgets(1));
+  });
+
+  testWidgets('approval detail can open the originating thread page', (
+    tester,
+  ) async {
+    final approvalApi = FakeApprovalBridgeApi(
+      accessMode: AccessMode.fullControl,
+      approvals: [_pendingApproval()],
     );
-    expect(find.text('Approved'), findsAtLeastNWidgets(1));
+
+    await _pumpApprovalsApp(
+      tester,
+      approvalApi: approvalApi,
+      detailApi: FakeThreadDetailBridgeApi(
+        detailByThreadId: {'thread-123': _threadDetail()},
+        timelineByThreadId: {'thread-123': _threadTimeline()},
+      ),
+    );
+    await tester.tap(find.byKey(const Key('approval-card-approval-1')));
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(find.text('Open originating thread'), 300);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Open originating thread'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Implement shared contracts'), findsOneWidget);
+    expect(find.text('Timeline'), findsOneWidget);
   });
 }
 
@@ -898,6 +897,8 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
 
   final Map<String, ThreadDetailDto> detailByThreadId;
   final Map<String, List<ThreadTimelineEntryDto>> timelineByThreadId;
+  int fetchThreadTimelineCallCount = 0;
+  int fetchThreadTimelinePageCallCount = 0;
 
   @override
   Future<ThreadDetailDto> fetchThreadDetail({
@@ -919,7 +920,44 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
   }) async {
+    fetchThreadTimelineCallCount += 1;
     return timelineByThreadId[threadId] ?? <ThreadTimelineEntryDto>[];
+  }
+
+  @override
+  Future<ThreadTimelinePageDto> fetchThreadTimelinePage({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? before,
+    int limit = 50,
+  }) async {
+    fetchThreadTimelinePageCallCount += 1;
+    final detail = detailByThreadId[threadId];
+    if (detail == null) {
+      throw const ThreadDetailBridgeException(
+        message: 'Thread unavailable',
+        isUnavailable: true,
+      );
+    }
+
+    final entries =
+        timelineByThreadId[threadId] ?? const <ThreadTimelineEntryDto>[];
+    final endIndex = before == null
+        ? entries.length
+        : entries.indexWhere((entry) => entry.eventId == before);
+    final normalizedEndIndex = endIndex < 0 ? entries.length : endIndex;
+    final startIndex = normalizedEndIndex - limit < 0
+        ? 0
+        : normalizedEndIndex - limit;
+    final pageEntries = entries.sublist(startIndex, normalizedEndIndex);
+    final hasMoreBefore = startIndex > 0;
+    return ThreadTimelinePageDto(
+      contractVersion: contractVersion,
+      thread: detail,
+      entries: pageEntries,
+      nextBefore: hasMoreBefore ? entries[startIndex].eventId : null,
+      hasMoreBefore: hasMoreBefore,
+    );
   }
 
   @override

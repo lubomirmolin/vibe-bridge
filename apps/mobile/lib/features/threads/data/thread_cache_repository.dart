@@ -22,29 +22,10 @@ class CachedThreadListSnapshot {
   final List<ThreadSummaryDto> threads;
 }
 
-class CachedThreadDetailSnapshot {
-  const CachedThreadDetailSnapshot({
-    required this.cachedAtUtc,
-    required this.detail,
-    required this.timeline,
-  });
-
-  final DateTime cachedAtUtc;
-  final ThreadDetailDto detail;
-  final List<ThreadTimelineEntryDto> timeline;
-}
-
 abstract class ThreadCacheRepository {
   Future<void> saveThreadList(List<ThreadSummaryDto> threads);
 
   Future<CachedThreadListSnapshot?> readThreadList();
-
-  Future<void> saveThreadDetail({
-    required ThreadDetailDto detail,
-    required List<ThreadTimelineEntryDto> timeline,
-  });
-
-  Future<CachedThreadDetailSnapshot?> readThreadDetail(String threadId);
 
   Future<void> saveSelectedThreadId(String threadId);
 
@@ -116,67 +97,6 @@ class SecureStoreThreadCacheRepository implements ThreadCacheRepository {
   }
 
   @override
-  Future<void> saveThreadDetail({
-    required ThreadDetailDto detail,
-    required List<ThreadTimelineEntryDto> timeline,
-  }) async {
-    final detailsCache = await _readMutableDetailsCache();
-    final threads = _readMutableThreadMap(detailsCache);
-
-    threads[detail.threadId] = <String, dynamic>{
-      'cached_at_epoch_seconds': _nowUtc().millisecondsSinceEpoch ~/ 1000,
-      'detail': detail.toJson(),
-      'timeline': timeline
-          .map((event) => event.toJson())
-          .toList(growable: false),
-    };
-
-    await _secureStore.writeSecret(
-      SecureValueKey.threadDetailsCache,
-      jsonEncode(detailsCache),
-    );
-  }
-
-  @override
-  Future<CachedThreadDetailSnapshot?> readThreadDetail(String threadId) async {
-    final detailsCache = await _readMutableDetailsCache();
-    final threads = _readMutableThreadMap(detailsCache);
-    final entry = threads[threadId];
-    if (entry is! Map<String, dynamic>) {
-      return null;
-    }
-
-    try {
-      final cachedAtUtc = _readCachedAt(entry);
-      final detailJson = entry['detail'];
-      final timelineJson = entry['timeline'];
-
-      if (detailJson is! Map<String, dynamic> || timelineJson is! List) {
-        return null;
-      }
-
-      final timeline = timelineJson
-          .map((event) {
-            if (event is! Map<String, dynamic>) {
-              throw const FormatException(
-                'Timeline cache entry must be an object.',
-              );
-            }
-            return ThreadTimelineEntryDto.fromJson(event);
-          })
-          .toList(growable: false);
-
-      return CachedThreadDetailSnapshot(
-        cachedAtUtc: cachedAtUtc,
-        detail: ThreadDetailDto.fromJson(detailJson),
-        timeline: timeline,
-      );
-    } on FormatException {
-      return null;
-    }
-  }
-
-  @override
   Future<void> saveSelectedThreadId(String threadId) async {
     final normalizedThreadId = threadId.trim();
     if (normalizedThreadId.isEmpty) {
@@ -198,42 +118,6 @@ class SecureStoreThreadCacheRepository implements ThreadCacheRepository {
     }
 
     return raw.trim();
-  }
-
-  Future<Map<String, dynamic>> _readMutableDetailsCache() async {
-    final raw = await _secureStore.readSecret(
-      SecureValueKey.threadDetailsCache,
-    );
-    if (raw == null || raw.trim().isEmpty) {
-      return <String, dynamic>{'threads': <String, dynamic>{}};
-    }
-
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map<String, dynamic>) {
-        return <String, dynamic>{'threads': <String, dynamic>{}};
-      }
-
-      final threads = decoded['threads'];
-      if (threads is Map<String, dynamic>) {
-        return <String, dynamic>{'threads': Map<String, dynamic>.from(threads)};
-      }
-
-      return <String, dynamic>{'threads': <String, dynamic>{}};
-    } on FormatException {
-      return <String, dynamic>{'threads': <String, dynamic>{}};
-    }
-  }
-
-  Map<String, dynamic> _readMutableThreadMap(Map<String, dynamic> cache) {
-    final threads = cache['threads'];
-    if (threads is! Map<String, dynamic>) {
-      final nextThreads = <String, dynamic>{};
-      cache['threads'] = nextThreads;
-      return nextThreads;
-    }
-
-    return threads;
   }
 }
 

@@ -27,6 +27,7 @@ void main() {
       final approvalApi = const HttpApprovalBridgeApi();
       final settingsApi = const HttpSettingsBridgeApi();
 
+      await _resetTrustedSession(bridgeApiBaseUrl);
       final trustedSession = await _createTrustedSession(bridgeApiBaseUrl);
       final gitThreadContext = await _selectThreadWithGitContext(
         bridgeApiBaseUrl: bridgeApiBaseUrl,
@@ -83,13 +84,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await _pumpUntilFound(tester, find.text('Threads'));
-      await _pumpUntilFound(
-        tester,
-        find.byKey(const Key('open-approvals-queue')),
-      );
-
-      await tester.tap(find.byKey(const Key('open-approvals-queue')));
+      await _pumpUntilFound(tester, find.text('Approvals Queue'));
+      await tester.tap(find.text('Approvals Queue'));
       await tester.pumpAndSettle();
 
       final branchSwitchCard = find.byKey(
@@ -245,6 +241,10 @@ Future<_TrustedSession> _createTrustedSession(String bridgeApiBaseUrl) async {
     sessionId: sessionId,
     sessionToken: _readRequiredString(finalize, 'session_token'),
   );
+}
+
+Future<void> _resetTrustedSession(String bridgeApiBaseUrl) async {
+  await _requestJson(_buildUri(bridgeApiBaseUrl, '/pairing/trust/revoke'));
 }
 
 Future<void> _seedTrustedBridge({

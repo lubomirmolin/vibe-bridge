@@ -15,6 +15,42 @@ enum ThreadActivityItemType {
   generic,
 }
 
+enum ThreadActivityPresentationGroupKind { exploration }
+
+enum ThreadActivityPresentationEntryKind { read, search, generic }
+
+class ThreadActivityPresentation {
+  const ThreadActivityPresentation({
+    required this.groupKind,
+    required this.entryKind,
+    this.entryLabel,
+  });
+
+  final ThreadActivityPresentationGroupKind groupKind;
+  final ThreadActivityPresentationEntryKind entryKind;
+  final String? entryLabel;
+
+  factory ThreadActivityPresentation.fromAnnotations(
+    ThreadTimelineAnnotationsDto annotations,
+  ) {
+    return ThreadActivityPresentation(
+      groupKind: switch (annotations.groupKind) {
+        ThreadTimelineGroupKind.exploration =>
+          ThreadActivityPresentationGroupKind.exploration,
+        null => ThreadActivityPresentationGroupKind.exploration,
+      },
+      entryKind: switch (annotations.explorationKind) {
+        ThreadTimelineExplorationKind.read =>
+          ThreadActivityPresentationEntryKind.read,
+        ThreadTimelineExplorationKind.search =>
+          ThreadActivityPresentationEntryKind.search,
+        null => ThreadActivityPresentationEntryKind.generic,
+      },
+      entryLabel: annotations.entryLabel,
+    );
+  }
+}
+
 class ThreadActivityItem {
   const ThreadActivityItem({
     required this.eventId,
@@ -25,6 +61,7 @@ class ThreadActivityItem {
     required this.body,
     required this.payload,
     this.messageImageUrls = const <String>[],
+    this.presentation,
     this.parsedCommandOutput,
   });
 
@@ -36,6 +73,7 @@ class ThreadActivityItem {
   final String body;
   final Map<String, dynamic> payload;
   final List<String> messageImageUrls;
+  final ThreadActivityPresentation? presentation;
   final ParsedCommandOutput? parsedCommandOutput;
 
   factory ThreadActivityItem.fromTimelineEntry(ThreadTimelineEntryDto entry) {
@@ -45,6 +83,7 @@ class ThreadActivityItem {
       occurredAt: entry.occurredAt,
       summary: entry.summary,
       payload: entry.payload,
+      annotations: entry.annotations,
     );
   }
 
@@ -57,6 +96,7 @@ class ThreadActivityItem {
       occurredAt: event.occurredAt,
       summary: _extractSummary(event.kind, event.payload),
       payload: event.payload,
+      annotations: event.annotations,
     );
   }
 
@@ -66,11 +106,13 @@ class ThreadActivityItem {
     required String occurredAt,
     required String summary,
     required Map<String, dynamic> payload,
+    ThreadTimelineAnnotationsDto? annotations,
   }) {
     final type = _mapType(kind, payload);
     final title = _titleForType(type);
     final body = _bodyForType(type, kind, payload, summary);
     final messageImageUrls = _extractMessageImageUrls(payload);
+    final presentation = _extractPresentation(annotations);
 
     ParsedCommandOutput? parsedCommandOutput;
     if (type == ThreadActivityItemType.terminalOutput ||
@@ -87,9 +129,20 @@ class ThreadActivityItem {
       body: body,
       payload: payload,
       messageImageUrls: messageImageUrls,
+      presentation: presentation,
       parsedCommandOutput: parsedCommandOutput,
     );
   }
+}
+
+ThreadActivityPresentation? _extractPresentation(
+  ThreadTimelineAnnotationsDto? annotations,
+) {
+  if (annotations?.groupKind == null) {
+    return null;
+  }
+
+  return ThreadActivityPresentation.fromAnnotations(annotations!);
 }
 
 ThreadActivityItemType _mapType(

@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:codex_mobile_companion/features/threads/application/thread_list_controller.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
 import 'package:codex_mobile_companion/features/threads/domain/thread_activity_item.dart';
@@ -23,7 +22,6 @@ final threadDetailControllerProvider = StateNotifierProvider.autoDispose
         threadId: args.threadId,
         initialVisibleTimelineEntries: args.initialVisibleTimelineEntries,
         bridgeApi: ref.watch(threadDetailBridgeApiProvider),
-        cacheRepository: ref.watch(threadCacheRepositoryProvider),
         liveStream: ref.watch(threadLiveStreamProvider),
         threadListController: threadListController,
       );
@@ -65,7 +63,9 @@ class ThreadDetailState {
     this.isLoading = true,
     this.isShowingCachedData = false,
     this.isConnectivityUnavailable = false,
-    this.visibleItemCount = 0,
+    this.hasMoreBefore = false,
+    this.nextBefore,
+    this.isLoadingEarlierHistory = false,
     this.isComposerMutationInFlight = false,
     this.isInterruptMutationInFlight = false,
     this.turnControlErrorMessage,
@@ -90,7 +90,9 @@ class ThreadDetailState {
   final bool isLoading;
   final bool isShowingCachedData;
   final bool isConnectivityUnavailable;
-  final int visibleItemCount;
+  final bool hasMoreBefore;
+  final String? nextBefore;
+  final bool isLoadingEarlierHistory;
   final bool isComposerMutationInFlight;
   final bool isInterruptMutationInFlight;
   final String? turnControlErrorMessage;
@@ -127,31 +129,11 @@ class ThreadDetailState {
         items.where(_isConversationTimelineItem),
       );
 
-  int get hiddenHistoryCount {
-    final conversationItemCount = conversationItems.length;
-    if (conversationItemCount <= visibleItemCount) {
-      return 0;
-    }
+  int get hiddenHistoryCount => 0;
 
-    return conversationItemCount - visibleItemCount;
-  }
+  bool get canLoadEarlierHistory => hasMoreBefore && !isLoadingEarlierHistory;
 
-  bool get canLoadEarlierHistory => hiddenHistoryCount > 0;
-
-  List<ThreadActivityItem> get visibleItems {
-    final visibleSource = conversationItems;
-    if (visibleSource.isEmpty) {
-      return const <ThreadActivityItem>[];
-    }
-
-    if (visibleItemCount <= 0 || visibleItemCount >= visibleSource.length) {
-      return visibleSource;
-    }
-
-    return List<ThreadActivityItem>.unmodifiable(
-      visibleSource.sublist(visibleSource.length - visibleItemCount),
-    );
-  }
+  List<ThreadActivityItem> get visibleItems => conversationItems;
 
   ThreadDetailState copyWith({
     ThreadDetailDto? thread,
@@ -167,7 +149,10 @@ class ThreadDetailState {
     bool? isLoading,
     bool? isShowingCachedData,
     bool? isConnectivityUnavailable,
-    int? visibleItemCount,
+    bool? hasMoreBefore,
+    String? nextBefore,
+    bool clearNextBefore = false,
+    bool? isLoadingEarlierHistory,
     bool? isComposerMutationInFlight,
     bool? isInterruptMutationInFlight,
     String? turnControlErrorMessage,
@@ -206,7 +191,10 @@ class ThreadDetailState {
       isShowingCachedData: isShowingCachedData ?? this.isShowingCachedData,
       isConnectivityUnavailable:
           isConnectivityUnavailable ?? this.isConnectivityUnavailable,
-      visibleItemCount: visibleItemCount ?? this.visibleItemCount,
+      hasMoreBefore: hasMoreBefore ?? this.hasMoreBefore,
+      nextBefore: clearNextBefore ? null : (nextBefore ?? this.nextBefore),
+      isLoadingEarlierHistory:
+          isLoadingEarlierHistory ?? this.isLoadingEarlierHistory,
       isComposerMutationInFlight:
           isComposerMutationInFlight ?? this.isComposerMutationInFlight,
       isInterruptMutationInFlight:
@@ -248,19 +236,22 @@ bool _isConversationTimelineItem(ThreadActivityItem item) {
   }
 }
 
+bool _isExplorationTimelineItem(ThreadActivityItem item) {
+  return item.presentation?.groupKind ==
+      ThreadActivityPresentationGroupKind.exploration;
+}
+
 class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   ThreadDetailController({
     required String bridgeApiBaseUrl,
     required String threadId,
     required int initialVisibleTimelineEntries,
     required ThreadDetailBridgeApi bridgeApi,
-    required ThreadCacheRepository cacheRepository,
     required ThreadLiveStream liveStream,
     required ThreadListController threadListController,
   }) : _bridgeApiBaseUrl = bridgeApiBaseUrl,
        _initialVisibleTimelineEntries = initialVisibleTimelineEntries,
        _bridgeApi = bridgeApi,
-       _cacheRepository = cacheRepository,
        _liveStream = liveStream,
        _threadListController = threadListController,
        super(ThreadDetailState(threadId: threadId)) {
@@ -270,7 +261,6 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   final String _bridgeApiBaseUrl;
   final int _initialVisibleTimelineEntries;
   final ThreadDetailBridgeApi _bridgeApi;
-  final ThreadCacheRepository _cacheRepository;
   final ThreadLiveStream _liveStream;
   final ThreadListController _threadListController;
   final Set<String> _knownEventIds = <String>{};
@@ -283,6 +273,10 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   bool _isDisposed = false;
 
   Future<void> loadThread() async {
+    if (_isDisposed) {
+      return;
+    }
+
     _reconnectTimer?.cancel();
     state = state.copyWith(
       isLoading: true,
@@ -293,6 +287,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       clearTurnControlError: true,
       isShowingCachedData: false,
       isConnectivityUnavailable: false,
+      hasMoreBefore: false,
+      clearNextBefore: true,
+      isLoadingEarlierHistory: false,
       clearGitStatus: true,
       isGitStatusLoading: false,
       isGitMutationInFlight: false,
@@ -308,26 +305,24 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       await _closeLiveSubscription();
       _knownEventIds.clear();
 
-      final detail = await _bridgeApi.fetchThreadDetail(
+      final page = await _bridgeApi.fetchThreadTimelinePage(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
         threadId: state.threadId,
-      );
-      final timeline = await _bridgeApi.fetchThreadTimeline(
-        bridgeApiBaseUrl: _bridgeApiBaseUrl,
-        threadId: state.threadId,
+        limit: _initialVisibleTimelineEntries,
       );
 
-      final items = timeline
+      final items = page.entries
           .map(ThreadActivityItem.fromTimelineEntry)
           .toList(growable: false);
       _knownEventIds.addAll(items.map((item) => item.eventId));
 
-      final visibleItemCount = _initialVisibleCount(items.length);
+      if (_isDisposed) {
+        return;
+      }
 
       state = state.copyWith(
-        thread: detail,
+        thread: page.thread,
         items: items,
-        visibleItemCount: visibleItemCount,
         isLoading: false,
         isUnavailable: false,
         clearErrorMessage: true,
@@ -336,6 +331,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearTurnControlError: true,
         isShowingCachedData: false,
         isConnectivityUnavailable: false,
+        hasMoreBefore: page.hasMoreBefore,
+        nextBefore: page.nextBefore,
+        isLoadingEarlierHistory: false,
         clearGitStatus: true,
         isGitStatusLoading: false,
         isGitMutationInFlight: false,
@@ -347,29 +345,25 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearOpenOnMacErrorMessage: true,
       );
 
-      _threadListController.syncThreadDetail(detail);
-      unawaited(
-        _persistThreadDetailSnapshot(detail: detail, timeline: timeline),
-      );
+      _threadListController.syncThreadDetail(page.thread);
       await refreshGitStatus(showLoading: true);
       await _startLiveSubscription();
     } on ThreadDetailBridgeException catch (error) {
-      if (error.isConnectivityError) {
-        final loadedFromCache = await _loadFromCachedThreadSnapshot(
-          bridgeMessage: error.message,
-        );
-        if (loadedFromCache) {
-          _scheduleReconnectCatchUp();
-          return;
-        }
+      if (_isDisposed) {
+        return;
       }
 
       state = state.copyWith(
         isLoading: false,
         errorMessage: error.message,
         isUnavailable: error.isUnavailable,
+        isConnectivityUnavailable: error.isConnectivityError,
       );
     } catch (_) {
+      if (_isDisposed) {
+        return;
+      }
+
       state = state.copyWith(
         isLoading: false,
         errorMessage: 'Couldn’t load this thread right now.',
@@ -377,18 +371,81 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     }
   }
 
-  void loadEarlierHistory() {
+  Future<void> loadEarlierHistory() async {
     if (!state.canLoadEarlierHistory) {
       return;
     }
 
-    final nextVisibleCount =
-        state.visibleItemCount + _initialVisibleTimelineEntries;
+    final previousBlockSignatures = _visibleBlockSignatures(state.visibleItems);
+
     state = state.copyWith(
-      visibleItemCount: nextVisibleCount > state.items.length
-          ? state.items.length
-          : nextVisibleCount,
+      isLoadingEarlierHistory: true,
+      clearStreamErrorMessage: true,
     );
+
+    try {
+      var nextBefore = state.nextBefore;
+      var hasMoreBefore = state.hasMoreBefore;
+      var items = state.items;
+      ThreadDetailDto? latestThread = state.thread;
+
+      while (hasMoreBefore && nextBefore != null) {
+        final page = await _bridgeApi.fetchThreadTimelinePage(
+          bridgeApiBaseUrl: _bridgeApiBaseUrl,
+          threadId: state.threadId,
+          before: nextBefore,
+          limit: _initialVisibleTimelineEntries,
+        );
+        latestThread = page.thread;
+        items = _prependTimelineEntries(items, page.entries);
+        hasMoreBefore = page.hasMoreBefore;
+        nextBefore = page.nextBefore;
+
+        if (_didRevealNewVisibleBlock(
+          previousBlockSignatures: previousBlockSignatures,
+          nextItems: items,
+        )) {
+          break;
+        }
+      }
+
+      if (_isDisposed) {
+        return;
+      }
+
+      state = state.copyWith(
+        thread: latestThread,
+        items: items,
+        hasMoreBefore: hasMoreBefore,
+        nextBefore: nextBefore,
+        isLoadingEarlierHistory: false,
+        clearErrorMessage: true,
+        clearStreamErrorMessage: true,
+        clearStaleMessage: true,
+      );
+      if (latestThread != null) {
+        _threadListController.syncThreadDetail(latestThread);
+      }
+    } on ThreadDetailBridgeException catch (error) {
+      if (_isDisposed) {
+        return;
+      }
+
+      state = state.copyWith(
+        isLoadingEarlierHistory: false,
+        streamErrorMessage: error.message,
+        isConnectivityUnavailable: error.isConnectivityError,
+      );
+    } catch (_) {
+      if (_isDisposed) {
+        return;
+      }
+
+      state = state.copyWith(
+        isLoadingEarlierHistory: false,
+        streamErrorMessage: 'Couldn’t load older history right now.',
+      );
+    }
   }
 
   Future<void> retryReconnectCatchUp() async {
@@ -402,6 +459,10 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
         threadId: state.threadId,
       );
+      if (_isDisposed) {
+        await subscription.close();
+        return;
+      }
       _liveSubscription = subscription;
 
       _liveEventSubscription = subscription.events.listen(
@@ -435,8 +496,8 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       streamErrorMessage:
           'Live updates disconnected. Reconnecting and catching up…',
       staleMessage:
-          'Bridge is offline. Showing cached thread content. Mutating actions are blocked until reconnect.',
-      isShowingCachedData: true,
+          'Bridge is offline. Current thread content may be stale until reconnect.',
+      isShowingCachedData: false,
       isConnectivityUnavailable: true,
       gitControlsUnavailableReason:
           'Git controls are unavailable while reconnecting to the private route.',
@@ -468,21 +529,21 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
         threadId: state.threadId,
       );
-      final timeline = await _bridgeApi.fetchThreadTimeline(
+      final page = await _bridgeApi.fetchThreadTimelinePage(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
         threadId: state.threadId,
+        limit: _initialVisibleTimelineEntries,
       );
 
-      final mergedItems = _mergeTimeline(timeline);
+      final mergedItems = _mergeTimeline(page.entries);
+
+      if (_isDisposed) {
+        return;
+      }
 
       state = state.copyWith(
         thread: detail,
         items: mergedItems,
-        visibleItemCount: _nextVisibleCountForMergedItems(
-          previousVisibleItemCount: state.visibleItemCount,
-          previousItemCount: state.items.length,
-          nextItemCount: mergedItems.length,
-        ),
         clearErrorMessage: true,
         clearStreamErrorMessage: true,
         clearStaleMessage: true,
@@ -494,86 +555,29 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       );
 
       _threadListController.syncThreadDetail(detail);
-      unawaited(
-        _persistThreadDetailSnapshot(detail: detail, timeline: timeline),
-      );
       await refreshGitStatus(showLoading: false);
       await _startLiveSubscription();
     } on ThreadDetailBridgeException catch (error) {
-      if (!error.isConnectivityError) {
-        state = state.copyWith(
-          streamErrorMessage: error.message,
-          staleMessage:
-              'Bridge is offline. Showing cached thread content. Mutating actions are blocked until reconnect.',
-          isShowingCachedData: true,
-          isConnectivityUnavailable: true,
-        );
+      if (_isDisposed) {
+        return;
       }
+
+      state = state.copyWith(
+        streamErrorMessage: error.message,
+        staleMessage:
+            'Bridge is offline. Current thread content may be stale until reconnect.',
+        isShowingCachedData: false,
+        isConnectivityUnavailable: true,
+      );
       _scheduleReconnectCatchUp();
     } catch (_) {
+      if (_isDisposed) {
+        return;
+      }
+
       _scheduleReconnectCatchUp();
     } finally {
       _isReconnectInProgress = false;
-    }
-  }
-
-  Future<bool> _loadFromCachedThreadSnapshot({
-    required String bridgeMessage,
-  }) async {
-    final cachedSnapshot = await _cacheRepository.readThreadDetail(
-      state.threadId,
-    );
-    if (cachedSnapshot == null) {
-      return false;
-    }
-
-    final items = cachedSnapshot.timeline
-        .map(ThreadActivityItem.fromTimelineEntry)
-        .toList(growable: false);
-
-    _knownEventIds
-      ..clear()
-      ..addAll(items.map((item) => item.eventId));
-
-    state = state.copyWith(
-      thread: cachedSnapshot.detail,
-      items: items,
-      visibleItemCount: _initialVisibleCount(items.length),
-      clearErrorMessage: true,
-      streamErrorMessage: bridgeMessage,
-      staleMessage:
-          'Bridge is offline. Showing cached thread content. Mutating actions are blocked until reconnect.',
-      isLoading: false,
-      isUnavailable: false,
-      isShowingCachedData: true,
-      isConnectivityUnavailable: true,
-      clearGitStatus: true,
-      isGitStatusLoading: false,
-      isGitMutationInFlight: false,
-      clearGitErrorMessage: true,
-      clearGitMutationMessage: true,
-      gitControlsUnavailableReason:
-          'Git controls are unavailable while reconnecting to the private route.',
-      isOpenOnMacInFlight: false,
-      clearOpenOnMacMessage: true,
-      clearOpenOnMacErrorMessage: true,
-    );
-
-    _threadListController.syncThreadDetail(cachedSnapshot.detail);
-    return true;
-  }
-
-  Future<void> _persistThreadDetailSnapshot({
-    required ThreadDetailDto detail,
-    required List<ThreadTimelineEntryDto> timeline,
-  }) async {
-    try {
-      await _cacheRepository.saveThreadDetail(
-        detail: detail,
-        timeline: timeline,
-      );
-    } catch (_) {
-      // Cache persistence is best-effort. Live thread content should still load.
     }
   }
 
@@ -586,43 +590,118 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
     final nextItems = List<ThreadActivityItem>.from(state.items);
     for (final entry in timeline) {
-      if (_knownEventIds.contains(entry.eventId)) {
-        continue;
+      final nextItem = ThreadActivityItem.fromTimelineEntry(entry);
+      final existingIndex = nextItems.indexWhere(
+        (item) => item.eventId == entry.eventId,
+      );
+      if (existingIndex >= 0) {
+        nextItems[existingIndex] = nextItem;
+      } else {
+        nextItems.add(nextItem);
+        _knownEventIds.add(entry.eventId);
       }
-
-      nextItems.add(ThreadActivityItem.fromTimelineEntry(entry));
-      _knownEventIds.add(entry.eventId);
     }
 
     return nextItems;
   }
 
-  int _initialVisibleCount(int itemCount) {
-    if (itemCount <= 0) {
-      return 0;
+  List<ThreadActivityItem> _prependTimelineEntries(
+    List<ThreadActivityItem> currentItems,
+    List<ThreadTimelineEntryDto> timeline,
+  ) {
+    if (timeline.isEmpty) {
+      return currentItems;
     }
 
-    return itemCount < _initialVisibleTimelineEntries
-        ? itemCount
-        : _initialVisibleTimelineEntries;
+    final prependedItems = <ThreadActivityItem>[];
+    for (final entry in timeline) {
+      final existingIndex = currentItems.indexWhere(
+        (item) => item.eventId == entry.eventId,
+      );
+      if (existingIndex >= 0) {
+        continue;
+      }
+
+      prependedItems.add(ThreadActivityItem.fromTimelineEntry(entry));
+      _knownEventIds.add(entry.eventId);
+    }
+
+    if (prependedItems.isEmpty) {
+      return currentItems;
+    }
+
+    return List<ThreadActivityItem>.unmodifiable(<ThreadActivityItem>[
+      ...prependedItems,
+      ...currentItems,
+    ]);
   }
 
-  int _nextVisibleCountForMergedItems({
-    required int previousVisibleItemCount,
-    required int previousItemCount,
-    required int nextItemCount,
+  bool _didRevealNewVisibleBlock({
+    required List<String> previousBlockSignatures,
+    required List<ThreadActivityItem> nextItems,
   }) {
-    final shouldExpandVisibleWindow =
-        previousVisibleItemCount >= previousItemCount;
-    if (!shouldExpandVisibleWindow) {
-      return previousVisibleItemCount > nextItemCount
-          ? nextItemCount
-          : previousVisibleItemCount;
+    final nextVisibleItems = nextItems
+        .where(_isConversationTimelineItem)
+        .toList(growable: false);
+    final nextBlockSignatures = _visibleBlockSignatures(nextVisibleItems);
+    return _hasNewLeadingVisibleBlock(
+      previousBlockSignatures: previousBlockSignatures,
+      nextBlockSignatures: nextBlockSignatures,
+    );
+  }
+
+  List<String> _visibleBlockSignatures(List<ThreadActivityItem> items) {
+    if (items.isEmpty) {
+      return const <String>[];
     }
 
-    final delta = nextItemCount - previousItemCount;
-    final candidate = previousVisibleItemCount + (delta > 0 ? delta : 0);
-    return candidate > nextItemCount ? nextItemCount : candidate;
+    final signatures = <String>[];
+    var index = 0;
+
+    while (index < items.length) {
+      final item = items[index];
+
+      if (_isExplorationTimelineItem(item)) {
+        var scanIndex = index;
+        while (scanIndex < items.length &&
+            _isExplorationTimelineItem(items[scanIndex])) {
+          scanIndex += 1;
+        }
+
+        signatures.add('exploration:${items[scanIndex - 1].eventId}');
+        index = scanIndex;
+        continue;
+      }
+
+      var scanIndex = index + 1;
+      while (scanIndex < items.length &&
+          _isExplorationTimelineItem(items[scanIndex])) {
+        scanIndex += 1;
+      }
+
+      signatures.add('activity:${item.eventId}');
+      index = scanIndex;
+    }
+
+    return List<String>.unmodifiable(signatures);
+  }
+
+  bool _hasNewLeadingVisibleBlock({
+    required List<String> previousBlockSignatures,
+    required List<String> nextBlockSignatures,
+  }) {
+    var previousIndex = previousBlockSignatures.length - 1;
+    var nextIndex = nextBlockSignatures.length - 1;
+
+    while (previousIndex >= 0 &&
+        nextIndex >= 0 &&
+        previousBlockSignatures[previousIndex] ==
+            nextBlockSignatures[nextIndex]) {
+      previousIndex -= 1;
+      nextIndex -= 1;
+    }
+
+    return nextIndex >= 0;
   }
 
   void _handleLiveEvent(BridgeEventEnvelope<Map<String, dynamic>> event) {
@@ -661,20 +740,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       _knownEventIds.add(event.eventId);
     }
 
-    final previousItemCount = state.items.length;
-    final shouldExpandVisibleWindow =
-        existingIndex < 0 && state.visibleItemCount >= previousItemCount;
-    final nextVisibleCount = shouldExpandVisibleWindow
-        ? state.visibleItemCount + 1
-        : state.visibleItemCount;
-
-    state = state.copyWith(
-      items: nextItems,
-      visibleItemCount: nextVisibleCount > nextItems.length
-          ? nextItems.length
-          : nextVisibleCount,
-      clearStreamErrorMessage: true,
-    );
+    state = state.copyWith(items: nextItems, clearStreamErrorMessage: true);
   }
 
   void _applyLifecycleStatusUpdate(

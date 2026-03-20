@@ -15,6 +15,13 @@ abstract class ThreadDetailBridgeApi {
     required String threadId,
   });
 
+  Future<ThreadTimelinePageDto> fetchThreadTimelinePage({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? before,
+    int limit = 50,
+  });
+
   Future<List<ThreadTimelineEntryDto>> fetchThreadTimeline({
     required String bridgeApiBaseUrl,
     required String threadId,
@@ -285,73 +292,31 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
-    try {
-      final request = await client.getUrl(
-        _buildThreadUri(bridgeApiBaseUrl, threadId),
-      );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      final bodyText = await utf8.decodeStream(response);
-      final decoded = _decodeJsonObject(bodyText);
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final threadJson = decoded['thread'];
-        if (threadJson is! Map<String, dynamic>) {
-          throw const FormatException(
-            'Missing or invalid "thread" object in bridge response.',
-          );
-        }
-
-        return ThreadDetailDto.fromJson(threadJson);
-      }
-
-      throw ThreadDetailBridgeException(
-        message:
-            _readOptionalString(decoded, 'message') ??
-            'Couldn’t open this thread right now.',
-        isUnavailable: response.statusCode == 404,
-      );
-    } on SocketException {
-      throw const ThreadDetailBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const ThreadDetailBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const ThreadDetailBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
-      throw const ThreadDetailBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on FormatException {
-      throw const ThreadDetailBridgeException(
-        message: 'Bridge returned an invalid thread detail response.',
-      );
-    } finally {
-      client.close();
-    }
+    final page = await fetchThreadTimelinePage(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+      limit: 1,
+    );
+    return page.thread;
   }
 
   @override
-  Future<List<ThreadTimelineEntryDto>> fetchThreadTimeline({
+  Future<ThreadTimelinePageDto> fetchThreadTimelinePage({
     required String bridgeApiBaseUrl,
     required String threadId,
+    String? before,
+    int limit = 50,
   }) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
 
     try {
       final request = await client.getUrl(
-        _buildThreadTimelineUri(bridgeApiBaseUrl, threadId),
+        _buildThreadTimelineUri(
+          bridgeApiBaseUrl,
+          threadId,
+          before: before,
+          limit: limit,
+        ),
       );
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       final response = await request.close();
@@ -359,24 +324,13 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       final decoded = _decodeJsonObject(bodyText);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        final eventsJson = decoded['events'];
-        if (eventsJson is! List) {
-          throw const FormatException(
-            'Missing or invalid "events" list in bridge response.',
+        try {
+          return ThreadTimelinePageDto.fromJson(decoded);
+        } on FormatException {
+          throw const ThreadDetailBridgeException(
+            message: 'Bridge returned an invalid thread timeline response.',
           );
         }
-
-        return eventsJson
-            .map((item) {
-              if (item is! Map<String, dynamic>) {
-                throw const FormatException(
-                  'Timeline entry must be a JSON object.',
-                );
-              }
-
-              return ThreadTimelineEntryDto.fromJson(item);
-            })
-            .toList(growable: false);
       }
 
       throw ThreadDetailBridgeException(
@@ -411,6 +365,29 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       );
     } finally {
       client.close();
+    }
+  }
+
+  @override
+  Future<List<ThreadTimelineEntryDto>> fetchThreadTimeline({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    final entries = <ThreadTimelineEntryDto>[];
+    String? before;
+
+    while (true) {
+      final page = await fetchThreadTimelinePage(
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: threadId,
+        before: before,
+        limit: 100,
+      );
+      entries.insertAll(0, page.entries);
+      if (!page.hasMoreBefore || page.nextBefore == null) {
+        return List<ThreadTimelineEntryDto>.unmodifiable(entries);
+      }
+      before = page.nextBefore;
     }
   }
 
@@ -705,24 +682,30 @@ class TurnMutationResult {
   }
 }
 
-Uri _buildThreadUri(String baseUrl, String threadId) {
-  final baseUri = Uri.parse(baseUrl);
-  final normalizedBasePath = baseUri.path.endsWith('/')
-      ? baseUri.path.substring(0, baseUri.path.length - 1)
-      : baseUri.path;
-  final fullPath =
-      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}';
-  return baseUri.replace(path: fullPath, queryParameters: null);
-}
-
-Uri _buildThreadTimelineUri(String baseUrl, String threadId) {
+Uri _buildThreadTimelineUri(
+  String baseUrl,
+  String threadId, {
+  String? before,
+  int? limit,
+}) {
   final baseUri = Uri.parse(baseUrl);
   final normalizedBasePath = baseUri.path.endsWith('/')
       ? baseUri.path.substring(0, baseUri.path.length - 1)
       : baseUri.path;
   final fullPath =
       '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/timeline';
-  return baseUri.replace(path: fullPath, queryParameters: null);
+  final queryParameters = <String, String>{};
+  final normalizedBefore = before?.trim();
+  if (normalizedBefore != null && normalizedBefore.isNotEmpty) {
+    queryParameters['before'] = normalizedBefore;
+  }
+  if (limit != null && limit > 0) {
+    queryParameters['limit'] = '$limit';
+  }
+  return baseUri.replace(
+    path: fullPath,
+    queryParameters: queryParameters.isEmpty ? null : queryParameters,
+  );
 }
 
 Uri _buildThreadGitStatusUri(String baseUrl, String threadId) {

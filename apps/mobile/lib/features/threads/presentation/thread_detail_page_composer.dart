@@ -51,7 +51,10 @@ class _PinnedTurnComposer extends StatelessWidget {
   Widget build(BuildContext context) {
     final canEditPinnedControls =
         !isComposerMutationInFlight && !isInterruptMutationInFlight;
-    final composerEnabled = controlsEnabled && !isComposerMutationInFlight && !isInterruptMutationInFlight;
+    final composerEnabled =
+        controlsEnabled &&
+        !isComposerMutationInFlight &&
+        !isInterruptMutationInFlight;
 
     if (!composerEnabled && composerFocusNode.hasFocus) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -218,27 +221,45 @@ class _PinnedTurnComposer extends StatelessWidget {
                   listenable: composerController,
                   builder: (context, _) {
                     final hasInput = composerController.text.trim().isNotEmpty;
-                    final showStopAction = (isTurnActive || isInterruptMutationInFlight) && !hasInput;
+                    final showStopAction =
+                        (isTurnActive || isInterruptMutationInFlight) &&
+                        !hasInput;
                     final canRunPrimaryAction = showStopAction
-                        ? (controlsEnabled && isTurnActive && !isInterruptMutationInFlight && !isComposerMutationInFlight)
-                        : (controlsEnabled && !isComposerMutationInFlight && !isInterruptMutationInFlight);
+                        ? (controlsEnabled &&
+                              isTurnActive &&
+                              !isInterruptMutationInFlight &&
+                              !isComposerMutationInFlight)
+                        : (controlsEnabled &&
+                              !isComposerMutationInFlight &&
+                              !isInterruptMutationInFlight);
 
                     return MagneticButton(
+                      key: Key(
+                        showStopAction
+                            ? 'turn-interrupt-button'
+                            : 'turn-composer-submit',
+                      ),
                       isCircle: true,
-                      variant: showStopAction ? MagneticButtonVariant.secondary : MagneticButtonVariant.primary,
-                      onClick: canRunPrimaryAction ? () async {
-                        if (showStopAction) {
-                          await onInterruptActiveTurn();
-                          return;
-                        }
+                      variant: showStopAction
+                          ? MagneticButtonVariant.secondary
+                          : MagneticButtonVariant.primary,
+                      onClick: canRunPrimaryAction
+                          ? () async {
+                              if (showStopAction) {
+                                await onInterruptActiveTurn();
+                                return;
+                              }
 
-                        if (!hasInput) return;
+                              if (!hasInput) return;
 
-                        final success = await onSubmitComposer(composerController.text);
-                        if (success) {
-                          composerController.clear();
-                        }
-                      } : () {},
+                              final success = await onSubmitComposer(
+                                composerController.text,
+                              );
+                              if (success) {
+                                composerController.clear();
+                              }
+                            }
+                          : () {},
                       child: AnimatedSwitcher(
                         duration: const Duration(milliseconds: 180),
                         switchInCurve: Curves.easeOutCubic,
@@ -247,16 +268,24 @@ class _PinnedTurnComposer extends StatelessWidget {
                             ? const SizedBox.square(
                                 key: ValueKey('composer-loading'),
                                 dimension: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.background),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppTheme.background,
+                                ),
                               )
                             : isInterruptMutationInFlight
                             ? const SizedBox.square(
                                 key: ValueKey('interrupt-loading'),
                                 dimension: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.textMain),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppTheme.textMain,
+                                ),
                               )
                             : PhosphorIcon(
-                                showStopAction ? PhosphorIcons.stop() : PhosphorIcons.arrowUp(),
+                                showStopAction
+                                    ? PhosphorIcons.stop()
+                                    : PhosphorIcons.arrowUp(),
                                 key: ValueKey(showStopAction ? 'stop' : 'send'),
                                 size: 24,
                               ),
@@ -380,136 +409,134 @@ class _ComposerModelSheetState extends State<_ComposerModelSheet> {
             borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
           ),
           child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.14),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(999),
                     ),
                   ),
-                  const SizedBox(height: 18),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Settings for the chat',
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(
-                                fontWeight: FontWeight.w600,
-                                letterSpacing: -0.3,
-                              ),
-                        ),
-                      ),
-                      IconButton(
-                        key: const Key('turn-composer-model-sheet-close'),
-                        onPressed: () => Navigator.of(context).pop(),
-                        icon: PhosphorIcon(
-                          PhosphorIcons.x(),
-                          size: 20,
-                          color: AppTheme.textMuted,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Pick the model and intelligence level for the next turn.',
-                    style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
-                  ),
-                  const SizedBox(height: 18),
-                  _ComposerSheetSection(
-                    title: 'Models',
-                    children: _ThreadDetailPageState._modelOptions
-                        .map(
-                          (model) => _ComposerSheetOption(
-                            key: Key('turn-composer-model-option-$model'),
-                            label: model,
-                            selected: _selectedModel == model,
-                            onTap: () {
-                              setState(() {
-                                _selectedModel = model;
-                              });
-                              widget.onModelChanged(model);
-                            },
-                          ),
-                        )
-                        .toList(growable: false),
-                  ),
-                  const SizedBox(height: 18),
-                  _ComposerSheetSection(
-                    title: 'Intelligence',
-                    children: _ThreadDetailPageState._reasoningOptions
-                        .map(
-                          (reasoning) => _ComposerSheetOption(
-                            key: Key(
-                              'turn-composer-reasoning-option-$reasoning',
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Settings for the chat',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: -0.3,
                             ),
-                            label: reasoning,
-                            selected: _selectedReasoning == reasoning,
-                            onTap: () {
-                              setState(() {
-                                _selectedReasoning = reasoning;
-                              });
-                              widget.onReasoningChanged(reasoning);
-                            },
-                          ),
-                        )
-                        .toList(growable: false),
-                  ),
-                  const SizedBox(height: 18),
-                  _ComposerSheetSection(
-                    title: 'Approval',
-                    subtitle: widget.trustedBridge == null
-                        ? 'Pair with a Mac to change access mode.'
-                        : null,
-                    children: AccessMode.values
-                        .map(
-                          (mode) => _ComposerSheetOption(
-                            key: Key('turn-composer-access-mode-option-$mode'),
-                            label: _accessModeChipLabel(mode),
-                            selected: _selectedAccessMode == mode,
-                            leading:
-                                widget.trustedBridge == null &&
-                                    _selectedAccessMode != mode
-                                ? PhosphorIcons.lock()
-                                : _composerAccessModeVisual(mode).icon,
-                            leadingColor: _composerAccessModeVisual(mode).color,
-                            trailing:
-                                widget.isAccessModeUpdating &&
-                                    _selectedAccessMode == mode
-                                ? const SizedBox.square(
-                                    dimension: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: AppTheme.textMain,
-                                    ),
-                                  )
-                                : null,
-                            onTap: widget.trustedBridge == null
-                                ? () {}
-                                : () {
-                                    setState(() {
-                                      _selectedAccessMode = mode;
-                                    });
-                                    widget.onAccessModeChanged(mode);
-                                  },
-                          ),
-                        )
-                        .toList(growable: false),
-                  ),
-                ],
-              ),
+                      ),
+                    ),
+                    IconButton(
+                      key: const Key('turn-composer-model-sheet-close'),
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: PhosphorIcon(
+                        PhosphorIcons.x(),
+                        size: 20,
+                        color: AppTheme.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Pick the model and intelligence level for the next turn.',
+                  style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
+                ),
+                const SizedBox(height: 18),
+                _ComposerSheetSection(
+                  title: 'Models',
+                  children: _ThreadDetailPageState._modelOptions
+                      .map(
+                        (model) => _ComposerSheetOption(
+                          key: Key('turn-composer-model-option-$model'),
+                          label: model,
+                          selected: _selectedModel == model,
+                          onTap: () {
+                            setState(() {
+                              _selectedModel = model;
+                            });
+                            widget.onModelChanged(model);
+                          },
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+                const SizedBox(height: 18),
+                _ComposerSheetSection(
+                  title: 'Intelligence',
+                  children: _ThreadDetailPageState._reasoningOptions
+                      .map(
+                        (reasoning) => _ComposerSheetOption(
+                          key: Key('turn-composer-reasoning-option-$reasoning'),
+                          label: reasoning,
+                          selected: _selectedReasoning == reasoning,
+                          onTap: () {
+                            setState(() {
+                              _selectedReasoning = reasoning;
+                            });
+                            widget.onReasoningChanged(reasoning);
+                          },
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+                const SizedBox(height: 18),
+                _ComposerSheetSection(
+                  title: 'Approval',
+                  subtitle: widget.trustedBridge == null
+                      ? 'Pair with a Mac to change access mode.'
+                      : null,
+                  children: AccessMode.values
+                      .map(
+                        (mode) => _ComposerSheetOption(
+                          key: Key('turn-composer-access-mode-option-$mode'),
+                          label: _accessModeChipLabel(mode),
+                          selected: _selectedAccessMode == mode,
+                          leading:
+                              widget.trustedBridge == null &&
+                                  _selectedAccessMode != mode
+                              ? PhosphorIcons.lock()
+                              : _composerAccessModeVisual(mode).icon,
+                          leadingColor: _composerAccessModeVisual(mode).color,
+                          trailing:
+                              widget.isAccessModeUpdating &&
+                                  _selectedAccessMode == mode
+                              ? const SizedBox.square(
+                                  dimension: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: AppTheme.textMain,
+                                  ),
+                                )
+                              : null,
+                          onTap: widget.trustedBridge == null
+                              ? () {}
+                              : () {
+                                  setState(() {
+                                    _selectedAccessMode = mode;
+                                  });
+                                  widget.onAccessModeChanged(mode);
+                                },
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+              ],
             ),
           ),
         ),
+      ),
     );
   }
 }

@@ -83,7 +83,6 @@ void main() {
       final detailApi = ScriptedThreadDetailBridgeApi(
         detailScriptByThreadId: {
           'thread-123': [
-            _thread123Detail(),
             const ThreadDetailBridgeException(
               message: 'Cannot reach the bridge. Check your private route.',
               isConnectivityError: true,
@@ -133,19 +132,18 @@ void main() {
         threadId: 'thread-123',
         initialVisibleTimelineEntries: 20,
         bridgeApi: detailApi,
-        cacheRepository: _newCacheRepository(),
         liveStream: ScriptedThreadLiveStream(),
         threadListController: listController,
       );
       addTearDown(detailController.dispose);
 
       await _waitUntil(() => !detailController.state.isLoading);
-      expect(detailApi.detailFetchCount, 1);
+      expect(detailApi.detailFetchCount, 0);
 
       await detailController.retryReconnectCatchUp();
       await Future<void>.delayed(const Duration(seconds: 5));
 
-      expect(detailApi.detailFetchCount, greaterThanOrEqualTo(4));
+      expect(detailApi.detailFetchCount, greaterThanOrEqualTo(3));
       expect(
         detailController.state.items.any(
           (item) => item.eventId == 'evt-catchup-2',
@@ -316,6 +314,43 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   }
 
   @override
+  Future<ThreadTimelinePageDto> fetchThreadTimelinePage({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? before,
+    int limit = 50,
+  }) async {
+    final detail = _detailScriptByThreadId[threadId]
+        ?.whereType<ThreadDetailDto>()
+        .cast<ThreadDetailDto?>()
+        .firstWhere((entry) => entry != null, orElse: () => null);
+    if (detail == null) {
+      throw StateError('Missing scripted detail for thread "$threadId".');
+    }
+
+    final entries = await fetchThreadTimeline(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+    );
+    final endIndex = before == null
+        ? entries.length
+        : entries.indexWhere((entry) => entry.eventId == before);
+    final normalizedEndIndex = endIndex < 0 ? entries.length : endIndex;
+    final startIndex = normalizedEndIndex - limit < 0
+        ? 0
+        : normalizedEndIndex - limit;
+    final pageEntries = entries.sublist(startIndex, normalizedEndIndex);
+    final hasMoreBefore = startIndex > 0;
+    return ThreadTimelinePageDto(
+      contractVersion: contractVersion,
+      thread: detail,
+      entries: pageEntries,
+      nextBefore: hasMoreBefore ? entries[startIndex].eventId : null,
+      hasMoreBefore: hasMoreBefore,
+    );
+  }
+
+  @override
   Future<GitStatusResponseDto> fetchGitStatus({
     required String bridgeApiBaseUrl,
     required String threadId,
@@ -421,7 +456,8 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
 
 class ScriptedThreadLiveStream implements ThreadLiveStream {
   final List<StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>
-  _controllers = <StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>[];
+  _controllers =
+      <StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>[];
 
   int totalSubscriptions = 0;
 
