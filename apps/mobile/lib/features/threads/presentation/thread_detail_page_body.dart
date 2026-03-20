@@ -76,7 +76,7 @@ class _ThreadDetailBody extends StatelessWidget {
         controller: scrollController,
         key: const Key('thread-detail-scroll-view'),
         physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        padding: const EdgeInsets.only(left: 24, right: 24, bottom: 16, top: 180),
         children: [
           const SizedBox(height: 16),
           if (state.staleMessage != null) ...[

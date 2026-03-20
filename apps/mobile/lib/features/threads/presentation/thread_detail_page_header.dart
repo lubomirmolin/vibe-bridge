@@ -12,6 +12,7 @@ class _ThreadDetailHeader extends StatelessWidget {
     required this.onOpenGitBranchSheet,
     required this.onOpenGitSyncSheet,
     required this.onOpenOnMac,
+    required this.isHeaderCollapsed,
   });
 
   final ThreadDetailState state;
@@ -24,6 +25,7 @@ class _ThreadDetailHeader extends StatelessWidget {
   final Future<void> Function() onOpenGitBranchSheet;
   final Future<void> Function() onOpenGitSyncSheet;
   final Future<void> Function() onOpenOnMac;
+  final ValueListenable<bool> isHeaderCollapsed;
 
   @override
   Widget build(BuildContext context) {
@@ -41,6 +43,7 @@ class _ThreadDetailHeader extends StatelessWidget {
       onOpenGitBranchSheet: onOpenGitBranchSheet,
       onOpenGitSyncSheet: onOpenGitSyncSheet,
       onOpenOnMac: onOpenOnMac,
+      isHeaderCollapsed: isHeaderCollapsed,
     );
   }
 }
@@ -56,6 +59,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
     required this.onOpenGitBranchSheet,
     required this.onOpenGitSyncSheet,
     required this.onOpenOnMac,
+    required this.isHeaderCollapsed,
   });
 
   final ThreadDetailState state;
@@ -67,6 +71,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
   final Future<void> Function() onOpenGitBranchSheet;
   final Future<void> Function() onOpenGitSyncSheet;
   final Future<void> Function() onOpenOnMac;
+  final ValueListenable<bool> isHeaderCollapsed;
 
   @override
   Widget build(BuildContext context) {
@@ -77,6 +82,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.only(top: 0, right: 16, bottom: 8),
       decoration: const BoxDecoration(
+        color: AppTheme.background,
         border: Border(bottom: BorderSide(color: Colors.white10)),
       ),
       child: Column(
@@ -144,7 +150,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
                 onPressed: onBack,
                 icon: PhosphorIcon(
                   PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
-                  size: 24,
+                  size: 20,
                   color: AppTheme.textMuted,
                 ),
               ),
@@ -152,16 +158,17 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
                 child: Text(
                   thread.title,
                   key: const Key('thread-detail-title'),
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w500, letterSpacing: -0.5),
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: -0.5,
+                    fontSize: 18,
+                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
           Padding(
             padding: const EdgeInsets.only(left: 36),
             child: SingleChildScrollView(
@@ -199,90 +206,109 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 16),
-          Padding(
-            padding: const EdgeInsets.only(left: 36),
-            child: Row(
+          ValueListenableBuilder<bool>(
+            valueListenable: isHeaderCollapsed,
+            builder: (context, isCollapsed, child) {
+              return AnimatedSize(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeInOut,
+                alignment: Alignment.topCenter,
+                child: isCollapsed ? const SizedBox(width: double.infinity) : child!,
+              );
+            },
+            child: Column(
               children: [
-                Expanded(
-                  flex: 3,
-                  child: FilledButton.tonalIcon(
-                    key: const Key('git-header-branch-button'),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      backgroundColor: AppTheme.surfaceZinc800.withValues(alpha: 0.5),
-                      foregroundColor: AppTheme.textMain,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        side: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
+                const SizedBox(height: 16),
+                Padding(
+                  padding: const EdgeInsets.only(left: 36),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: FilledButton.tonalIcon(
+                          key: const Key('git-header-branch-button'),
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            backgroundColor: AppTheme.surfaceZinc800.withValues(alpha: 0.5),
+                            foregroundColor: AppTheme.textMain,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              side: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
+                            ),
+                          ),
+                          onPressed: () async {
+                            await onOpenGitBranchSheet();
+                          },
+                          icon: PhosphorIcon(
+                            PhosphorIcons.gitBranch(),
+                            size: 16,
+                            color: gitControls.hasDirtyWorkingTree ? AppTheme.amber : AppTheme.textSubtle,
+                          ),
+                          label: Text(
+                            gitControls.repositoryContext.branch,
+                            style: const TextStyle(fontSize: 13),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                       ),
-                    ),
-                    onPressed: () async {
-                      await onOpenGitBranchSheet();
-                    },
-                    icon: PhosphorIcon(
-                      PhosphorIcons.gitBranch(),
-                      size: 16,
-                      color: gitControls.hasDirtyWorkingTree ? AppTheme.amber : AppTheme.textSubtle,
-                    ),
-                    label: Text(
-                      gitControls.repositoryContext.branch,
-                      style: const TextStyle(fontSize: 13),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  flex: 2,
-                  child: FilledButton.tonalIcon(
-                    key: const Key('git-header-sync-button'),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      backgroundColor: AppTheme.surfaceZinc800.withValues(alpha: 0.5),
-                      foregroundColor: AppTheme.textMain,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        side: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 2,
+                        child: FilledButton.tonalIcon(
+                          key: const Key('git-header-sync-button'),
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            backgroundColor: AppTheme.surfaceZinc800.withValues(alpha: 0.5),
+                            foregroundColor: AppTheme.textMain,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              side: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
+                            ),
+                          ),
+                          onPressed: () async {
+                            await onOpenGitSyncSheet();
+                          },
+                          icon: PhosphorIcon(
+                            PhosphorIcons.arrowsClockwise(),
+                            size: 16,
+                            color: AppTheme.textSubtle,
+                          ),
+                          label: Text(
+                            gitControls.syncLabel,
+                            style: const TextStyle(fontSize: 13),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                       ),
-                    ),
-                    onPressed: () async {
-                      await onOpenGitSyncSheet();
-                    },
-                    icon: PhosphorIcon(PhosphorIcons.arrowsClockwise(), size: 16, color: AppTheme.textSubtle),
-                    label: Text(
-                      gitControls.syncLabel,
-                      style: const TextStyle(fontSize: 13),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                      const SizedBox(width: 8),
+                      FilledButton.tonal(
+                        key: const Key('open-on-mac-button'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(44, 44),
+                          padding: const EdgeInsets.all(10),
+                          backgroundColor: AppTheme.surfaceZinc800.withValues(alpha: 0.5),
+                          foregroundColor: AppTheme.textMain,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            side: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
+                          ),
+                        ),
+                        onPressed: canOpenOnMac
+                            ? () async {
+                                await onOpenOnMac();
+                              }
+                            : null,
+                        child: state.isOpenOnMacInFlight
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.textMain),
+                              )
+                            : PhosphorIcon(PhosphorIcons.monitor(), size: 18, color: AppTheme.textMain),
+                      ),
+                    ],
                   ),
-                ),
-                const SizedBox(width: 8),
-                FilledButton.tonal(
-                  key: const Key('open-on-mac-button'),
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size(44, 44),
-                    padding: const EdgeInsets.all(10),
-                    backgroundColor: AppTheme.surfaceZinc800.withValues(alpha: 0.5),
-                    foregroundColor: AppTheme.textMain,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      side: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
-                    ),
-                  ),
-                  onPressed: canOpenOnMac
-                      ? () async {
-                          await onOpenOnMac();
-                        }
-                      : null,
-                  child: state.isOpenOnMacInFlight
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.textMain),
-                        )
-                      : PhosphorIcon(PhosphorIcons.monitor(), size: 18, color: AppTheme.textMain),
                 ),
               ],
             ),
@@ -303,6 +329,7 @@ class _UnavailableThreadDetailHeader extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
       decoration: const BoxDecoration(
+        color: AppTheme.background,
         border: Border(bottom: BorderSide(color: Colors.white10)),
       ),
       child: Row(

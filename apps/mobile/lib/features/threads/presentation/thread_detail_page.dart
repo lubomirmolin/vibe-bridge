@@ -13,6 +13,7 @@ import 'package:codex_mobile_companion/features/threads/domain/thread_activity_i
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
 import 'package:codex_mobile_companion/shared/widgets/badges.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -57,6 +58,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   late final TextEditingController _composerController;
   late final TextEditingController _gitBranchController;
   late final ScrollController _timelineScrollController;
+  late final ValueNotifier<bool> _isHeaderCollapsed;
   final ImagePicker _imagePicker = ImagePicker();
 
   List<XFile> _attachedImages = const <XFile>[];
@@ -64,12 +66,51 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   String _selectedReasoning = _reasoningOptions[1];
   bool _didInitialScrollToBottom = false;
 
+  double _lastScrollOffset = 0;
+  double _scrollOffsetOnDirectionChange = 0;
+  bool _isScrollingDown = false;
+
   @override
   void initState() {
     super.initState();
     _composerController = TextEditingController();
     _gitBranchController = TextEditingController();
     _timelineScrollController = ScrollController();
+    _isHeaderCollapsed = ValueNotifier(false);
+    _timelineScrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (!_timelineScrollController.hasClients) return;
+
+    final position = _timelineScrollController.position;
+    final currentOffset = clampDouble(
+      _timelineScrollController.offset,
+      position.minScrollExtent,
+      position.maxScrollExtent,
+    );
+    final isCurrentlyScrollingDown = currentOffset > _lastScrollOffset;
+
+    if (isCurrentlyScrollingDown != _isScrollingDown) {
+      _isScrollingDown = isCurrentlyScrollingDown;
+      _scrollOffsetOnDirectionChange = currentOffset;
+    }
+
+    final scrollDeltaSinceDirectionChange =
+        currentOffset - _scrollOffsetOnDirectionChange;
+
+    if (_isScrollingDown &&
+        scrollDeltaSinceDirectionChange > 30 &&
+        !_isHeaderCollapsed.value &&
+        currentOffset > 100) {
+      _isHeaderCollapsed.value = true;
+    } else if (!_isScrollingDown &&
+        scrollDeltaSinceDirectionChange < -30 &&
+        _isHeaderCollapsed.value) {
+      _isHeaderCollapsed.value = false;
+    }
+
+    _lastScrollOffset = currentOffset;
   }
 
   @override
@@ -84,7 +125,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   void dispose() {
     _composerController.dispose();
     _gitBranchController.dispose();
+    _timelineScrollController.removeListener(_onScroll);
     _timelineScrollController.dispose();
+    _isHeaderCollapsed.dispose();
     super.dispose();
   }
 
@@ -274,44 +317,55 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       body: SafeArea(
         child: Column(
           children: [
-            _ThreadDetailHeader(
-              state: state,
-              accessMode: effectiveAccessMode,
-              hasPendingApprovals: threadApprovals.isNotEmpty,
-              gitControls: gitControls,
-              canOpenOnMac:
-                  desktopIntegrationControlsEnabled &&
-                  desktopIntegrationState.isEnabled &&
-                  !state.isOpenOnMacInFlight,
-              onBackWhenLoaded: () => Navigator.of(context).maybePop(),
-              onBackWhenUnavailable: () => Navigator.of(context).pop(),
-              onOpenGitBranchSheet: openGitBranchSheet,
-              onOpenGitSyncSheet: openGitSyncSheet,
-              onOpenOnMac: controller.openOnMac,
-            ),
             Expanded(
-              child: _ThreadDetailBody(
-                state: state,
-                isReadOnlyMode: isReadOnlyMode,
-                controlsEnabled: controlsEnabled,
-                desktopIntegrationEnabled: desktopIntegrationState.isEnabled,
-                onRetry: controller.loadThread,
-                onLoadEarlier: controller.loadEarlierHistory,
-                onRetryReconnect: controller.retryReconnectCatchUp,
-                threadApprovals: threadApprovals,
-                approvalsErrorMessage: approvalsState.errorMessage,
-                canResolveApprovals: approvalsState.canResolveApprovals,
-                gitErrorMessage: state.gitErrorMessage,
-                gitMutationMessage: state.gitMutationMessage,
-                gitControlsUnavailableReason:
-                    state.gitControlsUnavailableReason,
-                openOnMacMessage: state.openOnMacMessage,
-                openOnMacErrorMessage: state.openOnMacErrorMessage,
-                hasPinnedComposer: state.thread != null,
-                onRefreshApprovals: () {
-                  approvalsController.loadApprovals(showLoading: false);
-                },
-                scrollController: _timelineScrollController,
+              child: Stack(
+                children: [
+                  _ThreadDetailBody(
+                    state: state,
+                    isReadOnlyMode: isReadOnlyMode,
+                    controlsEnabled: controlsEnabled,
+                    desktopIntegrationEnabled:
+                        desktopIntegrationState.isEnabled,
+                    onRetry: controller.loadThread,
+                    onLoadEarlier: controller.loadEarlierHistory,
+                    onRetryReconnect: controller.retryReconnectCatchUp,
+                    threadApprovals: threadApprovals,
+                    approvalsErrorMessage: approvalsState.errorMessage,
+                    canResolveApprovals: approvalsState.canResolveApprovals,
+                    gitErrorMessage: state.gitErrorMessage,
+                    gitMutationMessage: state.gitMutationMessage,
+                    gitControlsUnavailableReason:
+                        state.gitControlsUnavailableReason,
+                    openOnMacMessage: state.openOnMacMessage,
+                    openOnMacErrorMessage: state.openOnMacErrorMessage,
+                    hasPinnedComposer: state.thread != null,
+                    onRefreshApprovals: () {
+                      approvalsController.loadApprovals(showLoading: false);
+                    },
+                    scrollController: _timelineScrollController,
+                  ),
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: _ThreadDetailHeader(
+                      state: state,
+                      accessMode: effectiveAccessMode,
+                      hasPendingApprovals: threadApprovals.isNotEmpty,
+                      gitControls: gitControls,
+                      canOpenOnMac:
+                          desktopIntegrationControlsEnabled &&
+                          desktopIntegrationState.isEnabled &&
+                          !state.isOpenOnMacInFlight,
+                      onBackWhenLoaded: () => Navigator.of(context).maybePop(),
+                      onBackWhenUnavailable: () => Navigator.of(context).pop(),
+                      onOpenGitBranchSheet: openGitBranchSheet,
+                      onOpenGitSyncSheet: openGitSyncSheet,
+                      onOpenOnMac: controller.openOnMac,
+                      isHeaderCollapsed: _isHeaderCollapsed,
+                    ),
+                  ),
+                ],
               ),
             ),
             if (state.thread != null)
