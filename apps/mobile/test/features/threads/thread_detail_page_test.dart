@@ -46,6 +46,10 @@ void main() {
 
       expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
       expect(find.text('Implement shared contracts'), findsOneWidget);
+      expect(
+        find.byKey(const Key('thread-detail-metadata-scroll')),
+        findsOneWidget,
+      );
       expect(find.byKey(const Key('thread-detail-thread-id')), findsOneWidget);
       expect(find.text('thread-123'), findsOneWidget);
       await _scrollUntilVisible(tester, find.text('User prompt'));
@@ -162,6 +166,37 @@ void main() {
     );
     expect(find.byKey(const Key('thread-message-image-0')), findsOneWidget);
   });
+
+  testWidgets(
+    'access mode is shown in the header and not repeated in the body',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+      );
+      await tester.pumpAndSettle();
+
+      final accessModeBadge = find.byKey(
+        const Key('thread-detail-access-mode-badge'),
+      );
+      expect(accessModeBadge, findsOneWidget);
+      expect(
+        find.descendant(of: accessModeBadge, matching: find.text('Gated Mode')),
+        findsOneWidget,
+      );
+      expect(find.text('Approval Gated Mode'), findsNothing);
+    },
+  );
 
   testWidgets('status-only changed file rows are hidden from the timeline', (
     tester,
