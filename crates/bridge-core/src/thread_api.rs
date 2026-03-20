@@ -164,6 +164,48 @@ impl ThreadApiService {
         Ok(())
     }
 
+    pub fn sync_thread_from_upstream(&mut self, thread_id: &str) -> Result<(), String> {
+        let Some(sync_config) = &self.sync_config else {
+            return Ok(());
+        };
+
+        let (thread_records, timeline_by_thread_id) = load_thread_snapshot_for_id(
+            &sync_config.codex_command,
+            &sync_config.codex_args,
+            sync_config.codex_endpoint.as_deref(),
+            &sync_config.codex_home,
+            thread_id,
+        )?;
+
+        let next_thread = thread_records
+            .into_iter()
+            .find(|thread| thread.id == thread_id);
+        let next_timeline = timeline_by_thread_id.get(thread_id).cloned();
+
+        if let Some(thread) = next_thread {
+            if let Some(existing_index) = self
+                .thread_records
+                .iter()
+                .position(|existing| existing.id == thread_id)
+            {
+                self.thread_records[existing_index] = thread;
+            } else {
+                self.thread_records.push(thread);
+            }
+        } else {
+            self.thread_records.retain(|thread| thread.id != thread_id);
+        }
+
+        if let Some(timeline) = next_timeline {
+            self.timeline_by_thread_id
+                .insert(thread_id.to_string(), timeline);
+        } else {
+            self.timeline_by_thread_id.remove(thread_id);
+        }
+
+        Ok(())
+    }
+
     pub fn reconcile_from_upstream(&mut self) -> Result<Vec<BridgeEventEnvelope<Value>>, String> {
         let Some(sync_config) = &self.sync_config else {
             return Ok(Vec::new());
@@ -196,19 +238,19 @@ impl ThreadApiService {
         let mut merged_timeline_by_thread_id = HashMap::new();
 
         for thread in &thread_records {
-            if let Some(previous_thread) = previous_threads.get(&thread.id) {
-                if previous_thread.lifecycle_state != thread.lifecycle_state {
-                    events.push(self.next_event_with_occurred_at(
-                        &thread.id,
-                        BridgeEventKind::ThreadStatusChanged,
-                        thread.updated_at.as_str(),
-                        json!({
-                            "status": serde_json::to_value(map_thread_status(&thread.lifecycle_state))
-                                .expect("thread status should serialize"),
-                            "reason": "upstream_sync",
-                        }),
-                    ));
-                }
+            if let Some(previous_thread) = previous_threads.get(&thread.id)
+                && previous_thread.lifecycle_state != thread.lifecycle_state
+            {
+                events.push(self.next_event_with_occurred_at(
+                    &thread.id,
+                    BridgeEventKind::ThreadStatusChanged,
+                    thread.updated_at.as_str(),
+                    json!({
+                        "status": serde_json::to_value(map_thread_status(&thread.lifecycle_state))
+                            .expect("thread status should serialize"),
+                        "reason": "upstream_sync",
+                    }),
+                ));
             }
 
             let previous_event_ids = previous_timeline
@@ -1029,6 +1071,36 @@ fn load_thread_snapshot(
     }
 }
 
+fn load_thread_snapshot_for_id(
+    command: &str,
+    args: &[String],
+    endpoint: Option<&str>,
+    codex_home: &Path,
+    thread_id: &str,
+) -> Result<ThreadSnapshot, String> {
+    let rpc_result = load_thread_snapshot_from_codex_rpc_for_id(command, args, endpoint, thread_id);
+    let requested_ids = HashSet::from([thread_id.to_string()]);
+    let archive_result =
+        load_thread_snapshot_from_codex_archive_for_ids(codex_home, Some(&requested_ids));
+
+    match (rpc_result, archive_result) {
+        (Ok(Some(rpc_snapshot)), Ok(archive_snapshot)) => {
+            Ok(merge_thread_snapshots(rpc_snapshot, archive_snapshot))
+        }
+        (Ok(Some(rpc_snapshot)), _) => Ok(rpc_snapshot),
+        (_, Ok((thread_records, timeline_by_thread_id))) if !thread_records.is_empty() => {
+            Ok((thread_records, timeline_by_thread_id))
+        }
+        (Ok(None), _) => Ok((Vec::new(), HashMap::new())),
+        (Err(rpc_error), Err(archive_error)) => Err(format!(
+            "failed to load Codex thread {thread_id} from app-server ({rpc_error}) and local archive ({archive_error})"
+        )),
+        (Err(rpc_error), Ok(_)) => Err(format!(
+            "failed to load Codex thread {thread_id} from app-server ({rpc_error}) and local archive was empty"
+        )),
+    }
+}
+
 fn merge_thread_snapshots(
     rpc_snapshot: ThreadSnapshot,
     archive_snapshot: ThreadSnapshot,
@@ -1099,8 +1171,10 @@ fn merge_rpc_timeline_with_archive(
 
     for rpc_event in rpc_events {
         let fingerprint = timeline_merge_fingerprint(&rpc_event);
-        if !fingerprint_to_index.contains_key(&fingerprint) {
-            fingerprint_to_index.insert(fingerprint, merged_events.len());
+        if let std::collections::hash_map::Entry::Vacant(entry) =
+            fingerprint_to_index.entry(fingerprint)
+        {
+            entry.insert(merged_events.len());
             merged_events.push(rpc_event);
         }
     }
@@ -1201,6 +1275,28 @@ fn load_thread_snapshot_from_codex_rpc(
         .collect::<HashMap<_, _>>();
 
     Ok((thread_records, timeline_by_thread_id))
+}
+
+fn load_thread_snapshot_from_codex_rpc_for_id(
+    command: &str,
+    args: &[String],
+    endpoint: Option<&str>,
+    thread_id: &str,
+) -> Result<Option<ThreadSnapshot>, String> {
+    let mut client = CodexRpcClient::start(command, args, endpoint)?;
+    let thread = match read_thread_with_resume(&mut client, thread_id, true) {
+        Ok(thread) => thread,
+        Err(error) if should_resume_thread(&error) || error.contains("not found") => {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+
+    let thread_record = map_codex_thread_to_upstream_record(&thread);
+    let timeline = map_codex_thread_to_timeline_events(&thread);
+    let timeline_by_thread_id = HashMap::from([(thread.id.clone(), timeline)]);
+
+    Ok(Some((vec![thread_record], timeline_by_thread_id)))
 }
 
 fn load_thread_snapshot_from_codex_archive(codex_home: &Path) -> Result<ThreadSnapshot, String> {
@@ -2135,24 +2231,24 @@ fn archived_response_message_content(payload: &Value) -> Vec<Value> {
         let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
         match item_type {
             "input_text" | "output_text" | "text" => {
-                if let Some(text) = item.get("text").and_then(Value::as_str) {
-                    if !text.trim().is_empty() {
-                        content.push(json!({
-                            "type": "text",
-                            "text_type": item_type,
-                            "text": text,
-                        }));
-                    }
+                if let Some(text) = item.get("text").and_then(Value::as_str)
+                    && !text.trim().is_empty()
+                {
+                    content.push(json!({
+                        "type": "text",
+                        "text_type": item_type,
+                        "text": text,
+                    }));
                 }
             }
             "input_image" | "image" => {
-                if let Some(image_url) = item.get("image_url").and_then(Value::as_str) {
-                    if !image_url.trim().is_empty() {
-                        content.push(json!({
-                            "type": "image",
-                            "image_url": image_url,
-                        }));
-                    }
+                if let Some(image_url) = item.get("image_url").and_then(Value::as_str)
+                    && !image_url.trim().is_empty()
+                {
+                    content.push(json!({
+                        "type": "image",
+                        "image_url": image_url,
+                    }));
                 }
             }
             _ => {}
@@ -3033,8 +3129,7 @@ fn extract_file_name_from_command(command: &str) -> Option<String> {
     command
         .split_whitespace()
         .map(|segment| segment.trim_matches(|ch| ch == '"' || ch == '\'' || ch == '`'))
-        .filter(|segment| segment.contains('/') || segment.contains('.'))
-        .last()
+        .rfind(|segment| segment.contains('/') || segment.contains('.'))
         .and_then(|path| path.rsplit('/').next())
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -3210,10 +3305,10 @@ fn normalize_codex_item_payload(
         "plan" => Some((BridgeEventKind::PlanDelta, item.clone())),
         "commandExecution" => {
             let mut payload = item.clone();
-            if let Some(output) = item.get("aggregatedOutput").and_then(Value::as_str) {
-                if let Some(object) = payload.as_object_mut() {
-                    object.insert("output".to_string(), Value::String(output.to_string()));
-                }
+            if let Some(output) = item.get("aggregatedOutput").and_then(Value::as_str)
+                && let Some(object) = payload.as_object_mut()
+            {
+                object.insert("output".to_string(), Value::String(output.to_string()));
             }
             Some((BridgeEventKind::CommandDelta, payload))
         }
@@ -3260,15 +3355,14 @@ fn normalize_codex_tool_invocation_item(
             if !input_text.trim().is_empty() {
                 object.insert("change".to_string(), Value::String(input_text.clone()));
             }
-            if !object.contains_key("resolved_unified_diff") {
-                if let Some(resolved_diff) =
+            if !object.contains_key("resolved_unified_diff")
+                && let Some(resolved_diff) =
                     resolve_apply_patch_to_unified_diff(&input_text, workspace_path)
-                {
-                    object.insert(
-                        "resolved_unified_diff".to_string(),
-                        Value::String(resolved_diff),
-                    );
-                }
+            {
+                object.insert(
+                    "resolved_unified_diff".to_string(),
+                    Value::String(resolved_diff),
+                );
             }
         } else if !object.contains_key("arguments") {
             object.insert("arguments".to_string(), input);
@@ -3417,7 +3511,7 @@ mod tests {
 
     use super::{
         CodexNotificationNormalizer, CodexThread, CodexThreadStatus, CodexTurn, ThreadApiService,
-        UpstreamThreadRecord, UpstreamTimelineEvent, should_resume_thread,
+        ThreadSyncConfig, UpstreamThreadRecord, UpstreamTimelineEvent, should_resume_thread,
     };
     use serde_json::{Value, json};
     use shared_contracts::{
@@ -4505,6 +4599,132 @@ mod tests {
             timeline[2].data["resolved_unified_diff"],
             "diff --git a/lib/main.dart b/lib/main.dart\n--- a/lib/main.dart\n+++ b/lib/main.dart"
         );
+    }
+
+    #[test]
+    fn sync_thread_from_upstream_refreshes_only_requested_thread() {
+        let codex_home = unique_test_codex_home();
+        let sessions_directory = codex_home.join("sessions/2026/03/19");
+        fs::create_dir_all(&sessions_directory).expect("test sessions directory should exist");
+        fs::write(
+            codex_home.join("session_index.jsonl"),
+            r#"{"id":"thread-target","thread_name":"Fresh target title","updated_at":"2026-03-19T10:00:00Z"}"#,
+        )
+        .expect("session index should be writable");
+        fs::write(
+            sessions_directory.join("rollout-2026-03-19T10-00-00-thread-target.jsonl"),
+            concat!(
+                r#"{"timestamp":"2026-03-19T09:55:00Z","type":"session_meta","payload":{"id":"thread-target","timestamp":"2026-03-19T09:55:00Z","cwd":"/Users/test/workspace","source":"cli","git":{"branch":"main","repository_url":"git@github.com:example/project.git"}}}"#,
+                "\n",
+                r#"{"timestamp":"2026-03-19T09:56:00Z","type":"event_msg","payload":{"type":"agent_message","message":"Fresh target body."}}"#,
+                "\n"
+            ),
+        )
+        .expect("session log should be writable");
+
+        let mut service = ThreadApiService {
+            thread_records: vec![
+                UpstreamThreadRecord {
+                    id: "thread-target".to_string(),
+                    headline: "Stale target title".to_string(),
+                    lifecycle_state: "done".to_string(),
+                    workspace_path: "/workspace/stale-target".to_string(),
+                    repository_name: "stale-target".to_string(),
+                    branch_name: "main".to_string(),
+                    remote_name: "origin".to_string(),
+                    git_dirty: false,
+                    git_ahead_by: 0,
+                    git_behind_by: 0,
+                    created_at: "2026-03-17T10:00:00Z".to_string(),
+                    updated_at: "2026-03-17T10:00:00Z".to_string(),
+                    source: "cli".to_string(),
+                    approval_mode: "control_with_approvals".to_string(),
+                    last_turn_summary: "stale target summary".to_string(),
+                },
+                UpstreamThreadRecord {
+                    id: "thread-other".to_string(),
+                    headline: "Unrelated thread".to_string(),
+                    lifecycle_state: "done".to_string(),
+                    workspace_path: "/workspace/other".to_string(),
+                    repository_name: "other".to_string(),
+                    branch_name: "main".to_string(),
+                    remote_name: "origin".to_string(),
+                    git_dirty: false,
+                    git_ahead_by: 0,
+                    git_behind_by: 0,
+                    created_at: "2026-03-17T10:00:00Z".to_string(),
+                    updated_at: "2026-03-17T10:00:00Z".to_string(),
+                    source: "cli".to_string(),
+                    approval_mode: "control_with_approvals".to_string(),
+                    last_turn_summary: "other summary".to_string(),
+                },
+            ],
+            timeline_by_thread_id: HashMap::from([
+                (
+                    "thread-target".to_string(),
+                    vec![UpstreamTimelineEvent {
+                        id: "stale-target-event".to_string(),
+                        event_type: "agent_message_delta".to_string(),
+                        happened_at: "2026-03-17T10:00:00Z".to_string(),
+                        summary_text: "stale target event".to_string(),
+                        data: json!({"delta": "stale target event", "role": "assistant"}),
+                    }],
+                ),
+                (
+                    "thread-other".to_string(),
+                    vec![UpstreamTimelineEvent {
+                        id: "other-event".to_string(),
+                        event_type: "agent_message_delta".to_string(),
+                        happened_at: "2026-03-17T10:00:00Z".to_string(),
+                        summary_text: "other event".to_string(),
+                        data: json!({"delta": "other event", "role": "assistant"}),
+                    }],
+                ),
+            ]),
+            next_event_sequence: 10,
+            sync_config: Some(ThreadSyncConfig {
+                codex_command: "/definitely/missing/codex".to_string(),
+                codex_args: Vec::new(),
+                codex_endpoint: None,
+                codex_home: codex_home.clone(),
+            }),
+        };
+
+        service
+            .sync_thread_from_upstream("thread-target")
+            .expect("thread sync should fall back to archive");
+
+        let refreshed_target = service
+            .thread_records
+            .iter()
+            .find(|thread| thread.id == "thread-target")
+            .expect("target thread should remain present");
+        assert_eq!(refreshed_target.headline, "Fresh target title");
+        assert_eq!(refreshed_target.last_turn_summary, "Fresh target body.");
+
+        let untouched_other = service
+            .thread_records
+            .iter()
+            .find(|thread| thread.id == "thread-other")
+            .expect("other thread should remain present");
+        assert_eq!(untouched_other.headline, "Unrelated thread");
+        assert_eq!(untouched_other.last_turn_summary, "other summary");
+
+        let target_timeline = service
+            .timeline_by_thread_id
+            .get("thread-target")
+            .expect("target timeline should exist");
+        assert_eq!(target_timeline.len(), 1);
+        assert_eq!(target_timeline[0].summary_text, "Fresh target body.");
+
+        let other_timeline = service
+            .timeline_by_thread_id
+            .get("thread-other")
+            .expect("other timeline should still exist");
+        assert_eq!(other_timeline.len(), 1);
+        assert_eq!(other_timeline[0].id, "other-event");
+
+        let _ = fs::remove_dir_all(codex_home);
     }
 
     #[test]
