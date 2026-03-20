@@ -44,6 +44,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
 }
 
 class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
+  static const double _historyPrefetchTriggerOffset = 160;
   static const List<String> _modelOptions = <String>[
     'GPT-5',
     'GPT-5 Mini',
@@ -56,6 +57,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   ];
 
   late final TextEditingController _composerController;
+  late final FocusNode _composerFocusNode;
   late final TextEditingController _gitBranchController;
   late final ScrollController _timelineScrollController;
   late final ValueNotifier<bool> _isHeaderCollapsed;
@@ -65,6 +67,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   String _selectedModel = _modelOptions.first;
   String _selectedReasoning = _reasoningOptions[1];
   bool _didInitialScrollToBottom = false;
+  bool _isComposerFocused = false;
+  bool _canLoadEarlierHistory = false;
+  bool _isAutoLoadingEarlierHistory = false;
+  VoidCallback? _loadEarlierHistory;
 
   double _lastScrollOffset = 0;
   double _scrollOffsetOnDirectionChange = 0;
@@ -74,10 +80,21 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   void initState() {
     super.initState();
     _composerController = TextEditingController();
+    _composerFocusNode = FocusNode();
     _gitBranchController = TextEditingController();
     _timelineScrollController = ScrollController();
     _isHeaderCollapsed = ValueNotifier(false);
+    _composerFocusNode.addListener(_handleComposerFocusChange);
     _timelineScrollController.addListener(_onScroll);
+  }
+
+  void _handleComposerFocusChange() {
+    if (_isComposerFocused == _composerFocusNode.hasFocus) {
+      return;
+    }
+    setState(() {
+      _isComposerFocused = _composerFocusNode.hasFocus;
+    });
   }
 
   void _onScroll() {
@@ -111,6 +128,51 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     }
 
     _lastScrollOffset = currentOffset;
+    _maybeAutoLoadEarlierHistory();
+  }
+
+  void _maybeAutoLoadEarlierHistory() {
+    if (!_timelineScrollController.hasClients ||
+        !_canLoadEarlierHistory ||
+        _isAutoLoadingEarlierHistory) {
+      return;
+    }
+
+    final position = _timelineScrollController.position;
+    if (position.pixels >
+        position.minScrollExtent + _historyPrefetchTriggerOffset) {
+      return;
+    }
+
+    final previousOffset = position.pixels;
+    final previousMaxScrollExtent = position.maxScrollExtent;
+    _isAutoLoadingEarlierHistory = true;
+    _loadEarlierHistory?.call();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _isAutoLoadingEarlierHistory = false;
+      if (!mounted || !_timelineScrollController.hasClients) {
+        return;
+      }
+
+      final nextPosition = _timelineScrollController.position;
+      final insertedExtent =
+          nextPosition.maxScrollExtent - previousMaxScrollExtent;
+      if (insertedExtent <= 0) {
+        return;
+      }
+
+      final compensatedOffset = clampDouble(
+        previousOffset + insertedExtent,
+        nextPosition.minScrollExtent,
+        nextPosition.maxScrollExtent,
+      );
+      if ((nextPosition.pixels - compensatedOffset).abs() < 0.5) {
+        return;
+      }
+
+      _timelineScrollController.jumpTo(compensatedOffset);
+    });
   }
 
   @override
@@ -124,6 +186,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   @override
   void dispose() {
     _composerController.dispose();
+    _composerFocusNode
+      ..removeListener(_handleComposerFocusChange)
+      ..dispose();
     _gitBranchController.dispose();
     _timelineScrollController.removeListener(_onScroll);
     _timelineScrollController.dispose();
@@ -265,6 +330,8 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       isGitMutationInFlight: state.isGitMutationInFlight,
       gitControlsUnavailableReason: state.gitControlsUnavailableReason,
     );
+    _canLoadEarlierHistory = state.canLoadEarlierHistory;
+    _loadEarlierHistory = controller.loadEarlierHistory;
 
     if (state.hasThread && !_didInitialScrollToBottom) {
       _scheduleInitialScrollToBottom();
@@ -327,7 +394,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                     desktopIntegrationEnabled:
                         desktopIntegrationState.isEnabled,
                     onRetry: controller.loadThread,
-                    onLoadEarlier: controller.loadEarlierHistory,
                     onRetryReconnect: controller.retryReconnectCatchUp,
                     threadApprovals: threadApprovals,
                     approvalsErrorMessage: approvalsState.errorMessage,
@@ -350,7 +416,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                     right: 0,
                     child: _ThreadDetailHeader(
                       state: state,
-                      accessMode: effectiveAccessMode,
                       hasPendingApprovals: threadApprovals.isNotEmpty,
                       gitControls: gitControls,
                       canOpenOnMac:
@@ -373,11 +438,13 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                 top: false,
                 child: _PinnedTurnComposer(
                   composerController: _composerController,
+                  composerFocusNode: _composerFocusNode,
                   isTurnActive: state.isTurnActive,
                   controlsEnabled: controlsEnabled,
                   isComposerMutationInFlight: state.isComposerMutationInFlight,
                   isInterruptMutationInFlight:
                       state.isInterruptMutationInFlight,
+                  isComposerFocused: _isComposerFocused,
                   attachedImages: _attachedImages,
                   selectedModel: _selectedModel,
                   selectedReasoning: _selectedReasoning,

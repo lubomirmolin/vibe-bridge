@@ -9,53 +9,244 @@ class _ChatMessageCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isUser = item.type == ThreadActivityItemType.userPrompt;
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: isUser
-          ? BoxDecoration(
-              color: AppTheme.surfaceZinc800.withOpacity(0.4),
-              borderRadius: BorderRadius.circular(16),
-            )
-          : null,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (isUser) ...[
-            Row(
-              children: [
-                PhosphorIcon(
-                  PhosphorIcons.user(),
-                  color: AppTheme.emerald,
-                  size: 14,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'User',
-                  style: GoogleFonts.jetBrainsMono(
+    return _SwipeToRevealMessageTimestamp(
+      eventId: item.eventId,
+      occurredAt: item.occurredAt,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: isUser
+            ? BoxDecoration(
+                color: AppTheme.surfaceZinc800.withOpacity(0.4),
+                borderRadius: BorderRadius.circular(16),
+              )
+            : null,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (isUser) ...[
+              Row(
+                children: [
+                  PhosphorIcon(
+                    PhosphorIcons.user(),
                     color: AppTheme.emerald,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+                    size: 14,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'User',
+                    style: GoogleFonts.jetBrainsMono(
+                      color: AppTheme.emerald,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+            ],
+            _ThreadMessageBody(
+              body: item.body,
+              imageUrls: item.messageImageUrls,
+              textStyle: TextStyle(
+                color: isUser
+                    ? AppTheme.textMain
+                    : AppTheme.textMain.withOpacity(0.9),
+                fontSize: 14,
+                height: 1.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SwipeToRevealMessageTimestamp extends StatefulWidget {
+  const _SwipeToRevealMessageTimestamp({
+    required this.eventId,
+    required this.occurredAt,
+    required this.child,
+  });
+
+  final String eventId;
+  final String occurredAt;
+  final Widget child;
+
+  @override
+  State<_SwipeToRevealMessageTimestamp> createState() =>
+      _SwipeToRevealMessageTimestampState();
+}
+
+class _SwipeToRevealMessageTimestampState
+    extends State<_SwipeToRevealMessageTimestamp> {
+  static const double _maxRevealOffset = 80;
+  static const double _visibleThreshold = 8;
+  static const Duration _snapBackDuration = Duration(milliseconds: 180);
+
+  double _rawDragOffset = 0;
+  double _dragOffset = 0;
+  bool _isDragging = false;
+
+  bool get _isTimestampVisible => _dragOffset.abs() >= _visibleThreshold;
+
+  void _handleDragUpdate(double deltaX) {
+    setState(() {
+      _isDragging = true;
+      _rawDragOffset += deltaX;
+      _dragOffset = _applyResistance(_rawDragOffset);
+    });
+  }
+
+  void _resetDrag() {
+    if (_rawDragOffset == 0 && _dragOffset == 0 && !_isDragging) {
+      return;
+    }
+
+    setState(() {
+      _rawDragOffset = 0;
+      _dragOffset = 0;
+      _isDragging = false;
+    });
+  }
+
+  double _applyResistance(double rawOffset) {
+    final distance = rawOffset.abs();
+    if (distance == 0) {
+      return 0;
+    }
+
+    final resistedDistance = _maxRevealOffset * (distance / (distance + 96));
+    return rawOffset.isNegative ? -resistedDistance : resistedDistance;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final timestamp = _MessageTimestampLabel.parse(widget.occurredAt);
+    final revealAlignment = _dragOffset.isNegative
+        ? Alignment.centerRight
+        : Alignment.centerLeft;
+    final revealCrossAxisAlignment = _dragOffset.isNegative
+        ? CrossAxisAlignment.end
+        : CrossAxisAlignment.start;
+    final revealOpacity = clampDouble(_dragOffset.abs() / 28, 0, 1);
+
+    return GestureDetector(
+      key: Key('thread-message-card-${widget.eventId}'),
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragStart: (_) {
+        if (_isDragging) {
+          return;
+        }
+        setState(() {
+          _isDragging = true;
+        });
+      },
+      onHorizontalDragUpdate: (details) => _handleDragUpdate(details.delta.dx),
+      onHorizontalDragEnd: (_) => _resetDrag(),
+      onHorizontalDragCancel: _resetDrag,
+      child: Stack(
+        clipBehavior: Clip.hardEdge,
+        children: [
+          if (_isTimestampVisible)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: Align(
+                    alignment: revealAlignment,
+                    child: AnimatedOpacity(
+                      duration: _isDragging ? Duration.zero : _snapBackDuration,
+                      curve: Curves.easeOutCubic,
+                      opacity: revealOpacity,
+                      child: _MessageTimestampReveal(
+                        key: Key('thread-message-timestamp-${widget.eventId}'),
+                        timestamp: timestamp,
+                        crossAxisAlignment: revealCrossAxisAlignment,
+                      ),
+                    ),
                   ),
                 ),
-              ],
+              ),
             ),
-            const SizedBox(height: 6),
-          ],
-          _ThreadMessageBody(
-            body: item.body,
-            imageUrls: item.messageImageUrls,
-            textStyle: TextStyle(
-              color: isUser
-                  ? AppTheme.textMain
-                  : AppTheme.textMain.withOpacity(0.9),
-              fontSize: 14,
-              height: 1.5,
-            ),
+          AnimatedContainer(
+            duration: _isDragging ? Duration.zero : _snapBackDuration,
+            curve: Curves.easeOutCubic,
+            transform: Matrix4.translationValues(_dragOffset, 0, 0),
+            child: widget.child,
           ),
         ],
       ),
     );
+  }
+}
+
+class _MessageTimestampReveal extends StatelessWidget {
+  const _MessageTimestampReveal({
+    super.key,
+    required this.timestamp,
+    required this.crossAxisAlignment,
+  });
+
+  final _MessageTimestampLabel timestamp;
+  final CrossAxisAlignment crossAxisAlignment;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: crossAxisAlignment,
+      children: [
+        Text(
+          timestamp.dateLabel,
+          style: GoogleFonts.jetBrainsMono(
+            color: AppTheme.textSubtle,
+            fontSize: 10,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          timestamp.timeLabel,
+          style: GoogleFonts.jetBrainsMono(
+            color: AppTheme.textMuted,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MessageTimestampLabel {
+  const _MessageTimestampLabel({
+    required this.dateLabel,
+    required this.timeLabel,
+  });
+
+  final String dateLabel;
+  final String timeLabel;
+
+  static _MessageTimestampLabel parse(String rawTimestamp) {
+    final parsed = DateTime.tryParse(rawTimestamp);
+    if (parsed == null) {
+      return _MessageTimestampLabel(
+        dateLabel: rawTimestamp.trim().isEmpty ? 'Unknown date' : rawTimestamp,
+        timeLabel: '',
+      );
+    }
+
+    final date = [
+      parsed.year.toString().padLeft(4, '0'),
+      parsed.month.toString().padLeft(2, '0'),
+      parsed.day.toString().padLeft(2, '0'),
+    ].join('-');
+    final time =
+        '${parsed.hour.toString().padLeft(2, '0')}:${parsed.minute.toString().padLeft(2, '0')}';
+
+    return _MessageTimestampLabel(dateLabel: date, timeLabel: time);
   }
 }
 

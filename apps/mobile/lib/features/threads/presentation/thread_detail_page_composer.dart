@@ -3,10 +3,12 @@ part of 'thread_detail_page.dart';
 class _PinnedTurnComposer extends StatelessWidget {
   const _PinnedTurnComposer({
     required this.composerController,
+    required this.composerFocusNode,
     required this.isTurnActive,
     required this.controlsEnabled,
     required this.isComposerMutationInFlight,
     required this.isInterruptMutationInFlight,
+    required this.isComposerFocused,
     required this.attachedImages,
     required this.selectedModel,
     required this.selectedReasoning,
@@ -24,10 +26,12 @@ class _PinnedTurnComposer extends StatelessWidget {
   });
 
   final TextEditingController composerController;
+  final FocusNode composerFocusNode;
   final bool isTurnActive;
   final bool controlsEnabled;
   final bool isComposerMutationInFlight;
   final bool isInterruptMutationInFlight;
+  final bool isComposerFocused;
   final List<XFile> attachedImages;
   final String selectedModel;
   final String selectedReasoning;
@@ -61,25 +65,21 @@ class _PinnedTurnComposer extends StatelessWidget {
         : canSubmitComposer;
     final canEditPinnedControls =
         !isComposerMutationInFlight && !isInterruptMutationInFlight;
+    if (!canSubmitComposer && composerFocusNode.hasFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (composerFocusNode.hasFocus) {
+          composerFocusNode.unfocus();
+        }
+      });
+    }
 
-    return Container(
+    return Padding(
       key: const Key('pinned-turn-composer'),
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-      decoration: BoxDecoration(
-        color: AppTheme.background.withOpacity(0.96),
-        border: const Border(top: BorderSide(color: Colors.white10)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.45),
-            blurRadius: 24,
-            offset: const Offset(0, -8),
-          ),
-        ],
-      ),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (attachedImages.isNotEmpty)
+          if (attachedImages.isNotEmpty) ...[
             Align(
               alignment: Alignment.centerLeft,
               child: Wrap(
@@ -95,127 +95,115 @@ class _PinnedTurnComposer extends StatelessWidget {
                     .toList(growable: false),
               ),
             ),
-          const SizedBox(height: 10),
+            const SizedBox(height: 10),
+          ],
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              SizedBox(
-                width: 56,
-                height: 56,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: AppTheme.surfaceZinc800.withOpacity(0.86),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white.withOpacity(0.06)),
-                  ),
-                  child: IconButton(
-                    icon: PhosphorIcon(
-                      PhosphorIcons.plus(),
-                      size: 24,
-                      color: AppTheme.textMain,
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 220),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                transitionBuilder: (child, animation) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: SizeTransition(
+                      axis: Axis.horizontal,
+                      axisAlignment: -1,
+                      sizeFactor: animation,
+                      child: child,
                     ),
-                    onPressed: canEditPinnedControls
-                        ? () async {
-                            await onPickImages();
-                          }
-                        : null,
-                  ),
-                ),
+                  );
+                },
+                child: isComposerFocused
+                    ? const SizedBox(
+                        key: ValueKey('composer-leading-actions-hidden'),
+                      )
+                    : Padding(
+                        key: const ValueKey('composer-leading-actions-visible'),
+                        padding: const EdgeInsets.only(right: 8),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _ComposerUtilityButton(
+                              key: const Key('turn-composer-attach-button'),
+                              icon: PhosphorIcons.plus(),
+                              tooltip: 'Attach images',
+                              onPressed: canEditPinnedControls
+                                  ? () async {
+                                      await onPickImages();
+                                    }
+                                  : null,
+                            ),
+                            const SizedBox(width: 8),
+                            _ComposerUtilityButton(
+                              key: const Key('turn-composer-model-button'),
+                              icon: PhosphorIcons.slidersHorizontal(),
+                              tooltip: 'Composer settings',
+                              onPressed: canEditPinnedControls
+                                  ? () {
+                                      composerFocusNode.unfocus();
+                                      showModalBottomSheet<void>(
+                                        context: context,
+                                        backgroundColor: Colors.transparent,
+                                        isScrollControlled: true,
+                                        builder: (context) =>
+                                            _ComposerModelSheet(
+                                              initialModel: selectedModel,
+                                              initialReasoning:
+                                                  selectedReasoning,
+                                              selectedAccessMode: accessMode,
+                                              trustedBridge: trustedBridge,
+                                              isAccessModeUpdating:
+                                                  isAccessModeUpdating,
+                                              onModelChanged: onModelChanged,
+                                              onReasoningChanged:
+                                                  onReasoningChanged,
+                                              onAccessModeChanged:
+                                                  onAccessModeChanged,
+                                            ),
+                                      );
+                                    }
+                                  : null,
+                            ),
+                          ],
+                        ),
+                      ),
               ),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 56,
-                height: 56,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: AppTheme.surfaceZinc800.withOpacity(0.86),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white.withOpacity(0.06)),
-                  ),
-                  child: PopupMenuButton<dynamic>(
-                    enabled: canEditPinnedControls,
-                    tooltip: '',
-                    icon: PhosphorIcon(
-                      PhosphorIcons.cpu(),
-                      size: 24,
-                      color: AppTheme.textMain,
-                    ),
-                    onSelected: (value) {
-                      if (value is String &&
-                          _ThreadDetailPageState._modelOptions.contains(
-                            value,
-                          )) {
-                        onModelChanged(value);
-                      } else if (value is String &&
-                          _ThreadDetailPageState._reasoningOptions.contains(
-                            value,
-                          )) {
-                        onReasoningChanged(value);
-                      } else if (value is AccessMode) {
-                        onAccessModeChanged(value);
-                      }
-                    },
-                    itemBuilder: (context) {
-                      return [
-                        const PopupMenuItem(
-                          enabled: false,
-                          child: Text(
-                            'Model',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                        ..._ThreadDetailPageState._modelOptions.map(
-                          (model) =>
-                              PopupMenuItem(value: model, child: Text(model)),
-                        ),
-                        const PopupMenuDivider(),
-                        const PopupMenuItem(
-                          enabled: false,
-                          child: Text(
-                            'Reasoning',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                        ..._ThreadDetailPageState._reasoningOptions.map(
-                          (reasoning) => PopupMenuItem(
-                            value: reasoning,
-                            child: Text(reasoning),
-                          ),
-                        ),
-                        const PopupMenuDivider(),
-                        const PopupMenuItem(
-                          enabled: false,
-                          child: Text(
-                            'Access Mode',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                        ...AccessMode.values.map(
-                          (mode) => PopupMenuItem(
-                            value: mode,
-                            child: Text(_accessModeChipLabel(mode)),
-                          ),
-                        ),
-                      ];
-                    },
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
               Expanded(
-                child: Container(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutCubic,
                   decoration: BoxDecoration(
-                    color: AppTheme.surfaceZinc800.withOpacity(0.86),
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: Colors.white.withOpacity(0.06)),
+                    color: AppTheme.surfaceZinc800.withValues(
+                      alpha: isComposerFocused ? 0.98 : 0.9,
+                    ),
+                    borderRadius: BorderRadius.circular(26),
+                    border: Border.all(
+                      color: Colors.white.withValues(
+                        alpha: isComposerFocused ? 0.14 : 0.07,
+                      ),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(
+                          alpha: isComposerFocused ? 0.18 : 0.12,
+                        ),
+                        blurRadius: isComposerFocused ? 18 : 12,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
                   ),
                   child: TextField(
                     key: const Key('turn-composer-input'),
                     controller: composerController,
+                    focusNode: composerFocusNode,
                     enabled: canSubmitComposer,
                     minLines: 1,
                     maxLines: 4,
+                    keyboardType: TextInputType.multiline,
                     textInputAction: TextInputAction.newline,
+                    onTapOutside: (_) => composerFocusNode.unfocus(),
                     style: const TextStyle(
                       color: AppTheme.textMain,
                       fontSize: 15,
@@ -244,7 +232,7 @@ class _PinnedTurnComposer extends StatelessWidget {
                     backgroundColor: showStopAction
                         ? (canRunPrimaryAction
                               ? AppTheme.rose
-                              : AppTheme.rose.withOpacity(0.35))
+                              : AppTheme.rose.withValues(alpha: 0.35))
                         : (canRunPrimaryAction ? Colors.white : Colors.white24),
                     foregroundColor: showStopAction
                         ? Colors.white
@@ -304,11 +292,12 @@ class _PinnedTurnComposer extends StatelessWidget {
             ],
           ),
           if (trustedBridge == null) ...[
-            const SizedBox(height: 8),
-            const Align(
+            const SizedBox(height: 10),
+            Align(
               alignment: Alignment.centerLeft,
-              child: Text(
+              child: const Text(
                 'Pair with a Mac to change access mode from here.',
+                key: Key('turn-composer-access-mode-pairing-note'),
                 style: TextStyle(color: AppTheme.textSubtle, fontSize: 12),
               ),
             ),
@@ -319,6 +308,7 @@ class _PinnedTurnComposer extends StatelessWidget {
               alignment: Alignment.centerLeft,
               child: Text(
                 accessModeErrorMessage!,
+                key: const Key('turn-composer-access-mode-error'),
                 style: const TextStyle(color: AppTheme.rose, fontSize: 12),
               ),
             ),
@@ -327,6 +317,387 @@ class _PinnedTurnComposer extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ComposerUtilityButton extends StatelessWidget {
+  const _ComposerUtilityButton({
+    super.key,
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 52,
+      height: 52,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceZinc800.withValues(alpha: 0.86),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+        ),
+        child: IconButton(
+          tooltip: tooltip,
+          onPressed: onPressed,
+          icon: PhosphorIcon(icon, size: 22, color: AppTheme.textMain),
+        ),
+      ),
+    );
+  }
+}
+
+class _ComposerModelSheet extends StatefulWidget {
+  const _ComposerModelSheet({
+    required this.initialModel,
+    required this.initialReasoning,
+    required this.selectedAccessMode,
+    required this.trustedBridge,
+    required this.isAccessModeUpdating,
+    required this.onModelChanged,
+    required this.onReasoningChanged,
+    required this.onAccessModeChanged,
+  });
+
+  final String initialModel;
+  final String initialReasoning;
+  final AccessMode selectedAccessMode;
+  final TrustedBridgeIdentity? trustedBridge;
+  final bool isAccessModeUpdating;
+  final ValueChanged<String> onModelChanged;
+  final ValueChanged<String> onReasoningChanged;
+  final ValueChanged<AccessMode> onAccessModeChanged;
+
+  @override
+  State<_ComposerModelSheet> createState() => _ComposerModelSheetState();
+}
+
+class _ComposerModelSheetState extends State<_ComposerModelSheet> {
+  late String _selectedModel;
+  late String _selectedReasoning;
+  late AccessMode _selectedAccessMode;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedModel = widget.initialModel;
+    _selectedReasoning = widget.initialReasoning;
+    _selectedAccessMode = widget.selectedAccessMode;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.82,
+          ),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceZinc900,
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.26),
+                  blurRadius: 32,
+                  offset: const Offset(0, 18),
+                ),
+              ],
+            ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Model Setup',
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: -0.3,
+                              ),
+                        ),
+                      ),
+                      IconButton(
+                        key: const Key('turn-composer-model-sheet-close'),
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: PhosphorIcon(
+                          PhosphorIcons.x(),
+                          size: 20,
+                          color: AppTheme.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Pick the model and intelligence level for the next turn.',
+                    style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
+                  ),
+                  const SizedBox(height: 18),
+                  _ComposerSheetSection(
+                    title: 'Models',
+                    children: _ThreadDetailPageState._modelOptions
+                        .map(
+                          (model) => _ComposerSheetOption(
+                            key: Key('turn-composer-model-option-$model'),
+                            label: model,
+                            selected: _selectedModel == model,
+                            onTap: () {
+                              setState(() {
+                                _selectedModel = model;
+                              });
+                              widget.onModelChanged(model);
+                            },
+                          ),
+                        )
+                        .toList(growable: false),
+                  ),
+                  const SizedBox(height: 18),
+                  _ComposerSheetSection(
+                    title: 'Intelligence',
+                    children: _ThreadDetailPageState._reasoningOptions
+                        .map(
+                          (reasoning) => _ComposerSheetOption(
+                            key: Key(
+                              'turn-composer-reasoning-option-$reasoning',
+                            ),
+                            label: reasoning,
+                            selected: _selectedReasoning == reasoning,
+                            onTap: () {
+                              setState(() {
+                                _selectedReasoning = reasoning;
+                              });
+                              widget.onReasoningChanged(reasoning);
+                            },
+                          ),
+                        )
+                        .toList(growable: false),
+                  ),
+                  const SizedBox(height: 18),
+                  _ComposerSheetSection(
+                    title: 'Approval',
+                    subtitle: widget.trustedBridge == null
+                        ? 'Pair with a Mac to change access mode.'
+                        : null,
+                    children: AccessMode.values
+                        .map(
+                          (mode) => _ComposerSheetOption(
+                            key: Key('turn-composer-access-mode-option-$mode'),
+                            label: _accessModeChipLabel(mode),
+                            selected: _selectedAccessMode == mode,
+                            leading:
+                                widget.trustedBridge == null &&
+                                    _selectedAccessMode != mode
+                                ? PhosphorIcons.lock()
+                                : _composerAccessModeVisual(mode).icon,
+                            leadingColor: _composerAccessModeVisual(mode).color,
+                            trailing:
+                                widget.isAccessModeUpdating &&
+                                    _selectedAccessMode == mode
+                                ? const SizedBox.square(
+                                    dimension: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: AppTheme.textMain,
+                                    ),
+                                  )
+                                : null,
+                            onTap: widget.trustedBridge == null
+                                ? () {}
+                                : () {
+                                    setState(() {
+                                      _selectedAccessMode = mode;
+                                    });
+                                    widget.onAccessModeChanged(mode);
+                                  },
+                          ),
+                        )
+                        .toList(growable: false),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ComposerSheetSection extends StatelessWidget {
+  const _ComposerSheetSection({
+    required this.title,
+    required this.children,
+    this.subtitle,
+  });
+
+  final String title;
+  final List<Widget> children;
+  final String? subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.03),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: GoogleFonts.jetBrainsMono(
+                color: AppTheme.textMuted,
+                fontSize: 11,
+                letterSpacing: 0.7,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (subtitle != null) ...[
+              Text(
+                subtitle!,
+                style: const TextStyle(
+                  color: AppTheme.textSubtle,
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
+            ...children,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ComposerSheetOption extends StatelessWidget {
+  const _ComposerSheetOption({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.leading,
+    this.leadingColor,
+    this.trailing,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final IconData? leading;
+  final Color? leadingColor;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Ink(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            decoration: BoxDecoration(
+              color: selected
+                  ? Colors.white.withValues(alpha: 0.06)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Row(
+              children: [
+                if (leading != null) ...[
+                  PhosphorIcon(
+                    leading!,
+                    size: 18,
+                    color: leadingColor ?? AppTheme.textMuted,
+                  ),
+                  const SizedBox(width: 10),
+                ],
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: selected ? AppTheme.textMain : AppTheme.textMuted,
+                      fontSize: 15,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                    ),
+                  ),
+                ),
+                if (trailing != null)
+                  trailing!
+                else if (selected)
+                  PhosphorIcon(
+                    PhosphorIcons.check(),
+                    size: 18,
+                    color: AppTheme.textMain,
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+_ComposerAccessModeVisual _composerAccessModeVisual(AccessMode accessMode) {
+  switch (accessMode) {
+    case AccessMode.readOnly:
+      return _ComposerAccessModeVisual(
+        icon: PhosphorIcons.lock(),
+        color: AppTheme.textSubtle,
+      );
+    case AccessMode.controlWithApprovals:
+      return _ComposerAccessModeVisual(
+        icon: PhosphorIcons.shieldCheck(),
+        color: AppTheme.amber,
+      );
+    case AccessMode.fullControl:
+      return _ComposerAccessModeVisual(
+        icon: PhosphorIcons.lightning(),
+        color: AppTheme.emerald,
+      );
+  }
+}
+
+class _ComposerAccessModeVisual {
+  const _ComposerAccessModeVisual({required this.icon, required this.color});
+
+  final IconData icon;
+  final Color color;
 }
 
 class _ComposerImagePreview extends StatelessWidget {
@@ -367,7 +738,7 @@ class _ComposerImagePreview extends StatelessWidget {
               width: 22,
               height: 22,
               decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.72),
+                color: Colors.black.withValues(alpha: 0.72),
                 shape: BoxShape.circle,
               ),
               child: PhosphorIcon(
