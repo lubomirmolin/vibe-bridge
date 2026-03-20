@@ -60,11 +60,13 @@ class PairingFlowPage extends ConsumerStatefulWidget {
   const PairingFlowPage({
     super.key,
     this.enableCameraPreview = true,
+    this.enableAnimatedBackground,
     this.initialScannerIssue,
     this.autoOpenThreadsOnPairing = false,
   });
 
   final bool enableCameraPreview;
+  final bool? enableAnimatedBackground;
   final PairingScannerIssue? initialScannerIssue;
   final bool autoOpenThreadsOnPairing;
 
@@ -227,10 +229,6 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
     }
   }
 
-  void _focusManualFallback() {
-    _manualPayloadFocusNode.requestFocus();
-  }
-
   void _maybeAutoOpenThreadList(PairingState pairingState) {
     if (!widget.autoOpenThreadsOnPairing ||
         pairingState.step != PairingStep.paired) {
@@ -307,7 +305,9 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          const AnimatedBridgeBackground(),
+          (widget.enableAnimatedBackground ?? widget.enableCameraPreview)
+              ? const AnimatedBridgeBackground()
+              : const ColoredBox(color: AppTheme.background),
 
           SafeArea(
             child: Padding(
@@ -839,7 +839,6 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
           _ScannerIssueBanner(
             issue: _scannerIssue!,
             onRetryCamera: _retryCamera,
-            onUseManualFallback: _focusManualFallback,
           ),
 
         if (displayStep == PairingStep.paired &&
@@ -922,7 +921,10 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
                 ),
               );
             },
-            child: const Text('Device Settings'),
+            child: const Text(
+              'Device Settings',
+              key: Key('open-device-settings'),
+            ),
           ),
         ],
       ],
@@ -1142,13 +1144,26 @@ class _SecurityRePairRequiredBanner extends StatelessWidget {
 class _ScannerIssueBanner extends StatelessWidget {
   final PairingScannerIssue issue;
   final VoidCallback onRetryCamera;
-  final VoidCallback onUseManualFallback;
 
-  const _ScannerIssueBanner({
-    required this.issue,
-    required this.onRetryCamera,
-    required this.onUseManualFallback,
-  });
+  const _ScannerIssueBanner({required this.issue, required this.onRetryCamera});
+
+  String get _headline {
+    switch (issue.type) {
+      case PairingScannerIssueType.permissionDenied:
+        return 'Camera permission blocked';
+      case PairingScannerIssueType.scannerFailure:
+        return 'Scanner unavailable';
+    }
+  }
+
+  String get _body {
+    switch (issue.type) {
+      case PairingScannerIssueType.permissionDenied:
+        return 'Enable camera access in system settings, then retry scanning.';
+      case PairingScannerIssueType.scannerFailure:
+        return 'Camera feed could not be read. Retry scanning.';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1163,15 +1178,21 @@ class _ScannerIssueBanner extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text(
-            'Scanner Issue',
+          Text(
+            _headline,
             style: TextStyle(color: AppTheme.rose, fontWeight: FontWeight.bold),
           ),
+          const SizedBox(height: 8),
+          Text(_body, style: const TextStyle(color: AppTheme.rose)),
+          if (issue.details case final details?) ...[
+            const SizedBox(height: 8),
+            Text(details, style: const TextStyle(color: AppTheme.rose)),
+          ],
           const SizedBox(height: 8),
           MagneticButton(
             variant: MagneticButtonVariant.danger,
             onClick: onRetryCamera,
-            child: const Text('Retry Camera'),
+            child: const Text('Retry camera'),
           ),
         ],
       ),

@@ -652,6 +652,7 @@ class _UnpairCard extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
+              key: const Key('unpair-device-button'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppTheme.rose.withOpacity(0.2),
                 foregroundColor: AppTheme.rose,

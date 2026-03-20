@@ -8,7 +8,7 @@ void main() {
   ) async {
     await tester.pumpWidget(const ProviderScope(child: CodexMobileApp()));
 
-    expect(find.text('Pair your phone to this Mac'), findsOneWidget);
-    expect(find.text('Scan pairing QR'), findsOneWidget);
+    expect(find.text('Codex\nBridge'), findsOneWidget);
+    expect(find.text('Initialize Pairing'), findsOneWidget);
   });
 }
