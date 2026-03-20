@@ -377,5 +377,5 @@ Future<void> _pumpUntilFound(
     }
   }
 
-  throw TestFailure('Timed out waiting for ${finder.description}.');
+  throw TestFailure('Timed out waiting for $finder.');
 }

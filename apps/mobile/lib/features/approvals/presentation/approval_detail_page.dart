@@ -497,7 +497,7 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      color: AppTheme.background.withOpacity(0.8),
+      color: AppTheme.background.withValues(alpha: 0.8),
       child: Row(
         children: [
           IconButton(
@@ -576,9 +576,9 @@ class _ThreadContextCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppTheme.surfaceZinc800.withOpacity(0.3),
+        color: AppTheme.surfaceZinc800.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white.withOpacity(0.05)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -708,9 +708,9 @@ class _InlineWarning extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppTheme.rose.withOpacity(0.1),
+        color: AppTheme.rose.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.rose.withOpacity(0.3)),
+        border: Border.all(color: AppTheme.rose.withValues(alpha: 0.3)),
       ),
       child: Text(
         message,
@@ -730,9 +730,9 @@ class _InlineInfo extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppTheme.emerald.withOpacity(0.1),
+        color: AppTheme.emerald.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.emerald.withOpacity(0.3)),
+        border: Border.all(color: AppTheme.emerald.withValues(alpha: 0.3)),
       ),
       child: Text(
         message,

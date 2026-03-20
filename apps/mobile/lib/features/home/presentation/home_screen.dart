@@ -51,7 +51,13 @@ class HomeScreen extends ConsumerWidget {
                     decoration: const BoxDecoration(
                       color: AppTheme.emerald,
                       shape: BoxShape.circle,
-                      boxShadow: [BoxShadow(color: AppTheme.emerald, blurRadius: 10, spreadRadius: 2)],
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppTheme.emerald,
+                          blurRadius: 10,
+                          spreadRadius: 2,
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -96,7 +102,9 @@ class HomeScreen extends ConsumerWidget {
                       onTap: () {
                         Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) => ThreadListPage(bridgeApiBaseUrl: bridgeApiBaseUrl),
+                            builder: (_) => ThreadListPage(
+                              bridgeApiBaseUrl: bridgeApiBaseUrl,
+                            ),
                           ),
                         );
                       },
@@ -105,15 +113,22 @@ class HomeScreen extends ConsumerWidget {
                     _FeatureCard(
                       title: 'Approvals Queue',
                       subtitle: 'Actions require review',
-                      icon: PhosphorIcons.shieldWarning(PhosphorIconsStyle.duotone),
+                      icon: PhosphorIcons.shieldWarning(
+                        PhosphorIconsStyle.duotone,
+                      ),
                       iconColor: AppTheme.amber,
-                      iconBg: AppTheme.amber.withOpacity(0.1),
-                      badge: const StatusBadge(text: 'ACTION NEEDED', variant: BadgeVariant.warning),
+                      iconBg: AppTheme.amber.withValues(alpha: 0.1),
+                      badge: const StatusBadge(
+                        text: 'ACTION NEEDED',
+                        variant: BadgeVariant.warning,
+                      ),
                       glowColor: AppTheme.amber,
                       onTap: () {
                         Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) => ApprovalsQueuePage(bridgeApiBaseUrl: bridgeApiBaseUrl),
+                            builder: (_) => ApprovalsQueuePage(
+                              bridgeApiBaseUrl: bridgeApiBaseUrl,
+                            ),
                           ),
                         );
                       },
@@ -127,7 +142,11 @@ class HomeScreen extends ConsumerWidget {
                       iconBg: AppTheme.surfaceZinc800,
                       onTap: () {
                         Navigator.of(context).push(
-                          MaterialPageRoute(builder: (_) => SettingsPage(bridgeApiBaseUrl: bridgeApiBaseUrl)),
+                          MaterialPageRoute(
+                            builder: (_) => SettingsPage(
+                              bridgeApiBaseUrl: bridgeApiBaseUrl,
+                            ),
+                          ),
                         );
                       },
                     ),
@@ -171,7 +190,9 @@ class _FeatureCard extends StatelessWidget {
         children: [
           Container(
             padding: const EdgeInsets.all(24),
-            decoration: LiquidStyles.liquidGlass.copyWith(borderRadius: BorderRadius.circular(32)),
+            decoration: LiquidStyles.liquidGlass.copyWith(
+              borderRadius: BorderRadius.circular(32),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -181,13 +202,19 @@ class _FeatureCard extends StatelessWidget {
                   children: [
                     Container(
                       padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(color: iconBg, borderRadius: BorderRadius.circular(16)),
+                      decoration: BoxDecoration(
+                        color: iconBg,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
                       child: PhosphorIcon(icon, color: iconColor, size: 24),
                     ),
                     if (badge != null)
                       badge!
                     else
-                      PhosphorIcon(PhosphorIcons.arrowRight(), color: AppTheme.textSubtle),
+                      PhosphorIcon(
+                        PhosphorIcons.arrowRight(),
+                        color: AppTheme.textSubtle,
+                      ),
                   ],
                 ),
                 const SizedBox(height: 32),
@@ -201,7 +228,13 @@ class _FeatureCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 4),
-                Text(subtitle, style: const TextStyle(fontSize: 14, color: AppTheme.textSubtle)),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: AppTheme.textSubtle,
+                  ),
+                ),
               ],
             ),
           ),
@@ -215,7 +248,11 @@ class _FeatureCard extends StatelessWidget {
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   boxShadow: [
-                    BoxShadow(color: glowColor!.withOpacity(0.15), blurRadius: 60, spreadRadius: 10),
+                    BoxShadow(
+                      color: glowColor!.withValues(alpha: 0.15),
+                      blurRadius: 60,
+                      spreadRadius: 10,
+                    ),
                   ],
                 ),
               ),

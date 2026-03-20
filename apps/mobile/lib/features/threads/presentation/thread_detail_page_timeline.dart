@@ -40,7 +40,7 @@ class _ThreadActivityCard extends StatelessWidget {
 
       switch (item.type) {
         case ThreadActivityItemType.approvalRequest:
-          borderColor = AppTheme.amber.withOpacity(0.3);
+          borderColor = AppTheme.amber.withValues(alpha: 0.3);
           iconColor = AppTheme.amber;
           icon = PhosphorIcon(
             PhosphorIcons.shieldWarning(),
@@ -49,7 +49,7 @@ class _ThreadActivityCard extends StatelessWidget {
           );
           break;
         case ThreadActivityItemType.securityEvent:
-          borderColor = AppTheme.rose.withOpacity(0.3);
+          borderColor = AppTheme.rose.withValues(alpha: 0.3);
           iconColor = AppTheme.rose;
           icon = PhosphorIcon(
             PhosphorIcons.warning(),
@@ -58,7 +58,7 @@ class _ThreadActivityCard extends StatelessWidget {
           );
           break;
         case ThreadActivityItemType.fileChange:
-          borderColor = Colors.white.withOpacity(0.1);
+          borderColor = Colors.white.withValues(alpha: 0.1);
           iconColor = AppTheme.textSubtle;
           icon = PhosphorIcon(
             PhosphorIcons.fileCode(),
@@ -67,7 +67,7 @@ class _ThreadActivityCard extends StatelessWidget {
           );
           break;
         case ThreadActivityItemType.planUpdate:
-          borderColor = AppTheme.emerald.withOpacity(0.3);
+          borderColor = AppTheme.emerald.withValues(alpha: 0.3);
           iconColor = AppTheme.emerald;
           icon = PhosphorIcon(
             PhosphorIcons.listChecks(),
@@ -76,7 +76,7 @@ class _ThreadActivityCard extends StatelessWidget {
           );
           break;
         default:
-          borderColor = Colors.white.withOpacity(0.1);
+          borderColor = Colors.white.withValues(alpha: 0.1);
           iconColor = AppTheme.textSubtle;
           icon = PhosphorIcon(
             PhosphorIcons.lightning(),
@@ -90,7 +90,7 @@ class _ThreadActivityCard extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 16),
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
         decoration: BoxDecoration(
-          color: AppTheme.surfaceZinc800.withOpacity(0.3),
+          color: AppTheme.surfaceZinc800.withValues(alpha: 0.3),
           border: Border(left: BorderSide(color: borderColor, width: 3)),
           borderRadius: const BorderRadius.only(
             topRight: Radius.circular(12),
@@ -239,13 +239,13 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
     final workedForLabel = _workedForLabel(widget.parsed.wallTimeSeconds);
     final cardDecoration = isBackgroundTerminal
         ? BoxDecoration(
-            color: AppTheme.surfaceZinc900.withOpacity(0.55),
+            color: AppTheme.surfaceZinc900.withValues(alpha: 0.55),
             borderRadius: BorderRadius.circular(10),
           )
         : BoxDecoration(
             color: AppTheme.background,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.white.withOpacity(0.08)),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
           );
 
     return Container(
@@ -329,7 +329,7 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
             Divider(
               height: 1,
               color: isBackgroundTerminal
-                  ? Colors.white.withOpacity(0.05)
+                  ? Colors.white.withValues(alpha: 0.05)
                   : Colors.white10,
             ),
             Container(
@@ -338,7 +338,7 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
               decoration: BoxDecoration(
                 color: isBackgroundTerminal
                     ? Colors.transparent
-                    : Colors.black.withOpacity(0.2),
+                    : Colors.black.withValues(alpha: 0.2),
                 borderRadius: const BorderRadius.only(
                   bottomLeft: Radius.circular(12),
                   bottomRight: Radius.circular(12),
@@ -363,7 +363,7 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
             Divider(
               height: 1,
               color: isBackgroundTerminal
-                  ? Colors.white.withOpacity(0.05)
+                  ? Colors.white.withValues(alpha: 0.05)
                   : Colors.white10,
             ),
             Padding(
@@ -373,7 +373,7 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
                   Expanded(
                     child: Container(
                       height: 1,
-                      color: Colors.white.withOpacity(0.06),
+                      color: Colors.white.withValues(alpha: 0.06),
                     ),
                   ),
                   Padding(
@@ -391,7 +391,7 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
                   Expanded(
                     child: Container(
                       height: 1,
-                      color: Colors.white.withOpacity(0.06),
+                      color: Colors.white.withValues(alpha: 0.06),
                     ),
                   ),
                 ],
@@ -422,7 +422,7 @@ class _ExploredFilesCardState extends State<_ExploredFilesCard> {
       decoration: BoxDecoration(
         color: AppTheme.background,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withOpacity(0.08)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -515,9 +515,9 @@ class _CollapsibleFileChangeCardState
 
     return Container(
       decoration: BoxDecoration(
-        color: AppTheme.surfaceZinc800.withOpacity(0.4),
+        color: AppTheme.surfaceZinc800.withValues(alpha: 0.4),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withOpacity(0.08)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -594,7 +594,7 @@ class _CollapsibleFileChangeCardState
             Container(
               width: double.infinity,
               decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.3),
+                color: Colors.black.withValues(alpha: 0.3),
                 borderRadius: const BorderRadius.only(
                   bottomLeft: Radius.circular(12),
                   bottomRight: Radius.circular(12),
@@ -690,9 +690,9 @@ class _ThreadDiffFileSection extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.25),
+        color: Colors.black.withValues(alpha: 0.25),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white.withOpacity(0.06)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -701,7 +701,7 @@ class _ThreadDiffFileSection extends StatelessWidget {
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.03),
+              color: Colors.white.withValues(alpha: 0.03),
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(10),
                 topRight: Radius.circular(10),
@@ -743,9 +743,11 @@ class _ThreadDiffFileSection extends StatelessWidget {
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: AppTheme.surfaceZinc800.withOpacity(0.8),
+                    color: AppTheme.surfaceZinc800.withValues(alpha: 0.8),
                     borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: Colors.white.withOpacity(0.08)),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.08),
+                    ),
                   ),
                   child: Text(
                     changeLabel,
@@ -856,7 +858,7 @@ class _ThreadDiffLineRow extends StatelessWidget {
           Container(
             width: 1,
             height: 24,
-            color: Colors.white.withOpacity(0.06),
+            color: Colors.white.withValues(alpha: 0.06),
           ),
           const SizedBox(width: 8),
           Padding(
@@ -889,11 +891,11 @@ class _ThreadDiffLineRow extends StatelessWidget {
   Color _backgroundColorForLine(ParsedDiffLineKind kind) {
     switch (kind) {
       case ParsedDiffLineKind.addition:
-        return AppTheme.emerald.withOpacity(0.12);
+        return AppTheme.emerald.withValues(alpha: 0.12);
       case ParsedDiffLineKind.deletion:
-        return AppTheme.rose.withOpacity(0.14);
+        return AppTheme.rose.withValues(alpha: 0.14);
       case ParsedDiffLineKind.hunk:
-        return Colors.white.withOpacity(0.04);
+        return Colors.white.withValues(alpha: 0.04);
       case ParsedDiffLineKind.context:
         return Colors.transparent;
     }
@@ -902,11 +904,11 @@ class _ThreadDiffLineRow extends StatelessWidget {
   Color _accentColorForLine(ParsedDiffLineKind kind) {
     switch (kind) {
       case ParsedDiffLineKind.addition:
-        return AppTheme.emerald.withOpacity(0.85);
+        return AppTheme.emerald.withValues(alpha: 0.85);
       case ParsedDiffLineKind.deletion:
-        return AppTheme.rose.withOpacity(0.85);
+        return AppTheme.rose.withValues(alpha: 0.85);
       case ParsedDiffLineKind.hunk:
-        return Colors.white.withOpacity(0.18);
+        return Colors.white.withValues(alpha: 0.18);
       case ParsedDiffLineKind.context:
         return Colors.transparent;
     }

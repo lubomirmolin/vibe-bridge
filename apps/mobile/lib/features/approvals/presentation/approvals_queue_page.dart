@@ -31,7 +31,7 @@ class ApprovalsQueuePage extends ConsumerWidget {
             // Header
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              color: AppTheme.background.withOpacity(0.8),
+              color: AppTheme.background.withValues(alpha: 0.8),
               child: Row(
                 children: [
                   IconButton(
@@ -254,9 +254,9 @@ class _AccessModeBanner extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.05),
+        color: color.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.2)),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
       ),
       child: Row(
         children: [
@@ -387,7 +387,7 @@ class _ApprovalCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: AppTheme.rose.withOpacity(0.1),
+                  color: AppTheme.rose.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
@@ -441,9 +441,9 @@ class _InlineWarning extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppTheme.rose.withOpacity(0.1),
+        color: AppTheme.rose.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.rose.withOpacity(0.3)),
+        border: Border.all(color: AppTheme.rose.withValues(alpha: 0.3)),
       ),
       child: Text(
         message,
