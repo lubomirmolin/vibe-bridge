@@ -1086,24 +1086,22 @@ fn merge_rpc_timeline_with_archive(
     rpc_events: Vec<UpstreamTimelineEvent>,
     archive_events: Vec<UpstreamTimelineEvent>,
 ) -> Vec<UpstreamTimelineEvent> {
-    if rpc_events.is_empty() {
-        return sort_timeline_events(archive_events);
+    if archive_events.is_empty() {
+        return sort_timeline_events(rpc_events);
     }
 
-    let mut merged_events = rpc_events;
-    let mut existing_fingerprints = merged_events
+    let mut merged_events = archive_events;
+    let mut fingerprint_to_index = merged_events
         .iter()
-        .map(timeline_event_fingerprint)
-        .collect::<HashSet<_>>();
+        .enumerate()
+        .map(|(index, event)| (timeline_merge_fingerprint(event), index))
+        .collect::<HashMap<_, _>>();
 
-    for archive_event in archive_events {
-        if !should_supplement_archive_event(&archive_event) {
-            continue;
-        }
-
-        let fingerprint = timeline_event_fingerprint(&archive_event);
-        if existing_fingerprints.insert(fingerprint) {
-            merged_events.push(archive_event);
+    for rpc_event in rpc_events {
+        let fingerprint = timeline_merge_fingerprint(&rpc_event);
+        if !fingerprint_to_index.contains_key(&fingerprint) {
+            fingerprint_to_index.insert(fingerprint, merged_events.len());
+            merged_events.push(rpc_event);
         }
     }
 
@@ -1137,13 +1135,6 @@ fn sort_timeline_events(mut events: Vec<UpstreamTimelineEvent>) -> Vec<UpstreamT
     events
 }
 
-fn should_supplement_archive_event(event: &UpstreamTimelineEvent) -> bool {
-    !matches!(
-        event.event_type.as_str(),
-        "agent_message_delta" | "plan_delta"
-    )
-}
-
 fn timeline_event_fingerprint(event: &UpstreamTimelineEvent) -> String {
     let serialized_payload =
         serde_json::to_string(&event.data).unwrap_or_else(|_| event.summary_text.clone());
@@ -1151,6 +1142,39 @@ fn timeline_event_fingerprint(event: &UpstreamTimelineEvent) -> String {
         "{}\u{1f}|{}\u{1f}|{}",
         event.event_type, event.summary_text, serialized_payload
     )
+}
+
+fn timeline_merge_fingerprint(event: &UpstreamTimelineEvent) -> String {
+    match event.event_type.as_str() {
+        "agent_message_delta" => {
+            let role = event
+                .data
+                .get("role")
+                .and_then(Value::as_str)
+                .or_else(|| event.data.get("source").and_then(Value::as_str))
+                .unwrap_or("assistant");
+            let text = event
+                .data
+                .get("delta")
+                .and_then(Value::as_str)
+                .or_else(|| event.data.get("text").and_then(Value::as_str))
+                .or_else(|| event.data.get("message").and_then(Value::as_str))
+                .unwrap_or_default()
+                .trim();
+            format!("agent_message_delta\u{1f}|{role}\u{1f}|{text}")
+        }
+        "plan_delta" => {
+            let text = event
+                .data
+                .get("delta")
+                .and_then(Value::as_str)
+                .or_else(|| event.data.get("text").and_then(Value::as_str))
+                .unwrap_or(event.summary_text.as_str())
+                .trim();
+            format!("plan_delta\u{1f}|{text}")
+        }
+        _ => timeline_event_fingerprint(event),
+    }
 }
 
 fn load_thread_snapshot_from_codex_rpc(
@@ -4289,7 +4313,9 @@ mod tests {
             .map(PathBuf::from)
             .expect("HOME should be set")
             .join(".codex");
-        let requested_ids = HashSet::from(["019d0b18-30e3-7240-9e27-e6766967d061".to_string()]);
+        let thread_id = std::env::var("CODEX_DEBUG_THREAD_ID")
+            .unwrap_or_else(|_| "019d0b18-30e3-7240-9e27-e6766967d061".to_string());
+        let requested_ids = HashSet::from([thread_id.clone()]);
         let (_, timeline_by_thread_id) = super::load_thread_snapshot_from_codex_archive_for_ids(
             &codex_home,
             Some(&requested_ids),
@@ -4297,13 +4323,30 @@ mod tests {
         .expect("archive snapshot should load");
 
         let timeline = timeline_by_thread_id
-            .get("019d0b18-30e3-7240-9e27-e6766967d061")
+            .get(&thread_id)
             .expect("timeline should exist");
         let mut counts = HashMap::new();
         for event in timeline {
             *counts.entry(event.event_type.clone()).or_insert(0usize) += 1;
         }
         eprintln!("timeline count={} counts={counts:?}", timeline.len());
+        let latest_page = timeline.iter().rev().take(80).cloned().collect::<Vec<_>>();
+        let mut latest_counts = HashMap::new();
+        for event in latest_page.iter().rev() {
+            *latest_counts
+                .entry(event.event_type.clone())
+                .or_insert(0usize) += 1;
+        }
+        eprintln!(
+            "latest_page_count={} counts={latest_counts:?}",
+            latest_page.len()
+        );
+        for event in latest_page.iter().take(15) {
+            eprintln!(
+                "latest page event: {} {}",
+                event.event_type, event.summary_text
+            );
+        }
         for event in timeline
             .iter()
             .filter(|event| event.event_type != "agent_message_delta")
@@ -4319,6 +4362,8 @@ mod tests {
     #[test]
     #[ignore]
     fn debug_live_snapshot_thread_event_mix() {
+        let thread_id = std::env::var("CODEX_DEBUG_THREAD_ID")
+            .unwrap_or_else(|_| "019d0b18-30e3-7240-9e27-e6766967d061".to_string());
         let service = ThreadApiService::from_codex_app_server(
             "/Users/lubomirmolin/.bun/bin/codex",
             &[],
@@ -4327,13 +4372,30 @@ mod tests {
         .expect("live snapshot should load");
         let timeline = service
             .timeline_by_thread_id
-            .get("019d0b18-30e3-7240-9e27-e6766967d061")
+            .get(&thread_id)
             .expect("timeline should exist");
         let mut counts = HashMap::new();
         for event in timeline {
             *counts.entry(event.event_type.clone()).or_insert(0usize) += 1;
         }
         eprintln!("live snapshot count={} counts={counts:?}", timeline.len());
+        let latest_page = timeline.iter().rev().take(80).cloned().collect::<Vec<_>>();
+        let mut latest_counts = HashMap::new();
+        for event in latest_page.iter().rev() {
+            *latest_counts
+                .entry(event.event_type.clone())
+                .or_insert(0usize) += 1;
+        }
+        eprintln!(
+            "live latest_page_count={} counts={latest_counts:?}",
+            latest_page.len()
+        );
+        for event in latest_page.iter().take(15) {
+            eprintln!(
+                "live latest page event: {} {}",
+                event.event_type, event.summary_text
+            );
+        }
         for event in timeline
             .iter()
             .filter(|event| event.event_type != "agent_message_delta")
@@ -4435,8 +4497,9 @@ mod tests {
             .expect("merged timeline should exist");
 
         assert_eq!(timeline.len(), 3);
-        assert_eq!(timeline[0].id, "evt-user");
+        assert_eq!(timeline[0].id, "archive-user");
         assert_eq!(timeline[1].id, "evt-agent");
+        assert_eq!(timeline[2].id, "archive-file-change");
         assert_eq!(timeline[2].event_type, "file_change_delta");
         assert_eq!(
             timeline[2].data["resolved_unified_diff"],

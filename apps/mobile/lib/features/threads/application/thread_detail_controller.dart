@@ -31,7 +31,7 @@ class ThreadDetailControllerArgs {
   const ThreadDetailControllerArgs({
     required this.bridgeApiBaseUrl,
     required this.threadId,
-    this.initialVisibleTimelineEntries = 20,
+    this.initialVisibleTimelineEntries = 80,
   });
 
   final String bridgeApiBaseUrl;

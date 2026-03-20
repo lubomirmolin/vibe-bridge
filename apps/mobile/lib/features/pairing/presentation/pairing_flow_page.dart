@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:ui';
 
-import 'package:codex_mobile_companion/features/home/presentation/home_screen.dart';
 import 'package:codex_mobile_companion/features/pairing/application/pairing_controller.dart';
 import 'package:codex_mobile_companion/features/settings/presentation/settings_page.dart';
+import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
 import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
 import 'package:codex_mobile_companion/foundation/theme/liquid_styles.dart';
 import 'package:codex_mobile_companion/shared/widgets/animated_bridge_background.dart';
@@ -253,11 +253,8 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
       try {
         await Navigator.of(context).push(
           MaterialPageRoute<void>(
-            builder: (context) => HomeScreen(
-              bridgeApiBaseUrl: bridge.bridgeApiBaseUrl,
-              bridgeName: bridge.bridgeName,
-              bridgeId: bridge.bridgeId,
-            ),
+            builder: (context) =>
+                ThreadListPage(bridgeApiBaseUrl: bridge.bridgeApiBaseUrl),
           ),
         );
       } finally {
@@ -898,11 +895,8 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
               if (bridge == null) return;
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (context) => HomeScreen(
-                    bridgeApiBaseUrl: bridge.bridgeApiBaseUrl,
-                    bridgeName: bridge.bridgeName,
-                    bridgeId: bridge.bridgeId,
-                  ),
+                  builder: (context) =>
+                      ThreadListPage(bridgeApiBaseUrl: bridge.bridgeApiBaseUrl),
                 ),
               );
             },

@@ -84,6 +84,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
           Row(
             children: [
               IconButton(
+                key: const Key('thread-detail-back-button'),
                 onPressed: onBack,
                 icon: PhosphorIcon(
                   PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
@@ -318,6 +319,7 @@ class _UnavailableThreadDetailHeader extends StatelessWidget {
       child: Row(
         children: [
           IconButton(
+            key: const Key('thread-detail-back-button'),
             onPressed: onBack,
             icon: PhosphorIcon(
               PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),

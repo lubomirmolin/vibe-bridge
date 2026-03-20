@@ -155,6 +155,8 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
   bool _isDisposed = false;
   bool _isReconnectInProgress = false;
 
+  bool get _canMutateState => mounted && !_isDisposed;
+
   void overrideAccessMode(AccessMode? accessMode) {
     if (accessMode == null) {
       return;
@@ -168,6 +170,9 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
   }
 
   Future<void> loadApprovals({bool showLoading = true}) async {
+    if (!_canMutateState) {
+      return;
+    }
     if (showLoading) {
       state = state.copyWith(isLoading: true, clearErrorMessage: true);
     }
@@ -180,6 +185,9 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
 
       final accessMode = values[0] as AccessMode;
       final approvals = values[1] as List<ApprovalRecordDto>;
+      if (!_canMutateState) {
+        return;
+      }
       _onAccessModeObserved(accessMode);
 
       final previousItemsById = {
@@ -210,8 +218,14 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
         isLoading: false,
       );
     } on ApprovalBridgeException catch (error) {
+      if (!_canMutateState) {
+        return;
+      }
       state = state.copyWith(errorMessage: error.message, isLoading: false);
     } catch (_) {
+      if (!_canMutateState) {
+        return;
+      }
       state = state.copyWith(
         errorMessage: 'Couldn’t load approvals right now.',
         isLoading: false,
@@ -223,6 +237,9 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
     required String approvalId,
     required bool approved,
   }) async {
+    if (!_canMutateState) {
+      return false;
+    }
     final item = state.byApprovalId(approvalId);
     if (item == null) {
       return false;
@@ -269,6 +286,9 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
               bridgeApiBaseUrl: _bridgeApiBaseUrl,
               approvalId: approvalId,
             );
+      if (!_canMutateState) {
+        return false;
+      }
 
       _updateItem(
         approvalId,
@@ -285,6 +305,9 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
       await loadApprovals(showLoading: false);
       return true;
     } on ApprovalResolutionBridgeException catch (error) {
+      if (!_canMutateState) {
+        return false;
+      }
       _updateItem(
         approvalId,
         (current) => current.copyWith(
@@ -300,6 +323,9 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
       state = state.copyWith(errorMessage: error.message);
       return false;
     } catch (_) {
+      if (!_canMutateState) {
+        return false;
+      }
       _updateItem(
         approvalId,
         (current) => current.copyWith(isResolving: false),
@@ -315,6 +341,9 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
     String approvalId,
     ApprovalItemState Function(ApprovalItemState current) transform,
   ) {
+    if (!_canMutateState) {
+      return;
+    }
     final index = state.items.indexWhere(
       (item) => item.approval.approvalId == approvalId,
     );
@@ -332,6 +361,10 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
       final subscription = await _liveStream.subscribe(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
       );
+      if (!_canMutateState) {
+        await subscription.close();
+        return;
+      }
       _liveSubscription = subscription;
 
       _liveEventSubscription = subscription.events.listen(

@@ -159,7 +159,6 @@ bool _isHiddenInternalToolCommand(ParsedCommandOutput parsed) {
 }
 
 const Set<String> _hiddenInternalToolCommands = <String>{
-  'apply_patch',
   'browser_click',
   'browser_close',
   'browser_console_messages',
@@ -183,7 +182,6 @@ const Set<String> _hiddenInternalToolCommands = <String>{
   'browser_type',
   'browser_wait_for',
   'close_agent',
-  'exec_command',
   'list_mcp_resource_templates',
   'list_mcp_resources',
   'read_mcp_resource',

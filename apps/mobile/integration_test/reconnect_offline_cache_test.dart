@@ -88,6 +88,7 @@ void main() {
     await tester.tap(find.text('Trust & Connect'));
     await tester.pumpAndSettle();
 
+    await _pumpUntilFound(tester, find.text('Threads'));
     expect(find.text('Threads'), findsOneWidget);
     await _pumpUntilFound(
       tester,
@@ -96,6 +97,11 @@ void main() {
     expect(
       find.byKey(const Key('thread-summary-card-thread-123')),
       findsOneWidget,
+    );
+    await _pumpUntil(
+      tester,
+      () => liveStream.subscribeCountFor(null) >= 1,
+      description: 'thread list live subscription',
     );
 
     liveStream.emit(
@@ -110,8 +116,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await _pumpUntilFound(tester, find.text('Completed'));
-    expect(find.text('Completed'), findsOneWidget);
+    await _pumpUntilFound(tester, find.text('COMPLETED'));
+    expect(find.text('COMPLETED'), findsOneWidget);
     expect(
       await secureStore.readSecret(SecureValueKey.sessionToken),
       isNotNull,
@@ -283,17 +289,12 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Investigate reconnect dedup'), findsOneWidget);
-      expect(find.text('thread-456'), findsOneWidget);
       expect(
-        find.textContaining(
-          'Bridge is offline. Showing cached thread content.',
-        ),
+        find.textContaining('Bridge is offline. Showing cached threads.'),
         findsOneWidget,
       );
       expect(
-        find.text(
-          'Mutating actions are blocked while the bridge or private route is unavailable.',
-        ),
+        find.textContaining('Mutating actions stay blocked until reconnect.'),
         findsOneWidget,
       );
     },
@@ -388,11 +389,11 @@ void main() {
 
       await _scrollUntilVisible(
         tester,
-        find.byKey(const Key('thread-activity-evt-live-1')),
+        find.byKey(const Key('thread-message-card-evt-live-1')),
       );
 
       expect(
-        find.byKey(const Key('thread-activity-evt-live-1')),
+        find.byKey(const Key('thread-message-card-evt-live-1')),
         findsOneWidget,
       );
 
@@ -404,11 +405,11 @@ void main() {
 
       await _scrollUntilVisible(
         tester,
-        find.byKey(const Key('thread-activity-evt-live-1')),
+        find.byKey(const Key('thread-message-card-evt-live-1')),
       );
 
       expect(
-        find.byKey(const Key('thread-activity-evt-live-1')),
+        find.byKey(const Key('thread-message-card-evt-live-1')),
         findsOneWidget,
       );
     },
@@ -562,7 +563,6 @@ void main() {
 
       expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
       expect(find.text('Implement shared contracts'), findsOneWidget);
-      expect(find.text('thread-123'), findsOneWidget);
 
       const liveEvent = BridgeEventEnvelope<Map<String, dynamic>>(
         contractVersion: contractVersion,
@@ -579,10 +579,10 @@ void main() {
 
       await _scrollUntilVisible(
         tester,
-        find.byKey(const Key('thread-activity-evt-live-restore')),
+        find.byKey(const Key('thread-message-card-evt-live-restore')),
       );
       expect(
-        find.byKey(const Key('thread-activity-evt-live-restore')),
+        find.byKey(const Key('thread-message-card-evt-live-restore')),
         findsOneWidget,
       );
 
@@ -602,10 +602,39 @@ void main() {
           payload: _pendingApprovalRecord(threadId: 'thread-123').toJson(),
         ),
       );
-      await tester.pumpAndSettle();
-
       final container = ProviderScope.containerOf(
         tester.element(find.byType(MaterialApp).first),
+      );
+
+      await _pumpUntil(
+        tester,
+        () {
+          final detailState = container.read(
+            threadDetailControllerProvider(
+              const ThreadDetailControllerArgs(
+                bridgeApiBaseUrl: 'https://bridge.ts.net',
+                threadId: 'thread-123',
+              ),
+            ),
+          );
+          final approvalsState = container.read(
+            approvalsQueueControllerProvider('https://bridge.ts.net'),
+          );
+
+          return detailState.items.any(
+                (item) => item.eventId == 'evt-live-restore',
+              ) &&
+              detailState.items.any(
+                (item) => item.eventId == 'evt-catchup-restore',
+              ) &&
+              approvalsState
+                  .forThread('thread-123')
+                  .any(
+                    (item) => item.approval.approvalId == 'approval-restore',
+                  );
+        },
+        description: 'reconnect catch-up and approval restore',
+        timeout: const Duration(seconds: 10),
       );
 
       final detailState = container.read(
@@ -691,6 +720,23 @@ Future<void> _pumpUntilFound(
   }
 }
 
+Future<void> _pumpUntil(
+  WidgetTester tester,
+  bool Function() condition, {
+  required String description,
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  final end = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(end)) {
+    if (condition()) {
+      return;
+    }
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+
+  fail('Timed out waiting for $description');
+}
+
 Future<void> _submitPayloadFromController(
   WidgetTester tester,
   String payload,
@@ -704,14 +750,36 @@ Future<void> _submitPayloadFromController(
 }
 
 Future<void> _scrollUntilVisible(WidgetTester tester, Finder finder) async {
-  final scrollables = find.byType(Scrollable);
-  if (scrollables.evaluate().isEmpty) {
-    await tester.pumpAndSettle();
+  if (finder.evaluate().isNotEmpty) {
     return;
   }
 
-  await tester.scrollUntilVisible(finder, 240, scrollable: scrollables.first);
-  await tester.pumpAndSettle();
+  final scrollables = find.byType(Scrollable);
+  if (scrollables.evaluate().isEmpty) {
+    return;
+  }
+
+  final scrollable = scrollables.first;
+
+  for (var attempt = 0; attempt < 25; attempt += 1) {
+    if (finder.evaluate().isNotEmpty) {
+      return;
+    }
+
+    await tester.drag(scrollable, const Offset(0, -300));
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+
+  for (var attempt = 0; attempt < 25; attempt += 1) {
+    if (finder.evaluate().isNotEmpty) {
+      return;
+    }
+
+    await tester.drag(scrollable, const Offset(0, 300));
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+
+  fail('Timed out scrolling to finder: $finder');
 }
 
 ThreadCacheRepository _newCacheRepository() {

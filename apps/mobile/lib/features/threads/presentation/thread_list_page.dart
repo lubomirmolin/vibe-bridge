@@ -44,7 +44,8 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
   ) {
     if (_didRestoreSelectedThread ||
         !state.hasSelectedThread ||
-        state.isLoading) {
+        state.isLoading ||
+        state.isShowingCachedData) {
       return;
     }
 
