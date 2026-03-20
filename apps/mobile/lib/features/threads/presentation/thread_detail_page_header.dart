@@ -75,7 +75,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
     final accessModePresentation = _accessModePresentation(accessMode);
 
     return Container(
-      padding: const EdgeInsets.only(top: 8, right: 16, bottom: 8),
+      padding: const EdgeInsets.only(top: 0, right: 16, bottom: 8),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Colors.white10)),
       ),
@@ -113,11 +113,6 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
                 Container(
                   key: const Key('thread-detail-access-mode-badge'),
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: accessModePresentation.color.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: accessModePresentation.color.withValues(alpha: 0.28)),
-                  ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -164,13 +159,6 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              const SizedBox(width: 8),
-              StatusBadge(
-                text: _threadStatusLabel(thread.status),
-                variant: thread.status == ThreadStatus.running
-                    ? BadgeVariant.active
-                    : BadgeVariant.defaultVariant,
-              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -190,10 +178,11 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
                   const SizedBox(width: 8),
                   const Text('•', style: TextStyle(color: AppTheme.textSubtle)),
                   const SizedBox(width: 8),
-                  Text(
-                    thread.threadId,
-                    key: const Key('thread-detail-thread-id'),
-                    style: GoogleFonts.jetBrainsMono(color: AppTheme.textSubtle, fontSize: 12),
+                  StatusBadge(
+                    text: _threadStatusLabel(thread.status),
+                    variant: thread.status == ThreadStatus.running
+                        ? BadgeVariant.active
+                        : BadgeVariant.defaultVariant,
                   ),
                   if (hasPendingApprovals) ...[
                     const SizedBox(width: 8),

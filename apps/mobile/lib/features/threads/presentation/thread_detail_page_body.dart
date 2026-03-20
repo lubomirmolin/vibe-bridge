@@ -50,9 +50,7 @@ class _ThreadDetailBody extends StatelessWidget {
     final openOnMacErrorMessage = this.openOnMacErrorMessage;
 
     if (state.isLoading && !state.hasThread) {
-      return const Center(
-        child: CircularProgressIndicator(color: AppTheme.emerald),
-      );
+      return const Center(child: CircularProgressIndicator(color: AppTheme.emerald));
     }
 
     if (state.hasError && !state.hasThread) {
@@ -65,11 +63,7 @@ class _ThreadDetailBody extends StatelessWidget {
 
     final thread = state.thread;
     if (thread == null) {
-      return _ThreadDetailErrorState(
-        isUnavailable: true,
-        message: 'Thread unavailable',
-        onRetry: onRetry,
-      );
+      return _ThreadDetailErrorState(isUnavailable: true, message: 'Thread unavailable', onRetry: onRetry);
     }
 
     final timelineBlocks = _buildTimelineBlocks(state.visibleItems);
@@ -81,9 +75,7 @@ class _ThreadDetailBody extends StatelessWidget {
       child: ListView(
         controller: scrollController,
         key: const Key('thread-detail-scroll-view'),
-        physics: const AlwaysScrollableScrollPhysics(
-          parent: BouncingScrollPhysics(),
-        ),
+        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
         children: [
           const SizedBox(height: 16),
@@ -127,9 +119,7 @@ class _ThreadDetailBody extends StatelessWidget {
             const SizedBox(height: 12),
             const KeyedSubtree(
               key: Key('desktop-integration-disabled-message'),
-              child: _InlineWarning(
-                message: 'Desktop integration is disabled in settings.',
-              ),
+              child: _InlineWarning(message: 'Desktop integration is disabled in settings.'),
             ),
           ],
           if (openOnMacMessage != null) ...[
@@ -158,11 +148,7 @@ class _ThreadDetailBody extends StatelessWidget {
           const SizedBox(height: 32),
           const Text(
             'Timeline',
-            style: TextStyle(
-              color: AppTheme.textSubtle,
-              fontSize: 13,
-              letterSpacing: 1.2,
-            ),
+            style: TextStyle(color: AppTheme.textSubtle, fontSize: 13, letterSpacing: 1.2),
           ),
           const SizedBox(height: 16),
           if (state.canLoadEarlierHistory) ...[
@@ -174,9 +160,7 @@ class _ThreadDetailBody extends StatelessWidget {
                 'Load earlier history (${state.hiddenHistoryCount})',
                 style: const TextStyle(color: AppTheme.textMuted),
               ),
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Colors.white12),
-              ),
+              style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.white12)),
             ),
             const SizedBox(height: 16),
           ],
@@ -186,14 +170,10 @@ class _ThreadDetailBody extends StatelessWidget {
             ...timelineBlocks
                 .map(
                   (block) => block.item != null
-                      ? _ThreadActivityCard(
-                          item: block.item!,
-                          exploration: block.exploration,
-                        )
+                      ? _ThreadActivityCard(item: block.item!, exploration: block.exploration)
                       : _ExploredFilesCard(exploration: block.exploration!),
                 )
                 .expand((widget) => [widget, const SizedBox(height: 12)]),
-          if (hasPinnedComposer) const SizedBox(height: 220),
         ],
       ),
     );
@@ -229,10 +209,7 @@ List<_TimelineBlock> _buildTimelineBlocks(List<ThreadActivityItem> items) {
     }
 
     blocks.add(
-      _TimelineBlock.activity(
-        item,
-        exploration: exploration.hasContent ? exploration.build() : null,
-      ),
+      _TimelineBlock.activity(item, exploration: exploration.hasContent ? exploration.build() : null),
     );
     index = scanIndex;
   }
@@ -266,9 +243,7 @@ String? _extractExploredFileLabel(ThreadActivityItem item) {
     return null;
   }
 
-  final pattern = RegExp(
-    r'([~./A-Za-z0-9_-]+(?:/[~./A-Za-z0-9_-]+)*\.[A-Za-z0-9]+)',
-  );
+  final pattern = RegExp(r'([~./A-Za-z0-9_-]+(?:/[~./A-Za-z0-9_-]+)*\.[A-Za-z0-9]+)');
 
   String? lastPath;
   for (final match in pattern.allMatches(command)) {
@@ -300,10 +275,7 @@ bool _isSearchExplorationItem(ThreadActivityItem item) {
 class _TimelineBlock {
   const _TimelineBlock._({this.item, this.exploration});
 
-  factory _TimelineBlock.activity(
-    ThreadActivityItem item, {
-    _ExplorationSummary? exploration,
-  }) {
+  factory _TimelineBlock.activity(ThreadActivityItem item, {_ExplorationSummary? exploration}) {
     return _TimelineBlock._(item: item, exploration: exploration);
   }
 
@@ -335,10 +307,7 @@ class _ExplorationSummaryBuilder {
   }
 
   _ExplorationSummary build() {
-    return _ExplorationSummary(
-      files: List<String>.unmodifiable(_files),
-      searchCount: _searchCount,
-    );
+    return _ExplorationSummary(files: List<String>.unmodifiable(_files), searchCount: _searchCount);
   }
 }
 
@@ -351,9 +320,7 @@ class _ExplorationSummary {
   String get label {
     final parts = <String>[];
     if (files.isNotEmpty) {
-      parts.add(
-        'Explored ${files.length} ${files.length == 1 ? 'file' : 'files'}',
-      );
+      parts.add('Explored ${files.length} ${files.length == 1 ? 'file' : 'files'}');
     }
     if (searchCount > 0) {
       parts.add('$searchCount ${searchCount == 1 ? 'search' : 'searches'}');
@@ -369,11 +336,7 @@ class _ExplorationSummary {
 }
 
 class _ThreadDetailErrorState extends StatelessWidget {
-  const _ThreadDetailErrorState({
-    required this.isUnavailable,
-    required this.message,
-    required this.onRetry,
-  });
+  const _ThreadDetailErrorState({required this.isUnavailable, required this.message, required this.onRetry});
 
   final bool isUnavailable;
   final String message;
@@ -395,11 +358,7 @@ class _ThreadDetailErrorState extends StatelessWidget {
             const SizedBox(height: 16),
             Text(
               isUnavailable ? 'Unavailable' : 'Couldn\'t load',
-              style: const TextStyle(
-                color: AppTheme.textMain,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
+              style: const TextStyle(color: AppTheme.textMain, fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             Text(
@@ -450,49 +409,31 @@ class _ThreadApprovalsCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              PhosphorIcon(
-                PhosphorIcons.shieldWarning(),
-                color: AppTheme.amber,
-                size: 20,
-              ),
+              PhosphorIcon(PhosphorIcons.shieldWarning(), color: AppTheme.amber, size: 20),
               const SizedBox(width: 8),
               const Expanded(
                 child: Text(
                   'Pending Approvals',
-                  style: TextStyle(
-                    color: AppTheme.amber,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 16,
-                  ),
+                  style: TextStyle(color: AppTheme.amber, fontWeight: FontWeight.w600, fontSize: 16),
                 ),
               ),
               IconButton(
                 onPressed: onRefresh,
-                icon: PhosphorIcon(
-                  PhosphorIcons.arrowsClockwise(),
-                  color: AppTheme.amber,
-                  size: 20,
-                ),
+                icon: PhosphorIcon(PhosphorIcons.arrowsClockwise(), color: AppTheme.amber, size: 20),
               ),
             ],
           ),
           if (errorMessage != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                errorMessage!,
-                style: const TextStyle(color: AppTheme.rose, fontSize: 13),
-              ),
+              child: Text(errorMessage!, style: const TextStyle(color: AppTheme.rose, fontSize: 13)),
             ),
           const SizedBox(height: 12),
           ...approvals.map(
             (item) => Container(
               margin: const EdgeInsets.only(bottom: 8),
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.black26,
-                borderRadius: BorderRadius.circular(12),
-              ),
+              decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(12)),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -501,28 +442,16 @@ class _ThreadApprovalsCard extends StatelessWidget {
                     children: [
                       Text(
                         approvalActionLabel(item.approval.action),
-                        style: const TextStyle(
-                          color: AppTheme.textMain,
-                          fontWeight: FontWeight.w500,
-                        ),
+                        style: const TextStyle(color: AppTheme.textMain, fontWeight: FontWeight.w500),
                       ),
                       Text(
                         approvalStatusLabel(item.approval.status),
-                        style: GoogleFonts.jetBrainsMono(
-                          color: AppTheme.textSubtle,
-                          fontSize: 10,
-                        ),
+                        style: GoogleFonts.jetBrainsMono(color: AppTheme.textSubtle, fontSize: 10),
                       ),
                     ],
                   ),
                   const SizedBox(height: 4),
-                  Text(
-                    item.approval.reason,
-                    style: const TextStyle(
-                      color: AppTheme.textMuted,
-                      fontSize: 13,
-                    ),
-                  ),
+                  Text(item.approval.reason, style: const TextStyle(color: AppTheme.textMuted, fontSize: 13)),
                 ],
               ),
             ),
@@ -545,10 +474,7 @@ class _EmptyTimelineState extends StatelessWidget {
           children: [
             Icon(Icons.history_rounded, size: 32, color: AppTheme.textSubtle),
             SizedBox(height: 16),
-            Text(
-              'No timeline entries yet.',
-              style: TextStyle(color: AppTheme.textMuted),
-            ),
+            Text('No timeline entries yet.', style: TextStyle(color: AppTheme.textMuted)),
           ],
         ),
       ),
@@ -571,10 +497,7 @@ class _InlineWarning extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppTheme.rose.withValues(alpha: 0.3)),
       ),
-      child: Text(
-        message,
-        style: const TextStyle(color: AppTheme.rose, fontSize: 13),
-      ),
+      child: Text(message, style: const TextStyle(color: AppTheme.rose, fontSize: 13)),
     );
   }
 }
@@ -594,19 +517,13 @@ class _InlineInfo extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppTheme.emerald.withValues(alpha: 0.3)),
       ),
-      child: Text(
-        message,
-        style: const TextStyle(color: AppTheme.emerald, fontSize: 13),
-      ),
+      child: Text(message, style: const TextStyle(color: AppTheme.emerald, fontSize: 13)),
     );
   }
 }
 
 class _MutatingActionsBlockedNotice extends StatelessWidget {
-  const _MutatingActionsBlockedNotice({
-    required this.message,
-    required this.onRetryReconnect,
-  });
+  const _MutatingActionsBlockedNotice({required this.message, required this.onRetryReconnect});
 
   final String message;
   final Future<void> Function()? onRetryReconnect;
@@ -624,21 +541,13 @@ class _MutatingActionsBlockedNotice extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            message,
-            style: const TextStyle(color: AppTheme.textMuted, fontSize: 13),
-          ),
+          Text(message, style: const TextStyle(color: AppTheme.textMuted, fontSize: 13)),
           if (onRetryReconnect != null) ...[
             const SizedBox(height: 8),
             OutlinedButton(
               onPressed: onRetryReconnect,
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Colors.white12),
-              ),
-              child: const Text(
-                'Retry reconnect',
-                style: TextStyle(color: AppTheme.textMain),
-              ),
+              style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.white12)),
+              child: const Text('Retry reconnect', style: TextStyle(color: AppTheme.textMain)),
             ),
           ],
         ],
