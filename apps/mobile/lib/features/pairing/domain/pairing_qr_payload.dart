@@ -72,7 +72,7 @@ class PairingQrPayload {
       ]),
     );
 
-    if (parsed.contractVersion != bridge_contracts.contractVersion) {
+    if (!_isSupportedPairingContractVersion(parsed.contractVersion)) {
       throw const FormatException('Unsupported pairing contract version.');
     }
 
@@ -97,6 +97,15 @@ class PairingQrPayload {
 
     return parsed;
   }
+}
+
+bool _isSupportedPairingContractVersion(String contractVersion) {
+  final normalized = contractVersion.trim();
+  if (normalized == bridge_contracts.contractVersion) {
+    return true;
+  }
+
+  return RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(normalized);
 }
 
 PairingQrPayload decodePairingQrPayload(String rawPayload) {

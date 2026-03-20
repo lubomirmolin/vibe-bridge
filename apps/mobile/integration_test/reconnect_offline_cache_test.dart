@@ -77,19 +77,15 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Pair your phone to this Mac'), findsOneWidget);
+    expect(find.text('Initialize Pairing'), findsOneWidget);
 
-    await tester.tap(find.text('Scan pairing QR'));
+    await tester.tap(find.text('Initialize Pairing'));
     await tester.pumpAndSettle();
 
-    await tester.enterText(
-      find.byKey(const Key('manual-payload-input')),
-      _validPairingPayloadJson(),
-    );
-    await tester.tap(find.text('Submit scanned payload'));
+    await _submitPayloadFromController(tester, _validPairingPayloadJson());
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Confirm trust'));
+    await tester.tap(find.text('Trust & Connect'));
     await tester.pumpAndSettle();
 
     expect(find.text('Threads'), findsOneWidget);
@@ -162,8 +158,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Pair your phone to this Mac'), findsOneWidget);
-      expect(find.text('Re-pair required for security'), findsOneWidget);
+      expect(find.text('Initialize Pairing'), findsOneWidget);
+      expect(find.text('Re-pair required'), findsOneWidget);
       expect(
         find.text(
           'Trust was revoked for this session. Re-pair from the Mac pairing QR.',
@@ -218,8 +214,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Pair your phone to this Mac'), findsOneWidget);
-      expect(find.text('Re-pair required for security'), findsOneWidget);
+      expect(find.text('Initialize Pairing'), findsOneWidget);
+      expect(find.text('Re-pair required'), findsOneWidget);
       expect(
         find.text(
           'Stored bridge identity did not match the active bridge. Re-pair is required.',
@@ -240,21 +236,6 @@ void main() {
       final cacheRepository = _newCacheRepository();
       await cacheRepository.saveThreadList(_threadSummaries());
       await cacheRepository.saveSelectedThreadId('thread-456');
-      await cacheRepository.saveThreadDetail(
-        detail: _threadDetail(
-          threadId: 'thread-456',
-          title: 'Investigate reconnect dedup',
-          status: ThreadStatus.idle,
-        ),
-        timeline: [
-          _timelineEvent(
-            id: 'evt-cached-1',
-            summary: 'Cached timeline item',
-            payload: {'delta': 'Cached timeline item'},
-            occurredAt: '2026-03-18T10:01:00Z',
-          ),
-        ],
-      );
 
       await tester.pumpWidget(
         ProviderScope(
@@ -457,21 +438,6 @@ void main() {
       );
       await cacheRepository.saveThreadList(_threadSummaries());
       await cacheRepository.saveSelectedThreadId('thread-123');
-      await cacheRepository.saveThreadDetail(
-        detail: _threadDetail(
-          threadId: 'thread-123',
-          title: 'Implement shared contracts',
-          status: ThreadStatus.running,
-        ),
-        timeline: [
-          _timelineEvent(
-            id: 'evt-base-restore',
-            summary: 'Cached base timeline event',
-            payload: {'delta': 'Cached base timeline event'},
-            occurredAt: '2026-03-18T10:00:00Z',
-          ),
-        ],
-      );
 
       final pairingBridgeApi = FakePairingBridgeApi(
         handshakeScript: const [
@@ -577,7 +543,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Bridge disconnected'), findsOneWidget);
+      expect(find.text('Disconnected'), findsOneWidget);
       expect(
         find.text(
           'Private bridge path is currently unreachable. Reconnect to Tailscale and retry.',
@@ -591,7 +557,7 @@ void main() {
       expect(find.text('Paired with Codex Mobile Companion'), findsOneWidget);
       expect(pairingBridgeApi.handshakeCalls, greaterThanOrEqualTo(2));
 
-      await tester.tap(find.text('Open threads'));
+      await tester.tap(find.text('Open sessions'));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
@@ -723,6 +689,18 @@ Future<void> _pumpUntilFound(
     }
     await tester.pump(const Duration(milliseconds: 100));
   }
+}
+
+Future<void> _submitPayloadFromController(
+  WidgetTester tester,
+  String payload,
+) async {
+  final container = ProviderScope.containerOf(
+    tester.element(find.byType(PairingFlowPage)),
+  );
+  container
+      .read(pairingControllerProvider.notifier)
+      .submitScannedPayload(payload);
 }
 
 Future<void> _scrollUntilVisible(WidgetTester tester, Finder finder) async {
@@ -971,6 +949,32 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     }
 
     throw StateError('Unsupported detail scripted result: $scriptedResult');
+  }
+
+  @override
+  Future<ThreadTimelinePageDto> fetchThreadTimelinePage({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? before,
+    int limit = 50,
+  }) async {
+    final detail = await fetchThreadDetail(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+    );
+
+    final entries = await fetchThreadTimeline(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+    );
+
+    return ThreadTimelinePageDto(
+      contractVersion: contractVersion,
+      thread: detail,
+      entries: entries,
+      nextBefore: null,
+      hasMoreBefore: false,
+    );
   }
 
   @override
