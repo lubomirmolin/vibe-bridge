@@ -1119,6 +1119,7 @@ fn merge_thread_snapshots(
     for rpc_record in rpc_records {
         let thread_id = rpc_record.id.clone();
         seen_thread_ids.insert(thread_id.clone());
+        let archive_record = archive_records_by_id.remove(&thread_id);
         let archive_timeline = archive_timeline_by_thread_id
             .get(&thread_id)
             .cloned()
@@ -1131,23 +1132,32 @@ fn merge_thread_snapshots(
             archive_timeline,
         );
 
+        let merged_record = merge_detail_record_for_thread(
+            rpc_record,
+            archive_record.as_ref(),
+            &merged_timeline,
+            archive_timeline_by_thread_id
+                .get(&thread_id)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+        );
+
         merged_timeline_by_thread_id.insert(thread_id.clone(), merged_timeline);
-        merged_records.push(rpc_record);
-        archive_records_by_id.remove(&thread_id);
+        merged_records.push(merged_record);
     }
 
-    for (thread_id, archive_record) in archive_records_by_id {
+    for (thread_id, mut archive_record) in archive_records_by_id {
         if !seen_thread_ids.insert(thread_id.clone()) {
             continue;
         }
 
-        merged_timeline_by_thread_id.insert(
-            thread_id.clone(),
-            archive_timeline_by_thread_id
-                .get(&thread_id)
-                .cloned()
-                .unwrap_or_default(),
-        );
+        let archive_timeline = archive_timeline_by_thread_id
+            .get(&thread_id)
+            .cloned()
+            .unwrap_or_default();
+        cohere_detail_record_with_timeline(&mut archive_record, &archive_timeline);
+
+        merged_timeline_by_thread_id.insert(thread_id.clone(), archive_timeline);
         merged_records.push(archive_record);
     }
 
@@ -1207,6 +1217,164 @@ fn sort_timeline_events(mut events: Vec<UpstreamTimelineEvent>) -> Vec<UpstreamT
     // same snapshot stay grouped deterministically across pagination boundaries.
     events.sort_by(|left, right| left.happened_at.cmp(&right.happened_at));
     events
+}
+
+fn merge_detail_record_for_thread(
+    mut rpc_record: UpstreamThreadRecord,
+    archive_record: Option<&UpstreamThreadRecord>,
+    merged_timeline: &[UpstreamTimelineEvent],
+    archive_timeline: &[UpstreamTimelineEvent],
+) -> UpstreamThreadRecord {
+    if let Some(archive_record) = archive_record {
+        if should_prefer_archive_metadata(&rpc_record, archive_record, archive_timeline) {
+            rpc_record.headline = archive_record.headline.clone();
+            rpc_record.lifecycle_state = archive_record.lifecycle_state.clone();
+            rpc_record.workspace_path = archive_record.workspace_path.clone();
+            rpc_record.repository_name = archive_record.repository_name.clone();
+            rpc_record.branch_name = archive_record.branch_name.clone();
+            rpc_record.remote_name = archive_record.remote_name.clone();
+            rpc_record.source = archive_record.source.clone();
+        } else {
+            backfill_detail_identity_from_archive(&mut rpc_record, archive_record);
+            if rpc_record.lifecycle_state == "idle" && archive_record.lifecycle_state != "idle" {
+                rpc_record.lifecycle_state = archive_record.lifecycle_state.clone();
+            }
+        }
+    }
+
+    cohere_detail_record_with_timeline(&mut rpc_record, merged_timeline);
+    rpc_record
+}
+
+fn should_prefer_archive_metadata(
+    rpc_record: &UpstreamThreadRecord,
+    archive_record: &UpstreamThreadRecord,
+    archive_timeline: &[UpstreamTimelineEvent],
+) -> bool {
+    let archive_freshness = latest_visible_timeline_timestamp(archive_timeline)
+        .unwrap_or_else(|| archive_record.updated_at.clone());
+    if !archive_freshness.is_empty() && archive_freshness > rpc_record.updated_at {
+        return true;
+    }
+
+    detail_identity_looks_placeholder(rpc_record)
+        && !detail_identity_looks_placeholder(archive_record)
+}
+
+fn backfill_detail_identity_from_archive(
+    rpc_record: &mut UpstreamThreadRecord,
+    archive_record: &UpstreamThreadRecord,
+) {
+    if is_placeholder_title(&rpc_record.headline) && !is_placeholder_title(&archive_record.headline)
+    {
+        rpc_record.headline = archive_record.headline.clone();
+    }
+    if rpc_record.workspace_path.trim().is_empty()
+        && !archive_record.workspace_path.trim().is_empty()
+    {
+        rpc_record.workspace_path = archive_record.workspace_path.clone();
+    }
+    if is_placeholder_repository(&rpc_record.repository_name)
+        && !is_placeholder_repository(&archive_record.repository_name)
+    {
+        rpc_record.repository_name = archive_record.repository_name.clone();
+    }
+    if is_placeholder_branch(&rpc_record.branch_name)
+        && !is_placeholder_branch(&archive_record.branch_name)
+    {
+        rpc_record.branch_name = archive_record.branch_name.clone();
+    }
+    if is_placeholder_source(&rpc_record.source) && !is_placeholder_source(&archive_record.source) {
+        rpc_record.source = archive_record.source.clone();
+    }
+}
+
+fn cohere_detail_record_with_timeline(
+    thread_record: &mut UpstreamThreadRecord,
+    timeline: &[UpstreamTimelineEvent],
+) {
+    if let Some(latest_visible_at) = latest_visible_timeline_timestamp(timeline)
+        && (thread_record.updated_at.trim().is_empty()
+            || latest_visible_at > thread_record.updated_at)
+    {
+        thread_record.updated_at = latest_visible_at;
+    }
+
+    if let Some(summary) = latest_substantive_timeline_summary(timeline) {
+        thread_record.last_turn_summary = summary;
+    }
+
+    if let Some(lifecycle_state) = latest_timeline_lifecycle_state(timeline) {
+        thread_record.lifecycle_state = lifecycle_state;
+    }
+}
+
+fn latest_visible_timeline_timestamp(timeline: &[UpstreamTimelineEvent]) -> Option<String> {
+    timeline
+        .iter()
+        .filter_map(|event| {
+            let timestamp = event.happened_at.trim();
+            if timestamp.is_empty() {
+                None
+            } else {
+                Some(timestamp.to_string())
+            }
+        })
+        .max()
+}
+
+fn latest_substantive_timeline_summary(timeline: &[UpstreamTimelineEvent]) -> Option<String> {
+    timeline.iter().rev().find_map(|event| {
+        let summary = event.summary_text.trim();
+        if summary.is_empty() {
+            return None;
+        }
+        if event.event_type == "command_output_delta"
+            && (summary == "Command completed" || summary.starts_with("Called "))
+        {
+            return None;
+        }
+        Some(summary.to_string())
+    })
+}
+
+fn latest_timeline_lifecycle_state(timeline: &[UpstreamTimelineEvent]) -> Option<String> {
+    timeline.iter().rev().find_map(|event| {
+        if event.event_type != "thread_status_changed" {
+            return None;
+        }
+        event
+            .data
+            .get("status")
+            .and_then(Value::as_str)
+            .map(map_wire_thread_status_to_lifecycle_state)
+    })
+}
+
+fn detail_identity_looks_placeholder(record: &UpstreamThreadRecord) -> bool {
+    is_placeholder_title(&record.headline)
+        || record.workspace_path.trim().is_empty()
+        || is_placeholder_repository(&record.repository_name)
+        || is_placeholder_branch(&record.branch_name)
+        || is_placeholder_source(&record.source)
+}
+
+fn is_placeholder_title(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.is_empty() || trimmed == "Untitled thread"
+}
+
+fn is_placeholder_repository(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.is_empty() || trimmed == "unknown-repository"
+}
+
+fn is_placeholder_branch(value: &str) -> bool {
+    value.trim().is_empty() || value.trim() == "unknown"
+}
+
+fn is_placeholder_source(value: &str) -> bool {
+    value.trim().is_empty() || value.trim() == "unknown"
 }
 
 fn timeline_event_fingerprint(event: &UpstreamTimelineEvent) -> String {
@@ -4599,6 +4767,108 @@ mod tests {
             timeline[2].data["resolved_unified_diff"],
             "diff --git a/lib/main.dart b/lib/main.dart\n--- a/lib/main.dart\n+++ b/lib/main.dart"
         );
+    }
+
+    #[test]
+    fn merge_thread_snapshots_prefers_fresher_archive_metadata_for_real_thread_detail_parity() {
+        let thread_id = "019d0d0c-07df-7632-81fa-a1636651400a";
+        let rpc_snapshot = (
+            vec![UpstreamThreadRecord {
+                id: thread_id.to_string(),
+                headline: "Delegate subagents to fix tests".to_string(),
+                lifecycle_state: "idle".to_string(),
+                workspace_path: "/Users/lubomirmolin/PhpstormProjects/wrong-workspace".to_string(),
+                repository_name: "wrong-workspace".to_string(),
+                branch_name: "feature/wrong-thread".to_string(),
+                remote_name: "origin".to_string(),
+                git_dirty: false,
+                git_ahead_by: 0,
+                git_behind_by: 0,
+                created_at: "2026-03-20T20:59:45.000Z".to_string(),
+                updated_at: "2026-03-20T21:40:09.000Z".to_string(),
+                source: "cli".to_string(),
+                approval_mode: "control_with_approvals".to_string(),
+                last_turn_summary: "can you help me debug why the threads detail is very spotty?"
+                    .to_string(),
+            }],
+            HashMap::from([(
+                thread_id.to_string(),
+                vec![UpstreamTimelineEvent {
+                    id: "rpc-last-event".to_string(),
+                    event_type: "command_output_delta".to_string(),
+                    happened_at: "2026-03-20T21:40:09.000Z".to_string(),
+                    summary_text: "Command: /bin/zsh -lc pgrep".to_string(),
+                    data: json!({"command": "pgrep -fal bridge-server"}),
+                }],
+            )]),
+        );
+
+        let archive_snapshot = (
+            vec![UpstreamThreadRecord {
+                id: thread_id.to_string(),
+                headline: "Investigate thread detail sync".to_string(),
+                lifecycle_state: "done".to_string(),
+                workspace_path: "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion"
+                    .to_string(),
+                repository_name: "codex-mobile-companion".to_string(),
+                branch_name: "master".to_string(),
+                remote_name: "local".to_string(),
+                git_dirty: false,
+                git_ahead_by: 0,
+                git_behind_by: 0,
+                created_at: "2026-03-20T20:59:45.512Z".to_string(),
+                updated_at: "2026-03-20T21:04:34.235Z".to_string(),
+                source: "vscode".to_string(),
+                approval_mode: "control_with_approvals".to_string(),
+                last_turn_summary: "kill all old servers or apps".to_string(),
+            }],
+            HashMap::from([(
+                thread_id.to_string(),
+                vec![UpstreamTimelineEvent {
+                    id: format!("{thread_id}-archive-2"),
+                    event_type: "agent_message_delta".to_string(),
+                    happened_at: "2026-03-20T21:40:09.107Z".to_string(),
+                    summary_text: "All of the old local app/server processes are down.".to_string(),
+                    data: json!({"delta": "All of the old local app/server processes are down.", "role": "assistant"}),
+                }],
+            )]),
+        );
+
+        let (records, timeline_by_thread_id) =
+            super::merge_thread_snapshots(rpc_snapshot, archive_snapshot);
+
+        let merged_record = records
+            .iter()
+            .find(|record| record.id == thread_id)
+            .expect("merged thread record should exist");
+        assert_eq!(merged_record.headline, "Investigate thread detail sync");
+        assert_eq!(
+            merged_record.workspace_path,
+            "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion"
+        );
+        assert_eq!(merged_record.repository_name, "codex-mobile-companion");
+        assert_eq!(merged_record.branch_name, "master");
+        assert_eq!(merged_record.source, "vscode");
+        assert_eq!(merged_record.lifecycle_state, "done");
+        assert_eq!(
+            merged_record.last_turn_summary,
+            "All of the old local app/server processes are down."
+        );
+        assert_eq!(merged_record.updated_at, "2026-03-20T21:40:09.107Z");
+
+        let detail = super::map_thread_detail(merged_record);
+        assert_eq!(detail.status, ThreadStatus::Completed);
+        assert_eq!(
+            detail.last_turn_summary,
+            "All of the old local app/server processes are down."
+        );
+        assert_eq!(detail.updated_at, "2026-03-20T21:40:09.107Z");
+
+        let timeline = timeline_by_thread_id
+            .get(thread_id)
+            .expect("merged timeline should exist");
+        assert_eq!(timeline.len(), 2);
+        assert_eq!(timeline[1].id, format!("{thread_id}-archive-2"));
     }
 
     #[test]
