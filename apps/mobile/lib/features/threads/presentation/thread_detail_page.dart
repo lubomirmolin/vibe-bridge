@@ -34,7 +34,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
     super.key,
     required this.bridgeApiBaseUrl,
     required this.threadId,
-    this.initialVisibleTimelineEntries = 20,
+    this.initialVisibleTimelineEntries = 80,
   });
 
   final String bridgeApiBaseUrl;

@@ -238,6 +238,7 @@ class _ApprovalDetailPageState extends ConsumerState<ApprovalDetailPage> {
                             Expanded(
                               child: Text(
                                 'ID: ${approval.approvalId}',
+                                key: const Key('approval-detail-id'),
                                 style: GoogleFonts.jetBrainsMono(
                                   color: AppTheme.textSubtle,
                                   fontSize: 10,
@@ -502,6 +503,7 @@ class _Header extends StatelessWidget {
       child: Row(
         children: [
           IconButton(
+            key: const Key('approval-detail-back-button'),
             onPressed: () => Navigator.of(context).pop(),
             icon: PhosphorIcon(
               PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),

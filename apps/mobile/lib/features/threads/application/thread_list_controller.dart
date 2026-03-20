@@ -173,6 +173,8 @@ class ThreadListController extends StateNotifier<ThreadListState> {
   bool _isReconnectInProgress = false;
   bool _isDisposed = false;
 
+  bool get _canMutateState => mounted && !_isDisposed;
+
   Future<void> _initialize() async {
     await _restoreSelectedThreadId();
     await _restoreCachedThreadList();
@@ -182,7 +184,7 @@ class ThreadListController extends StateNotifier<ThreadListState> {
 
   Future<void> _restoreSelectedThreadId() async {
     final selectedThreadId = await _cacheRepository.readSelectedThreadId();
-    if (selectedThreadId == null) {
+    if (!_canMutateState || selectedThreadId == null) {
       return;
     }
 
@@ -191,7 +193,7 @@ class ThreadListController extends StateNotifier<ThreadListState> {
 
   Future<void> _restoreCachedThreadList() async {
     final cached = await _cacheRepository.readThreadList();
-    if (cached == null || cached.threads.isEmpty) {
+    if (!_canMutateState || cached == null || cached.threads.isEmpty) {
       return;
     }
 
@@ -204,6 +206,9 @@ class ThreadListController extends StateNotifier<ThreadListState> {
   }
 
   Future<void> loadThreads() async {
+    if (!_canMutateState) {
+      return;
+    }
     state = state.copyWith(
       isLoading: true,
       clearErrorMessage: true,
@@ -216,6 +221,9 @@ class ThreadListController extends StateNotifier<ThreadListState> {
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
       );
       await _cacheRepository.saveThreadList(threads);
+      if (!_canMutateState) {
+        return;
+      }
 
       state = state.copyWith(
         threads: threads,
@@ -225,8 +233,14 @@ class ThreadListController extends StateNotifier<ThreadListState> {
         isShowingCachedData: false,
       );
     } on ThreadListBridgeException catch (error) {
+      if (!_canMutateState) {
+        return;
+      }
       if (error.isConnectivityError) {
         final cachedList = await _cacheRepository.readThreadList();
+        if (!_canMutateState) {
+          return;
+        }
         if (cachedList != null && cachedList.threads.isNotEmpty) {
           state = state.copyWith(
             threads: cachedList.threads,
@@ -253,6 +267,9 @@ class ThreadListController extends StateNotifier<ThreadListState> {
 
       state = state.copyWith(errorMessage: error.message, isLoading: false);
     } catch (_) {
+      if (!_canMutateState) {
+        return;
+      }
       state = state.copyWith(
         errorMessage: 'Couldn’t load threads from the bridge.',
         isLoading: false,
@@ -341,6 +358,10 @@ class ThreadListController extends StateNotifier<ThreadListState> {
       final subscription = await _liveStream.subscribe(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
       );
+      if (!_canMutateState) {
+        await subscription.close();
+        return;
+      }
       _liveSubscription = subscription;
       _liveEventSubscription = subscription.events.listen(
         _handleLiveEvent,
@@ -459,6 +480,9 @@ class ThreadListController extends StateNotifier<ThreadListState> {
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
       );
       await _cacheRepository.saveThreadList(threads);
+      if (!_canMutateState) {
+        return false;
+      }
 
       state = state.copyWith(
         threads: threads,
@@ -470,6 +494,9 @@ class ThreadListController extends StateNotifier<ThreadListState> {
 
       return true;
     } on ThreadListBridgeException catch (error) {
+      if (!_canMutateState) {
+        return false;
+      }
       if (error.isConnectivityError) {
         if (state.threads.isNotEmpty) {
           state = state.copyWith(

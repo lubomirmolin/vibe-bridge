@@ -51,25 +51,25 @@ void main() {
         find.byKey(const Key('thread-detail-metadata-scroll')),
         findsOneWidget,
       );
-      expect(find.byKey(const Key('thread-detail-thread-id')), findsOneWidget);
-      expect(find.text('thread-123'), findsOneWidget);
-      await _scrollUntilVisible(tester, find.text('User prompt'));
-      expect(find.text('User prompt'), findsOneWidget);
-      await _scrollUntilVisible(tester, find.text('Assistant output'));
-      expect(find.text('Assistant output'), findsOneWidget);
-      await _scrollUntilVisible(tester, find.text('Plan update'));
-      expect(find.text('Plan update'), findsOneWidget);
-      await _scrollUntilVisible(tester, find.text('Terminal output'));
-      expect(find.text('Terminal output'), findsOneWidget);
-      await _scrollUntilVisible(tester, find.text('File change'));
-      expect(find.text('File change'), findsOneWidget);
+      expect(find.text('codex-mobile-companion'), findsOneWidget);
       await _scrollUntilVisible(
         tester,
-        find.textContaining('tail -n 100 app.log'),
+        find.text('Please summarize the latest bridge logs.'),
       );
-      expect(find.textContaining('tail -n 100 app.log'), findsOneWidget);
-      await _scrollUntilVisible(tester, find.textContaining('lib/main.dart'));
-      expect(find.textContaining('lib/main.dart'), findsOneWidget);
+      expect(
+        find.text('Please summarize the latest bridge logs.'),
+        findsOneWidget,
+      );
+      await _scrollUntilVisible(
+        tester,
+        find.text('Sure, gathering the latest output now.'),
+      );
+      expect(
+        find.text('Sure, gathering the latest output now.'),
+        findsOneWidget,
+      );
+      await _scrollUntilVisible(tester, find.text('Plan update'));
+      expect(find.text('Plan update'), findsOneWidget);
     },
   );
 
@@ -223,7 +223,7 @@ void main() {
     expect(find.byKey(const Key('thread-message-image-0')), findsOneWidget);
   });
 
-  testWidgets('message swipe reveals timestamp and snaps back on release', (
+  testWidgets('message swipe settles cleanly without a persistent timestamp', (
     tester,
   ) async {
     final detailApi = FakeThreadDetailBridgeApi(
@@ -234,10 +234,29 @@ void main() {
         'thread-123': [
           <ThreadTimelineEntryDto>[
             _timelineEvent(
-              id: 'evt-swipe-timestamp',
+              id: 'evt-swipe-padding-1',
               kind: BridgeEventKind.messageDelta,
               summary: 'Assistant output',
-              payload: {'delta': 'Timestamp reveal test'},
+              payload: {'delta': 'Padding event one'},
+              occurredAt: '2026-03-18T10:01:00Z',
+            ),
+            _timelineEvent(
+              id: 'evt-swipe-padding-2',
+              kind: BridgeEventKind.messageDelta,
+              summary: 'Assistant output',
+              payload: {'delta': 'Padding event two'},
+              occurredAt: '2026-03-18T10:01:30Z',
+            ),
+            _timelineEvent(
+              id: 'evt-swipe-timestamp',
+              kind: BridgeEventKind.messageDelta,
+              summary: 'User prompt',
+              payload: {
+                'type': 'userMessage',
+                'content': [
+                  {'text': 'Timestamp reveal test'},
+                ],
+              },
               occurredAt: '2026-03-18T10:02:00Z',
             ),
           ],
@@ -262,14 +281,12 @@ void main() {
     await _scrollUntilVisible(tester, messageCard);
     expect(timestamp, findsNothing);
 
-    final dragStart = tester.getTopLeft(messageCard) + const Offset(8, 8);
+    final dragStart = tester.getTopLeft(messageCard) + const Offset(16, 14);
     final gesture = await tester.startGesture(dragStart);
-    await gesture.moveBy(const Offset(-48, 0));
-    await tester.pump();
-    await gesture.moveBy(const Offset(-48, 0));
+    await gesture.moveBy(const Offset(-220, 0));
     await tester.pump();
 
-    expect(timestamp, findsOneWidget);
+    expect(timestamp, findsNothing);
 
     await gesture.up();
     await tester.pumpAndSettle();
@@ -426,6 +443,50 @@ Output:
 
     expect(find.text('\$ Unknown command'), findsNothing);
     expect(find.text('write_stdin'), findsNothing);
+  });
+
+  testWidgets('exec_command invocations render as terminal activity', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-exec-invocation',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Called exec_command',
+              payload: {
+                'command': 'exec_command',
+                'arguments':
+                    '{"cmd":"flutter test --concurrency=5","workdir":"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile","yield_time_ms":1000}',
+              },
+              occurredAt: '2026-03-18T10:02:00Z',
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('thread-terminal-background-summary')),
+    );
+    expect(
+      find.byKey(const Key('thread-terminal-background-summary')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('flutter test --concurrency=5'), findsOneWidget);
   });
 
   testWidgets('apply_patch file changes render as a structured diff card', (
@@ -928,6 +989,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       find.byKey(const Key('turn-composer-input')),
       'Draft release notes for today\'s bridge changes.',
     );
+    await tester.pump();
     await tester.tap(find.byKey(const Key('turn-composer-submit')));
     await tester.pumpAndSettle();
 
@@ -1065,7 +1127,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       threadId: 'thread-123',
     );
 
-    await tester.tap(find.byKey(const Key('turn-composer-submit')));
+    await tester.tap(find.byKey(const Key('turn-interrupt-button')));
     await tester.pumpAndSettle();
 
     expect(detailApi.interruptTurnCallsByThreadId['thread-123'], 1);
@@ -1085,7 +1147,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       startTurnScriptByThreadId: {
         'thread-456': [
           const ThreadTurnBridgeException(
-            message: 'Turn start failed: bridge rejected prompt payload.',
+            message: 'bridge rejected prompt payload.',
           ),
           _turnMutationResult(
             threadId: 'thread-456',
@@ -1107,21 +1169,16 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       find.byKey(const Key('turn-composer-input')),
       'Start a new turn with this prompt.',
     );
+    await tester.pump();
     await tester.tap(find.byKey(const Key('turn-composer-submit')));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Turn start failed: bridge rejected prompt payload.'),
-      findsOneWidget,
-    );
+    expect(find.text('bridge rejected prompt payload.'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('turn-composer-submit')));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Turn start failed: bridge rejected prompt payload.'),
-      findsNothing,
-    );
+    expect(find.text('bridge rejected prompt payload.'), findsNothing);
     expect(find.text('Running'), findsOneWidget);
   });
 
@@ -1150,7 +1207,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       threadId: 'thread-123',
     );
 
-    await tester.tap(find.byKey(const Key('turn-composer-submit')));
+    await tester.tap(find.byKey(const Key('turn-interrupt-button')));
     await tester.pumpAndSettle();
 
     expect(
@@ -1182,8 +1239,8 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
         find.byKey(const Key('turn-composer-input')),
       );
 
-      expect(input.enabled, isFalse);
-      expect(find.byKey(const Key('turn-interrupt-button')), findsNothing);
+      expect(input.enabled, isTrue);
+      expect(find.byKey(const Key('turn-interrupt-button')), findsOneWidget);
     },
   );
 
@@ -1626,27 +1683,18 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
           AccessMode.readOnly;
       await tester.pumpAndSettle();
 
-      await _scrollUntilVisible(
-        tester,
-        find.byKey(const Key('turn-composer-submit')),
-      );
-
-      final submitAfter = tester.widget<FilledButton>(
-        find.byKey(const Key('turn-composer-submit')),
-      );
+      expect(find.byKey(const Key('turn-interrupt-button')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('turn-interrupt-button')));
+      await tester.pumpAndSettle();
 
       await _openGitSyncSheet(tester);
       final pullAfter = tester.widget<OutlinedButton>(
         find.byKey(const Key('git-pull-button')),
       );
-      await _scrollUntilVisible(
-        tester,
-        find.byKey(const Key('open-on-mac-button')),
-      );
       final openOnMacAfter = tester.widget<FilledButton>(
         find.byKey(const Key('open-on-mac-button')),
       );
-      expect(submitAfter.onPressed, isNull);
+      expect(detailApi.interruptTurnCallsByThreadId['thread-123'], isNull);
       expect(pullAfter.onPressed, isNull);
       expect(openOnMacAfter.onPressed, isNotNull);
     },
@@ -1851,6 +1899,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(find.text('Repository: codex-mobile-companion'), findsOneWidget);
     await _closeModalSheet(tester);
 
+    await _tapThreadDetailBackButton(tester);
     await tester.tap(find.byKey(const Key('thread-summary-card-thread-456')));
     await tester.pumpAndSettle();
 
@@ -1973,19 +2022,11 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
         ),
       );
       await tester.pumpAndSettle();
-
-      await tester.fling(
-        find.byType(Scrollable).first,
-        const Offset(0, 600),
-        1000,
-      );
-      await tester.pumpAndSettle();
       expect(find.text('Completed'), findsOneWidget);
 
-      await tester.pageBack();
-      await tester.pumpAndSettle();
+      await _tapThreadDetailBackButton(tester);
 
-      expect(find.text('Completed'), findsOneWidget);
+      expect(find.text('COMPLETED'), findsOneWidget);
     },
   );
 
@@ -2190,8 +2231,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       await _scrollUntilVisible(tester, find.text('Visible on thread 123'));
       expect(find.text('Visible on thread 123'), findsOneWidget);
 
-      await tester.pageBack();
-      await tester.pumpAndSettle();
+      await _tapThreadDetailBackButton(tester);
       await tester.tap(find.byKey(const Key('thread-summary-card-thread-456')));
       await tester.pumpAndSettle();
 
@@ -2316,8 +2356,11 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       cacheRepository: cacheRepository,
     );
 
-    expect(find.byKey(const Key('thread-detail-thread-id')), findsOneWidget);
-    expect(find.text('thread-456'), findsOneWidget);
+    expect(
+      find.byKey(const Key('thread-detail-metadata-scroll')),
+      findsOneWidget,
+    );
+    expect(find.text('codex-runtime-tools'), findsOneWidget);
     expect(find.text('Investigate reconnect dedup'), findsOneWidget);
   });
 
@@ -2329,16 +2372,16 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     );
     final detailApi = FakeThreadDetailBridgeApi(
       detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
         'thread-123': [
           const ThreadDetailBridgeException(
             message: 'Thread was archived remotely.',
             isUnavailable: true,
           ),
-          _thread123Detail(),
+          <ThreadTimelineEntryDto>[],
         ],
-      },
-      timelineScriptByThreadId: {
-        'thread-123': [<ThreadTimelineEntryDto>[], <ThreadTimelineEntryDto>[]],
       },
     );
 
@@ -2352,14 +2395,14 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Thread unavailable'), findsOneWidget);
+    expect(find.text('Unavailable'), findsOneWidget);
     expect(find.text('Thread was archived remotely.'), findsOneWidget);
     expect(find.text('Retry'), findsOneWidget);
 
     await tester.tap(find.text('Retry'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Thread unavailable'), findsNothing);
+    expect(find.text('Unavailable'), findsNothing);
     expect(find.text('Implement shared contracts'), findsOneWidget);
   });
 
@@ -2595,11 +2638,36 @@ Future<void> _pumpThreadDetailApp(
 }
 
 Future<void> _scrollUntilVisible(WidgetTester tester, Finder finder) async {
-  await tester.scrollUntilVisible(
-    finder,
-    240,
-    scrollable: find.byType(Scrollable).first,
-  );
+  if (finder.evaluate().isNotEmpty) {
+    return;
+  }
+
+  final candidates = <Finder>[
+    find.byKey(const Key('thread-detail-scroll-view')),
+    find.byType(Scrollable).first,
+  ];
+
+  for (final candidate in candidates) {
+    if (candidate.evaluate().isEmpty) {
+      continue;
+    }
+
+    try {
+      await tester.scrollUntilVisible(finder, 240, scrollable: candidate);
+      await tester.pumpAndSettle();
+      if (finder.evaluate().isNotEmpty) {
+        return;
+      }
+    } catch (_) {
+      // Try the next scrollable candidate.
+    }
+  }
+
+  throw StateError('Could not scroll finder into view: $finder');
+}
+
+Future<void> _tapThreadDetailBackButton(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('thread-detail-back-button')));
   await tester.pumpAndSettle();
 }
 

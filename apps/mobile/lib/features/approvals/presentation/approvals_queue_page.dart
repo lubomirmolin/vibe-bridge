@@ -53,6 +53,7 @@ class ApprovalsQueuePage extends ConsumerWidget {
                     ),
                   ),
                   IconButton(
+                    key: const Key('approvals-queue-refresh-button'),
                     onPressed: () =>
                         controller.loadApprovals(showLoading: false),
                     icon: PhosphorIcon(PhosphorIcons.arrowsClockwise()),

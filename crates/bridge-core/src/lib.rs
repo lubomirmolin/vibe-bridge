@@ -1624,19 +1624,21 @@ fn route_thread_request(
 
     match (method, segments.as_slice()) {
         ("GET", [_]) => {
-            let thread_api = app
+            let mut thread_api = app
                 .thread_api
                 .lock()
                 .expect("thread API mutex should not be poisoned");
+            log_thread_sync_error(thread_api.sync_from_upstream());
             let mut detail = thread_api.detail_response(thread_id)?;
             detail.thread.access_mode = app.access_mode();
             Some(json_response("200 OK", &detail))
         }
         ("GET", [_, "timeline"]) => {
-            let thread_api = app
+            let mut thread_api = app
                 .thread_api
                 .lock()
                 .expect("thread API mutex should not be poisoned");
+            log_thread_sync_error(thread_api.sync_from_upstream());
             let thread_exists = thread_api.detail_response(thread_id).is_some();
             if !thread_exists {
                 return None;
