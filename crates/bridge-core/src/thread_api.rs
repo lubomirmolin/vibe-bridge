@@ -4,6 +4,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -211,14 +212,16 @@ impl ThreadApiService {
                 .map(|events| {
                     events
                         .iter()
-                        .map(|event| event.id.as_str())
-                        .collect::<HashSet<_>>()
+                        .map(|event| (event.id.as_str(), event))
+                        .collect::<HashMap<_, _>>()
                 })
                 .unwrap_or_default();
 
             if let Some(next_events) = timeline_by_thread_id.get(&thread.id) {
                 for event in next_events {
-                    if previous_event_ids.contains(event.id.as_str()) {
+                    if let Some(previous_event) = previous_event_ids.get(event.id.as_str())
+                        && *previous_event == event
+                    {
                         continue;
                     }
 
@@ -236,6 +239,53 @@ impl ThreadApiService {
         self.thread_records = thread_records;
         self.timeline_by_thread_id = timeline_by_thread_id;
         events
+    }
+
+    pub fn apply_live_event(&mut self, event: BridgeEventEnvelope<Value>) {
+        let thread_id = event.thread_id.clone();
+        let upstream_event = UpstreamTimelineEvent {
+            id: event.event_id.clone(),
+            event_type: map_bridge_kind_to_event_type(event.kind).to_string(),
+            happened_at: event.occurred_at.clone(),
+            summary_text: summarize_live_payload(event.kind, &event.payload),
+            data: event.payload.clone(),
+        };
+
+        let timeline = self
+            .timeline_by_thread_id
+            .entry(thread_id.clone())
+            .or_default();
+        if let Some(existing_index) = timeline
+            .iter()
+            .position(|entry| entry.id == upstream_event.id)
+        {
+            timeline[existing_index] = upstream_event.clone();
+        } else {
+            timeline.push(upstream_event.clone());
+        }
+
+        if let Some(thread) = self
+            .thread_records
+            .iter_mut()
+            .find(|thread| thread.id == thread_id)
+        {
+            thread.updated_at = event.occurred_at.clone();
+
+            if event.kind == BridgeEventKind::ThreadStatusChanged {
+                let next_status = event
+                    .payload
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .map(map_wire_thread_status_to_lifecycle_state);
+                if let Some(next_status) = next_status {
+                    thread.lifecycle_state = next_status;
+                }
+            }
+
+            if !upstream_event.summary_text.trim().is_empty() {
+                thread.last_turn_summary = upstream_event.summary_text;
+            }
+        }
     }
 
     pub fn sample() -> Self {
@@ -2035,6 +2085,325 @@ impl Drop for CodexRpcClient {
     }
 }
 
+#[derive(Debug)]
+pub struct CodexNotificationStream {
+    child: Child,
+    _stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    normalizer: CodexNotificationNormalizer,
+}
+
+#[derive(Debug, Default)]
+struct CodexNotificationNormalizer {
+    active_turn_id_by_thread: HashMap<String, String>,
+    items_by_event_id: HashMap<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CodexDeltaNotification {
+    delta: String,
+    #[serde(rename = "itemId")]
+    item_id: String,
+    #[serde(rename = "threadId")]
+    thread_id: String,
+    #[serde(rename = "turnId")]
+    turn_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CodexThreadStatusChangedNotification {
+    #[serde(rename = "threadId")]
+    thread_id: String,
+    status: CodexThreadStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CodexThreadRealtimeItemAddedNotification {
+    #[serde(rename = "threadId")]
+    thread_id: String,
+    item: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CodexTurnNotification {
+    #[serde(rename = "threadId")]
+    thread_id: String,
+    turn: CodexTurn,
+}
+
+impl CodexNotificationStream {
+    pub fn start(command: &str, args: &[String]) -> Result<Self, String> {
+        let mut command_args = if args.is_empty() {
+            vec!["app-server".to_string()]
+        } else {
+            args.to_vec()
+        };
+
+        if !command_args.iter().any(|arg| arg == "--listen") {
+            command_args.push("--listen".to_string());
+            command_args.push("stdio://".to_string());
+        }
+
+        let mut child = Command::new(command)
+            .args(command_args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| {
+                format!("failed to spawn codex app-server via '{command}': {error}")
+            })?;
+
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "failed to acquire codex app-server stdin".to_string())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "failed to acquire codex app-server stdout".to_string())?;
+        let mut stdout = BufReader::new(stdout);
+
+        let initialize_payload = json!({
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "clientInfo": {
+                    "name": "bridge-core",
+                    "version": CONTRACT_VERSION,
+                }
+            },
+        });
+        let line = serde_json::to_string(&initialize_payload)
+            .map_err(|error| format!("failed to serialize initialize request: {error}"))?;
+        writeln!(stdin, "{line}")
+            .map_err(|error| format!("failed to write initialize request: {error}"))?;
+        stdin
+            .flush()
+            .map_err(|error| format!("failed to flush initialize request: {error}"))?;
+
+        let mut response_line = String::new();
+        loop {
+            response_line.clear();
+            let bytes_read = stdout
+                .read_line(&mut response_line)
+                .map_err(|error| format!("failed to read initialize response: {error}"))?;
+            if bytes_read == 0 {
+                return Err("codex app-server closed stdout during initialize".to_string());
+            }
+
+            let response: Value = serde_json::from_str(response_line.trim())
+                .map_err(|error| format!("failed to parse initialize response as JSON: {error}"))?;
+
+            if response.get("id").and_then(Value::as_i64) != Some(1) {
+                continue;
+            }
+
+            if let Some(error) = response.get("error") {
+                return Err(format!(
+                    "codex rpc initialize failed: {}",
+                    error
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown error")
+                ));
+            }
+
+            break;
+        }
+
+        Ok(Self {
+            child,
+            _stdin: stdin,
+            stdout,
+            normalizer: CodexNotificationNormalizer::default(),
+        })
+    }
+
+    pub fn next_event(&mut self) -> Result<Option<BridgeEventEnvelope<Value>>, String> {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let bytes_read = self
+                .stdout
+                .read_line(&mut line)
+                .map_err(|error| format!("failed to read codex notification: {error}"))?;
+            if bytes_read == 0 {
+                return Ok(None);
+            }
+
+            let message: Value = match serde_json::from_str(line.trim()) {
+                Ok(message) => message,
+                Err(_) => continue,
+            };
+
+            if message.get("id").is_some() {
+                continue;
+            }
+
+            let Some(method) = message.get("method").and_then(Value::as_str) else {
+                continue;
+            };
+            let params = message.get("params").cloned().unwrap_or(Value::Null);
+
+            if let Some(event) = self.normalizer.normalize(method, &params) {
+                return Ok(Some(event));
+            }
+        }
+    }
+}
+
+impl Drop for CodexNotificationStream {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl CodexNotificationNormalizer {
+    fn normalize(&mut self, method: &str, params: &Value) -> Option<BridgeEventEnvelope<Value>> {
+        match method {
+            "turn/started" => {
+                let notification: CodexTurnNotification =
+                    serde_json::from_value(params.clone()).ok()?;
+                self.active_turn_id_by_thread
+                    .insert(notification.thread_id, notification.turn.id);
+                None
+            }
+            "turn/completed" => {
+                let notification: CodexTurnNotification =
+                    serde_json::from_value(params.clone()).ok()?;
+                if self
+                    .active_turn_id_by_thread
+                    .get(&notification.thread_id)
+                    .is_some_and(|turn_id| turn_id == &notification.turn.id)
+                {
+                    self.active_turn_id_by_thread
+                        .remove(&notification.thread_id);
+                }
+                None
+            }
+            "thread/status/changed" => {
+                let notification: CodexThreadStatusChangedNotification =
+                    serde_json::from_value(params.clone()).ok()?;
+                let occurred_at = current_epoch_millis_string();
+                Some(BridgeEventEnvelope::new(
+                    format!("{}-status-{occurred_at}", notification.thread_id),
+                    notification.thread_id,
+                    BridgeEventKind::ThreadStatusChanged,
+                    occurred_at,
+                    json!({
+                        "status": match map_thread_status(&map_codex_status_to_lifecycle_state(&notification.status.kind)) {
+                            ThreadStatus::Idle => "idle",
+                            ThreadStatus::Running => "running",
+                            ThreadStatus::Completed => "completed",
+                            ThreadStatus::Interrupted => "interrupted",
+                            ThreadStatus::Failed => "failed",
+                        },
+                        "reason": "upstream_notification",
+                    }),
+                ))
+            }
+            "thread/realtime/itemAdded" => {
+                let notification: CodexThreadRealtimeItemAddedNotification =
+                    serde_json::from_value(params.clone()).ok()?;
+                self.normalize_item_added(notification)
+            }
+            "item/agentMessage/delta" => self.normalize_delta(
+                params,
+                BridgeEventKind::MessageDelta,
+                "agentMessage",
+                DeltaTarget::Text,
+            ),
+            "item/plan/delta" => self.normalize_delta(
+                params,
+                BridgeEventKind::PlanDelta,
+                "plan",
+                DeltaTarget::Text,
+            ),
+            "item/commandExecution/outputDelta" => self.normalize_delta(
+                params,
+                BridgeEventKind::CommandDelta,
+                "commandExecution",
+                DeltaTarget::CommandOutput,
+            ),
+            "item/fileChange/outputDelta" => self.normalize_delta(
+                params,
+                BridgeEventKind::FileChange,
+                "fileChange",
+                DeltaTarget::FileDiff,
+            ),
+            _ => None,
+        }
+    }
+
+    fn normalize_item_added(
+        &mut self,
+        notification: CodexThreadRealtimeItemAddedNotification,
+    ) -> Option<BridgeEventEnvelope<Value>> {
+        let item_id = notification
+            .item
+            .get("id")
+            .and_then(Value::as_str)?
+            .to_string();
+        let event_id = self.event_id_for_item(&notification.thread_id, &item_id);
+        self.items_by_event_id
+            .insert(event_id.clone(), notification.item.clone());
+
+        let (kind, payload) = normalize_realtime_item_payload(&notification.item)?;
+        if !should_publish_live_payload(kind, &payload) {
+            return None;
+        }
+
+        Some(BridgeEventEnvelope::new(
+            event_id,
+            notification.thread_id,
+            kind,
+            current_epoch_millis_string(),
+            payload,
+        ))
+    }
+
+    fn normalize_delta(
+        &mut self,
+        params: &Value,
+        kind: BridgeEventKind,
+        item_type: &str,
+        target: DeltaTarget,
+    ) -> Option<BridgeEventEnvelope<Value>> {
+        let notification: CodexDeltaNotification = serde_json::from_value(params.clone()).ok()?;
+        let event_id = format!("{}-{}", notification.turn_id, notification.item_id);
+        let payload = self
+            .items_by_event_id
+            .entry(event_id.clone())
+            .or_insert_with(|| synthesize_realtime_item(item_type, &notification.item_id, target));
+
+        apply_delta_to_item_payload(payload, &notification.delta, target);
+
+        Some(BridgeEventEnvelope::new(
+            event_id,
+            notification.thread_id,
+            kind,
+            current_epoch_millis_string(),
+            payload.clone(),
+        ))
+    }
+
+    fn event_id_for_item(&self, thread_id: &str, item_id: &str) -> String {
+        self.active_turn_id_by_thread
+            .get(thread_id)
+            .map(|turn_id| format!("{turn_id}-{item_id}"))
+            .unwrap_or_else(|| item_id.to_string())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeltaTarget {
+    Text,
+    CommandOutput,
+    FileDiff,
+}
+
 fn map_codex_thread_to_upstream_record(thread: &CodexThread) -> UpstreamThreadRecord {
     let repository_name = thread
         .git_info
@@ -2266,6 +2635,211 @@ fn map_event_kind(raw: &str) -> BridgeEventKind {
     }
 }
 
+fn map_bridge_kind_to_event_type(kind: BridgeEventKind) -> &'static str {
+    match kind {
+        BridgeEventKind::MessageDelta => "agent_message_delta",
+        BridgeEventKind::PlanDelta => "plan_delta",
+        BridgeEventKind::CommandDelta => "command_output_delta",
+        BridgeEventKind::FileChange => "file_change_delta",
+        BridgeEventKind::ThreadStatusChanged => "thread_status_changed",
+        BridgeEventKind::ApprovalRequested => "approval_requested",
+        BridgeEventKind::SecurityAudit => "security_audit",
+    }
+}
+
+fn summarize_live_payload(kind: BridgeEventKind, payload: &Value) -> String {
+    match kind {
+        BridgeEventKind::MessageDelta | BridgeEventKind::PlanDelta => payload
+            .get("text")
+            .or_else(|| payload.get("delta"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        BridgeEventKind::CommandDelta => payload
+            .get("output")
+            .or_else(|| payload.get("aggregatedOutput"))
+            .or_else(|| payload.get("command"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        BridgeEventKind::FileChange => payload
+            .get("resolved_unified_diff")
+            .or_else(|| payload.get("output"))
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| {
+                payload
+                    .get("path")
+                    .or_else(|| payload.get("file"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+            })
+            .to_string(),
+        BridgeEventKind::ThreadStatusChanged => payload
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        BridgeEventKind::ApprovalRequested => payload
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        BridgeEventKind::SecurityAudit => payload
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    }
+}
+
+fn map_wire_thread_status_to_lifecycle_state(raw: &str) -> String {
+    match raw {
+        "running" => "active".to_string(),
+        "completed" => "done".to_string(),
+        "interrupted" => "halted".to_string(),
+        "failed" => "error".to_string(),
+        _ => "idle".to_string(),
+    }
+}
+
+fn current_epoch_millis_string() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .to_string()
+}
+
+fn normalize_realtime_item_payload(item: &Value) -> Option<(BridgeEventKind, Value)> {
+    let item_type = item.get("type").and_then(Value::as_str)?;
+    match item_type {
+        "userMessage" | "agentMessage" => Some((BridgeEventKind::MessageDelta, item.clone())),
+        "plan" => Some((BridgeEventKind::PlanDelta, item.clone())),
+        "commandExecution" => {
+            let mut payload = item.clone();
+            if let Some(output) = item.get("aggregatedOutput").and_then(Value::as_str) {
+                if let Some(object) = payload.as_object_mut() {
+                    object.insert("output".to_string(), Value::String(output.to_string()));
+                }
+            }
+            Some((BridgeEventKind::CommandDelta, payload))
+        }
+        "fileChange" => Some((BridgeEventKind::FileChange, item.clone())),
+        _ => None,
+    }
+}
+
+fn should_publish_live_payload(kind: BridgeEventKind, payload: &Value) -> bool {
+    match kind {
+        BridgeEventKind::MessageDelta | BridgeEventKind::PlanDelta => {
+            payload
+                .get("text")
+                .and_then(Value::as_str)
+                .is_some_and(|text| !text.trim().is_empty())
+                || payload
+                    .get("content")
+                    .and_then(Value::as_array)
+                    .is_some_and(|content| !content.is_empty())
+        }
+        BridgeEventKind::CommandDelta => payload
+            .get("output")
+            .or_else(|| payload.get("aggregatedOutput"))
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty()),
+        BridgeEventKind::FileChange => {
+            payload
+                .get("resolved_unified_diff")
+                .or_else(|| payload.get("output"))
+                .and_then(Value::as_str)
+                .is_some_and(|text| !text.trim().is_empty())
+                || payload
+                    .get("changes")
+                    .and_then(Value::as_array)
+                    .is_some_and(|changes| !changes.is_empty())
+        }
+        _ => true,
+    }
+}
+
+fn synthesize_realtime_item(item_type: &str, item_id: &str, target: DeltaTarget) -> Value {
+    match target {
+        DeltaTarget::Text => json!({
+            "id": item_id,
+            "type": item_type,
+            "text": "",
+        }),
+        DeltaTarget::CommandOutput => json!({
+            "id": item_id,
+            "type": item_type,
+            "output": "",
+            "aggregatedOutput": "",
+            "status": "inProgress",
+            "command": "",
+            "cwd": "",
+            "commandActions": [],
+        }),
+        DeltaTarget::FileDiff => json!({
+            "id": item_id,
+            "type": item_type,
+            "resolved_unified_diff": "",
+            "status": "inProgress",
+            "changes": [],
+        }),
+    }
+}
+
+fn apply_delta_to_item_payload(item: &mut Value, delta: &str, target: DeltaTarget) {
+    let Some(object) = item.as_object_mut() else {
+        return;
+    };
+
+    match target {
+        DeltaTarget::Text => {
+            let next_text = format!(
+                "{}{}",
+                object
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                delta
+            );
+            object.insert("text".to_string(), Value::String(next_text));
+        }
+        DeltaTarget::CommandOutput => {
+            let next_output = format!(
+                "{}{}",
+                object
+                    .get("aggregatedOutput")
+                    .or_else(|| object.get("output"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                delta
+            );
+            object.insert(
+                "aggregatedOutput".to_string(),
+                Value::String(next_output.clone()),
+            );
+            object.insert("output".to_string(), Value::String(next_output));
+        }
+        DeltaTarget::FileDiff => {
+            let next_diff = format!(
+                "{}{}",
+                object
+                    .get("resolved_unified_diff")
+                    .or_else(|| object.get("output"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                delta
+            );
+            object.insert(
+                "resolved_unified_diff".to_string(),
+                Value::String(next_diff.clone()),
+            );
+            object.insert("output".to_string(), Value::String(next_diff));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -2273,11 +2847,13 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        CodexThread, CodexThreadStatus, CodexTurn, ThreadApiService, UpstreamThreadRecord,
-        UpstreamTimelineEvent,
+        CodexNotificationNormalizer, CodexThread, CodexThreadStatus, CodexTurn, ThreadApiService,
+        UpstreamThreadRecord, UpstreamTimelineEvent,
     };
     use serde_json::{Value, json};
-    use shared_contracts::{AccessMode, BridgeEventKind, CONTRACT_VERSION, ThreadStatus};
+    use shared_contracts::{
+        AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ThreadStatus,
+    };
 
     #[test]
     fn list_and_detail_responses_normalize_upstream_thread_shapes() {
@@ -2867,6 +3443,192 @@ mod tests {
         let events = service.reconcile_snapshot(vec![thread], timeline);
 
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn reconcile_snapshot_republishes_changed_events_with_stable_upstream_ids() {
+        let thread = UpstreamThreadRecord {
+            id: "thread-123".to_string(),
+            headline: "Investigate bridge sync".to_string(),
+            lifecycle_state: "active".to_string(),
+            workspace_path: "/workspace/codex-mobile-companion".to_string(),
+            repository_name: "codex-mobile-companion".to_string(),
+            branch_name: "main".to_string(),
+            remote_name: "origin".to_string(),
+            git_dirty: false,
+            git_ahead_by: 0,
+            git_behind_by: 0,
+            created_at: "2026-03-17T10:00:00Z".to_string(),
+            updated_at: "2026-03-17T10:05:00Z".to_string(),
+            source: "cli".to_string(),
+            approval_mode: "control_with_approvals".to_string(),
+            last_turn_summary: "Streaming".to_string(),
+        };
+        let mut service = ThreadApiService::with_seed_data(
+            vec![thread.clone()],
+            HashMap::from([(
+                "thread-123".to_string(),
+                vec![UpstreamTimelineEvent {
+                    id: "evt-streaming-message".to_string(),
+                    event_type: "agent_message_delta".to_string(),
+                    happened_at: "2026-03-17T10:05:00Z".to_string(),
+                    summary_text: "Hel".to_string(),
+                    data: json!({
+                        "type": "agentMessage",
+                        "text": "Hel",
+                    }),
+                }],
+            )]),
+        );
+
+        let events = service.reconcile_snapshot(
+            vec![UpstreamThreadRecord {
+                updated_at: "2026-03-17T10:05:02Z".to_string(),
+                ..thread
+            }],
+            HashMap::from([(
+                "thread-123".to_string(),
+                vec![UpstreamTimelineEvent {
+                    id: "evt-streaming-message".to_string(),
+                    event_type: "agent_message_delta".to_string(),
+                    happened_at: "2026-03-17T10:05:02Z".to_string(),
+                    summary_text: "Hello from the streamed update".to_string(),
+                    data: json!({
+                        "type": "agentMessage",
+                        "text": "Hello from the streamed update",
+                    }),
+                }],
+            )]),
+        );
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_id, "evt-streaming-message");
+        assert_eq!(events[0].kind, BridgeEventKind::MessageDelta);
+        assert_eq!(events[0].payload["text"], "Hello from the streamed update");
+    }
+
+    #[test]
+    fn codex_notification_normalizer_accumulates_agent_message_deltas() {
+        let mut normalizer = CodexNotificationNormalizer::default();
+
+        assert!(
+            normalizer
+                .normalize(
+                    "turn/started",
+                    &json!({
+                        "threadId": "thread-123",
+                        "turn": {
+                            "id": "turn-123",
+                            "status": "inProgress",
+                            "items": [],
+                        }
+                    }),
+                )
+                .is_none()
+        );
+        assert!(
+            normalizer
+                .normalize(
+                    "thread/realtime/itemAdded",
+                    &json!({
+                        "threadId": "thread-123",
+                        "item": {
+                            "id": "msg-1",
+                            "type": "agentMessage",
+                            "text": "",
+                        }
+                    }),
+                )
+                .is_none()
+        );
+
+        let first = normalizer
+            .normalize(
+                "item/agentMessage/delta",
+                &json!({
+                    "delta": "Hel",
+                    "itemId": "msg-1",
+                    "threadId": "thread-123",
+                    "turnId": "turn-123",
+                }),
+            )
+            .expect("first delta should produce an event");
+        assert_eq!(first.event_id, "turn-123-msg-1");
+        assert_eq!(first.payload["text"], "Hel");
+
+        let second = normalizer
+            .normalize(
+                "item/agentMessage/delta",
+                &json!({
+                    "delta": "lo",
+                    "itemId": "msg-1",
+                    "threadId": "thread-123",
+                    "turnId": "turn-123",
+                }),
+            )
+            .expect("second delta should produce an event");
+        assert_eq!(second.event_id, "turn-123-msg-1");
+        assert_eq!(second.payload["text"], "Hello");
+    }
+
+    #[test]
+    fn apply_live_event_replaces_existing_timeline_entry_with_same_event_id() {
+        let mut service = ThreadApiService::with_seed_data(
+            vec![UpstreamThreadRecord {
+                id: "thread-123".to_string(),
+                headline: "Investigate bridge sync".to_string(),
+                lifecycle_state: "active".to_string(),
+                workspace_path: "/workspace/codex-mobile-companion".to_string(),
+                repository_name: "codex-mobile-companion".to_string(),
+                branch_name: "main".to_string(),
+                remote_name: "origin".to_string(),
+                git_dirty: false,
+                git_ahead_by: 0,
+                git_behind_by: 0,
+                created_at: "2026-03-17T10:00:00Z".to_string(),
+                updated_at: "2026-03-17T10:05:00Z".to_string(),
+                source: "cli".to_string(),
+                approval_mode: "control_with_approvals".to_string(),
+                last_turn_summary: "Streaming".to_string(),
+            }],
+            HashMap::new(),
+        );
+
+        service.apply_live_event(BridgeEventEnvelope::new(
+            "turn-123-msg-1",
+            "thread-123",
+            BridgeEventKind::MessageDelta,
+            "101",
+            json!({
+                "id": "msg-1",
+                "type": "agentMessage",
+                "text": "Hel",
+            }),
+        ));
+        service.apply_live_event(BridgeEventEnvelope::new(
+            "turn-123-msg-1",
+            "thread-123",
+            BridgeEventKind::MessageDelta,
+            "102",
+            json!({
+                "id": "msg-1",
+                "type": "agentMessage",
+                "text": "Hello",
+            }),
+        ));
+
+        let timeline = service
+            .timeline_response("thread-123")
+            .expect("timeline response should exist");
+        assert_eq!(timeline.events.len(), 1);
+        assert_eq!(timeline.events[0].event_id, "turn-123-msg-1");
+        assert_eq!(timeline.events[0].payload["text"], "Hello");
+
+        let detail = service
+            .detail_response("thread-123")
+            .expect("detail response should exist");
+        assert_eq!(detail.thread.updated_at, "102");
+        assert_eq!(detail.thread.last_turn_summary, "Hello");
     }
 
     #[test]

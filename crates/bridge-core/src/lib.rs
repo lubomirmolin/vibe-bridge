@@ -30,8 +30,8 @@ use policy::{PolicyAction, PolicyDecision, PolicyEngine};
 use secure_storage::InMemorySecureStore;
 use stream_router::StreamRouter;
 use thread_api::{
-    GitStatusResponse, MutationDispatch, MutationResultResponse, RepositoryContextDto,
-    ThreadApiService,
+    CodexNotificationStream, GitStatusResponse, MutationDispatch, MutationResultResponse,
+    RepositoryContextDto, ThreadApiService,
 };
 
 pub mod codex_runtime;
@@ -209,6 +209,17 @@ where
 
     let reconciler_app = Arc::clone(&app);
     let _reconciler = thread::spawn(move || reconcile_upstream_loop(reconciler_app));
+
+    let notifications_app = Arc::clone(&app);
+    let notification_command = config.codex_runtime.command.clone();
+    let notification_args = config.codex_runtime.args.clone();
+    let _notifications = thread::spawn(move || {
+        forward_upstream_notifications_loop(
+            notifications_app,
+            notification_command,
+            notification_args,
+        )
+    });
 
     api_server
         .join()
@@ -1067,6 +1078,43 @@ fn reconcile_upstream_loop(app: Arc<BridgeApplication>) {
         }
 
         thread::sleep(ACTIVE_POLL_INTERVAL);
+    }
+}
+
+fn forward_upstream_notifications_loop(
+    app: Arc<BridgeApplication>,
+    command: String,
+    args: Vec<String>,
+) {
+    const RESTART_DELAY: Duration = Duration::from_secs(1);
+
+    loop {
+        match CodexNotificationStream::start(&command, &args) {
+            Ok(mut notifications) => loop {
+                match notifications.next_event() {
+                    Ok(Some(event)) => {
+                        app.thread_api
+                            .lock()
+                            .expect("thread API mutex should not be poisoned")
+                            .apply_live_event(event.clone());
+                        app.stream_router.publish(event);
+                    }
+                    Ok(None) => {
+                        eprintln!("codex notification stream closed; restarting");
+                        break;
+                    }
+                    Err(error) => {
+                        eprintln!("failed to read codex notification stream: {error}");
+                        break;
+                    }
+                }
+            },
+            Err(error) => {
+                eprintln!("failed to connect codex notification stream: {error}");
+            }
+        }
+
+        thread::sleep(RESTART_DELAY);
     }
 }
 

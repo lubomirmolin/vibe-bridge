@@ -62,6 +62,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   late final TextEditingController _gitBranchController;
   late final ScrollController _timelineScrollController;
   late final ValueNotifier<bool> _isHeaderCollapsed;
+  late final ValueNotifier<bool> _showNewMessagePill;
   final ImagePicker _imagePicker = ImagePicker();
 
   List<XFile> _attachedImages = const <XFile>[];
@@ -85,6 +86,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     _gitBranchController = TextEditingController();
     _timelineScrollController = ScrollController();
     _isHeaderCollapsed = ValueNotifier(false);
+    _showNewMessagePill = ValueNotifier(false);
     _composerFocusNode.addListener(_handleComposerFocusChange);
     _timelineScrollController.addListener(_onScroll);
   }
@@ -129,6 +131,12 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     }
 
     _lastScrollOffset = currentOffset;
+
+    final isNearBottom = position.maxScrollExtent - currentOffset < 120;
+    if (isNearBottom && _showNewMessagePill.value) {
+      _showNewMessagePill.value = false;
+    }
+
     _maybeAutoLoadEarlierHistory();
   }
 
@@ -194,6 +202,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     _timelineScrollController.removeListener(_onScroll);
     _timelineScrollController.dispose();
     _isHeaderCollapsed.dispose();
+    _showNewMessagePill.dispose();
     super.dispose();
   }
 
@@ -220,6 +229,18 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       if (attempt < 2) {
         _jumpToTimelineBottom(attempt: attempt + 1);
       }
+    });
+  }
+
+  void _scrollToTimelineBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_timelineScrollController.hasClients) return;
+      final position = _timelineScrollController.position;
+      _timelineScrollController.animateTo(
+        position.maxScrollExtent,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOutCubic,
+      );
     });
   }
 
@@ -312,6 +333,38 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     );
     final deviceSettingsController = ref.read(
       deviceSettingsControllerProvider(widget.bridgeApiBaseUrl).notifier,
+    );
+
+    ref.listen(
+      threadDetailControllerProvider(args).select(
+        (s) => (
+          s.items.length,
+          s.items.isEmpty ? null : s.items.last.eventId,
+          s.items.isEmpty ? null : s.items.last.body,
+        ),
+      ),
+      (previous, next) {
+        if (previous != null) {
+          final itemCountIncreased = next.$1 > previous.$1;
+          final lastVisibleItemChanged =
+              next.$2 != previous.$2 || next.$3 != previous.$3;
+          if (!itemCountIncreased && !lastVisibleItemChanged) {
+            return;
+          }
+
+          final isNearBottom =
+              !_timelineScrollController.hasClients ||
+              (_timelineScrollController.position.maxScrollExtent -
+                      _timelineScrollController.offset <
+                  180);
+
+          if (isNearBottom) {
+            _scrollToTimelineBottom();
+          } else {
+            _showNewMessagePill.value = true;
+          }
+        }
+      },
     );
 
     final threadApprovals = approvalsState.forThread(widget.threadId);
@@ -451,39 +504,113 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                         ),
                         child: SafeArea(
                           top: false,
-                          child: _PinnedTurnComposer(
-                            composerController: _composerController,
-                            composerFocusNode: _composerFocusNode,
-                            isTurnActive: state.isTurnActive,
-                            controlsEnabled: controlsEnabled,
-                            isComposerMutationInFlight: state.isComposerMutationInFlight,
-                            isInterruptMutationInFlight:
-                                state.isInterruptMutationInFlight,
-                            isComposerFocused: _isComposerFocused,
-                            attachedImages: _attachedImages,
-                            selectedModel: _selectedModel,
-                            selectedReasoning: _selectedReasoning,
-                            accessMode: effectiveAccessMode,
-                            trustedBridge: pairingState.trustedBridge,
-                            isAccessModeUpdating:
-                                deviceSettingsState.isAccessModeUpdating,
-                            accessModeErrorMessage:
-                                deviceSettingsState.accessModeErrorMessage,
-                            onPickImages: _pickImages,
-                            onRemoveImage: _removeAttachedImage,
-                            onModelChanged: (value) {
-                              setState(() {
-                                _selectedModel = value;
-                              });
-                            },
-                            onReasoningChanged: (value) {
-                              setState(() {
-                                _selectedReasoning = value;
-                              });
-                            },
-                            onAccessModeChanged: changeAccessMode,
-                            onSubmitComposer: controller.submitComposerInput,
-                            onInterruptActiveTurn: controller.interruptActiveTurn,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              ValueListenableBuilder<bool>(
+                                valueListenable: _showNewMessagePill,
+                                builder: (context, show, child) {
+                                  return AnimatedSwitcher(
+                                    duration: const Duration(milliseconds: 240),
+                                    transitionBuilder: (child, animation) =>
+                                        FadeTransition(
+                                          opacity: animation,
+                                          child: SlideTransition(
+                                            position:
+                                                Tween<Offset>(
+                                                  begin: const Offset(0, 0.4),
+                                                  end: Offset.zero,
+                                                ).animate(
+                                                  CurvedAnimation(
+                                                    parent: animation,
+                                                    curve: Curves.easeOutBack,
+                                                  ),
+                                                ),
+                                            child: child,
+                                          ),
+                                        ),
+                                    child: show
+                                        ? Padding(
+                                            padding: const EdgeInsets.only(
+                                              top: 8,
+                                            ),
+                                            child: MagneticButton(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 18,
+                                                    vertical: 10,
+                                                  ),
+                                              variant: MagneticButtonVariant
+                                                  .secondary,
+                                              onClick: () {
+                                                _showNewMessagePill.value =
+                                                    false;
+                                                _jumpToTimelineBottom(
+                                                  attempt: 0,
+                                                );
+                                              },
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  const Text(
+                                                    'New messages',
+                                                    style: TextStyle(
+                                                      fontSize: 14,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  PhosphorIcon(
+                                                    PhosphorIcons.arrowDown(),
+                                                    size: 16,
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          )
+                                        : const SizedBox.shrink(),
+                                  );
+                                },
+                              ),
+                              _PinnedTurnComposer(
+                                composerController: _composerController,
+                                composerFocusNode: _composerFocusNode,
+                                isTurnActive: state.isTurnActive,
+                                controlsEnabled: controlsEnabled,
+                                isComposerMutationInFlight:
+                                    state.isComposerMutationInFlight,
+                                isInterruptMutationInFlight:
+                                    state.isInterruptMutationInFlight,
+                                isComposerFocused: _isComposerFocused,
+                                attachedImages: _attachedImages,
+                                selectedModel: _selectedModel,
+                                selectedReasoning: _selectedReasoning,
+                                accessMode: effectiveAccessMode,
+                                trustedBridge: pairingState.trustedBridge,
+                                isAccessModeUpdating:
+                                    deviceSettingsState.isAccessModeUpdating,
+                                accessModeErrorMessage:
+                                    deviceSettingsState.accessModeErrorMessage,
+                                onPickImages: _pickImages,
+                                onRemoveImage: _removeAttachedImage,
+                                onModelChanged: (value) {
+                                  setState(() {
+                                    _selectedModel = value;
+                                  });
+                                },
+                                onReasoningChanged: (value) {
+                                  setState(() {
+                                    _selectedReasoning = value;
+                                  });
+                                },
+                                onAccessModeChanged: changeAccessMode,
+                                onSubmitComposer:
+                                    controller.submitComposerInput,
+                                onInterruptActiveTurn:
+                                    controller.interruptActiveTurn,
+                              ),
+                            ],
                           ),
                         ),
                       ),

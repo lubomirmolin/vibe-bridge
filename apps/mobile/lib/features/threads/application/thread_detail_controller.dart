@@ -609,10 +609,13 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   }
 
   void _handleLiveEvent(BridgeEventEnvelope<Map<String, dynamic>> event) {
-    if (event.threadId != state.threadId ||
-        _knownEventIds.contains(event.eventId)) {
+    if (event.threadId != state.threadId) {
       return;
     }
+
+    final existingIndex = state.items.indexWhere(
+      (item) => item.eventId == event.eventId,
+    );
 
     if (event.kind == BridgeEventKind.threadStatusChanged) {
       _applyLifecycleStatusUpdate(event);
@@ -632,13 +635,18 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       }
     }
 
-    final nextItems = List<ThreadActivityItem>.from(state.items)
-      ..add(ThreadActivityItem.fromLiveEvent(event));
-    _knownEventIds.add(event.eventId);
+    final nextItem = ThreadActivityItem.fromLiveEvent(event);
+    final nextItems = List<ThreadActivityItem>.from(state.items);
+    if (existingIndex >= 0) {
+      nextItems[existingIndex] = nextItem;
+    } else {
+      nextItems.add(nextItem);
+      _knownEventIds.add(event.eventId);
+    }
 
     final previousItemCount = state.items.length;
     final shouldExpandVisibleWindow =
-        state.visibleItemCount >= previousItemCount;
+        existingIndex < 0 && state.visibleItemCount >= previousItemCount;
     final nextVisibleCount = shouldExpandVisibleWindow
         ? state.visibleItemCount + 1
         : state.visibleItemCount;
