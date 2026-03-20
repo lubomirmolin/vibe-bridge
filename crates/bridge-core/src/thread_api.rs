@@ -2,16 +2,20 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use shared_contracts::{
     AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ThreadDetailDto,
     ThreadStatus, ThreadSummaryDto, ThreadTimelineEntryDto,
 };
+use tungstenite::stream::MaybeTlsStream;
+use tungstenite::{Message, WebSocket, connect};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpstreamThreadRecord {
@@ -131,10 +135,14 @@ impl ThreadApiService {
         }
     }
 
-    pub fn from_codex_app_server(command: &str, args: &[String]) -> Result<Self, String> {
+    pub fn from_codex_app_server(
+        command: &str,
+        args: &[String],
+        endpoint: Option<&str>,
+    ) -> Result<Self, String> {
         let codex_home = resolve_codex_home_dir()?;
         let (thread_records, timeline_by_thread_id) =
-            load_thread_snapshot(command, args, &codex_home)?;
+            load_thread_snapshot(command, args, endpoint, &codex_home)?;
 
         Ok(Self {
             thread_records,
@@ -143,6 +151,7 @@ impl ThreadApiService {
             sync_config: Some(ThreadSyncConfig {
                 codex_command: command.to_string(),
                 codex_args: args.to_vec(),
+                codex_endpoint: endpoint.map(ToOwned::to_owned),
                 codex_home,
             }),
         })
@@ -156,6 +165,7 @@ impl ThreadApiService {
         let (thread_records, timeline_by_thread_id) = load_thread_snapshot(
             &sync_config.codex_command,
             &sync_config.codex_args,
+            sync_config.codex_endpoint.as_deref(),
             &sync_config.codex_home,
         )?;
         self.thread_records = thread_records;
@@ -171,6 +181,7 @@ impl ThreadApiService {
         let (thread_records, timeline_by_thread_id) = load_thread_snapshot(
             &sync_config.codex_command,
             &sync_config.codex_args,
+            sync_config.codex_endpoint.as_deref(),
             &sync_config.codex_home,
         )?;
 
@@ -407,6 +418,18 @@ impl ThreadApiService {
         &mut self,
         thread_id: &str,
         prompt: Option<&str>,
+    ) -> Result<Option<MutationDispatch>, String> {
+        if self.sync_config.is_some() {
+            return self.start_turn_via_upstream(thread_id, prompt);
+        }
+
+        Ok(self.start_turn_stub(thread_id, prompt))
+    }
+
+    fn start_turn_stub(
+        &mut self,
+        thread_id: &str,
+        prompt: Option<&str>,
     ) -> Option<MutationDispatch> {
         let prompt = prompt.unwrap_or("No prompt provided").trim();
         let prompt = if prompt.is_empty() {
@@ -464,7 +487,63 @@ impl ThreadApiService {
         })
     }
 
+    fn start_turn_via_upstream(
+        &mut self,
+        thread_id: &str,
+        prompt: Option<&str>,
+    ) -> Result<Option<MutationDispatch>, String> {
+        let prompt = normalize_turn_text(prompt, "No prompt provided");
+        let mut client = self.codex_rpc_client()?;
+        let started_turn = start_turn_with_resume(&mut client, thread_id, &prompt)?;
+        let updated_at = current_timestamp_string();
+
+        let (thread_status, repository, status) = {
+            let Some(thread) = self
+                .thread_records
+                .iter_mut()
+                .find(|thread| thread.id == thread_id)
+            else {
+                return Ok(None);
+            };
+            thread.lifecycle_state = "active".to_string();
+            thread.last_turn_summary = format!("Started turn: {prompt}");
+            thread.updated_at = updated_at;
+
+            (
+                map_thread_status(&thread.lifecycle_state),
+                map_repository_context(thread),
+                map_git_status(thread),
+            )
+        };
+
+        Ok(Some(MutationDispatch {
+            response: MutationResultResponse {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: thread_id.to_string(),
+                operation: "turn_start".to_string(),
+                outcome: "success".to_string(),
+                message: format!("Turn started ({})", started_turn.id),
+                thread_status,
+                repository,
+                status,
+            },
+            events: Vec::new(),
+        }))
+    }
+
     pub fn steer_turn(
+        &mut self,
+        thread_id: &str,
+        instruction: Option<&str>,
+    ) -> Result<Option<MutationDispatch>, String> {
+        if self.sync_config.is_some() {
+            return self.steer_turn_via_upstream(thread_id, instruction);
+        }
+
+        Ok(self.steer_turn_stub(thread_id, instruction))
+    }
+
+    fn steer_turn_stub(
         &mut self,
         thread_id: &str,
         instruction: Option<&str>,
@@ -517,7 +596,60 @@ impl ThreadApiService {
         })
     }
 
-    pub fn interrupt_turn(&mut self, thread_id: &str) -> Option<MutationDispatch> {
+    fn steer_turn_via_upstream(
+        &mut self,
+        thread_id: &str,
+        instruction: Option<&str>,
+    ) -> Result<Option<MutationDispatch>, String> {
+        let instruction = normalize_turn_text(instruction, "Continue");
+        let active_turn_id = self.resolve_active_turn_id(thread_id)?;
+        let mut client = self.codex_rpc_client()?;
+        let steered_turn_id = client.steer_turn(thread_id, &active_turn_id, &instruction)?;
+        let updated_at = current_timestamp_string();
+
+        let (thread_status, repository, status) = {
+            let Some(thread) = self
+                .thread_records
+                .iter_mut()
+                .find(|thread| thread.id == thread_id)
+            else {
+                return Ok(None);
+            };
+            thread.lifecycle_state = "active".to_string();
+            thread.last_turn_summary = format!("Steer instruction: {instruction}");
+            thread.updated_at = updated_at;
+
+            (
+                map_thread_status(&thread.lifecycle_state),
+                map_repository_context(thread),
+                map_git_status(thread),
+            )
+        };
+
+        Ok(Some(MutationDispatch {
+            response: MutationResultResponse {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: thread_id.to_string(),
+                operation: "turn_steer".to_string(),
+                outcome: "success".to_string(),
+                message: format!("Steer instruction sent to active turn ({steered_turn_id})"),
+                thread_status,
+                repository,
+                status,
+            },
+            events: Vec::new(),
+        }))
+    }
+
+    pub fn interrupt_turn(&mut self, thread_id: &str) -> Result<Option<MutationDispatch>, String> {
+        if self.sync_config.is_some() {
+            return self.interrupt_turn_via_upstream(thread_id);
+        }
+
+        Ok(self.interrupt_turn_stub(thread_id))
+    }
+
+    fn interrupt_turn_stub(&mut self, thread_id: &str) -> Option<MutationDispatch> {
         let updated_at = self.next_timestamp();
         let (thread_status, repository, status) = {
             let thread = self
@@ -557,6 +689,71 @@ impl ThreadApiService {
             },
             events: vec![event],
         })
+    }
+
+    fn interrupt_turn_via_upstream(
+        &mut self,
+        thread_id: &str,
+    ) -> Result<Option<MutationDispatch>, String> {
+        let active_turn_id = self.resolve_active_turn_id(thread_id)?;
+        let mut client = self.codex_rpc_client()?;
+        client.interrupt_turn(thread_id, &active_turn_id)?;
+        let updated_at = current_timestamp_string();
+
+        let (thread_status, repository, status) = {
+            let Some(thread) = self
+                .thread_records
+                .iter_mut()
+                .find(|thread| thread.id == thread_id)
+            else {
+                return Ok(None);
+            };
+            thread.lifecycle_state = "halted".to_string();
+            thread.last_turn_summary = "Interrupted active turn".to_string();
+            thread.updated_at = updated_at;
+
+            (
+                map_thread_status(&thread.lifecycle_state),
+                map_repository_context(thread),
+                map_git_status(thread),
+            )
+        };
+
+        Ok(Some(MutationDispatch {
+            response: MutationResultResponse {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: thread_id.to_string(),
+                operation: "turn_interrupt".to_string(),
+                outcome: "success".to_string(),
+                message: "Interrupt signal sent to active turn".to_string(),
+                thread_status,
+                repository,
+                status,
+            },
+            events: Vec::new(),
+        }))
+    }
+
+    fn codex_rpc_client(&self) -> Result<CodexRpcClient, String> {
+        let Some(sync_config) = &self.sync_config else {
+            return Err("thread API is not configured for upstream Codex mutations".to_string());
+        };
+
+        CodexRpcClient::start(
+            &sync_config.codex_command,
+            &sync_config.codex_args,
+            sync_config.codex_endpoint.as_deref(),
+        )
+    }
+
+    fn resolve_active_turn_id(&self, thread_id: &str) -> Result<String, String> {
+        let mut client = self.codex_rpc_client()?;
+        let thread = read_thread_with_resume(&mut client, thread_id, true)?;
+        thread
+            .turns
+            .last()
+            .map(|turn| turn.id.clone())
+            .ok_or_else(|| format!("no active turn found for thread {thread_id}"))
     }
 
     pub fn switch_branch(&mut self, thread_id: &str, branch: &str) -> Option<MutationDispatch> {
@@ -747,6 +944,7 @@ impl ThreadApiService {
 struct ThreadSyncConfig {
     codex_command: String,
     codex_args: Vec<String>,
+    codex_endpoint: Option<String>,
     codex_home: PathBuf,
 }
 
@@ -775,9 +973,10 @@ fn resolve_codex_home_dir() -> Result<PathBuf, String> {
 fn load_thread_snapshot(
     command: &str,
     args: &[String],
+    endpoint: Option<&str>,
     codex_home: &Path,
 ) -> Result<ThreadSnapshot, String> {
-    let rpc_result = load_thread_snapshot_from_codex_rpc(command, args);
+    let rpc_result = load_thread_snapshot_from_codex_rpc(command, args, endpoint);
     if let Ok((thread_records, timeline_by_thread_id)) = &rpc_result
         && !thread_records.is_empty()
     {
@@ -802,8 +1001,9 @@ fn load_thread_snapshot(
 fn load_thread_snapshot_from_codex_rpc(
     command: &str,
     args: &[String],
+    endpoint: Option<&str>,
 ) -> Result<ThreadSnapshot, String> {
-    let mut client = CodexRpcClient::start(command, args)?;
+    let mut client = CodexRpcClient::start(command, args, endpoint)?;
     let threads = client.fetch_all_threads()?;
 
     let thread_records = threads
@@ -1851,6 +2051,121 @@ fn truncate_summary(text: &str) -> String {
     summary
 }
 
+fn should_resume_thread(error: &str) -> bool {
+    error.contains("thread not found")
+}
+
+fn read_thread_with_resume(
+    client: &mut CodexRpcClient,
+    thread_id: &str,
+    include_turns: bool,
+) -> Result<CodexThread, String> {
+    match client.read_thread(thread_id, include_turns) {
+        Ok(thread) => Ok(thread),
+        Err(error) if should_resume_thread(&error) => {
+            client.resume_thread(thread_id)?;
+            client.read_thread(thread_id, include_turns)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn start_turn_with_resume(
+    client: &mut CodexRpcClient,
+    thread_id: &str,
+    prompt: &str,
+) -> Result<CodexTurn, String> {
+    match client.start_turn(thread_id, prompt) {
+        Ok(turn) => Ok(turn),
+        Err(error) if should_resume_thread(&error) => {
+            client.resume_thread(thread_id)?;
+            client.start_turn(thread_id, prompt)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn normalize_turn_text(raw: Option<&str>, fallback: &str) -> String {
+    let normalized = raw.unwrap_or(fallback).trim();
+    if normalized.is_empty() {
+        fallback.to_string()
+    } else {
+        normalized.to_string()
+    }
+}
+
+fn text_user_input(text: &str) -> Value {
+    json!({
+        "type": "text",
+        "text": text,
+        "text_elements": [],
+    })
+}
+
+fn connect_to_codex_websocket(
+    endpoint: &str,
+) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, tungstenite::Error> {
+    let (socket, _) = connect(endpoint)?;
+    Ok(socket)
+}
+
+fn parse_codex_rpc_response(method: &str, response: Value) -> Result<Value, String> {
+    if let Some(error) = response.get("error") {
+        return Err(format!(
+            "codex rpc request '{method}' failed: {}",
+            error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown error")
+        ));
+    }
+
+    response
+        .get("result")
+        .cloned()
+        .ok_or_else(|| format!("codex rpc response for '{method}' did not include result"))
+}
+
+fn read_codex_json_message_from_websocket(
+    socket: &mut WebSocket<MaybeTlsStream<TcpStream>>,
+    method: &str,
+) -> Result<Value, String> {
+    loop {
+        let message = socket.read().map_err(|error| {
+            format!("failed to read codex websocket message for '{method}': {error}")
+        })?;
+        match message {
+            Message::Text(text) => {
+                let response: Value = serde_json::from_str(text.as_ref()).map_err(|error| {
+                    format!(
+                        "failed to parse codex websocket message for '{method}' as JSON: {error}"
+                    )
+                })?;
+                return Ok(response);
+            }
+            Message::Binary(bytes) => {
+                let text = String::from_utf8(bytes.to_vec()).map_err(|error| {
+                    format!(
+                        "failed to decode binary codex websocket message for '{method}': {error}"
+                    )
+                })?;
+                let response: Value = serde_json::from_str(&text).map_err(|error| {
+                    format!(
+                        "failed to parse binary codex websocket message for '{method}' as JSON: {error}"
+                    )
+                })?;
+                return Ok(response);
+            }
+            Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
+            Message::Close(_) => {
+                return Err(format!(
+                    "codex websocket closed while waiting for '{method}'"
+                ));
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 struct CodexThreadListResult {
     data: Vec<CodexThread>,
@@ -1861,6 +2176,22 @@ struct CodexThreadListResult {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 struct CodexThreadReadResult {
     thread: CodexThread,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CodexTurnStartResult {
+    turn: CodexTurn,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CodexThreadResumeResult {
+    thread: CodexThread,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CodexTurnSteerResult {
+    #[serde(rename = "turnId")]
+    turn_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -1907,15 +2238,37 @@ struct CodexTurn {
 #[derive(Debug)]
 struct CodexRpcClient {
     next_id: i64,
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    transport: CodexRpcTransport,
+}
+
+#[derive(Debug)]
+enum CodexRpcTransport {
+    Stdio {
+        child: Child,
+        stdin: ChildStdin,
+        stdout: BufReader<ChildStdout>,
+    },
+    WebSocket {
+        socket: WebSocket<MaybeTlsStream<TcpStream>>,
+    },
 }
 
 impl CodexRpcClient {
     const MAX_THREADS_TO_FETCH: usize = 50;
 
-    fn start(command: &str, args: &[String]) -> Result<Self, String> {
+    fn start(command: &str, args: &[String], endpoint: Option<&str>) -> Result<Self, String> {
+        if let Some(endpoint) = endpoint {
+            let socket = connect_to_codex_websocket(endpoint).map_err(|error| {
+                format!("failed to connect to codex app-server websocket '{endpoint}': {error}")
+            })?;
+            let mut client = Self {
+                next_id: 1,
+                transport: CodexRpcTransport::WebSocket { socket },
+            };
+            client.initialize()?;
+            return Ok(client);
+        }
+
         let mut command_args = if args.is_empty() {
             vec!["app-server".to_string()]
         } else {
@@ -1948,12 +2301,20 @@ impl CodexRpcClient {
 
         let mut client = Self {
             next_id: 1,
-            child,
-            stdin,
-            stdout: BufReader::new(stdout),
+            transport: CodexRpcTransport::Stdio {
+                child,
+                stdin,
+                stdout: BufReader::new(stdout),
+            },
         };
 
-        client.request(
+        client.initialize()?;
+
+        Ok(client)
+    }
+
+    fn initialize(&mut self) -> Result<(), String> {
+        self.request(
             "initialize",
             json!({
                 "clientInfo": {
@@ -1961,9 +2322,8 @@ impl CodexRpcClient {
                     "version": CONTRACT_VERSION,
                 }
             }),
-        )?;
-
-        Ok(client)
+        )
+        .map(|_| ())
     }
 
     fn fetch_all_threads(&mut self) -> Result<Vec<CodexThread>, String> {
@@ -2021,6 +2381,79 @@ impl CodexRpcClient {
         Ok(threads)
     }
 
+    fn read_thread(&mut self, thread_id: &str, include_turns: bool) -> Result<CodexThread, String> {
+        let result = self.request(
+            "thread/read",
+            json!({
+                "threadId": thread_id,
+                "includeTurns": include_turns,
+            }),
+        )?;
+        let response: CodexThreadReadResult = serde_json::from_value(result).map_err(|error| {
+            format!("invalid thread/read response from codex app-server: {error}")
+        })?;
+        Ok(response.thread)
+    }
+
+    fn resume_thread(&mut self, thread_id: &str) -> Result<CodexThread, String> {
+        let result = self.request(
+            "thread/resume",
+            json!({
+                "threadId": thread_id,
+            }),
+        )?;
+        let response: CodexThreadResumeResult =
+            serde_json::from_value(result).map_err(|error| {
+                format!("invalid thread/resume response from codex app-server: {error}")
+            })?;
+        Ok(response.thread)
+    }
+
+    fn start_turn(&mut self, thread_id: &str, prompt: &str) -> Result<CodexTurn, String> {
+        let result = self.request(
+            "turn/start",
+            json!({
+                "threadId": thread_id,
+                "input": [text_user_input(prompt)],
+            }),
+        )?;
+        let response: CodexTurnStartResult = serde_json::from_value(result).map_err(|error| {
+            format!("invalid turn/start response from codex app-server: {error}")
+        })?;
+        Ok(response.turn)
+    }
+
+    fn steer_turn(
+        &mut self,
+        thread_id: &str,
+        expected_turn_id: &str,
+        instruction: &str,
+    ) -> Result<String, String> {
+        let result = self.request(
+            "turn/steer",
+            json!({
+                "threadId": thread_id,
+                "expectedTurnId": expected_turn_id,
+                "input": [text_user_input(instruction)],
+            }),
+        )?;
+        let response: CodexTurnSteerResult = serde_json::from_value(result).map_err(|error| {
+            format!("invalid turn/steer response from codex app-server: {error}")
+        })?;
+        Ok(response.turn_id)
+    }
+
+    fn interrupt_turn(&mut self, thread_id: &str, turn_id: &str) -> Result<(), String> {
+        self.request(
+            "turn/interrupt",
+            json!({
+                "threadId": thread_id,
+                "turnId": turn_id,
+            }),
+        )?;
+        Ok(())
+    }
+
     fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id;
         self.next_id += 1;
@@ -2034,63 +2467,85 @@ impl CodexRpcClient {
             format!("failed to serialize codex rpc request '{method}': {error}")
         })?;
 
-        writeln!(self.stdin, "{line}")
-            .map_err(|error| format!("failed to write codex rpc request '{method}': {error}"))?;
-        self.stdin
-            .flush()
-            .map_err(|error| format!("failed to flush codex rpc request '{method}': {error}"))?;
+        match &mut self.transport {
+            CodexRpcTransport::Stdio { stdin, stdout, .. } => {
+                writeln!(stdin, "{line}").map_err(|error| {
+                    format!("failed to write codex rpc request '{method}': {error}")
+                })?;
+                stdin.flush().map_err(|error| {
+                    format!("failed to flush codex rpc request '{method}': {error}")
+                })?;
 
-        let mut response_line = String::new();
-        loop {
-            response_line.clear();
-            let bytes_read = self.stdout.read_line(&mut response_line).map_err(|error| {
-                format!("failed to read codex rpc response for '{method}': {error}")
-            })?;
+                let mut response_line = String::new();
+                loop {
+                    response_line.clear();
+                    let bytes_read = stdout.read_line(&mut response_line).map_err(|error| {
+                        format!("failed to read codex rpc response for '{method}': {error}")
+                    })?;
 
-            if bytes_read == 0 {
-                return Err(format!(
-                    "codex app-server closed stdout while waiting for '{method}'"
-                ));
+                    if bytes_read == 0 {
+                        return Err(format!(
+                            "codex app-server closed stdout while waiting for '{method}'"
+                        ));
+                    }
+
+                    let response: Value =
+                        serde_json::from_str(response_line.trim()).map_err(|error| {
+                            format!(
+                                "failed to parse codex rpc response for '{method}' as JSON: {error}"
+                            )
+                        })?;
+
+                    if response.get("id").and_then(Value::as_i64) != Some(id) {
+                        continue;
+                    }
+
+                    return parse_codex_rpc_response(method, response);
+                }
             }
+            CodexRpcTransport::WebSocket { socket } => {
+                socket.send(Message::Text(line.into())).map_err(|error| {
+                    format!("failed to send codex rpc request '{method}' over websocket: {error}")
+                })?;
 
-            let response: Value = serde_json::from_str(response_line.trim()).map_err(|error| {
-                format!("failed to parse codex rpc response for '{method}' as JSON: {error}")
-            })?;
+                loop {
+                    let response = read_codex_json_message_from_websocket(socket, method)?;
+                    if response.get("id").and_then(Value::as_i64) != Some(id) {
+                        continue;
+                    }
 
-            if response.get("id").and_then(Value::as_i64) != Some(id) {
-                continue;
+                    return parse_codex_rpc_response(method, response);
+                }
             }
-
-            if let Some(error) = response.get("error") {
-                return Err(format!(
-                    "codex rpc request '{method}' failed: {}",
-                    error
-                        .get("message")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown error")
-                ));
-            }
-
-            return response.get("result").cloned().ok_or_else(|| {
-                format!("codex rpc response for '{method}' did not include result")
-            });
         }
     }
 }
 
 impl Drop for CodexRpcClient {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if let CodexRpcTransport::Stdio { child, .. } = &mut self.transport {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }
 
 #[derive(Debug)]
 pub struct CodexNotificationStream {
-    child: Child,
-    _stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    transport: CodexNotificationTransport,
     normalizer: CodexNotificationNormalizer,
+}
+
+#[derive(Debug)]
+enum CodexNotificationTransport {
+    Stdio {
+        child: Child,
+        _stdin: ChildStdin,
+        stdout: BufReader<ChildStdout>,
+    },
+    WebSocket {
+        socket: WebSocket<MaybeTlsStream<TcpStream>>,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -2132,7 +2587,19 @@ struct CodexTurnNotification {
 }
 
 impl CodexNotificationStream {
-    pub fn start(command: &str, args: &[String]) -> Result<Self, String> {
+    pub fn start(command: &str, args: &[String], endpoint: Option<&str>) -> Result<Self, String> {
+        if let Some(endpoint) = endpoint {
+            let socket = connect_to_codex_websocket(endpoint).map_err(|error| {
+                format!("failed to connect to codex app-server websocket '{endpoint}': {error}")
+            })?;
+            let mut stream = Self {
+                transport: CodexNotificationTransport::WebSocket { socket },
+                normalizer: CodexNotificationNormalizer::default(),
+            };
+            stream.initialize()?;
+            return Ok(stream);
+        }
+
         let mut command_args = if args.is_empty() {
             vec!["app-server".to_string()]
         } else {
@@ -2154,7 +2621,7 @@ impl CodexNotificationStream {
                 format!("failed to spawn codex app-server via '{command}': {error}")
             })?;
 
-        let mut stdin = child
+        let stdin = child
             .stdin
             .take()
             .ok_or_else(|| "failed to acquire codex app-server stdin".to_string())?;
@@ -2162,9 +2629,22 @@ impl CodexNotificationStream {
             .stdout
             .take()
             .ok_or_else(|| "failed to acquire codex app-server stdout".to_string())?;
-        let mut stdout = BufReader::new(stdout);
+        let stdout = BufReader::new(stdout);
 
-        let initialize_payload = json!({
+        let mut stream = Self {
+            transport: CodexNotificationTransport::Stdio {
+                child,
+                _stdin: stdin,
+                stdout,
+            },
+            normalizer: CodexNotificationNormalizer::default(),
+        };
+        stream.initialize()?;
+        Ok(stream)
+    }
+
+    fn initialize(&mut self) -> Result<(), String> {
+        let payload = json!({
             "id": 1,
             "method": "initialize",
             "params": {
@@ -2174,67 +2654,84 @@ impl CodexNotificationStream {
                 }
             },
         });
-        let line = serde_json::to_string(&initialize_payload)
+        let line = serde_json::to_string(&payload)
             .map_err(|error| format!("failed to serialize initialize request: {error}"))?;
-        writeln!(stdin, "{line}")
-            .map_err(|error| format!("failed to write initialize request: {error}"))?;
-        stdin
-            .flush()
-            .map_err(|error| format!("failed to flush initialize request: {error}"))?;
 
-        let mut response_line = String::new();
-        loop {
-            response_line.clear();
-            let bytes_read = stdout
-                .read_line(&mut response_line)
-                .map_err(|error| format!("failed to read initialize response: {error}"))?;
-            if bytes_read == 0 {
-                return Err("codex app-server closed stdout during initialize".to_string());
+        match &mut self.transport {
+            CodexNotificationTransport::Stdio { _stdin, stdout, .. } => {
+                writeln!(_stdin, "{line}")
+                    .map_err(|error| format!("failed to write initialize request: {error}"))?;
+                _stdin
+                    .flush()
+                    .map_err(|error| format!("failed to flush initialize request: {error}"))?;
+
+                let mut response_line = String::new();
+                loop {
+                    response_line.clear();
+                    let bytes_read = stdout
+                        .read_line(&mut response_line)
+                        .map_err(|error| format!("failed to read initialize response: {error}"))?;
+                    if bytes_read == 0 {
+                        return Err("codex app-server closed stdout during initialize".to_string());
+                    }
+
+                    let response: Value =
+                        serde_json::from_str(response_line.trim()).map_err(|error| {
+                            format!("failed to parse initialize response as JSON: {error}")
+                        })?;
+
+                    if response.get("id").and_then(Value::as_i64) != Some(1) {
+                        continue;
+                    }
+
+                    parse_codex_rpc_response("initialize", response).map(|_| ())?;
+                    break;
+                }
             }
+            CodexNotificationTransport::WebSocket { socket } => {
+                socket.send(Message::Text(line.into())).map_err(|error| {
+                    format!("failed to send initialize request over websocket: {error}")
+                })?;
 
-            let response: Value = serde_json::from_str(response_line.trim())
-                .map_err(|error| format!("failed to parse initialize response as JSON: {error}"))?;
+                loop {
+                    let response = read_codex_json_message_from_websocket(socket, "initialize")?;
+                    if response.get("id").and_then(Value::as_i64) != Some(1) {
+                        continue;
+                    }
 
-            if response.get("id").and_then(Value::as_i64) != Some(1) {
-                continue;
+                    parse_codex_rpc_response("initialize", response).map(|_| ())?;
+                    break;
+                }
             }
-
-            if let Some(error) = response.get("error") {
-                return Err(format!(
-                    "codex rpc initialize failed: {}",
-                    error
-                        .get("message")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown error")
-                ));
-            }
-
-            break;
         }
 
-        Ok(Self {
-            child,
-            _stdin: stdin,
-            stdout,
-            normalizer: CodexNotificationNormalizer::default(),
-        })
+        Ok(())
     }
 
     pub fn next_event(&mut self) -> Result<Option<BridgeEventEnvelope<Value>>, String> {
-        let mut line = String::new();
         loop {
-            line.clear();
-            let bytes_read = self
-                .stdout
-                .read_line(&mut line)
-                .map_err(|error| format!("failed to read codex notification: {error}"))?;
-            if bytes_read == 0 {
-                return Ok(None);
-            }
+            let message = match &mut self.transport {
+                CodexNotificationTransport::Stdio { stdout, .. } => {
+                    let mut line = String::new();
+                    let bytes_read = stdout
+                        .read_line(&mut line)
+                        .map_err(|error| format!("failed to read codex notification: {error}"))?;
+                    if bytes_read == 0 {
+                        return Ok(None);
+                    }
 
-            let message: Value = match serde_json::from_str(line.trim()) {
-                Ok(message) => message,
-                Err(_) => continue,
+                    match serde_json::from_str(line.trim()) {
+                        Ok(message) => message,
+                        Err(_) => continue,
+                    }
+                }
+                CodexNotificationTransport::WebSocket { socket } => {
+                    match read_codex_json_message_from_websocket(socket, "notification") {
+                        Ok(message) => message,
+                        Err(error) if error.contains("codex websocket closed") => return Ok(None),
+                        Err(error) => return Err(error),
+                    }
+                }
             };
 
             if message.get("id").is_some() {
@@ -2255,8 +2752,10 @@ impl CodexNotificationStream {
 
 impl Drop for CodexNotificationStream {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if let CodexNotificationTransport::Stdio { child, .. } = &mut self.transport {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }
 
@@ -2286,7 +2785,7 @@ impl CodexNotificationNormalizer {
             "thread/status/changed" => {
                 let notification: CodexThreadStatusChangedNotification =
                     serde_json::from_value(params.clone()).ok()?;
-                let occurred_at = current_epoch_millis_string();
+                let occurred_at = current_timestamp_string();
                 Some(BridgeEventEnvelope::new(
                     format!("{}-status-{occurred_at}", notification.thread_id),
                     notification.thread_id,
@@ -2359,7 +2858,7 @@ impl CodexNotificationNormalizer {
             event_id,
             notification.thread_id,
             kind,
-            current_epoch_millis_string(),
+            current_timestamp_string(),
             payload,
         ))
     }
@@ -2384,7 +2883,7 @@ impl CodexNotificationNormalizer {
             event_id,
             notification.thread_id,
             kind,
-            current_epoch_millis_string(),
+            current_timestamp_string(),
             payload.clone(),
         ))
     }
@@ -2451,8 +2950,8 @@ fn map_codex_thread_to_upstream_record(thread: &CodexThread) -> UpstreamThreadRe
         git_dirty: false,
         git_ahead_by: 0,
         git_behind_by: 0,
-        created_at: thread.created_at.to_string(),
-        updated_at: thread.updated_at.to_string(),
+        created_at: unix_timestamp_to_iso8601(thread.created_at),
+        updated_at: unix_timestamp_to_iso8601(thread.updated_at),
         source,
         approval_mode: "control_with_approvals".to_string(),
         last_turn_summary: thread.preview.clone().unwrap_or_default(),
@@ -2479,7 +2978,7 @@ fn map_codex_thread_to_timeline_events(thread: &CodexThread) -> Vec<UpstreamTime
             events.push(UpstreamTimelineEvent {
                 id: format!("{}-{item_id}", turn.id),
                 event_type: event_type.to_string(),
-                happened_at: thread.updated_at.to_string(),
+                happened_at: unix_timestamp_to_iso8601(thread.updated_at),
                 summary_text: summarize_codex_item(item_type, item),
                 data: item.clone(),
             });
@@ -2702,12 +3201,25 @@ fn map_wire_thread_status_to_lifecycle_state(raw: &str) -> String {
     }
 }
 
-fn current_epoch_millis_string() -> String {
-    SystemTime::now()
+fn current_timestamp_string() -> String {
+    let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis()
-        .to_string()
+        .as_millis() as i64;
+    unix_timestamp_to_iso8601(now)
+}
+
+fn unix_timestamp_to_iso8601(timestamp: i64) -> String {
+    let millis = if timestamp.abs() >= 1_000_000_000_000 {
+        timestamp
+    } else {
+        timestamp.saturating_mul(1000)
+    };
+
+    Utc.timestamp_millis_opt(millis)
+        .single()
+        .map(|datetime| datetime.to_rfc3339_opts(SecondsFormat::Millis, true))
+        .unwrap_or_else(|| timestamp.to_string())
 }
 
 fn normalize_realtime_item_payload(item: &Value) -> Option<(BridgeEventKind, Value)> {
@@ -2848,7 +3360,7 @@ mod tests {
 
     use super::{
         CodexNotificationNormalizer, CodexThread, CodexThreadStatus, CodexTurn, ThreadApiService,
-        UpstreamThreadRecord, UpstreamTimelineEvent,
+        UpstreamThreadRecord, UpstreamTimelineEvent, should_resume_thread,
     };
     use serde_json::{Value, json};
     use shared_contracts::{
@@ -2968,6 +3480,7 @@ mod tests {
 
         let dispatch = service
             .start_turn("thread-123", Some("Investigate websocket routing"))
+            .expect("turn mutation should not fail")
             .expect("thread should exist");
 
         assert_eq!(dispatch.response.operation, "turn_start");
@@ -2978,6 +3491,16 @@ mod tests {
             BridgeEventKind::ThreadStatusChanged
         );
         assert_eq!(dispatch.events[0].thread_id, "thread-123");
+    }
+
+    #[test]
+    fn thread_not_found_errors_trigger_resume_retry() {
+        assert!(should_resume_thread(
+            "codex rpc request 'turn/start' failed: thread not found: thread-123"
+        ));
+        assert!(!should_resume_thread(
+            "codex rpc request 'turn/start' failed: rate limited"
+        ));
     }
 
     #[test]

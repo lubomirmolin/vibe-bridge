@@ -161,6 +161,7 @@ where
     let thread_api = ThreadApiService::from_codex_app_server(
         &config.codex_runtime.command,
         &config.codex_runtime.args,
+        config.codex_runtime.endpoint.as_deref(),
     )
     .unwrap_or_else(|error| {
         eprintln!("failed to load codex-backed thread data: {error}");
@@ -213,11 +214,13 @@ where
     let notifications_app = Arc::clone(&app);
     let notification_command = config.codex_runtime.command.clone();
     let notification_args = config.codex_runtime.args.clone();
+    let notification_endpoint = config.codex_runtime.endpoint.clone();
     let _notifications = thread::spawn(move || {
         forward_upstream_notifications_loop(
             notifications_app,
             notification_command,
             notification_args,
+            notification_endpoint,
         )
     });
 
@@ -1085,11 +1088,12 @@ fn forward_upstream_notifications_loop(
     app: Arc<BridgeApplication>,
     command: String,
     args: Vec<String>,
+    endpoint: Option<String>,
 ) {
     const RESTART_DELAY: Duration = Duration::from_secs(1);
 
     loop {
-        match CodexNotificationStream::start(&command, &args) {
+        match CodexNotificationStream::start(&command, &args, endpoint.as_deref()) {
             Ok(mut notifications) => loop {
                 match notifications.next_event() {
                     Ok(Some(event)) => {
@@ -1725,11 +1729,23 @@ fn route_thread_request(
             }
 
             let prompt = query.get("prompt").map(String::as_str);
-            let dispatch = app
+            let dispatch = match app
                 .thread_api
                 .lock()
                 .expect("thread API mutex should not be poisoned")
-                .start_turn(thread_id, prompt)?;
+                .start_turn(thread_id, prompt)
+            {
+                Ok(Some(dispatch)) => dispatch,
+                Ok(None) => return None,
+                Err(message) => {
+                    return Some(json_error_response(
+                        "502 Bad Gateway",
+                        "turn_start_failed",
+                        "upstream_mutation_failed",
+                        &message,
+                    ));
+                }
+            };
             app.record_security_audit(
                 LogSeverity::Info,
                 thread_id,
@@ -1761,11 +1777,23 @@ fn route_thread_request(
             }
 
             let instruction = query.get("instruction").map(String::as_str);
-            let dispatch = app
+            let dispatch = match app
                 .thread_api
                 .lock()
                 .expect("thread API mutex should not be poisoned")
-                .steer_turn(thread_id, instruction)?;
+                .steer_turn(thread_id, instruction)
+            {
+                Ok(Some(dispatch)) => dispatch,
+                Ok(None) => return None,
+                Err(message) => {
+                    return Some(json_error_response(
+                        "502 Bad Gateway",
+                        "turn_steer_failed",
+                        "upstream_mutation_failed",
+                        &message,
+                    ));
+                }
+            };
             app.record_security_audit(
                 LogSeverity::Info,
                 thread_id,
@@ -1796,11 +1824,23 @@ fn route_thread_request(
                 ));
             }
 
-            let dispatch = app
+            let dispatch = match app
                 .thread_api
                 .lock()
                 .expect("thread API mutex should not be poisoned")
-                .interrupt_turn(thread_id)?;
+                .interrupt_turn(thread_id)
+            {
+                Ok(Some(dispatch)) => dispatch,
+                Ok(None) => return None,
+                Err(message) => {
+                    return Some(json_error_response(
+                        "502 Bad Gateway",
+                        "turn_interrupt_failed",
+                        "upstream_mutation_failed",
+                        &message,
+                    ));
+                }
+            };
             app.record_security_audit(
                 LogSeverity::Info,
                 thread_id,
