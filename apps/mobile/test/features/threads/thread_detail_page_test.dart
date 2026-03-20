@@ -198,6 +198,49 @@ void main() {
     },
   );
 
+  testWidgets('bottom bounce does not reopen collapsed git header controls', (
+    tester,
+  ) async {
+    final timeline = List<ThreadTimelineEntryDto>.generate(
+      36,
+      (index) => _timelineEvent(
+        id: 'evt-scroll-$index',
+        kind: BridgeEventKind.messageDelta,
+        summary: 'Assistant output',
+        payload: {'delta': 'Scrollable event $index'},
+        occurredAt:
+            '2026-03-18T10:${(index % 60).toString().padLeft(2, '0')}:00Z',
+      ),
+    );
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [timeline],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
+
+    final scrollable = find.byType(Scrollable).first;
+    final branchButton = find.byKey(const Key('git-header-branch-button'));
+
+    await tester.drag(scrollable, const Offset(0, 480));
+    await tester.pumpAndSettle();
+    expect(branchButton, findsOneWidget);
+
+    await tester.fling(scrollable, const Offset(0, -1800), 5000);
+    await tester.pumpAndSettle();
+
+    expect(branchButton, findsNothing);
+  });
+
   testWidgets('status-only changed file rows are hidden from the timeline', (
     tester,
   ) async {
