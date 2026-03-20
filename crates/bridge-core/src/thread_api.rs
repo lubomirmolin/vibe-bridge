@@ -1,10 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
-use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{SecondsFormat, TimeZone, Utc};
@@ -14,8 +11,8 @@ use shared_contracts::{
     AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ThreadDetailDto,
     ThreadStatus, ThreadSummaryDto, ThreadTimelineEntryDto,
 };
-use tungstenite::stream::MaybeTlsStream;
-use tungstenite::{Message, WebSocket, connect};
+
+use crate::codex_transport::CodexJsonTransport;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpstreamThreadRecord {
@@ -2102,70 +2099,6 @@ fn text_user_input(text: &str) -> Value {
     })
 }
 
-fn connect_to_codex_websocket(
-    endpoint: &str,
-) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, tungstenite::Error> {
-    let (socket, _) = connect(endpoint)?;
-    Ok(socket)
-}
-
-fn parse_codex_rpc_response(method: &str, response: Value) -> Result<Value, String> {
-    if let Some(error) = response.get("error") {
-        return Err(format!(
-            "codex rpc request '{method}' failed: {}",
-            error
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown error")
-        ));
-    }
-
-    response
-        .get("result")
-        .cloned()
-        .ok_or_else(|| format!("codex rpc response for '{method}' did not include result"))
-}
-
-fn read_codex_json_message_from_websocket(
-    socket: &mut WebSocket<MaybeTlsStream<TcpStream>>,
-    method: &str,
-) -> Result<Value, String> {
-    loop {
-        let message = socket.read().map_err(|error| {
-            format!("failed to read codex websocket message for '{method}': {error}")
-        })?;
-        match message {
-            Message::Text(text) => {
-                let response: Value = serde_json::from_str(text.as_ref()).map_err(|error| {
-                    format!(
-                        "failed to parse codex websocket message for '{method}' as JSON: {error}"
-                    )
-                })?;
-                return Ok(response);
-            }
-            Message::Binary(bytes) => {
-                let text = String::from_utf8(bytes.to_vec()).map_err(|error| {
-                    format!(
-                        "failed to decode binary codex websocket message for '{method}': {error}"
-                    )
-                })?;
-                let response: Value = serde_json::from_str(&text).map_err(|error| {
-                    format!(
-                        "failed to parse binary codex websocket message for '{method}' as JSON: {error}"
-                    )
-                })?;
-                return Ok(response);
-            }
-            Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
-            Message::Close(_) => {
-                return Err(format!(
-                    "codex websocket closed while waiting for '{method}'"
-                ));
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 struct CodexThreadListResult {
     data: Vec<CodexThread>,
@@ -2237,93 +2170,16 @@ struct CodexTurn {
 
 #[derive(Debug)]
 struct CodexRpcClient {
-    next_id: i64,
-    transport: CodexRpcTransport,
-}
-
-#[derive(Debug)]
-enum CodexRpcTransport {
-    Stdio {
-        child: Child,
-        stdin: ChildStdin,
-        stdout: BufReader<ChildStdout>,
-    },
-    WebSocket {
-        socket: WebSocket<MaybeTlsStream<TcpStream>>,
-    },
+    transport: CodexJsonTransport,
 }
 
 impl CodexRpcClient {
     const MAX_THREADS_TO_FETCH: usize = 50;
 
     fn start(command: &str, args: &[String], endpoint: Option<&str>) -> Result<Self, String> {
-        if let Some(endpoint) = endpoint {
-            let socket = connect_to_codex_websocket(endpoint).map_err(|error| {
-                format!("failed to connect to codex app-server websocket '{endpoint}': {error}")
-            })?;
-            let mut client = Self {
-                next_id: 1,
-                transport: CodexRpcTransport::WebSocket { socket },
-            };
-            client.initialize()?;
-            return Ok(client);
-        }
-
-        let mut command_args = if args.is_empty() {
-            vec!["app-server".to_string()]
-        } else {
-            args.to_vec()
-        };
-
-        if !command_args.iter().any(|arg| arg == "--listen") {
-            command_args.push("--listen".to_string());
-            command_args.push("stdio://".to_string());
-        }
-
-        let mut child = Command::new(command)
-            .args(command_args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| {
-                format!("failed to spawn codex app-server via '{command}': {error}")
-            })?;
-
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "failed to acquire codex app-server stdin".to_string())?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| "failed to acquire codex app-server stdout".to_string())?;
-
-        let mut client = Self {
-            next_id: 1,
-            transport: CodexRpcTransport::Stdio {
-                child,
-                stdin,
-                stdout: BufReader::new(stdout),
-            },
-        };
-
-        client.initialize()?;
-
-        Ok(client)
-    }
-
-    fn initialize(&mut self) -> Result<(), String> {
-        self.request(
-            "initialize",
-            json!({
-                "clientInfo": {
-                    "name": "bridge-core",
-                    "version": CONTRACT_VERSION,
-                }
-            }),
-        )
-        .map(|_| ())
+        Ok(Self {
+            transport: CodexJsonTransport::start(command, args, endpoint)?,
+        })
     }
 
     fn fetch_all_threads(&mut self) -> Result<Vec<CodexThread>, String> {
@@ -2455,97 +2311,14 @@ impl CodexRpcClient {
     }
 
     fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
-        let id = self.next_id;
-        self.next_id += 1;
-
-        let payload = json!({
-            "id": id,
-            "method": method,
-            "params": params,
-        });
-        let line = serde_json::to_string(&payload).map_err(|error| {
-            format!("failed to serialize codex rpc request '{method}': {error}")
-        })?;
-
-        match &mut self.transport {
-            CodexRpcTransport::Stdio { stdin, stdout, .. } => {
-                writeln!(stdin, "{line}").map_err(|error| {
-                    format!("failed to write codex rpc request '{method}': {error}")
-                })?;
-                stdin.flush().map_err(|error| {
-                    format!("failed to flush codex rpc request '{method}': {error}")
-                })?;
-
-                let mut response_line = String::new();
-                loop {
-                    response_line.clear();
-                    let bytes_read = stdout.read_line(&mut response_line).map_err(|error| {
-                        format!("failed to read codex rpc response for '{method}': {error}")
-                    })?;
-
-                    if bytes_read == 0 {
-                        return Err(format!(
-                            "codex app-server closed stdout while waiting for '{method}'"
-                        ));
-                    }
-
-                    let response: Value =
-                        serde_json::from_str(response_line.trim()).map_err(|error| {
-                            format!(
-                                "failed to parse codex rpc response for '{method}' as JSON: {error}"
-                            )
-                        })?;
-
-                    if response.get("id").and_then(Value::as_i64) != Some(id) {
-                        continue;
-                    }
-
-                    return parse_codex_rpc_response(method, response);
-                }
-            }
-            CodexRpcTransport::WebSocket { socket } => {
-                socket.send(Message::Text(line.into())).map_err(|error| {
-                    format!("failed to send codex rpc request '{method}' over websocket: {error}")
-                })?;
-
-                loop {
-                    let response = read_codex_json_message_from_websocket(socket, method)?;
-                    if response.get("id").and_then(Value::as_i64) != Some(id) {
-                        continue;
-                    }
-
-                    return parse_codex_rpc_response(method, response);
-                }
-            }
-        }
-    }
-}
-
-impl Drop for CodexRpcClient {
-    fn drop(&mut self) {
-        if let CodexRpcTransport::Stdio { child, .. } = &mut self.transport {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+        self.transport.request(method, params)
     }
 }
 
 #[derive(Debug)]
 pub struct CodexNotificationStream {
-    transport: CodexNotificationTransport,
+    transport: CodexJsonTransport,
     normalizer: CodexNotificationNormalizer,
-}
-
-#[derive(Debug)]
-enum CodexNotificationTransport {
-    Stdio {
-        child: Child,
-        _stdin: ChildStdin,
-        stdout: BufReader<ChildStdout>,
-    },
-    WebSocket {
-        socket: WebSocket<MaybeTlsStream<TcpStream>>,
-    },
 }
 
 #[derive(Debug, Default)]
@@ -2588,150 +2361,16 @@ struct CodexTurnNotification {
 
 impl CodexNotificationStream {
     pub fn start(command: &str, args: &[String], endpoint: Option<&str>) -> Result<Self, String> {
-        if let Some(endpoint) = endpoint {
-            let socket = connect_to_codex_websocket(endpoint).map_err(|error| {
-                format!("failed to connect to codex app-server websocket '{endpoint}': {error}")
-            })?;
-            let mut stream = Self {
-                transport: CodexNotificationTransport::WebSocket { socket },
-                normalizer: CodexNotificationNormalizer::default(),
-            };
-            stream.initialize()?;
-            return Ok(stream);
-        }
-
-        let mut command_args = if args.is_empty() {
-            vec!["app-server".to_string()]
-        } else {
-            args.to_vec()
-        };
-
-        if !command_args.iter().any(|arg| arg == "--listen") {
-            command_args.push("--listen".to_string());
-            command_args.push("stdio://".to_string());
-        }
-
-        let mut child = Command::new(command)
-            .args(command_args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| {
-                format!("failed to spawn codex app-server via '{command}': {error}")
-            })?;
-
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "failed to acquire codex app-server stdin".to_string())?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| "failed to acquire codex app-server stdout".to_string())?;
-        let stdout = BufReader::new(stdout);
-
-        let mut stream = Self {
-            transport: CodexNotificationTransport::Stdio {
-                child,
-                _stdin: stdin,
-                stdout,
-            },
+        Ok(Self {
+            transport: CodexJsonTransport::start(command, args, endpoint)?,
             normalizer: CodexNotificationNormalizer::default(),
-        };
-        stream.initialize()?;
-        Ok(stream)
-    }
-
-    fn initialize(&mut self) -> Result<(), String> {
-        let payload = json!({
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "clientInfo": {
-                    "name": "bridge-core",
-                    "version": CONTRACT_VERSION,
-                }
-            },
-        });
-        let line = serde_json::to_string(&payload)
-            .map_err(|error| format!("failed to serialize initialize request: {error}"))?;
-
-        match &mut self.transport {
-            CodexNotificationTransport::Stdio { _stdin, stdout, .. } => {
-                writeln!(_stdin, "{line}")
-                    .map_err(|error| format!("failed to write initialize request: {error}"))?;
-                _stdin
-                    .flush()
-                    .map_err(|error| format!("failed to flush initialize request: {error}"))?;
-
-                let mut response_line = String::new();
-                loop {
-                    response_line.clear();
-                    let bytes_read = stdout
-                        .read_line(&mut response_line)
-                        .map_err(|error| format!("failed to read initialize response: {error}"))?;
-                    if bytes_read == 0 {
-                        return Err("codex app-server closed stdout during initialize".to_string());
-                    }
-
-                    let response: Value =
-                        serde_json::from_str(response_line.trim()).map_err(|error| {
-                            format!("failed to parse initialize response as JSON: {error}")
-                        })?;
-
-                    if response.get("id").and_then(Value::as_i64) != Some(1) {
-                        continue;
-                    }
-
-                    parse_codex_rpc_response("initialize", response).map(|_| ())?;
-                    break;
-                }
-            }
-            CodexNotificationTransport::WebSocket { socket } => {
-                socket.send(Message::Text(line.into())).map_err(|error| {
-                    format!("failed to send initialize request over websocket: {error}")
-                })?;
-
-                loop {
-                    let response = read_codex_json_message_from_websocket(socket, "initialize")?;
-                    if response.get("id").and_then(Value::as_i64) != Some(1) {
-                        continue;
-                    }
-
-                    parse_codex_rpc_response("initialize", response).map(|_| ())?;
-                    break;
-                }
-            }
-        }
-
-        Ok(())
+        })
     }
 
     pub fn next_event(&mut self) -> Result<Option<BridgeEventEnvelope<Value>>, String> {
         loop {
-            let message = match &mut self.transport {
-                CodexNotificationTransport::Stdio { stdout, .. } => {
-                    let mut line = String::new();
-                    let bytes_read = stdout
-                        .read_line(&mut line)
-                        .map_err(|error| format!("failed to read codex notification: {error}"))?;
-                    if bytes_read == 0 {
-                        return Ok(None);
-                    }
-
-                    match serde_json::from_str(line.trim()) {
-                        Ok(message) => message,
-                        Err(_) => continue,
-                    }
-                }
-                CodexNotificationTransport::WebSocket { socket } => {
-                    match read_codex_json_message_from_websocket(socket, "notification") {
-                        Ok(message) => message,
-                        Err(error) if error.contains("codex websocket closed") => return Ok(None),
-                        Err(error) => return Err(error),
-                    }
-                }
+            let Some(message) = self.transport.next_message("notification")? else {
+                return Ok(None);
             };
 
             if message.get("id").is_some() {
@@ -2746,15 +2385,6 @@ impl CodexNotificationStream {
             if let Some(event) = self.normalizer.normalize(method, &params) {
                 return Ok(Some(event));
             }
-        }
-    }
-}
-
-impl Drop for CodexNotificationStream {
-    fn drop(&mut self) {
-        if let CodexNotificationTransport::Stdio { child, .. } = &mut self.transport {
-            let _ = child.kill();
-            let _ = child.wait();
         }
     }
 }
