@@ -27,18 +27,21 @@ use pairing::{
 };
 use persistence::PersistenceBoundary;
 use policy::{PolicyAction, PolicyDecision, PolicyEngine};
+use runtime_sync::{forward_upstream_notifications_loop, reconcile_upstream_loop};
 use secure_storage::InMemorySecureStore;
 use stream_router::StreamRouter;
 use thread_api::{
-    CodexNotificationStream, GitStatusResponse, MutationDispatch, MutationResultResponse,
-    RepositoryContextDto, ThreadApiService,
+    GitStatusResponse, MutationDispatch, MutationResultResponse, RepositoryContextDto,
+    ThreadApiService,
 };
 
 pub mod codex_runtime;
+pub mod codex_transport;
 pub mod logging;
 pub mod pairing;
 pub mod persistence;
 pub mod policy;
+pub mod runtime_sync;
 pub mod secure_storage;
 pub mod stream_router;
 pub mod thread_api;
@@ -891,7 +894,7 @@ fn parse_access_mode(raw: &str) -> Option<AccessMode> {
 }
 
 #[derive(Debug)]
-struct BridgeApplication {
+pub(crate) struct BridgeApplication {
     thread_api: Mutex<ThreadApiService>,
     runtime: Mutex<CodexRuntimeSupervisor>,
     stream_router: StreamRouter,
@@ -1031,11 +1034,29 @@ impl BridgeApplication {
         self.stream_router.publish(event);
     }
 
-    fn reconcile_upstream_activity(&self) -> Result<Vec<BridgeEventEnvelope<Value>>, String> {
+    pub(crate) fn reconcile_upstream_activity(
+        &self,
+    ) -> Result<Vec<BridgeEventEnvelope<Value>>, String> {
         self.thread_api
             .lock()
             .expect("thread API mutex should not be poisoned")
             .reconcile_from_upstream()
+    }
+
+    pub(crate) fn subscriber_count(&self) -> usize {
+        self.stream_router.subscriber_count()
+    }
+
+    pub(crate) fn publish_stream_event(&self, event: BridgeEventEnvelope<Value>) {
+        self.stream_router.publish(event);
+    }
+
+    pub(crate) fn apply_live_upstream_event(&self, event: BridgeEventEnvelope<Value>) {
+        self.thread_api
+            .lock()
+            .expect("thread API mutex should not be poisoned")
+            .apply_live_event(event.clone());
+        self.stream_router.publish(event);
     }
 }
 
@@ -1055,70 +1076,6 @@ fn serve_listener(listener: TcpListener, app: Arc<BridgeApplication>) {
                 break;
             }
         }
-    }
-}
-
-fn reconcile_upstream_loop(app: Arc<BridgeApplication>) {
-    const ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(750);
-    const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(1500);
-
-    loop {
-        let subscriber_count = app.stream_router.subscriber_count();
-        if subscriber_count == 0 {
-            thread::sleep(IDLE_POLL_INTERVAL);
-            continue;
-        }
-
-        match app.reconcile_upstream_activity() {
-            Ok(events) => {
-                for event in events {
-                    app.stream_router.publish(event);
-                }
-            }
-            Err(error) => {
-                eprintln!("failed to reconcile upstream thread activity: {error}");
-            }
-        }
-
-        thread::sleep(ACTIVE_POLL_INTERVAL);
-    }
-}
-
-fn forward_upstream_notifications_loop(
-    app: Arc<BridgeApplication>,
-    command: String,
-    args: Vec<String>,
-    endpoint: Option<String>,
-) {
-    const RESTART_DELAY: Duration = Duration::from_secs(1);
-
-    loop {
-        match CodexNotificationStream::start(&command, &args, endpoint.as_deref()) {
-            Ok(mut notifications) => loop {
-                match notifications.next_event() {
-                    Ok(Some(event)) => {
-                        app.thread_api
-                            .lock()
-                            .expect("thread API mutex should not be poisoned")
-                            .apply_live_event(event.clone());
-                        app.stream_router.publish(event);
-                    }
-                    Ok(None) => {
-                        eprintln!("codex notification stream closed; restarting");
-                        break;
-                    }
-                    Err(error) => {
-                        eprintln!("failed to read codex notification stream: {error}");
-                        break;
-                    }
-                }
-            },
-            Err(error) => {
-                eprintln!("failed to connect codex notification stream: {error}");
-            }
-        }
-
-        thread::sleep(RESTART_DELAY);
     }
 }
 

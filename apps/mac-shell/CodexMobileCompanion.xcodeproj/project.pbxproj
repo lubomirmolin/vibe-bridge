@@ -11,7 +11,11 @@
 		1342931C8BE082D128529EA4 /* CodexMobileCompanionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 728B378B81F809C4F14EC72D /* CodexMobileCompanionTests.swift */; };
 		21BFE2AD6196F327135F493B /* BridgeContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F2D601B571120586CB68C0 /* BridgeContracts.swift */; };
 		47EF301FD4DB23F23CE7051A /* SecureStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE2411DE1FFF6CE64E10B9C0 /* SecureStore.swift */; };
-		973354979576A95DFA9E1DB1 /* CodexMobileCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B069849D192547B8F4FA416 /* CodexMobileCompanionApp.swift */; };
+		A1B2C3D40100000000000001 /* CodexMobileCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1B2C3D40100000000000001 /* CodexMobileCompanionApp.swift */; };
+		A1B2C3D40100000000000002 /* PairingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1B2C3D40100000000000002 /* PairingViews.swift */; };
+		A1B2C3D40100000000000003 /* PairingEntryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1B2C3D40100000000000003 /* PairingEntryViewModel.swift */; };
+		A1B2C3D40100000000000004 /* BridgeShellAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1B2C3D40100000000000004 /* BridgeShellAPIClient.swift */; };
+		A1B2C3D40100000000000005 /* DesktopRuntimeSupervisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1B2C3D40100000000000005 /* DesktopRuntimeSupervisor.swift */; };
 		B17D93EC9AC73B9003D48DD9 /* StructuredLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED9789893934082730104731 /* StructuredLogger.swift */; };
 /* End PBXBuildFile section */
 
@@ -27,9 +31,13 @@
 
 /* Begin PBXFileReference section */
 		253C6D9A6CE243C2E4429D55 /* PersistenceBoundary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceBoundary.swift; sourceTree = "<group>"; };
-		5B069849D192547B8F4FA416 /* CodexMobileCompanionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexMobileCompanionApp.swift; sourceTree = "<group>"; };
 		728B378B81F809C4F14EC72D /* CodexMobileCompanionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexMobileCompanionTests.swift; sourceTree = "<group>"; };
 		A90B6FE0AC3C66F2B1FA806D /* CodexMobileCompanionTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CodexMobileCompanionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B1B2C3D40100000000000001 /* CodexMobileCompanionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexMobileCompanionApp.swift; sourceTree = "<group>"; };
+		B1B2C3D40100000000000002 /* PairingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViews.swift; sourceTree = "<group>"; };
+		B1B2C3D40100000000000003 /* PairingEntryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingEntryViewModel.swift; sourceTree = "<group>"; };
+		B1B2C3D40100000000000004 /* BridgeShellAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeShellAPIClient.swift; sourceTree = "<group>"; };
+		B1B2C3D40100000000000005 /* DesktopRuntimeSupervisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopRuntimeSupervisor.swift; sourceTree = "<group>"; };
 		B2F2D601B571120586CB68C0 /* BridgeContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeContracts.swift; sourceTree = "<group>"; };
 		C0824473A42415E32ECD7C7B /* CodexMobileCompanion.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CodexMobileCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		ED9789893934082730104731 /* StructuredLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StructuredLogger.swift; sourceTree = "<group>"; };
@@ -45,6 +53,46 @@
 				6FC3EB7AE2D7FB93BAD402FB /* Storage */,
 			);
 			path = Foundation;
+			sourceTree = "<group>";
+		};
+		C1B2C3D40100000000000001 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				B1B2C3D40100000000000001 /* CodexMobileCompanionApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		C1B2C3D40100000000000002 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				B1B2C3D40100000000000002 /* PairingViews.swift */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+		C1B2C3D40100000000000003 /* ViewModel */ = {
+			isa = PBXGroup;
+			children = (
+				B1B2C3D40100000000000003 /* PairingEntryViewModel.swift */,
+			);
+			path = ViewModel;
+			sourceTree = "<group>";
+		};
+		C1B2C3D40100000000000004 /* Bridge */ = {
+			isa = PBXGroup;
+			children = (
+				B1B2C3D40100000000000004 /* BridgeShellAPIClient.swift */,
+			);
+			path = Bridge;
+			sourceTree = "<group>";
+		};
+		C1B2C3D40100000000000005 /* Runtime */ = {
+			isa = PBXGroup;
+			children = (
+				B1B2C3D40100000000000005 /* DesktopRuntimeSupervisor.swift */,
+			);
+			path = Runtime;
 			sourceTree = "<group>";
 		};
 		127F99BDB4362D4644ECFD26 /* Logging */ = {
@@ -83,7 +131,11 @@
 		C14B55A87DD3B26FBFC28A49 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
-				5B069849D192547B8F4FA416 /* CodexMobileCompanionApp.swift */,
+				C1B2C3D40100000000000001 /* App */,
+				C1B2C3D40100000000000002 /* UI */,
+				C1B2C3D40100000000000003 /* ViewModel */,
+				C1B2C3D40100000000000004 /* Bridge */,
+				C1B2C3D40100000000000005 /* Runtime */,
 				06A1A52B8E050A92076962B5 /* Foundation */,
 			);
 			path = Sources;
@@ -212,8 +264,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1B2C3D40100000000000004 /* BridgeShellAPIClient.swift in Sources */,
+				A1B2C3D40100000000000001 /* CodexMobileCompanionApp.swift in Sources */,
+				A1B2C3D40100000000000005 /* DesktopRuntimeSupervisor.swift in Sources */,
 				21BFE2AD6196F327135F493B /* BridgeContracts.swift in Sources */,
-				973354979576A95DFA9E1DB1 /* CodexMobileCompanionApp.swift in Sources */,
+				A1B2C3D40100000000000003 /* PairingEntryViewModel.swift in Sources */,
+				A1B2C3D40100000000000002 /* PairingViews.swift in Sources */,
 				076DAD3555DF80C951B9329F /* PersistenceBoundary.swift in Sources */,
 				47EF301FD4DB23F23CE7051A /* SecureStore.swift in Sources */,
 				B17D93EC9AC73B9003D48DD9 /* StructuredLogger.swift in Sources */,
