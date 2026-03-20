@@ -1628,7 +1628,7 @@ fn route_thread_request(
                 .thread_api
                 .lock()
                 .expect("thread API mutex should not be poisoned");
-            log_thread_sync_error(thread_api.sync_from_upstream());
+            log_thread_sync_error(thread_api.sync_thread_from_upstream(thread_id));
             let mut detail = thread_api.detail_response(thread_id)?;
             detail.thread.access_mode = app.access_mode();
             Some(json_response("200 OK", &detail))
@@ -1638,7 +1638,7 @@ fn route_thread_request(
                 .thread_api
                 .lock()
                 .expect("thread API mutex should not be poisoned");
-            log_thread_sync_error(thread_api.sync_from_upstream());
+            log_thread_sync_error(thread_api.sync_thread_from_upstream(thread_id));
             let thread_exists = thread_api.detail_response(thread_id).is_some();
             if !thread_exists {
                 return None;
