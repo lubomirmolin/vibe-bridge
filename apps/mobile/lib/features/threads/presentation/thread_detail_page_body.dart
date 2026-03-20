@@ -1,0 +1,648 @@
+part of 'thread_detail_page.dart';
+
+class _ThreadDetailBody extends StatelessWidget {
+  const _ThreadDetailBody({
+    required this.state,
+    required this.isReadOnlyMode,
+    required this.controlsEnabled,
+    required this.desktopIntegrationEnabled,
+    required this.onRetry,
+    required this.onLoadEarlier,
+    required this.onRetryReconnect,
+    required this.threadApprovals,
+    required this.approvalsErrorMessage,
+    required this.canResolveApprovals,
+    required this.gitErrorMessage,
+    required this.gitMutationMessage,
+    required this.gitControlsUnavailableReason,
+    required this.openOnMacMessage,
+    required this.openOnMacErrorMessage,
+    required this.hasPinnedComposer,
+    required this.onRefreshApprovals,
+    required this.scrollController,
+  });
+
+  final ThreadDetailState state;
+  final bool isReadOnlyMode;
+  final bool controlsEnabled;
+  final bool desktopIntegrationEnabled;
+  final Future<void> Function() onRetry;
+  final VoidCallback onLoadEarlier;
+  final Future<void> Function() onRetryReconnect;
+  final List<ApprovalItemState> threadApprovals;
+  final String? approvalsErrorMessage;
+  final bool canResolveApprovals;
+  final String? gitErrorMessage;
+  final String? gitMutationMessage;
+  final String? gitControlsUnavailableReason;
+  final String? openOnMacMessage;
+  final String? openOnMacErrorMessage;
+  final bool hasPinnedComposer;
+  final VoidCallback onRefreshApprovals;
+  final ScrollController scrollController;
+
+  @override
+  Widget build(BuildContext context) {
+    final gitControlsUnavailableReason = this.gitControlsUnavailableReason;
+    final gitErrorMessage = this.gitErrorMessage;
+    final gitMutationMessage = this.gitMutationMessage;
+    final openOnMacMessage = this.openOnMacMessage;
+    final openOnMacErrorMessage = this.openOnMacErrorMessage;
+
+    if (state.isLoading && !state.hasThread) {
+      return const Center(
+        child: CircularProgressIndicator(color: AppTheme.emerald),
+      );
+    }
+
+    if (state.hasError && !state.hasThread) {
+      return _ThreadDetailErrorState(
+        isUnavailable: state.isUnavailable,
+        message: state.errorMessage ?? 'Couldn\'t load',
+        onRetry: onRetry,
+      );
+    }
+
+    final thread = state.thread;
+    if (thread == null) {
+      return _ThreadDetailErrorState(
+        isUnavailable: true,
+        message: 'Thread unavailable',
+        onRetry: onRetry,
+      );
+    }
+
+    final timelineBlocks = _buildTimelineBlocks(state.visibleItems);
+
+    return RefreshIndicator(
+      color: AppTheme.emerald,
+      backgroundColor: AppTheme.surfaceZinc800,
+      onRefresh: onRetry,
+      child: ListView(
+        controller: scrollController,
+        key: const Key('thread-detail-scroll-view'),
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        children: [
+          const SizedBox(height: 16),
+          if (state.staleMessage != null) ...[
+            const SizedBox(height: 12),
+            _InlineWarning(message: state.staleMessage!),
+          ],
+          if (!controlsEnabled) ...[
+            const SizedBox(height: 12),
+            _MutatingActionsBlockedNotice(
+              message: isReadOnlyMode
+                  ? 'Read-only mode blocks turn and git mutations.'
+                  : 'Mutating actions are blocked while bridge is offline.',
+              onRetryReconnect: isReadOnlyMode ? null : onRetryReconnect,
+            ),
+          ],
+          if (state.streamErrorMessage != null) ...[
+            const SizedBox(height: 12),
+            _InlineWarning(message: state.streamErrorMessage!),
+          ],
+          if (state.turnControlErrorMessage != null) ...[
+            const SizedBox(height: 12),
+            _InlineWarning(message: state.turnControlErrorMessage!),
+          ],
+          if (gitControlsUnavailableReason != null) ...[
+            const SizedBox(height: 12),
+            KeyedSubtree(
+              key: const Key('git-controls-unavailable-message'),
+              child: _InlineWarning(message: gitControlsUnavailableReason),
+            ),
+          ],
+          if (gitErrorMessage != null) ...[
+            const SizedBox(height: 12),
+            _InlineWarning(message: gitErrorMessage),
+          ],
+          if (gitMutationMessage != null) ...[
+            const SizedBox(height: 12),
+            _InlineInfo(message: gitMutationMessage),
+          ],
+          if (!desktopIntegrationEnabled) ...[
+            const SizedBox(height: 12),
+            const KeyedSubtree(
+              key: Key('desktop-integration-disabled-message'),
+              child: _InlineWarning(
+                message: 'Desktop integration is disabled in settings.',
+              ),
+            ),
+          ],
+          if (openOnMacMessage != null) ...[
+            const SizedBox(height: 12),
+            KeyedSubtree(
+              key: const Key('open-on-mac-success-message'),
+              child: _InlineInfo(message: openOnMacMessage),
+            ),
+          ],
+          if (openOnMacErrorMessage != null) ...[
+            const SizedBox(height: 12),
+            KeyedSubtree(
+              key: const Key('open-on-mac-error-message'),
+              child: _InlineWarning(message: openOnMacErrorMessage),
+            ),
+          ],
+          if (threadApprovals.isNotEmpty || approvalsErrorMessage != null) ...[
+            const SizedBox(height: 16),
+            _ThreadApprovalsCard(
+              approvals: threadApprovals,
+              canResolveApprovals: canResolveApprovals,
+              errorMessage: approvalsErrorMessage,
+              onRefresh: onRefreshApprovals,
+            ),
+          ],
+          const SizedBox(height: 32),
+          const Text(
+            'Timeline',
+            style: TextStyle(
+              color: AppTheme.textSubtle,
+              fontSize: 13,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (state.canLoadEarlierHistory) ...[
+            OutlinedButton.icon(
+              key: const Key('load-earlier-history'),
+              onPressed: onLoadEarlier,
+              icon: const Icon(Icons.history, color: AppTheme.textMuted),
+              label: Text(
+                'Load earlier history (${state.hiddenHistoryCount})',
+                style: const TextStyle(color: AppTheme.textMuted),
+              ),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Colors.white12),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+          if (state.visibleItems.isEmpty)
+            const _EmptyTimelineState()
+          else
+            ...timelineBlocks
+                .map(
+                  (block) => block.item != null
+                      ? _ThreadActivityCard(
+                          item: block.item!,
+                          exploration: block.exploration,
+                        )
+                      : _ExploredFilesCard(exploration: block.exploration!),
+                )
+                .expand((widget) => [widget, const SizedBox(height: 12)]),
+          if (hasPinnedComposer) const SizedBox(height: 220),
+        ],
+      ),
+    );
+  }
+}
+
+List<_TimelineBlock> _buildTimelineBlocks(List<ThreadActivityItem> items) {
+  final blocks = <_TimelineBlock>[];
+  var index = 0;
+
+  while (index < items.length) {
+    final item = items[index];
+    final exploration = _ExplorationSummaryBuilder();
+
+    if (_isExplorationItem(item)) {
+      var scanIndex = index;
+      while (scanIndex < items.length && _isExplorationItem(items[scanIndex])) {
+        exploration.add(items[scanIndex]);
+        scanIndex += 1;
+      }
+
+      if (exploration.hasContent) {
+        blocks.add(_TimelineBlock.explorationSummary(exploration.build()));
+        index = scanIndex;
+        continue;
+      }
+    }
+
+    var scanIndex = index + 1;
+    while (scanIndex < items.length && _isExplorationItem(items[scanIndex])) {
+      exploration.add(items[scanIndex]);
+      scanIndex += 1;
+    }
+
+    blocks.add(
+      _TimelineBlock.activity(
+        item,
+        exploration: exploration.hasContent ? exploration.build() : null,
+      ),
+    );
+    index = scanIndex;
+  }
+
+  return blocks;
+}
+
+bool _isExplorationItem(ThreadActivityItem item) {
+  if (item.type != ThreadActivityItemType.terminalOutput) {
+    return false;
+  }
+
+  final command = item.parsedCommandOutput?.command;
+  if (command == null || command.trim().isEmpty) {
+    return false;
+  }
+
+  final normalizedCommand = command.trim().toLowerCase();
+  return normalizedCommand.startsWith('nl -ba ') ||
+      normalizedCommand.startsWith('cat ') ||
+      normalizedCommand.startsWith('sed -n ') ||
+      normalizedCommand.startsWith('rg -n ') ||
+      normalizedCommand.startsWith('rg --files ') ||
+      normalizedCommand.startsWith('head ') ||
+      normalizedCommand.startsWith('tail ');
+}
+
+String? _extractExploredFileLabel(ThreadActivityItem item) {
+  final command = item.parsedCommandOutput?.command;
+  if (command == null || command.trim().isEmpty) {
+    return null;
+  }
+
+  final pattern = RegExp(
+    r'([~./A-Za-z0-9_-]+(?:/[~./A-Za-z0-9_-]+)*\.[A-Za-z0-9]+)',
+  );
+
+  String? lastPath;
+  for (final match in pattern.allMatches(command)) {
+    lastPath = match.group(1);
+  }
+
+  final fileName = _CodeLanguageResolver.displayName(lastPath);
+  if (fileName == null || fileName.isEmpty) {
+    return null;
+  }
+
+  return 'Read $fileName';
+}
+
+bool _isSearchExplorationItem(ThreadActivityItem item) {
+  final command = item.parsedCommandOutput?.command;
+  if (command == null || command.trim().isEmpty) {
+    return false;
+  }
+
+  final normalizedCommand = command.trim().toLowerCase();
+  return normalizedCommand.startsWith('rg -n ') ||
+      normalizedCommand.startsWith('rg --files ') ||
+      normalizedCommand.startsWith('find ') ||
+      normalizedCommand.startsWith('grep ') ||
+      normalizedCommand.startsWith('search_query ');
+}
+
+class _TimelineBlock {
+  const _TimelineBlock._({this.item, this.exploration});
+
+  factory _TimelineBlock.activity(
+    ThreadActivityItem item, {
+    _ExplorationSummary? exploration,
+  }) {
+    return _TimelineBlock._(item: item, exploration: exploration);
+  }
+
+  factory _TimelineBlock.explorationSummary(_ExplorationSummary exploration) {
+    return _TimelineBlock._(exploration: exploration);
+  }
+
+  final ThreadActivityItem? item;
+  final _ExplorationSummary? exploration;
+}
+
+class _ExplorationSummaryBuilder {
+  final List<String> _files = <String>[];
+  final Set<String> _seenFiles = <String>{};
+  int _searchCount = 0;
+
+  bool get hasContent => _files.isNotEmpty || _searchCount > 0;
+
+  void add(ThreadActivityItem item) {
+    if (_isSearchExplorationItem(item)) {
+      _searchCount += 1;
+      return;
+    }
+
+    final file = _extractExploredFileLabel(item);
+    if (file != null && _seenFiles.add(file)) {
+      _files.add(file);
+    }
+  }
+
+  _ExplorationSummary build() {
+    return _ExplorationSummary(
+      files: List<String>.unmodifiable(_files),
+      searchCount: _searchCount,
+    );
+  }
+}
+
+class _ExplorationSummary {
+  const _ExplorationSummary({required this.files, required this.searchCount});
+
+  final List<String> files;
+  final int searchCount;
+
+  String get label {
+    final parts = <String>[];
+    if (files.isNotEmpty) {
+      parts.add(
+        'Explored ${files.length} ${files.length == 1 ? 'file' : 'files'}',
+      );
+    }
+    if (searchCount > 0) {
+      parts.add('$searchCount ${searchCount == 1 ? 'search' : 'searches'}');
+    }
+    if (parts.isEmpty) {
+      return 'Explored activity';
+    }
+    if (parts.length == 1) {
+      return parts.first;
+    }
+    return '${parts.first}, ${parts.sublist(1).join(', ')}';
+  }
+}
+
+class _ThreadDetailErrorState extends StatelessWidget {
+  const _ThreadDetailErrorState({
+    required this.isUnavailable,
+    required this.message,
+    required this.onRetry,
+  });
+
+  final bool isUnavailable;
+  final String message;
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            PhosphorIcon(
+              isUnavailable ? PhosphorIcons.database() : PhosphorIcons.wifiX(),
+              size: 48,
+              color: AppTheme.rose,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              isUnavailable ? 'Unavailable' : 'Couldn\'t load',
+              style: const TextStyle(
+                color: AppTheme.textMain,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppTheme.textMuted),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.surfaceZinc800,
+                foregroundColor: AppTheme.textMain,
+              ),
+              onPressed: onRetry,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ThreadApprovalsCard extends StatelessWidget {
+  const _ThreadApprovalsCard({
+    required this.approvals,
+    required this.canResolveApprovals,
+    required this.errorMessage,
+    required this.onRefresh,
+  });
+
+  final List<ApprovalItemState> approvals;
+  final bool canResolveApprovals;
+  final String? errorMessage;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppTheme.amber.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppTheme.amber.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              PhosphorIcon(
+                PhosphorIcons.shieldWarning(),
+                color: AppTheme.amber,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Pending Approvals',
+                  style: TextStyle(
+                    color: AppTheme.amber,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: onRefresh,
+                icon: PhosphorIcon(
+                  PhosphorIcons.arrowsClockwise(),
+                  color: AppTheme.amber,
+                  size: 20,
+                ),
+              ),
+            ],
+          ),
+          if (errorMessage != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                errorMessage!,
+                style: const TextStyle(color: AppTheme.rose, fontSize: 13),
+              ),
+            ),
+          const SizedBox(height: 12),
+          ...approvals.map(
+            (item) => Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.black26,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        approvalActionLabel(item.approval.action),
+                        style: const TextStyle(
+                          color: AppTheme.textMain,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      Text(
+                        approvalStatusLabel(item.approval.status),
+                        style: GoogleFonts.jetBrainsMono(
+                          color: AppTheme.textSubtle,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    item.approval.reason,
+                    style: const TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyTimelineState extends StatelessWidget {
+  const _EmptyTimelineState();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 40),
+      child: Center(
+        child: Column(
+          children: [
+            Icon(Icons.history_rounded, size: 32, color: AppTheme.textSubtle),
+            SizedBox(height: 16),
+            Text(
+              'No timeline entries yet.',
+              style: TextStyle(color: AppTheme.textMuted),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InlineWarning extends StatelessWidget {
+  const _InlineWarning({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.rose.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.rose.withValues(alpha: 0.3)),
+      ),
+      child: Text(
+        message,
+        style: const TextStyle(color: AppTheme.rose, fontSize: 13),
+      ),
+    );
+  }
+}
+
+class _InlineInfo extends StatelessWidget {
+  const _InlineInfo({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.emerald.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.emerald.withValues(alpha: 0.3)),
+      ),
+      child: Text(
+        message,
+        style: const TextStyle(color: AppTheme.emerald, fontSize: 13),
+      ),
+    );
+  }
+}
+
+class _MutatingActionsBlockedNotice extends StatelessWidget {
+  const _MutatingActionsBlockedNotice({
+    required this.message,
+    required this.onRetryReconnect,
+  });
+
+  final String message;
+  final Future<void> Function()? onRetryReconnect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceZinc800,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            message,
+            style: const TextStyle(color: AppTheme.textMuted, fontSize: 13),
+          ),
+          if (onRetryReconnect != null) ...[
+            const SizedBox(height: 8),
+            OutlinedButton(
+              onPressed: onRetryReconnect,
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Colors.white12),
+              ),
+              child: const Text(
+                'Retry reconnect',
+                style: TextStyle(color: AppTheme.textMain),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
