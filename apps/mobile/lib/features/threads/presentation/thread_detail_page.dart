@@ -10,6 +10,7 @@ import 'package:codex_mobile_companion/features/settings/application/runtime_acc
 import 'package:codex_mobile_companion/features/threads/application/thread_detail_controller.dart';
 import 'package:codex_mobile_companion/features/threads/domain/parsed_command_output.dart';
 import 'package:codex_mobile_companion/features/threads/domain/thread_activity_item.dart';
+import 'package:codex_mobile_companion/features/threads/domain/thread_timeline_block.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
 import 'package:codex_mobile_companion/shared/widgets/badges.dart';
@@ -72,7 +73,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   bool _isComposerFocused = false;
   bool _canLoadEarlierHistory = false;
   bool _isAutoLoadingEarlierHistory = false;
-  VoidCallback? _loadEarlierHistory;
+  Future<void> Function()? _loadEarlierHistory;
 
   double _lastScrollOffset = 0;
   double _scrollOffsetOnDirectionChange = 0;
@@ -155,32 +156,36 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
 
     final previousOffset = position.pixels;
     final previousMaxScrollExtent = position.maxScrollExtent;
+    final loadEarlierHistory = _loadEarlierHistory;
+    if (loadEarlierHistory == null) {
+      return;
+    }
     _isAutoLoadingEarlierHistory = true;
-    _loadEarlierHistory?.call();
+    loadEarlierHistory().whenComplete(() {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _isAutoLoadingEarlierHistory = false;
+        if (!mounted || !_timelineScrollController.hasClients) {
+          return;
+        }
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _isAutoLoadingEarlierHistory = false;
-      if (!mounted || !_timelineScrollController.hasClients) {
-        return;
-      }
+        final nextPosition = _timelineScrollController.position;
+        final insertedExtent =
+            nextPosition.maxScrollExtent - previousMaxScrollExtent;
+        if (insertedExtent <= 0) {
+          return;
+        }
 
-      final nextPosition = _timelineScrollController.position;
-      final insertedExtent =
-          nextPosition.maxScrollExtent - previousMaxScrollExtent;
-      if (insertedExtent <= 0) {
-        return;
-      }
+        final compensatedOffset = clampDouble(
+          previousOffset + insertedExtent,
+          nextPosition.minScrollExtent,
+          nextPosition.maxScrollExtent,
+        );
+        if ((nextPosition.pixels - compensatedOffset).abs() < 0.5) {
+          return;
+        }
 
-      final compensatedOffset = clampDouble(
-        previousOffset + insertedExtent,
-        nextPosition.minScrollExtent,
-        nextPosition.maxScrollExtent,
-      );
-      if ((nextPosition.pixels - compensatedOffset).abs() < 0.5) {
-        return;
-      }
-
-      _timelineScrollController.jumpTo(compensatedOffset);
+        _timelineScrollController.jumpTo(compensatedOffset);
+      });
     });
   }
 
@@ -345,10 +350,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       ),
       (previous, next) {
         if (previous != null) {
-          final itemCountIncreased = next.$1 > previous.$1;
           final lastVisibleItemChanged =
               next.$2 != previous.$2 || next.$3 != previous.$3;
-          if (!itemCountIncreased && !lastVisibleItemChanged) {
+          if (!lastVisibleItemChanged) {
             return;
           }
 

@@ -1,4 +1,4 @@
-const String contractVersion = '2026-03-17';
+const String contractVersion = '2026-03-20';
 
 enum ThreadStatus { idle, running, completed, interrupted, failed }
 
@@ -15,6 +15,10 @@ enum BridgeEventKind {
   threadStatusChanged,
   securityAudit,
 }
+
+enum ThreadTimelineGroupKind { exploration }
+
+enum ThreadTimelineExplorationKind { read, search }
 
 extension ThreadStatusWire on ThreadStatus {
   String get wireValue {
@@ -63,6 +67,26 @@ extension BridgeEventKindWire on BridgeEventKind {
         return 'thread_status_changed';
       case BridgeEventKind.securityAudit:
         return 'security_audit';
+    }
+  }
+}
+
+extension ThreadTimelineGroupKindWire on ThreadTimelineGroupKind {
+  String get wireValue {
+    switch (this) {
+      case ThreadTimelineGroupKind.exploration:
+        return 'exploration';
+    }
+  }
+}
+
+extension ThreadTimelineExplorationKindWire on ThreadTimelineExplorationKind {
+  String get wireValue {
+    switch (this) {
+      case ThreadTimelineExplorationKind.read:
+        return 'read';
+      case ThreadTimelineExplorationKind.search:
+        return 'search';
     }
   }
 }
@@ -422,6 +446,64 @@ BridgeEventKind bridgeEventKindFromWire(String wireValue) {
   );
 }
 
+ThreadTimelineGroupKind threadTimelineGroupKindFromWire(String wireValue) {
+  return ThreadTimelineGroupKind.values.firstWhere(
+    (kind) => kind.wireValue == wireValue,
+    orElse: () => throw FormatException(
+      'Unknown ThreadTimelineGroupKind wire value "$wireValue".',
+    ),
+  );
+}
+
+ThreadTimelineExplorationKind threadTimelineExplorationKindFromWire(
+  String wireValue,
+) {
+  return ThreadTimelineExplorationKind.values.firstWhere(
+    (kind) => kind.wireValue == wireValue,
+    orElse: () => throw FormatException(
+      'Unknown ThreadTimelineExplorationKind wire value "$wireValue".',
+    ),
+  );
+}
+
+class ThreadTimelineAnnotationsDto {
+  const ThreadTimelineAnnotationsDto({
+    this.groupKind,
+    this.groupId,
+    this.explorationKind,
+    this.entryLabel,
+  });
+
+  final ThreadTimelineGroupKind? groupKind;
+  final String? groupId;
+  final ThreadTimelineExplorationKind? explorationKind;
+  final String? entryLabel;
+
+  factory ThreadTimelineAnnotationsDto.fromJson(Map<String, dynamic> json) {
+    return ThreadTimelineAnnotationsDto(
+      groupKind: json['group_kind'] == null
+          ? null
+          : threadTimelineGroupKindFromWire(json['group_kind'] as String),
+      groupId: json['group_id'] as String?,
+      explorationKind: json['exploration_kind'] == null
+          ? null
+          : threadTimelineExplorationKindFromWire(
+              json['exploration_kind'] as String,
+            ),
+      entryLabel: json['entry_label'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'group_kind': groupKind?.wireValue,
+      'group_id': groupId,
+      'exploration_kind': explorationKind?.wireValue,
+      'entry_label': entryLabel,
+    };
+  }
+}
+
 class ThreadSummaryDto {
   const ThreadSummaryDto({
     required this.contractVersion,
@@ -541,6 +623,7 @@ class ThreadTimelineEntryDto {
     required this.occurredAt,
     required this.summary,
     required this.payload,
+    this.annotations,
   });
 
   final String eventId;
@@ -548,6 +631,7 @@ class ThreadTimelineEntryDto {
   final String occurredAt;
   final String summary;
   final Map<String, dynamic> payload;
+  final ThreadTimelineAnnotationsDto? annotations;
 
   factory ThreadTimelineEntryDto.fromJson(Map<String, dynamic> json) {
     final payload = json['payload'];
@@ -563,6 +647,11 @@ class ThreadTimelineEntryDto {
       occurredAt: json['occurred_at'] as String,
       summary: json['summary'] as String,
       payload: payload,
+      annotations: json['annotations'] is Map<String, dynamic>
+          ? ThreadTimelineAnnotationsDto.fromJson(
+              json['annotations'] as Map<String, dynamic>,
+            )
+          : null,
     );
   }
 
@@ -573,6 +662,67 @@ class ThreadTimelineEntryDto {
       'occurred_at': occurredAt,
       'summary': summary,
       'payload': payload,
+      'annotations': annotations?.toJson(),
+    };
+  }
+}
+
+class ThreadTimelinePageDto {
+  const ThreadTimelinePageDto({
+    required this.contractVersion,
+    required this.thread,
+    required this.entries,
+    required this.nextBefore,
+    required this.hasMoreBefore,
+  });
+
+  final String contractVersion;
+  final ThreadDetailDto thread;
+  final List<ThreadTimelineEntryDto> entries;
+  final String? nextBefore;
+  final bool hasMoreBefore;
+
+  factory ThreadTimelinePageDto.fromJson(Map<String, dynamic> json) {
+    final threadJson = json['thread'];
+    if (threadJson is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "thread" in timeline page response.',
+      );
+    }
+
+    final entriesJson = json['entries'];
+    if (entriesJson is! List) {
+      throw const FormatException(
+        'Missing or invalid "entries" in timeline page response.',
+      );
+    }
+
+    return ThreadTimelinePageDto(
+      contractVersion: json['contract_version'] as String,
+      thread: ThreadDetailDto.fromJson(threadJson),
+      entries: entriesJson
+          .map((item) {
+            if (item is! Map<String, dynamic>) {
+              throw const FormatException(
+                'Timeline page entry must be a JSON object.',
+              );
+            }
+
+            return ThreadTimelineEntryDto.fromJson(item);
+          })
+          .toList(growable: false),
+      nextBefore: json['next_before'] as String?,
+      hasMoreBefore: json['has_more_before'] as bool? ?? false,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'contract_version': contractVersion,
+      'thread': thread.toJson(),
+      'entries': entries.map((entry) => entry.toJson()).toList(growable: false),
+      'next_before': nextBefore,
+      'has_more_before': hasMoreBefore,
     };
   }
 }
@@ -661,6 +811,7 @@ class BridgeEventEnvelope<TPayload> {
     required this.kind,
     required this.occurredAt,
     required this.payload,
+    this.annotations,
   });
 
   final String contractVersion;
@@ -669,6 +820,7 @@ class BridgeEventEnvelope<TPayload> {
   final BridgeEventKind kind;
   final String occurredAt;
   final TPayload payload;
+  final ThreadTimelineAnnotationsDto? annotations;
 
   factory BridgeEventEnvelope.fromJson(
     Map<String, dynamic> json,
@@ -681,6 +833,11 @@ class BridgeEventEnvelope<TPayload> {
       kind: bridgeEventKindFromWire(json['kind'] as String),
       occurredAt: json['occurred_at'] as String,
       payload: payloadDecoder(json['payload'] as Map<String, dynamic>),
+      annotations: json['annotations'] is Map<String, dynamic>
+          ? ThreadTimelineAnnotationsDto.fromJson(
+              json['annotations'] as Map<String, dynamic>,
+            )
+          : null,
     );
   }
 
@@ -694,6 +851,7 @@ class BridgeEventEnvelope<TPayload> {
       'kind': kind.wireValue,
       'occurred_at': occurredAt,
       'payload': payloadEncoder(payload),
+      'annotations': annotations?.toJson(),
     };
   }
 }

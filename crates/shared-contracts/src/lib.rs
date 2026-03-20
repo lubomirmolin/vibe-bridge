@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const CONTRACT_VERSION: &str = "2026-03-17";
+pub const CONTRACT_VERSION: &str = "2026-03-20";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -30,6 +30,31 @@ pub enum BridgeEventKind {
     ApprovalRequested,
     ThreadStatusChanged,
     SecurityAudit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadTimelineGroupKind {
+    Exploration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadTimelineExplorationKind {
+    Read,
+    Search,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadTimelineAnnotationsDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_kind: Option<ThreadTimelineGroupKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exploration_kind: Option<ThreadTimelineExplorationKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +92,17 @@ pub struct ThreadTimelineEntryDto {
     pub occurred_at: String,
     pub summary: String,
     pub payload: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<ThreadTimelineAnnotationsDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadTimelinePageDto {
+    pub contract_version: String,
+    pub thread: ThreadDetailDto,
+    pub entries: Vec<ThreadTimelineEntryDto>,
+    pub next_before: Option<String>,
+    pub has_more_before: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,6 +122,8 @@ pub struct BridgeEventEnvelope<TPayload> {
     pub kind: BridgeEventKind,
     pub occurred_at: String,
     pub payload: TPayload,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<ThreadTimelineAnnotationsDto>,
 }
 
 impl<TPayload> BridgeEventEnvelope<TPayload> {
@@ -103,7 +141,13 @@ impl<TPayload> BridgeEventEnvelope<TPayload> {
             kind,
             occurred_at: occurred_at.into(),
             payload,
+            annotations: None,
         }
+    }
+
+    pub fn with_annotations(mut self, annotations: Option<ThreadTimelineAnnotationsDto>) -> Self {
+        self.annotations = annotations;
+        self
     }
 }
 
@@ -111,7 +155,8 @@ impl<TPayload> BridgeEventEnvelope<TPayload> {
 mod tests {
     use super::{
         BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, SecurityAuditEventDto,
-        ThreadDetailDto, ThreadStatus, ThreadSummaryDto, ThreadTimelineEntryDto,
+        ThreadDetailDto, ThreadStatus, ThreadSummaryDto, ThreadTimelineExplorationKind,
+        ThreadTimelineGroupKind, ThreadTimelinePageDto,
     };
 
     #[test]
@@ -135,6 +180,7 @@ mod tests {
         assert_eq!(event.contract_version, CONTRACT_VERSION);
         assert_eq!(event.kind, BridgeEventKind::MessageDelta);
         assert_eq!(event.payload["delta"], "Working on foundation contracts");
+        assert!(event.annotations.is_none());
     }
 
     #[test]
@@ -149,14 +195,33 @@ mod tests {
     }
 
     #[test]
-    fn thread_timeline_fixture_matches_contract() {
-        let fixture = include_str!("../../../shared/contracts/fixtures/thread_timeline.json");
-        let timeline: Vec<ThreadTimelineEntryDto> =
-            serde_json::from_str(fixture).expect("thread timeline fixture should decode");
+    fn thread_timeline_page_fixture_matches_contract() {
+        let fixture = include_str!("../../../shared/contracts/fixtures/thread_timeline_page.json");
+        let timeline: ThreadTimelinePageDto =
+            serde_json::from_str(fixture).expect("thread timeline page fixture should decode");
 
-        assert_eq!(timeline.len(), 2);
-        assert_eq!(timeline[0].kind, BridgeEventKind::MessageDelta);
-        assert_eq!(timeline[1].payload["command"], "cargo test --workspace");
+        assert_eq!(timeline.thread.thread_id, "thread-123");
+        assert_eq!(timeline.entries.len(), 2);
+        assert_eq!(timeline.entries[0].kind, BridgeEventKind::MessageDelta);
+        assert_eq!(
+            timeline.entries[1].payload["command"],
+            "rg -n workspace crates/shared-contracts/src/lib.rs"
+        );
+        let annotations = timeline.entries[1]
+            .annotations
+            .as_ref()
+            .expect("timeline entry should include annotations");
+        assert_eq!(
+            annotations.group_kind,
+            Some(ThreadTimelineGroupKind::Exploration)
+        );
+        assert_eq!(
+            annotations.exploration_kind,
+            Some(ThreadTimelineExplorationKind::Search)
+        );
+        assert_eq!(annotations.entry_label.as_deref(), Some("Search"));
+        assert_eq!(timeline.next_before.as_deref(), Some("evt-1"));
+        assert!(timeline.has_more_before);
     }
 
     #[test]

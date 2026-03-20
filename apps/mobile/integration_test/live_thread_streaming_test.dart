@@ -4,7 +4,7 @@ import 'dart:io';
 
 import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
 import 'package:codex_mobile_companion/features/settings/data/settings_bridge_api.dart';
-import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
+import 'package:codex_mobile_companion/features/threads/presentation/thread_detail_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store_provider.dart';
@@ -34,7 +34,10 @@ void main() {
             ),
           ],
           child: MaterialApp(
-            home: ThreadListPage(bridgeApiBaseUrl: bridgeServer.baseUrl),
+            home: ThreadDetailPage(
+              bridgeApiBaseUrl: bridgeServer.baseUrl,
+              threadId: 'thread-123',
+            ),
           ),
         ),
       );
@@ -42,17 +45,10 @@ void main() {
 
       await _pumpUntilFound(
         tester,
-        find.byKey(const Key('thread-summary-card-thread-123')),
-      );
-      await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
-      await tester.pumpAndSettle();
-
-      await _pumpUntilFound(
-        tester,
         find.byKey(const Key('thread-detail-title')),
       );
       expect(find.text('Investigate live streaming'), findsOneWidget);
-      await bridgeServer.waitForSocketCount(2);
+      await bridgeServer.waitForSocketCount(1);
 
       await bridgeServer.emitLiveEvent(
         const BridgeEventEnvelope<Map<String, dynamic>>(
@@ -250,10 +246,12 @@ class _TestBridgeServer {
       case '/threads/thread-123/timeline':
         await _writeJson(request, <String, dynamic>{
           'contract_version': contractVersion,
-          'thread_id': 'thread-123',
-          'events': _timelineByEventId.values
+          'thread': _threadDetail.toJson(),
+          'entries': _timelineByEventId.values
               .map((event) => event.toJson())
               .toList(growable: false),
+          'next_before': null,
+          'has_more_before': false,
         });
         return;
       default:

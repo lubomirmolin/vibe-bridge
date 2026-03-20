@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:codex_mobile_companion/features/approvals/presentation/approvals_queue_page.dart';
 import 'package:codex_mobile_companion/features/threads/application/thread_list_controller.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_detail_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
@@ -119,6 +120,21 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                       PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
                       size: 20,
                       color: AppTheme.textMuted,
+                    ),
+                  ),
+                  IconButton(
+                    key: const Key('open-approvals-queue'),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (context) => ApprovalsQueuePage(
+                          bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+                        ),
+                      ),
+                    ),
+                    icon: PhosphorIcon(
+                      PhosphorIcons.shieldWarning(PhosphorIconsStyle.duotone),
+                      size: 20,
+                      color: AppTheme.amber,
                     ),
                   ),
                   const SizedBox(width: 8),

@@ -70,7 +70,7 @@ class _ThreadDetailBody extends StatelessWidget {
       );
     }
 
-    final timelineBlocks = _buildTimelineBlocks(state.visibleItems);
+    final timelineBlocks = buildThreadTimelineBlocks(state.visibleItems);
 
     return RefreshIndicator(
       color: AppTheme.emerald,
@@ -168,6 +168,10 @@ class _ThreadDetailBody extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
+          if (state.isLoadingEarlierHistory) ...[
+            const _InlineInfo(message: 'Loading older history…'),
+            const SizedBox(height: 12),
+          ],
           if (state.visibleItems.isEmpty)
             const _EmptyTimelineState()
           else
@@ -184,174 +188,6 @@ class _ThreadDetailBody extends StatelessWidget {
         ],
       ),
     );
-  }
-}
-
-List<_TimelineBlock> _buildTimelineBlocks(List<ThreadActivityItem> items) {
-  final blocks = <_TimelineBlock>[];
-  var index = 0;
-
-  while (index < items.length) {
-    final item = items[index];
-    final exploration = _ExplorationSummaryBuilder();
-
-    if (_isExplorationItem(item)) {
-      var scanIndex = index;
-      while (scanIndex < items.length && _isExplorationItem(items[scanIndex])) {
-        exploration.add(items[scanIndex]);
-        scanIndex += 1;
-      }
-
-      if (exploration.hasContent) {
-        blocks.add(_TimelineBlock.explorationSummary(exploration.build()));
-        index = scanIndex;
-        continue;
-      }
-    }
-
-    var scanIndex = index + 1;
-    while (scanIndex < items.length && _isExplorationItem(items[scanIndex])) {
-      exploration.add(items[scanIndex]);
-      scanIndex += 1;
-    }
-
-    blocks.add(
-      _TimelineBlock.activity(
-        item,
-        exploration: exploration.hasContent ? exploration.build() : null,
-      ),
-    );
-    index = scanIndex;
-  }
-
-  return blocks;
-}
-
-bool _isExplorationItem(ThreadActivityItem item) {
-  if (item.type != ThreadActivityItemType.terminalOutput) {
-    return false;
-  }
-
-  final command = item.parsedCommandOutput?.command;
-  if (command == null || command.trim().isEmpty) {
-    return false;
-  }
-
-  final normalizedCommand = command.trim().toLowerCase();
-  return normalizedCommand.startsWith('nl -ba ') ||
-      normalizedCommand.startsWith('cat ') ||
-      normalizedCommand.startsWith('sed -n ') ||
-      normalizedCommand.startsWith('rg -n ') ||
-      normalizedCommand.startsWith('rg --files ') ||
-      normalizedCommand.startsWith('head ') ||
-      normalizedCommand.startsWith('tail ');
-}
-
-String? _extractExploredFileLabel(ThreadActivityItem item) {
-  final command = item.parsedCommandOutput?.command;
-  if (command == null || command.trim().isEmpty) {
-    return null;
-  }
-
-  final pattern = RegExp(
-    r'([~./A-Za-z0-9_-]+(?:/[~./A-Za-z0-9_-]+)*\.[A-Za-z0-9]+)',
-  );
-
-  String? lastPath;
-  for (final match in pattern.allMatches(command)) {
-    lastPath = match.group(1);
-  }
-
-  final fileName = _CodeLanguageResolver.displayName(lastPath);
-  if (fileName == null || fileName.isEmpty) {
-    return null;
-  }
-
-  return 'Read $fileName';
-}
-
-bool _isSearchExplorationItem(ThreadActivityItem item) {
-  final command = item.parsedCommandOutput?.command;
-  if (command == null || command.trim().isEmpty) {
-    return false;
-  }
-
-  final normalizedCommand = command.trim().toLowerCase();
-  return normalizedCommand.startsWith('rg -n ') ||
-      normalizedCommand.startsWith('rg --files ') ||
-      normalizedCommand.startsWith('find ') ||
-      normalizedCommand.startsWith('grep ') ||
-      normalizedCommand.startsWith('search_query ');
-}
-
-class _TimelineBlock {
-  const _TimelineBlock._({this.item, this.exploration});
-
-  factory _TimelineBlock.activity(
-    ThreadActivityItem item, {
-    _ExplorationSummary? exploration,
-  }) {
-    return _TimelineBlock._(item: item, exploration: exploration);
-  }
-
-  factory _TimelineBlock.explorationSummary(_ExplorationSummary exploration) {
-    return _TimelineBlock._(exploration: exploration);
-  }
-
-  final ThreadActivityItem? item;
-  final _ExplorationSummary? exploration;
-}
-
-class _ExplorationSummaryBuilder {
-  final List<String> _files = <String>[];
-  final Set<String> _seenFiles = <String>{};
-  int _searchCount = 0;
-
-  bool get hasContent => _files.isNotEmpty || _searchCount > 0;
-
-  void add(ThreadActivityItem item) {
-    if (_isSearchExplorationItem(item)) {
-      _searchCount += 1;
-      return;
-    }
-
-    final file = _extractExploredFileLabel(item);
-    if (file != null && _seenFiles.add(file)) {
-      _files.add(file);
-    }
-  }
-
-  _ExplorationSummary build() {
-    return _ExplorationSummary(
-      files: List<String>.unmodifiable(_files),
-      searchCount: _searchCount,
-    );
-  }
-}
-
-class _ExplorationSummary {
-  const _ExplorationSummary({required this.files, required this.searchCount});
-
-  final List<String> files;
-  final int searchCount;
-
-  String get label {
-    final parts = <String>[];
-    if (files.isNotEmpty) {
-      parts.add(
-        'Explored ${files.length} ${files.length == 1 ? 'file' : 'files'}',
-      );
-    }
-    if (searchCount > 0) {
-      parts.add('$searchCount ${searchCount == 1 ? 'search' : 'searches'}');
-    }
-    if (parts.isEmpty) {
-      return 'Explored activity';
-    }
-    if (parts.length == 1) {
-      return parts.first;
-    }
-    return '${parts.first}, ${parts.sublist(1).join(', ')}';
   }
 }
 
@@ -495,6 +331,9 @@ class _ThreadApprovalsCard extends StatelessWidget {
                       ),
                       Text(
                         approvalStatusLabel(item.approval.status),
+                        key: Key(
+                          'thread-approval-status-${item.approval.approvalId}',
+                        ),
                         style: GoogleFonts.jetBrainsMono(
                           color: AppTheme.textSubtle,
                           fontSize: 10,

@@ -466,7 +466,6 @@ class PairingController extends StateNotifier<PairingState> {
 
     if (clearCachedThreadState) {
       await _secureStore.removeSecret(SecureValueKey.threadListCache);
-      await _secureStore.removeSecret(SecureValueKey.threadDetailsCache);
       await _secureStore.removeSecret(SecureValueKey.selectedThreadId);
     }
   }

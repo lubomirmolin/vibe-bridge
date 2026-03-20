@@ -1251,7 +1251,7 @@ fn route_request(request_line: &str, app: &BridgeApplication) -> String {
                         "POST /policy/access-mode?mode=<read_only|control_with_approvals|full_control>",
                         "GET /threads",
                         "GET /threads/:id",
-                        "GET /threads/:id/timeline",
+                        "GET /threads/:id/timeline?before=<event_id>&limit=<n>",
                         "POST /threads/:id/open-on-mac",
                         "GET /threads/:id/git/status",
                         "POST /threads/:id/turns/start",
@@ -1637,7 +1637,41 @@ fn route_thread_request(
                 .thread_api
                 .lock()
                 .expect("thread API mutex should not be poisoned");
-            let timeline = thread_api.timeline_response(thread_id)?;
+            let thread_exists = thread_api.detail_response(thread_id).is_some();
+            if !thread_exists {
+                return None;
+            }
+            let before = query_required(query, "before");
+            let limit = if let Some(raw_limit) = query.get("limit") {
+                let trimmed = raw_limit.trim();
+                if trimmed.is_empty() {
+                    return Some(bad_request_response(
+                        "The timeline limit query parameter must not be empty.",
+                    ));
+                }
+
+                match trimmed.parse::<usize>() {
+                    Ok(value) => value.clamp(1, 200),
+                    Err(_) => {
+                        return Some(bad_request_response(
+                            "The timeline limit query parameter must be a positive integer.",
+                        ));
+                    }
+                }
+            } else {
+                50
+            };
+            if let Some(before_cursor) = before.as_deref()
+                && !thread_api
+                    .timeline_cursor_exists(thread_id, before_cursor)
+                    .unwrap_or(false)
+            {
+                return Some(bad_request_response(
+                    "The provided timeline cursor does not exist for this thread.",
+                ));
+            }
+            let timeline =
+                thread_api.timeline_page_response(thread_id, before.as_deref(), limit)?;
             Some(json_response("200 OK", &timeline))
         }
         ("POST", [_, "open-on-mac"]) => {
@@ -2895,8 +2929,86 @@ mod tests {
 
         let timeline_response = route_request("GET /threads/thread-123/timeline HTTP/1.1", &app);
         assert!(timeline_response.starts_with("HTTP/1.1 200 OK"));
-        assert!(timeline_response.contains("\"events\""));
+        assert!(timeline_response.contains("\"thread\""));
+        assert!(timeline_response.contains("\"entries\""));
         assert!(timeline_response.contains("\"kind\":\"message_delta\""));
+    }
+
+    #[test]
+    fn thread_timeline_route_supports_before_and_limit_query() {
+        let app = test_application();
+
+        let timeline_response =
+            route_request("GET /threads/thread-123/timeline?limit=1 HTTP/1.1", &app);
+        assert!(timeline_response.starts_with("HTTP/1.1 200 OK"));
+        let body = parse_json_body(&timeline_response);
+        let entries = body["entries"]
+            .as_array()
+            .expect("timeline entries should be present");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(body["has_more_before"], true);
+
+        let before = body["next_before"]
+            .as_str()
+            .expect("next_before cursor should be present");
+        let older_response = route_request(
+            &format!("GET /threads/thread-123/timeline?before={before}&limit=1 HTTP/1.1"),
+            &app,
+        );
+        let older_body = parse_json_body(&older_response);
+        let older_entries = older_body["entries"]
+            .as_array()
+            .expect("older timeline entries should be present");
+        assert_eq!(older_entries.len(), 1);
+    }
+
+    #[test]
+    fn thread_timeline_route_rejects_invalid_limit_query() {
+        let app = test_application();
+
+        let invalid_limit =
+            route_request("GET /threads/thread-123/timeline?limit=abc HTTP/1.1", &app);
+        assert!(invalid_limit.starts_with("HTTP/1.1 400 Bad Request"));
+        let invalid_body = parse_json_body(&invalid_limit);
+        assert_eq!(
+            invalid_body["message"],
+            "The timeline limit query parameter must be a positive integer."
+        );
+
+        let empty_limit = route_request("GET /threads/thread-123/timeline?limit= HTTP/1.1", &app);
+        assert!(empty_limit.starts_with("HTTP/1.1 400 Bad Request"));
+        let empty_body = parse_json_body(&empty_limit);
+        assert_eq!(
+            empty_body["message"],
+            "The timeline limit query parameter must not be empty."
+        );
+    }
+
+    #[test]
+    fn thread_timeline_route_rejects_unknown_before_cursor() {
+        let app = test_application();
+
+        let response = route_request(
+            "GET /threads/thread-123/timeline?before=missing-event HTTP/1.1",
+            &app,
+        );
+        assert!(response.starts_with("HTTP/1.1 400 Bad Request"));
+        let body = parse_json_body(&response);
+        assert_eq!(
+            body["message"],
+            "The provided timeline cursor does not exist for this thread."
+        );
+    }
+
+    #[test]
+    fn thread_timeline_route_keeps_unknown_threads_as_not_found() {
+        let app = test_application();
+
+        let response = route_request(
+            "GET /threads/missing-thread/timeline?before=missing-event HTTP/1.1",
+            &app,
+        );
+        assert!(response.starts_with("HTTP/1.1 404 Not Found"));
     }
 
     #[test]

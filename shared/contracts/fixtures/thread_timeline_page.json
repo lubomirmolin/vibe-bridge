@@ -1,0 +1,46 @@
+{
+  "contract_version": "2026-03-20",
+  "thread": {
+    "contract_version": "2026-03-20",
+    "thread_id": "thread-123",
+    "title": "Improve mobile bridge caching",
+    "status": "running",
+    "workspace": "/Users/example/projects/codex-mobile-companion",
+    "repository": "codex-mobile-companion",
+    "branch": "feature/timeline-pagination",
+    "created_at": "2026-03-17T17:59:58Z",
+    "updated_at": "2026-03-17T18:01:12Z",
+    "source": "codex_cli",
+    "access_mode": "control_with_approvals",
+    "last_turn_summary": "Streaming thread timeline updates"
+  },
+  "entries": [
+    {
+      "event_id": "evt-1",
+      "kind": "message_delta",
+      "occurred_at": "2026-03-17T18:00:04Z",
+      "summary": "Agent streamed a response delta",
+      "payload": {
+        "delta": "Working on foundation contracts"
+      }
+    },
+    {
+      "event_id": "evt-2",
+      "kind": "command_delta",
+      "occurred_at": "2026-03-17T18:01:10Z",
+      "summary": "Command output streamed",
+      "annotations": {
+        "group_kind": "exploration",
+        "group_id": "exploration:turn-1",
+        "exploration_kind": "search",
+        "entry_label": "Search"
+      },
+      "payload": {
+        "command": "rg -n workspace crates/shared-contracts/src/lib.rs",
+        "delta": "12:    pub workspace: String,"
+      }
+    }
+  ],
+  "next_before": "evt-1",
+  "has_more_before": true
+}
