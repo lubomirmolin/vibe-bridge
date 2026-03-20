@@ -11,8 +11,7 @@ class _ThreadActivityCard extends StatelessWidget {
     final parsedContent = item.parsedCommandOutput;
 
     if (parsedContent != null) {
-      if (parsedContent.isStatusOnlyFileList ||
-          _isHiddenInternalToolCommand(parsedContent)) {
+      if (parsedContent.isStatusOnlyFileList || _isHiddenInternalToolCommand(parsedContent)) {
         return const SizedBox.shrink();
       }
       if (parsedContent.hasDiffBlock) {
@@ -24,11 +23,7 @@ class _ThreadActivityCard extends StatelessWidget {
 
       return Padding(
         padding: const EdgeInsets.only(bottom: 16),
-        child: _CollapsibleTerminalCard(
-          item: item,
-          parsed: parsedContent,
-          exploration: exploration,
-        ),
+        child: _CollapsibleTerminalCard(item: item, parsed: parsedContent, exploration: exploration),
       );
     }
 
@@ -48,53 +43,33 @@ class _ThreadActivityCard extends StatelessWidget {
       case ThreadActivityItemType.approvalRequest:
         borderColor = AppTheme.amber.withOpacity(0.3);
         iconColor = AppTheme.amber;
-        icon = PhosphorIcon(
-          PhosphorIcons.shieldWarning(),
-          color: iconColor,
-          size: 16,
-        );
+        icon = PhosphorIcon(PhosphorIcons.shieldWarning(), color: iconColor, size: 16);
         break;
       case ThreadActivityItemType.securityEvent:
         borderColor = AppTheme.rose.withOpacity(0.3);
         iconColor = AppTheme.rose;
-        icon = PhosphorIcon(
-          PhosphorIcons.warning(),
-          color: iconColor,
-          size: 16,
-        );
+        icon = PhosphorIcon(PhosphorIcons.warning(), color: iconColor, size: 16);
         break;
       case ThreadActivityItemType.fileChange:
         borderColor = Colors.white.withOpacity(0.1);
         iconColor = AppTheme.textSubtle;
-        icon = PhosphorIcon(
-          PhosphorIcons.fileCode(),
-          color: iconColor,
-          size: 16,
-        );
+        icon = PhosphorIcon(PhosphorIcons.fileCode(), color: iconColor, size: 16);
         break;
       case ThreadActivityItemType.planUpdate:
         borderColor = AppTheme.emerald.withOpacity(0.3);
         iconColor = AppTheme.emerald;
-        icon = PhosphorIcon(
-          PhosphorIcons.listChecks(),
-          color: iconColor,
-          size: 16,
-        );
+        icon = PhosphorIcon(PhosphorIcons.listChecks(), color: iconColor, size: 16);
         break;
       default:
         borderColor = Colors.white.withOpacity(0.1);
         iconColor = AppTheme.textSubtle;
-        icon = PhosphorIcon(
-          PhosphorIcons.lightning(),
-          color: iconColor,
-          size: 16,
-        );
+        icon = PhosphorIcon(PhosphorIcons.lightning(), color: iconColor, size: 16);
         break;
     }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
       decoration: BoxDecoration(
         color: AppTheme.surfaceZinc800.withOpacity(0.3),
         border: Border(left: BorderSide(color: borderColor, width: 3)),
@@ -122,18 +97,12 @@ class _ThreadActivityCard extends StatelessWidget {
               ),
               Text(
                 item.occurredAt,
-                style: GoogleFonts.jetBrainsMono(
-                  color: AppTheme.textSubtle,
-                  fontSize: 10,
-                ),
+                style: GoogleFonts.jetBrainsMono(color: AppTheme.textSubtle, fontSize: 10),
               ),
             ],
           ),
           const SizedBox(height: 8),
-          SelectableText(
-            item.body,
-            style: const TextStyle(color: AppTheme.textMain, fontSize: 14),
-          ),
+          SelectableText(item.body, style: const TextStyle(color: AppTheme.textMain, fontSize: 14)),
         ],
       ),
     );
@@ -208,19 +177,14 @@ String? _workedForLabel(double? wallTimeSeconds) {
 }
 
 class _CollapsibleTerminalCard extends StatefulWidget {
-  const _CollapsibleTerminalCard({
-    required this.item,
-    required this.parsed,
-    this.exploration,
-  });
+  const _CollapsibleTerminalCard({required this.item, required this.parsed, this.exploration});
 
   final ThreadActivityItem item;
   final ParsedCommandOutput parsed;
   final _ExplorationSummary? exploration;
 
   @override
-  State<_CollapsibleTerminalCard> createState() =>
-      _CollapsibleTerminalCardState();
+  State<_CollapsibleTerminalCard> createState() => _CollapsibleTerminalCardState();
 }
 
 class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
@@ -232,8 +196,7 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
     final commandStr = widget.parsed.terminalDisplayTitle;
     final outputBody = widget.parsed.terminalDisplayBody;
     final isSuccess = widget.parsed.isSuccess;
-    final isBackgroundTerminal =
-        widget.parsed.backgroundTerminalSummary != null;
+    final isBackgroundTerminal = widget.parsed.backgroundTerminalSummary != null;
     final exploration = widget.exploration;
     final hasExploration = exploration != null;
     final workedForLabel = _workedForLabel(widget.parsed.wallTimeSeconds);
@@ -267,28 +230,18 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
                 children: [
                   PhosphorIcon(
                     PhosphorIcons.terminalWindow(),
-                    color: isBackgroundTerminal
-                        ? AppTheme.textMuted
-                        : AppTheme.textSubtle,
+                    color: isBackgroundTerminal ? AppTheme.textMuted : AppTheme.textSubtle,
                     size: isBackgroundTerminal ? 15 : 16,
                   ),
                   SizedBox(width: isBackgroundTerminal ? 12 : 8),
                   if (!isBackgroundTerminal) ...[
-                    Text(
-                      '\$',
-                      style: GoogleFonts.jetBrainsMono(
-                        color: AppTheme.textMuted,
-                        fontSize: 13,
-                      ),
-                    ),
+                    Text('\$', style: GoogleFonts.jetBrainsMono(color: AppTheme.textMuted, fontSize: 13)),
                     const SizedBox(width: 6),
                   ],
                   Expanded(
                     child: Text(
                       commandStr,
-                      key: isBackgroundTerminal
-                          ? const Key('thread-terminal-background-summary')
-                          : null,
+                      key: isBackgroundTerminal ? const Key('thread-terminal-background-summary') : null,
                       style: isBackgroundTerminal
                           ? const TextStyle(
                               color: AppTheme.textMain,
@@ -296,10 +249,7 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
                               fontWeight: FontWeight.w600,
                               height: 1.25,
                             )
-                          : GoogleFonts.jetBrainsMono(
-                              color: AppTheme.textMain,
-                              fontSize: 13,
-                            ),
+                          : GoogleFonts.jetBrainsMono(color: AppTheme.textMain, fontSize: 13),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -307,17 +257,13 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
                   const SizedBox(width: 8),
                   if (widget.parsed.exitCode != null)
                     Icon(
-                      isSuccess
-                          ? Icons.check_circle_rounded
-                          : Icons.cancel_rounded,
+                      isSuccess ? Icons.check_circle_rounded : Icons.cancel_rounded,
                       color: isSuccess ? AppTheme.emerald : AppTheme.rose,
                       size: 16,
                     ),
                   const SizedBox(width: 8),
                   PhosphorIcon(
-                    _isExpanded
-                        ? PhosphorIcons.caretUp()
-                        : PhosphorIcons.caretDown(),
+                    _isExpanded ? PhosphorIcons.caretUp() : PhosphorIcons.caretDown(),
                     color: AppTheme.textSubtle,
                     size: 16,
                   ),
@@ -326,19 +272,12 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
             ),
           ),
           if (_isExpanded && outputBody.isNotEmpty) ...[
-            Divider(
-              height: 1,
-              color: isBackgroundTerminal
-                  ? Colors.white.withOpacity(0.05)
-                  : Colors.white10,
-            ),
+            Divider(height: 1, color: isBackgroundTerminal ? Colors.white.withOpacity(0.05) : Colors.white10),
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: isBackgroundTerminal
-                    ? Colors.transparent
-                    : Colors.black.withOpacity(0.2),
+                color: isBackgroundTerminal ? Colors.transparent : Colors.black.withOpacity(0.2),
                 borderRadius: const BorderRadius.only(
                   bottomLeft: Radius.circular(12),
                   bottomRight: Radius.circular(12),
@@ -346,13 +285,9 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
               ),
               child: SelectableText(
                 outputBody,
-                key: isBackgroundTerminal
-                    ? const Key('thread-terminal-background-details')
-                    : null,
+                key: isBackgroundTerminal ? const Key('thread-terminal-background-details') : null,
                 style: GoogleFonts.jetBrainsMono(
-                  color: isBackgroundTerminal
-                      ? AppTheme.textSubtle
-                      : AppTheme.textMuted,
+                  color: isBackgroundTerminal ? AppTheme.textSubtle : AppTheme.textMuted,
                   fontSize: isBackgroundTerminal ? 11.5 : 12,
                   height: 1.45,
                 ),
@@ -360,22 +295,12 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
             ),
           ],
           if (workedForLabel != null) ...[
-            Divider(
-              height: 1,
-              color: isBackgroundTerminal
-                  ? Colors.white.withOpacity(0.05)
-                  : Colors.white10,
-            ),
+            Divider(height: 1, color: isBackgroundTerminal ? Colors.white.withOpacity(0.05) : Colors.white10),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
               child: Row(
                 children: [
-                  Expanded(
-                    child: Container(
-                      height: 1,
-                      color: Colors.white.withOpacity(0.06),
-                    ),
-                  ),
+                  Expanded(child: Container(height: 1, color: Colors.white.withOpacity(0.06))),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 14),
                     child: Text(
@@ -388,27 +313,15 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
                       ),
                     ),
                   ),
-                  Expanded(
-                    child: Container(
-                      height: 1,
-                      color: Colors.white.withOpacity(0.06),
-                    ),
-                  ),
+                  Expanded(child: Container(height: 1, color: Colors.white.withOpacity(0.06))),
                 ],
               ),
             ),
           ],
           if (hasExploration) ...[
-            Divider(
-              height: 1,
-              color: isBackgroundTerminal
-                  ? Colors.white.withOpacity(0.05)
-                  : Colors.white10,
-            ),
+            Divider(height: 1, color: isBackgroundTerminal ? Colors.white.withOpacity(0.05) : Colors.white10),
             InkWell(
-              onTap: () => setState(
-                () => _isExploredFilesExpanded = !_isExploredFilesExpanded,
-              ),
+              onTap: () => setState(() => _isExploredFilesExpanded = !_isExploredFilesExpanded),
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                 child: Row(
@@ -417,18 +330,14 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
                       exploration.label,
                       key: const Key('thread-explored-files-summary'),
                       style: TextStyle(
-                        color: isBackgroundTerminal
-                            ? AppTheme.textMuted
-                            : AppTheme.textSubtle,
+                        color: isBackgroundTerminal ? AppTheme.textMuted : AppTheme.textSubtle,
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
                     const SizedBox(width: 8),
                     PhosphorIcon(
-                      _isExploredFilesExpanded
-                          ? PhosphorIcons.caretDown()
-                          : PhosphorIcons.caretRight(),
+                      _isExploredFilesExpanded ? PhosphorIcons.caretDown() : PhosphorIcons.caretRight(),
                       color: AppTheme.textSubtle,
                       size: 14,
                     ),
@@ -505,9 +414,7 @@ class _ExploredFilesCardState extends State<_ExploredFilesCard> {
                   ),
                   const SizedBox(width: 8),
                   PhosphorIcon(
-                    _isExpanded
-                        ? PhosphorIcons.caretDown()
-                        : PhosphorIcons.caretRight(),
+                    _isExpanded ? PhosphorIcons.caretDown() : PhosphorIcons.caretRight(),
                     color: AppTheme.textSubtle,
                     size: 14,
                   ),
@@ -550,12 +457,10 @@ class _CollapsibleFileChangeCard extends StatefulWidget {
   final ParsedCommandOutput parsed;
 
   @override
-  State<_CollapsibleFileChangeCard> createState() =>
-      _CollapsibleFileChangeCardState();
+  State<_CollapsibleFileChangeCard> createState() => _CollapsibleFileChangeCardState();
 }
 
-class _CollapsibleFileChangeCardState
-    extends State<_CollapsibleFileChangeCard> {
+class _CollapsibleFileChangeCardState extends State<_CollapsibleFileChangeCard> {
   bool _isExpanded = false;
 
   @override
@@ -565,13 +470,8 @@ class _CollapsibleFileChangeCardState
     final fileName = widget.parsed.diffPath ?? 'unknown file';
     final adds = widget.parsed.diffAdditions;
     final dels = widget.parsed.diffDeletions;
-    final primaryChangeType = fileCount == 1
-        ? diffDocument?.files.first.changeType
-        : null;
-    final titlePrefix = _titleForSummary(
-      fileCount: fileCount,
-      changeType: primaryChangeType,
-    );
+    final primaryChangeType = fileCount == 1 ? diffDocument?.files.first.changeType : null;
+    final titlePrefix = _titleForSummary(fileCount: fileCount, changeType: primaryChangeType);
 
     return Container(
       decoration: BoxDecoration(
@@ -590,19 +490,12 @@ class _CollapsibleFileChangeCardState
               padding: const EdgeInsets.all(12),
               child: Row(
                 children: [
-                  PhosphorIcon(
-                    PhosphorIcons.fileCode(),
-                    color: AppTheme.textSubtle,
-                    size: 16,
-                  ),
+                  PhosphorIcon(PhosphorIcons.fileCode(), color: AppTheme.textSubtle, size: 16),
                   const SizedBox(width: 8),
                   Expanded(
                     child: RichText(
                       text: TextSpan(
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: AppTheme.textMain,
-                        ),
+                        style: const TextStyle(fontSize: 13, color: AppTheme.textMain),
                         children: [
                           TextSpan(text: titlePrefix),
                           if (fileCount <= 1) ...[
@@ -617,21 +510,15 @@ class _CollapsibleFileChangeCardState
                           ] else
                             TextSpan(
                               text: ' ($fileCount)',
-                              style: GoogleFonts.jetBrainsMono(
-                                color: AppTheme.textMuted,
-                              ),
+                              style: GoogleFonts.jetBrainsMono(color: AppTheme.textMuted),
                             ),
                           TextSpan(
                             text: '  +$adds',
-                            style: GoogleFonts.jetBrainsMono(
-                              color: AppTheme.emerald,
-                            ),
+                            style: GoogleFonts.jetBrainsMono(color: AppTheme.emerald),
                           ),
                           TextSpan(
                             text: ' -$dels',
-                            style: GoogleFonts.jetBrainsMono(
-                              color: AppTheme.rose,
-                            ),
+                            style: GoogleFonts.jetBrainsMono(color: AppTheme.rose),
                           ),
                         ],
                       ),
@@ -639,9 +526,7 @@ class _CollapsibleFileChangeCardState
                   ),
                   const SizedBox(width: 8),
                   PhosphorIcon(
-                    _isExpanded
-                        ? PhosphorIcons.caretUp()
-                        : PhosphorIcons.caretDown(),
+                    _isExpanded ? PhosphorIcons.caretUp() : PhosphorIcons.caretDown(),
                     color: AppTheme.textSubtle,
                     size: 16,
                   ),
@@ -664,9 +549,7 @@ class _CollapsibleFileChangeCardState
               child: diffDocument == null
                   ? _ThreadCodeBlockViewer(
                       code: widget.parsed.outputBody,
-                      languageHint: _CodeLanguageResolver.fromFilePath(
-                        widget.parsed.diffPath,
-                      ),
+                      languageHint: _CodeLanguageResolver.fromFilePath(widget.parsed.diffPath),
                     )
                   : _ThreadDiffViewer(document: diffDocument),
             ),
@@ -676,10 +559,7 @@ class _CollapsibleFileChangeCardState
     );
   }
 
-  String _titleForSummary({
-    required int fileCount,
-    required ParsedDiffChangeType? changeType,
-  }) {
+  String _titleForSummary({required int fileCount, required ParsedDiffChangeType? changeType}) {
     if (fileCount > 1) {
       return 'Edited files';
     }
@@ -714,27 +594,18 @@ class _ThreadDiffViewer extends StatelessWidget {
             fileWidgets.add(const SizedBox(height: 12));
           }
           fileWidgets.add(
-            _ThreadDiffFileSection(
-              file: document.files[index],
-              highlighterSet: highlighterSet,
-            ),
+            _ThreadDiffFileSection(file: document.files[index], highlighterSet: highlighterSet),
           );
         }
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: fileWidgets,
-        );
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: fileWidgets);
       },
     );
   }
 }
 
 class _ThreadDiffFileSection extends StatelessWidget {
-  const _ThreadDiffFileSection({
-    required this.file,
-    required this.highlighterSet,
-  });
+  const _ThreadDiffFileSection({required this.file, required this.highlighterSet});
 
   final ParsedDiffFile file;
   final _ThreadCodeHighlighterSet? highlighterSet;
@@ -795,10 +666,7 @@ class _ThreadDiffFileSection extends StatelessWidget {
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: AppTheme.surfaceZinc800.withOpacity(0.8),
                     borderRadius: BorderRadius.circular(999),
@@ -825,11 +693,8 @@ class _ThreadDiffFileSection extends StatelessWidget {
                 children: file.lines
                     .where((line) => line.kind != ParsedDiffLineKind.hunk)
                     .map(
-                      (line) => _ThreadDiffLineRow(
-                        line: line,
-                        language: language,
-                        highlighterSet: highlighterSet,
-                      ),
+                      (line) =>
+                          _ThreadDiffLineRow(line: line, language: language, highlighterSet: highlighterSet),
                     )
                     .toList(growable: false),
               ),
@@ -853,11 +718,7 @@ class _ThreadDiffFileSection extends StatelessWidget {
 }
 
 class _ThreadDiffLineRow extends StatelessWidget {
-  const _ThreadDiffLineRow({
-    required this.line,
-    required this.language,
-    required this.highlighterSet,
-  });
+  const _ThreadDiffLineRow({required this.line, required this.language, required this.highlighterSet});
 
   final ParsedDiffLine line;
   final String? language;
@@ -882,22 +743,14 @@ class _ThreadDiffLineRow extends StatelessWidget {
           Container(width: 3, height: 24, color: accentColor),
           _DiffLineNumberCell(number: line.oldLineNumber),
           _DiffLineNumberCell(number: line.newLineNumber),
-          Container(
-            width: 1,
-            height: 24,
-            color: Colors.white.withOpacity(0.06),
-          ),
+          Container(width: 1, height: 24, color: Colors.white.withOpacity(0.06)),
           const SizedBox(width: 10),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 8),
             child: line.kind == ParsedDiffLineKind.hunk
                 ? Text(
                     line.text,
-                    style: GoogleFonts.jetBrainsMono(
-                      color: AppTheme.textSubtle,
-                      fontSize: 10.5,
-                      height: 1.4,
-                    ),
+                    style: GoogleFonts.jetBrainsMono(color: AppTheme.textSubtle, fontSize: 10.5, height: 1.4),
                   )
                 : RichText(text: _highlightedLine(textStyle)),
           ),
@@ -907,9 +760,7 @@ class _ThreadDiffLineRow extends StatelessWidget {
   }
 
   TextSpan _highlightedLine(TextStyle textStyle) {
-    final highlighted = language == null
-        ? null
-        : highlighterSet?.highlight(language!, line.text);
+    final highlighted = language == null ? null : highlighterSet?.highlight(language!, line.text);
     return highlighted == null
         ? TextSpan(text: line.text, style: textStyle)
         : TextSpan(style: textStyle, children: [highlighted]);
@@ -967,11 +818,7 @@ class _DiffLineNumberCell extends StatelessWidget {
         child: Text(
           number?.toString() ?? '',
           textAlign: TextAlign.right,
-          style: GoogleFonts.jetBrainsMono(
-            color: AppTheme.textSubtle,
-            fontSize: 10.5,
-            height: 1.4,
-          ),
+          style: GoogleFonts.jetBrainsMono(color: AppTheme.textSubtle, fontSize: 10.5, height: 1.4),
         ),
       ),
     );

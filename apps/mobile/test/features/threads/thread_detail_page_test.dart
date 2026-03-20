@@ -16,6 +16,7 @@ import 'package:codex_mobile_companion/foundation/storage/secure_store_provider.
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 void main() {
   testWidgets(
@@ -167,36 +168,83 @@ void main() {
     expect(find.byKey(const Key('thread-message-image-0')), findsOneWidget);
   });
 
-  testWidgets(
-    'access mode is shown in the header and not repeated in the body',
-    (tester) async {
-      final detailApi = FakeThreadDetailBridgeApi(
-        detailScriptByThreadId: {
-          'thread-123': [_thread123Detail()],
-        },
-        timelineScriptByThreadId: {
-          'thread-123': [<ThreadTimelineEntryDto>[]],
-        },
-      );
+  testWidgets('message swipe reveals timestamp and snaps back on release', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-swipe-timestamp',
+              kind: BridgeEventKind.messageDelta,
+              summary: 'Assistant output',
+              payload: {'delta': 'Timestamp reveal test'},
+              occurredAt: '2026-03-18T10:02:00Z',
+            ),
+          ],
+        ],
+      },
+    );
 
-      await _pumpThreadDetailApp(
-        tester,
-        detailApi: detailApi,
-        threadId: 'thread-123',
-      );
-      await tester.pumpAndSettle();
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
 
-      final accessModeBadge = find.byKey(
-        const Key('thread-detail-access-mode-badge'),
-      );
-      expect(accessModeBadge, findsOneWidget);
-      expect(
-        find.descendant(of: accessModeBadge, matching: find.text('Gated Mode')),
-        findsOneWidget,
-      );
-      expect(find.text('Approval Gated Mode'), findsNothing);
-    },
-  );
+    final messageCard = find.byKey(
+      const Key('thread-message-card-evt-swipe-timestamp'),
+    );
+    final timestamp = find.byKey(
+      const Key('thread-message-timestamp-evt-swipe-timestamp'),
+    );
+
+    await _scrollUntilVisible(tester, messageCard);
+    expect(timestamp, findsNothing);
+
+    final dragStart = tester.getTopLeft(messageCard) + const Offset(8, 8);
+    final gesture = await tester.startGesture(dragStart);
+    await gesture.moveBy(const Offset(-48, 0));
+    await tester.pump();
+    await gesture.moveBy(const Offset(-48, 0));
+    await tester.pump();
+
+    expect(timestamp, findsOneWidget);
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(timestamp, findsNothing);
+  });
+
+  testWidgets('access mode badge is not shown in the header', (tester) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('thread-detail-access-mode-badge')),
+      findsNothing,
+    );
+    expect(find.text('Approval Gated Mode'), findsNothing);
+  });
 
   testWidgets('bottom bounce does not reopen collapsed git header controls', (
     tester,
@@ -642,6 +690,106 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       'Draft release notes for today\'s bridge changes.',
     ]);
     expect(find.text('Running'), findsOneWidget);
+  });
+
+  testWidgets(
+    'composer input stays multiline and collapses leading actions on focus',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-456': [_thread456Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-456': [<ThreadTimelineEntryDto>[]],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-456',
+      );
+
+      final input = tester.widget<TextField>(
+        find.byKey(const Key('turn-composer-input')),
+      );
+
+      expect(input.maxLines, 4);
+      expect(input.textInputAction, TextInputAction.newline);
+      expect(
+        find.byKey(const Key('turn-composer-attach-button')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('turn-composer-model-button')),
+        findsOneWidget,
+      );
+
+      await tester.showKeyboard(find.byKey(const Key('turn-composer-input')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('turn-composer-attach-button')),
+        findsNothing,
+      );
+      expect(find.byKey(const Key('turn-composer-model-button')), findsNothing);
+      expect(find.byKey(const Key('turn-composer-submit')), findsOneWidget);
+    },
+  );
+
+  testWidgets('composer model sheet updates model and intelligence summary', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-456': [_thread456Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-456': [<ThreadTimelineEntryDto>[]],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-456',
+    );
+
+    await _openComposerModelSheet(tester);
+
+    expect(find.text('GPT-5 · Medium'), findsNothing);
+    expect(find.text('Models'), findsOneWidget);
+    expect(find.text('Intelligence'), findsOneWidget);
+    expect(find.text('Approval'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const Key('turn-composer-model-option-o4-mini')),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('turn-composer-reasoning-option-High')),
+    );
+    await tester.tap(
+      find.byKey(const Key('turn-composer-reasoning-option-High')),
+    );
+    await tester.pumpAndSettle();
+    await _closeModalSheet(tester);
+    await _openComposerModelSheet(tester);
+
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('turn-composer-model-option-o4-mini')),
+        matching: find.byType(PhosphorIcon),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('turn-composer-reasoning-option-High')),
+        matching: find.byType(PhosphorIcon),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('active composer primary button stops the active turn', (
@@ -1670,21 +1818,20 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(find.text('Recent event A'), findsOneWidget);
     await _scrollUntilVisible(tester, find.text('Recent event B'));
     expect(find.text('Recent event B'), findsOneWidget);
+    expect(find.byKey(const Key('load-earlier-history')), findsNothing);
 
-    await tester.tap(find.byKey(const Key('load-earlier-history')));
-    await tester.pumpAndSettle();
+    await tester.drag(
+      find.byKey(const Key('thread-detail-scroll-view')),
+      const Offset(0, 800),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
 
-    await _scrollUntilVisible(tester, find.text('Oldest event'));
     expect(find.text('Oldest event'), findsOneWidget);
     expect(find.text('Older event'), findsOneWidget);
     final oldestY = tester.getTopLeft(find.text('Oldest event')).dy;
     final olderY = tester.getTopLeft(find.text('Older event')).dy;
     expect(oldestY, lessThan(olderY));
-
-    await _scrollUntilVisible(tester, find.text('Recent event B'));
-    final recentAY = tester.getTopLeft(find.text('Recent event A')).dy;
-    final recentBY = tester.getTopLeft(find.text('Recent event B')).dy;
-    expect(recentAY, lessThan(recentBY));
   });
 
   testWidgets(
@@ -2113,6 +2260,11 @@ Future<void> _openGitBranchSheet(WidgetTester tester) async {
 
 Future<void> _openGitSyncSheet(WidgetTester tester) async {
   await tester.tap(find.byKey(const Key('git-header-sync-button')));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _openComposerModelSheet(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('turn-composer-model-button')));
   await tester.pumpAndSettle();
 }
 
