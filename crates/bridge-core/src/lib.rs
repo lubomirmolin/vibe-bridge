@@ -1643,7 +1643,17 @@ fn route_thread_request(
             if !thread_exists {
                 return None;
             }
-            let before = query_required(query, "before");
+            let before = if let Some(raw_before) = query.get("before") {
+                let trimmed = raw_before.trim();
+                if trimmed.is_empty() {
+                    return Some(bad_request_response(
+                        "The timeline before cursor query parameter must not be empty.",
+                    ));
+                }
+                Some(trimmed.to_string())
+            } else {
+                None
+            };
             let limit = if let Some(raw_limit) = query.get("limit") {
                 let trimmed = raw_limit.trim();
                 if trimmed.is_empty() {
@@ -2999,6 +3009,19 @@ mod tests {
         assert_eq!(
             body["message"],
             "The provided timeline cursor does not exist for this thread."
+        );
+    }
+
+    #[test]
+    fn thread_timeline_route_rejects_empty_before_cursor() {
+        let app = test_application();
+
+        let response = route_request("GET /threads/thread-123/timeline?before= HTTP/1.1", &app);
+        assert!(response.starts_with("HTTP/1.1 400 Bad Request"));
+        let body = parse_json_body(&response);
+        assert_eq!(
+            body["message"],
+            "The timeline before cursor query parameter must not be empty."
         );
     }
 

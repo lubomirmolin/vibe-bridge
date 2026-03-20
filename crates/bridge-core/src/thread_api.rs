@@ -1415,7 +1415,116 @@ fn timeline_merge_fingerprint(event: &UpstreamTimelineEvent) -> String {
                 .trim();
             format!("plan_delta\u{1f}|{text}")
         }
+        "command_output_delta" => {
+            let command = normalized_merge_text_value(
+                event
+                    .data
+                    .get("command")
+                    .or_else(|| event.data.get("name"))
+                    .or_else(|| event.data.get("action")),
+            );
+            let arguments = canonical_json_string(
+                event
+                    .data
+                    .get("arguments")
+                    .or_else(|| event.data.get("input")),
+            );
+            let output = normalized_merge_text_value(
+                event
+                    .data
+                    .get("output")
+                    .or_else(|| event.data.get("aggregatedOutput"))
+                    .or_else(|| event.data.get("delta")),
+            );
+            let summary = normalized_merge_text(&event.summary_text);
+            format!(
+                "command_output_delta\u{1f}|{}\u{1f}|{command}\u{1f}|{arguments}\u{1f}|{output}\u{1f}|{summary}",
+                normalized_merge_timestamp(event)
+            )
+        }
+        "file_change_delta" => {
+            let command = normalized_merge_text_value(
+                event
+                    .data
+                    .get("command")
+                    .or_else(|| event.data.get("name"))
+                    .or_else(|| event.data.get("action")),
+            );
+            let change = normalized_merge_text_value(
+                event
+                    .data
+                    .get("change")
+                    .or_else(|| event.data.get("input"))
+                    .or_else(|| event.data.get("patch")),
+            );
+            let output = normalized_merge_text_value(
+                event
+                    .data
+                    .get("output")
+                    .or_else(|| event.data.get("aggregatedOutput")),
+            );
+            let changes = canonical_json_string(event.data.get("changes"));
+            let summary = normalized_merge_text(&event.summary_text);
+            format!(
+                "file_change_delta\u{1f}|{}\u{1f}|{command}\u{1f}|{change}\u{1f}|{output}\u{1f}|{changes}\u{1f}|{summary}",
+                normalized_merge_timestamp(event)
+            )
+        }
         _ => timeline_event_fingerprint(event),
+    }
+}
+
+fn normalized_merge_timestamp(event: &UpstreamTimelineEvent) -> String {
+    normalized_merge_text(&event.happened_at)
+}
+
+fn normalized_merge_text(value: &str) -> String {
+    value.trim().to_string()
+}
+
+fn normalized_merge_text_value(value: Option<&Value>) -> String {
+    value
+        .and_then(value_to_text)
+        .map(|text| normalized_merge_text(&text))
+        .unwrap_or_default()
+}
+
+fn canonical_json_string(value: Option<&Value>) -> String {
+    let Some(value) = value else {
+        return String::new();
+    };
+    serde_json::to_string(&canonicalize_merge_value(value)).unwrap_or_default()
+}
+
+fn canonicalize_merge_value(value: &Value) -> Value {
+    match value {
+        Value::Object(object) => {
+            let mut keys = object.keys().cloned().collect::<Vec<_>>();
+            keys.sort();
+
+            let mut canonical = serde_json::Map::new();
+            for key in keys {
+                if let Some(next_value) = object.get(&key) {
+                    canonical.insert(key, canonicalize_merge_value(next_value));
+                }
+            }
+            Value::Object(canonical)
+        }
+        Value::Array(values) => Value::Array(
+            values
+                .iter()
+                .map(canonicalize_merge_value)
+                .collect::<Vec<_>>(),
+        ),
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
+                canonicalize_merge_value(&parsed)
+            } else {
+                Value::String(trimmed.to_string())
+            }
+        }
+        other => other.clone(),
     }
 }
 
@@ -3042,13 +3151,82 @@ fn map_codex_thread_to_timeline_events(thread: &CodexThread) -> Vec<UpstreamTime
             events.push(UpstreamTimelineEvent {
                 id: format!("{}-{item_id}", turn.id),
                 event_type: map_bridge_kind_to_event_type(kind).to_string(),
-                happened_at: unix_timestamp_to_iso8601(thread.updated_at),
+                happened_at: codex_item_occurred_at(item, &turn.id, thread.updated_at),
                 summary_text: summarize_live_payload(kind, &payload),
                 data: payload,
             });
         }
     }
     events
+}
+
+fn codex_item_occurred_at(item: &Value, turn_id: &str, thread_updated_at: i64) -> String {
+    if let Some(timestamp) = codex_timestamp_from_item(item) {
+        return timestamp;
+    }
+
+    if let Some(timestamp) = uuid_v7_timestamp_to_iso8601(turn_id) {
+        return timestamp;
+    }
+
+    unix_timestamp_to_iso8601(thread_updated_at)
+}
+
+fn codex_timestamp_from_item(item: &Value) -> Option<String> {
+    const KEYS: [&str; 8] = [
+        "timestamp",
+        "occurredAt",
+        "updatedAt",
+        "createdAt",
+        "startedAt",
+        "completedAt",
+        "startTime",
+        "endTime",
+    ];
+
+    KEYS.iter()
+        .find_map(|key| item.get(*key))
+        .and_then(value_to_timestamp)
+}
+
+fn value_to_timestamp(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+
+            if let Ok(parsed_numeric) = trimmed.parse::<i64>() {
+                Some(unix_timestamp_to_iso8601(parsed_numeric))
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        Value::Number(number) => number.as_i64().map(unix_timestamp_to_iso8601).or_else(|| {
+            number
+                .as_u64()
+                .map(|value| unix_timestamp_to_iso8601(value as i64))
+        }),
+        _ => None,
+    }
+}
+
+fn uuid_v7_timestamp_to_iso8601(value: &str) -> Option<String> {
+    let compact = value.chars().filter(|ch| *ch != '-').collect::<String>();
+    if compact.len() != 32 || !compact.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return None;
+    }
+    if compact
+        .chars()
+        .nth(12)
+        .is_none_or(|version| !version.eq_ignore_ascii_case(&'7'))
+    {
+        return None;
+    }
+
+    let millis = i64::from_str_radix(&compact[0..12], 16).ok()?;
+    Some(unix_timestamp_to_iso8601(millis))
 }
 
 fn map_codex_status_to_lifecycle_state(status_kind: &str) -> String {
@@ -4770,6 +4948,151 @@ mod tests {
     }
 
     #[test]
+    fn merge_thread_snapshots_deduplicates_archive_and_rpc_command_and_file_change_candidates() {
+        let rpc_snapshot = (
+            vec![UpstreamThreadRecord {
+                id: "thread-merge-dedupe".to_string(),
+                headline: "Inspect dedupe".to_string(),
+                lifecycle_state: "active".to_string(),
+                workspace_path: "/workspace/codex-mobile-companion".to_string(),
+                repository_name: "codex-mobile-companion".to_string(),
+                branch_name: "main".to_string(),
+                remote_name: "origin".to_string(),
+                git_dirty: false,
+                git_ahead_by: 0,
+                git_behind_by: 0,
+                created_at: "2026-03-17T10:00:00Z".to_string(),
+                updated_at: "2026-03-17T10:05:00Z".to_string(),
+                source: "cli".to_string(),
+                approval_mode: "control_with_approvals".to_string(),
+                last_turn_summary: "Inspecting".to_string(),
+            }],
+            HashMap::from([(
+                "thread-merge-dedupe".to_string(),
+                vec![
+                    UpstreamTimelineEvent {
+                        id: "rpc-command".to_string(),
+                        event_type: "command_output_delta".to_string(),
+                        happened_at: "2026-03-17T10:01:00Z".to_string(),
+                        summary_text: "Called exec_command".to_string(),
+                        data: json!({
+                            "id": "tool-1",
+                            "type": "functionCall",
+                            "name": "exec_command",
+                            "command": "exec_command",
+                            "arguments": {"cmd": "pwd"},
+                        }),
+                    },
+                    UpstreamTimelineEvent {
+                        id: "rpc-file-change".to_string(),
+                        event_type: "file_change_delta".to_string(),
+                        happened_at: "2026-03-17T10:02:00Z".to_string(),
+                        summary_text: "Edited files via apply_patch".to_string(),
+                        data: json!({
+                            "id": "tool-2",
+                            "type": "customToolCall",
+                            "name": "apply_patch",
+                            "command": "apply_patch",
+                            "input": "*** Begin Patch\n*** Update File: lib/main.dart\n@@\n-old\n+new\n*** End Patch\n",
+                            "change": "*** Begin Patch\n*** Update File: lib/main.dart\n@@\n-old\n+new\n*** End Patch\n",
+                        }),
+                    },
+                    UpstreamTimelineEvent {
+                        id: "rpc-file-output".to_string(),
+                        event_type: "file_change_delta".to_string(),
+                        happened_at: "2026-03-17T10:03:00Z".to_string(),
+                        summary_text: "Success. Updated the following files: M lib/main.dart"
+                            .to_string(),
+                        data: json!({
+                            "id": "tool-3",
+                            "type": "customToolCallOutput",
+                            "status": "completed",
+                            "output": "Success. Updated the following files:\nM lib/main.dart\n",
+                        }),
+                    },
+                ],
+            )]),
+        );
+
+        let archive_snapshot = (
+            vec![UpstreamThreadRecord {
+                id: "thread-merge-dedupe".to_string(),
+                headline: "Inspect dedupe".to_string(),
+                lifecycle_state: "done".to_string(),
+                workspace_path: "/workspace/codex-mobile-companion".to_string(),
+                repository_name: "codex-mobile-companion".to_string(),
+                branch_name: "main".to_string(),
+                remote_name: "origin".to_string(),
+                git_dirty: false,
+                git_ahead_by: 0,
+                git_behind_by: 0,
+                created_at: "2026-03-17T10:00:00Z".to_string(),
+                updated_at: "2026-03-17T10:05:00Z".to_string(),
+                source: "archive".to_string(),
+                approval_mode: "control_with_approvals".to_string(),
+                last_turn_summary: "Edited files".to_string(),
+            }],
+            HashMap::from([(
+                "thread-merge-dedupe".to_string(),
+                vec![
+                    UpstreamTimelineEvent {
+                        id: "archive-command".to_string(),
+                        event_type: "command_output_delta".to_string(),
+                        happened_at: "2026-03-17T10:01:00Z".to_string(),
+                        summary_text: "Called exec_command".to_string(),
+                        data: json!({
+                            "command": "exec_command",
+                            "arguments": {"cmd": "pwd"},
+                        }),
+                    },
+                    UpstreamTimelineEvent {
+                        id: "archive-file-change".to_string(),
+                        event_type: "file_change_delta".to_string(),
+                        happened_at: "2026-03-17T10:02:00Z".to_string(),
+                        summary_text: "Edited files via apply_patch".to_string(),
+                        data: json!({
+                            "command": "apply_patch",
+                            "change": "*** Begin Patch\n*** Update File: lib/main.dart\n@@\n-old\n+new\n*** End Patch\n",
+                            "resolved_unified_diff": "diff --git a/lib/main.dart b/lib/main.dart\n--- a/lib/main.dart\n+++ b/lib/main.dart",
+                        }),
+                    },
+                    UpstreamTimelineEvent {
+                        id: "archive-file-output".to_string(),
+                        event_type: "file_change_delta".to_string(),
+                        happened_at: "2026-03-17T10:03:00Z".to_string(),
+                        summary_text: "Success. Updated the following files: M lib/main.dart"
+                            .to_string(),
+                        data: json!({
+                            "output": "Success. Updated the following files:\nM lib/main.dart\n",
+                        }),
+                    },
+                ],
+            )]),
+        );
+
+        let (_, timeline_by_thread_id) =
+            super::merge_thread_snapshots(rpc_snapshot, archive_snapshot);
+        let timeline = timeline_by_thread_id
+            .get("thread-merge-dedupe")
+            .expect("merged timeline should exist");
+
+        assert_eq!(timeline.len(), 3);
+        assert_eq!(timeline[0].id, "archive-command");
+        assert_eq!(timeline[1].id, "archive-file-change");
+        assert_eq!(timeline[2].id, "archive-file-output");
+        assert_eq!(timeline[1].event_type, "file_change_delta");
+        assert_eq!(timeline[2].event_type, "file_change_delta");
+        assert_eq!(
+            timeline[1].data["resolved_unified_diff"],
+            "diff --git a/lib/main.dart b/lib/main.dart\n--- a/lib/main.dart\n+++ b/lib/main.dart"
+        );
+        assert_eq!(
+            timeline[2].data["output"],
+            "Success. Updated the following files:\nM lib/main.dart\n"
+        );
+    }
+
+    #[test]
     fn merge_thread_snapshots_prefers_fresher_archive_metadata_for_real_thread_detail_parity() {
         let thread_id = "019d0d0c-07df-7632-81fa-a1636651400a";
         let rpc_snapshot = (
@@ -5714,6 +6037,50 @@ mod tests {
         assert_eq!(
             timeline[2].data["output"],
             "Success. Updated the following files:\nM lib/main.dart\n"
+        );
+    }
+
+    #[test]
+    fn codex_rpc_timeline_prefers_item_timestamps_and_turn_fallback_over_thread_updated_at() {
+        let timeline = super::map_codex_thread_to_timeline_events(&CodexThread {
+            id: "thread-123".to_string(),
+            name: Some("Inspect RPC timestamping".to_string()),
+            preview: Some("Preview".to_string()),
+            status: CodexThreadStatus {
+                kind: "active".to_string(),
+            },
+            cwd: "/Users/test/workspace".to_string(),
+            git_info: None,
+            created_at: 1,
+            updated_at: 1_774_042_809,
+            source: json!("cli"),
+            turns: vec![CodexTurn {
+                id: "019d0d10-5cba-7a41-b99d-16d8da53307c".to_string(),
+                items: vec![
+                    json!({
+                        "id":"item-1",
+                        "type":"userMessage",
+                        "text":"Ship it",
+                        "createdAt": 1_774_040_000,
+                    }),
+                    json!({
+                        "id":"item-2",
+                        "type":"agentMessage",
+                        "text":"On it",
+                    }),
+                ],
+            }],
+        });
+
+        assert_eq!(timeline.len(), 2);
+        assert_eq!(
+            timeline[0].happened_at,
+            super::unix_timestamp_to_iso8601(1_774_040_000)
+        );
+        assert_eq!(timeline[1].happened_at, "2026-03-20T21:04:29.370Z");
+        assert_ne!(
+            timeline[1].happened_at,
+            super::unix_timestamp_to_iso8601(1_774_042_809)
         );
     }
 
