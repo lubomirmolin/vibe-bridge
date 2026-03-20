@@ -37,7 +37,6 @@ class StatusBadge extends StatelessWidget {
         backgroundColor = AppTheme.rose.withValues(alpha: 0.1);
         break;
       case BadgeVariant.defaultVariant:
-      default:
         borderColor = AppTheme.surfaceZinc800; // border-zinc-800
         textColor = AppTheme.textMuted; // text-zinc-400
         backgroundColor = Colors.transparent;

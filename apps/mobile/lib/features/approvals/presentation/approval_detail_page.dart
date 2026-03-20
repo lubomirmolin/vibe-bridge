@@ -181,7 +181,7 @@ class _ApprovalDetailPageState extends ConsumerState<ApprovalDetailPage> {
             Expanded(
               child: ListView(
                 physics: const AlwaysScrollableScrollPhysics(
-                  parent: const BouncingScrollPhysics(),
+                  parent: BouncingScrollPhysics(),
                 ),
                 padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
                 children: [
@@ -375,8 +375,9 @@ class _ApprovalDetailPageState extends ConsumerState<ApprovalDetailPage> {
                       }
 
                       final contextSnapshot = snapshot.data;
-                      if (contextSnapshot == null)
+                      if (contextSnapshot == null) {
                         return const SizedBox.shrink();
+                      }
 
                       return _ThreadContextCard(
                         bridgeApiBaseUrl: widget.bridgeApiBaseUrl,

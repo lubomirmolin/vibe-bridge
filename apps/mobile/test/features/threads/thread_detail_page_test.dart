@@ -839,9 +839,9 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
               summary: 'Background terminal finished',
               payload: {
                 'output':
-                    'Command: rg -n \"thread-detail\" apps/mobile/lib/features/threads\n'
+                    'Command: rg -n "thread-detail" apps/mobile/lib/features/threads\n'
                     'Output:\n'
-                    'Background terminal finished with rg -n \"thread-detail\" apps/mobile/lib/features/threads',
+                    'Background terminal finished with rg -n "thread-detail" apps/mobile/lib/features/threads',
               },
               occurredAt: '2026-03-18T10:02:45Z',
               annotations: _explorationAnnotations(

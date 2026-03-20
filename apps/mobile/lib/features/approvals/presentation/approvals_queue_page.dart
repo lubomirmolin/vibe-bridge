@@ -188,7 +188,7 @@ Widget _buildBody(
     onRefresh: () => onRetry(showLoading: false),
     child: ListView(
       physics: const AlwaysScrollableScrollPhysics(
-        parent: const BouncingScrollPhysics(),
+        parent: BouncingScrollPhysics(),
       ),
       padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
       children: [
@@ -243,7 +243,6 @@ class _AccessModeBanner extends StatelessWidget {
         color = AppTheme.emerald;
         break;
       case null:
-      default:
         label = 'Loading access mode...';
         icon = PhosphorIcon(PhosphorIcons.spinner(), color: AppTheme.textMuted);
         color = AppTheme.textMuted;
