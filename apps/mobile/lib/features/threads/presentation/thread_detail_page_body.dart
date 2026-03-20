@@ -82,10 +82,10 @@ class _ThreadDetailBody extends StatelessWidget {
         physics: const AlwaysScrollableScrollPhysics(
           parent: BouncingScrollPhysics(),
         ),
-        padding: const EdgeInsets.only(
+        padding: EdgeInsets.only(
           left: 24,
           right: 24,
-          bottom: 16,
+          bottom: hasPinnedComposer ? 140 : 16,
           top: 180,
         ),
         children: [

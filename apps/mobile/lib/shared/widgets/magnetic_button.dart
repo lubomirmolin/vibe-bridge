@@ -1,8 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter/physics.dart';
 import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
-import 'package:codex_mobile_companion/foundation/theme/liquid_styles.dart';
 
 enum MagneticButtonVariant { primary, secondary, danger }
 
@@ -11,6 +9,7 @@ class MagneticButton extends StatefulWidget {
   final VoidCallback onClick;
   final MagneticButtonVariant variant;
   final EdgeInsetsGeometry padding;
+  final bool isCircle;
 
   const MagneticButton({
     super.key,
@@ -18,6 +17,7 @@ class MagneticButton extends StatefulWidget {
     required this.onClick,
     this.variant = MagneticButtonVariant.primary,
     this.padding = const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+    this.isCircle = false,
   });
 
   @override
@@ -91,7 +91,7 @@ class _MagneticButtonState extends State<MagneticButton> {
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeOut,
       decoration: decoration,
-      padding: widget.padding,
+      padding: widget.isCircle ? EdgeInsets.zero : widget.padding,
       alignment: Alignment.center,
       child: DefaultTextStyle(
         style: Theme.of(context).textTheme.bodyMedium!.copyWith(

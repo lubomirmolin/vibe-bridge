@@ -13,6 +13,7 @@ import 'package:codex_mobile_companion/features/threads/domain/thread_activity_i
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
 import 'package:codex_mobile_companion/shared/widgets/badges.dart';
+import 'package:codex_mobile_companion/shared/widgets/magnetic_button.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -430,47 +431,66 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                       isHeaderCollapsed: _isHeaderCollapsed,
                     ),
                   ),
+                  if (state.thread != null)
+                    Positioned(
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              AppTheme.background.withValues(alpha: 0.0),
+                              AppTheme.background,
+                              AppTheme.background,
+                            ],
+                            stops: const [0.0, 0.45, 1.0],
+                          ),
+                        ),
+                        child: SafeArea(
+                          top: false,
+                          child: _PinnedTurnComposer(
+                            composerController: _composerController,
+                            composerFocusNode: _composerFocusNode,
+                            isTurnActive: state.isTurnActive,
+                            controlsEnabled: controlsEnabled,
+                            isComposerMutationInFlight: state.isComposerMutationInFlight,
+                            isInterruptMutationInFlight:
+                                state.isInterruptMutationInFlight,
+                            isComposerFocused: _isComposerFocused,
+                            attachedImages: _attachedImages,
+                            selectedModel: _selectedModel,
+                            selectedReasoning: _selectedReasoning,
+                            accessMode: effectiveAccessMode,
+                            trustedBridge: pairingState.trustedBridge,
+                            isAccessModeUpdating:
+                                deviceSettingsState.isAccessModeUpdating,
+                            accessModeErrorMessage:
+                                deviceSettingsState.accessModeErrorMessage,
+                            onPickImages: _pickImages,
+                            onRemoveImage: _removeAttachedImage,
+                            onModelChanged: (value) {
+                              setState(() {
+                                _selectedModel = value;
+                              });
+                            },
+                            onReasoningChanged: (value) {
+                              setState(() {
+                                _selectedReasoning = value;
+                              });
+                            },
+                            onAccessModeChanged: changeAccessMode,
+                            onSubmitComposer: controller.submitComposerInput,
+                            onInterruptActiveTurn: controller.interruptActiveTurn,
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
-            if (state.thread != null)
-              SafeArea(
-                top: false,
-                child: _PinnedTurnComposer(
-                  composerController: _composerController,
-                  composerFocusNode: _composerFocusNode,
-                  isTurnActive: state.isTurnActive,
-                  controlsEnabled: controlsEnabled,
-                  isComposerMutationInFlight: state.isComposerMutationInFlight,
-                  isInterruptMutationInFlight:
-                      state.isInterruptMutationInFlight,
-                  isComposerFocused: _isComposerFocused,
-                  attachedImages: _attachedImages,
-                  selectedModel: _selectedModel,
-                  selectedReasoning: _selectedReasoning,
-                  accessMode: effectiveAccessMode,
-                  trustedBridge: pairingState.trustedBridge,
-                  isAccessModeUpdating:
-                      deviceSettingsState.isAccessModeUpdating,
-                  accessModeErrorMessage:
-                      deviceSettingsState.accessModeErrorMessage,
-                  onPickImages: _pickImages,
-                  onRemoveImage: _removeAttachedImage,
-                  onModelChanged: (value) {
-                    setState(() {
-                      _selectedModel = value;
-                    });
-                  },
-                  onReasoningChanged: (value) {
-                    setState(() {
-                      _selectedReasoning = value;
-                    });
-                  },
-                  onAccessModeChanged: changeAccessMode,
-                  onSubmitComposer: controller.submitComposerInput,
-                  onInterruptActiveTurn: controller.interruptActiveTurn,
-                ),
-              ),
           ],
         ),
       ),
