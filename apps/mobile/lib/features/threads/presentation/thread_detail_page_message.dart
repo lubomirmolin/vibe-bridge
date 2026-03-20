@@ -17,7 +17,7 @@ class _ChatMessageCard extends StatelessWidget {
         padding: isUser ? const EdgeInsets.fromLTRB(16, 12, 16, 14) : null,
         decoration: isUser
             ? BoxDecoration(
-                color: AppTheme.surfaceZinc800.withOpacity(0.4),
+                color: AppTheme.surfaceZinc800.withValues(alpha: 0.4),
                 borderRadius: BorderRadius.circular(16),
               )
             : null,
@@ -51,7 +51,7 @@ class _ChatMessageCard extends StatelessWidget {
               textStyle: TextStyle(
                 color: isUser
                     ? AppTheme.textMain
-                    : AppTheme.textMain.withOpacity(0.9),
+                    : AppTheme.textMain.withValues(alpha: 0.9),
                 fontSize: 14,
                 height: 1.5,
               ),
@@ -325,8 +325,8 @@ class _ThreadMessageImage extends StatelessWidget {
         key: Key('thread-message-image-$index'),
         constraints: const BoxConstraints(maxHeight: 320),
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.25),
-          border: Border.all(color: Colors.white.withOpacity(0.08)),
+          color: Colors.black.withValues(alpha: 0.25),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
           borderRadius: BorderRadius.circular(12),
         ),
         child: imageWidget,
@@ -387,9 +387,9 @@ class _ThreadCodeBlockViewer extends StatelessWidget {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.35),
+        color: Colors.black.withValues(alpha: 0.35),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white.withOpacity(0.08)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -399,7 +399,7 @@ class _ThreadCodeBlockViewer extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.03),
+                color: Colors.white.withValues(alpha: 0.03),
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(10),
                   topRight: Radius.circular(10),
@@ -427,10 +427,10 @@ class _ThreadCodeBlockViewer extends StatelessWidget {
                         vertical: 4,
                       ),
                       decoration: BoxDecoration(
-                        color: AppTheme.surfaceZinc800.withOpacity(0.9),
+                        color: AppTheme.surfaceZinc800.withValues(alpha: 0.9),
                         borderRadius: BorderRadius.circular(999),
                         border: Border.all(
-                          color: Colors.white.withOpacity(0.08),
+                          color: Colors.white.withValues(alpha: 0.08),
                         ),
                       ),
                       child: Text(
@@ -480,7 +480,7 @@ class _ThreadCodeBlockViewer extends StatelessWidget {
                     Container(
                       width: 1,
                       height: 18.0 * lineCount,
-                      color: Colors.white.withOpacity(0.08),
+                      color: Colors.white.withValues(alpha: 0.08),
                     ),
                     const SizedBox(width: 8),
                     SelectableText.rich(

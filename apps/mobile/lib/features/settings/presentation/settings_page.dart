@@ -43,7 +43,7 @@ class SettingsPage extends ConsumerWidget {
             // Header
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              color: AppTheme.background.withOpacity(0.8),
+              color: AppTheme.background.withValues(alpha: 0.8),
               child: Row(
                 children: [
                   IconButton(
@@ -339,7 +339,7 @@ class _AccessModeCard extends StatelessWidget {
                 : null,
             style: SegmentedButton.styleFrom(
               backgroundColor: AppTheme.surfaceZinc800,
-              selectedBackgroundColor: AppTheme.emerald.withOpacity(0.2),
+              selectedBackgroundColor: AppTheme.emerald.withValues(alpha: 0.2),
               selectedForegroundColor: AppTheme.emerald,
               foregroundColor: AppTheme.textMuted,
             ),
@@ -350,7 +350,7 @@ class _AccessModeCard extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: AppTheme.rose.withOpacity(0.1),
+                color: AppTheme.rose.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
@@ -434,7 +434,7 @@ class _CustomSwitch extends StatelessWidget {
     return SwitchListTile(
       value: value,
       onChanged: onChanged,
-      activeColor: AppTheme.emerald,
+      activeThumbColor: AppTheme.emerald,
       title: Text(
         title,
         style: const TextStyle(
@@ -618,8 +618,8 @@ class _UnpairCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppTheme.rose.withOpacity(0.05),
-        border: Border.all(color: AppTheme.rose.withOpacity(0.2)),
+        color: AppTheme.rose.withValues(alpha: 0.05),
+        border: Border.all(color: AppTheme.rose.withValues(alpha: 0.2)),
         borderRadius: BorderRadius.circular(24),
       ),
       child: Column(
@@ -654,7 +654,7 @@ class _UnpairCard extends StatelessWidget {
             child: ElevatedButton.icon(
               key: const Key('unpair-device-button'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.rose.withOpacity(0.2),
+                backgroundColor: AppTheme.rose.withValues(alpha: 0.2),
                 foregroundColor: AppTheme.rose,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 elevation: 0,

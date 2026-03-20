@@ -8,7 +8,11 @@ class StatusBadge extends StatelessWidget {
   final String text;
   final BadgeVariant variant;
 
-  const StatusBadge({super.key, required this.text, this.variant = BadgeVariant.defaultVariant});
+  const StatusBadge({
+    super.key,
+    required this.text,
+    this.variant = BadgeVariant.defaultVariant,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -18,19 +22,19 @@ class StatusBadge extends StatelessWidget {
 
     switch (variant) {
       case BadgeVariant.active:
-        borderColor = AppTheme.emerald.withOpacity(0.3);
+        borderColor = AppTheme.emerald.withValues(alpha: 0.3);
         textColor = const Color(0xFF34D399); // emerald-400
-        backgroundColor = AppTheme.emerald.withOpacity(0.1);
+        backgroundColor = AppTheme.emerald.withValues(alpha: 0.1);
         break;
       case BadgeVariant.warning:
-        borderColor = AppTheme.amber.withOpacity(0.3);
+        borderColor = AppTheme.amber.withValues(alpha: 0.3);
         textColor = const Color(0xFFFBBF24); // amber-400
-        backgroundColor = AppTheme.amber.withOpacity(0.1);
+        backgroundColor = AppTheme.amber.withValues(alpha: 0.1);
         break;
       case BadgeVariant.danger:
-        borderColor = AppTheme.rose.withOpacity(0.3);
+        borderColor = AppTheme.rose.withValues(alpha: 0.3);
         textColor = const Color(0xFFFB7185); // rose-400
-        backgroundColor = AppTheme.rose.withOpacity(0.1);
+        backgroundColor = AppTheme.rose.withValues(alpha: 0.1);
         break;
       case BadgeVariant.defaultVariant:
       default:
@@ -47,7 +51,14 @@ class StatusBadge extends StatelessWidget {
         border: Border.all(color: borderColor),
         borderRadius: BorderRadius.circular(9999),
       ),
-      child: Text(text, style: GoogleFonts.jetBrainsMono(color: textColor, fontSize: 10, letterSpacing: 1.0)),
+      child: Text(
+        text,
+        style: GoogleFonts.jetBrainsMono(
+          color: textColor,
+          fontSize: 10,
+          letterSpacing: 1.0,
+        ),
+      ),
     );
   }
 }
