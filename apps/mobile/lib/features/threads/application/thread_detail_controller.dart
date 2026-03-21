@@ -400,7 +400,10 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
           before: nextBefore,
           limit: _initialVisibleTimelineEntries,
         );
-        latestThread = page.thread;
+        latestThread = _fresherThreadDetail(
+          current: latestThread,
+          candidate: page.thread,
+        );
         items = _prependTimelineEntries(items, page.entries);
         hasMoreBefore = page.hasMoreBefore;
         nextBefore = page.nextBefore;
@@ -619,10 +622,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
     final prependedItems = <ThreadActivityItem>[];
     for (final entry in timeline) {
-      final existingIndex = currentItems.indexWhere(
-        (item) => item.eventId == entry.eventId,
-      );
-      if (existingIndex >= 0) {
+      if (_knownEventIds.contains(entry.eventId)) {
         continue;
       }
 
@@ -638,6 +638,26 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       ...prependedItems,
       ...currentItems,
     ]);
+  }
+
+  ThreadDetailDto? _fresherThreadDetail({
+    required ThreadDetailDto? current,
+    required ThreadDetailDto? candidate,
+  }) {
+    if (candidate == null) {
+      return current;
+    }
+    if (current == null) {
+      return candidate;
+    }
+
+    final currentUpdatedAt = DateTime.tryParse(current.updatedAt);
+    final candidateUpdatedAt = DateTime.tryParse(candidate.updatedAt);
+    if (currentUpdatedAt == null || candidateUpdatedAt == null) {
+      return candidate;
+    }
+
+    return candidateUpdatedAt.isAfter(currentUpdatedAt) ? candidate : current;
   }
 
   bool _didRevealNewVisibleBlock({

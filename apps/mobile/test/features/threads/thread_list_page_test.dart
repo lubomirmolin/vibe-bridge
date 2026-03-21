@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
+import 'package:codex_mobile_companion/features/threads/application/thread_list_controller.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
@@ -273,6 +276,96 @@ void main() {
     );
   });
 
+  testWidgets(
+    'stale thread-list reload does not overwrite newer detail-synced metadata',
+    (tester) async {
+      final realDetail = _loadRealThreadDetailFixture();
+      final staleSummary = ThreadSummaryDto(
+        contractVersion: contractVersion,
+        threadId: realDetail.threadId,
+        title: 'Stale cached title',
+        status: ThreadStatus.running,
+        workspace: '/Users/lubomirmolin/PhpstormProjects/old-workspace',
+        repository: 'old-workspace',
+        branch: 'feature/stale-row',
+        updatedAt: '2026-03-20T21:39:00Z',
+      );
+
+      final bridgeApi = FakeThreadListBridgeApi(
+        scriptedResults: [
+          [staleSummary],
+          [staleSummary],
+        ],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+            approvalBridgeApiProvider.overrideWithValue(
+              EmptyApprovalBridgeApi(),
+            ),
+            threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+            threadCacheRepositoryProvider.overrideWithValue(
+              _newCacheRepository(),
+            ),
+          ],
+          child: const MaterialApp(
+            home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ThreadListPage)),
+      );
+      final controller = container.read(
+        threadListControllerProvider('https://bridge.ts.net').notifier,
+      );
+
+      controller.syncThreadDetail(realDetail);
+      await tester.pumpAndSettle();
+
+      expect(find.text(realDetail.title), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(Key('thread-summary-card-${realDetail.threadId}')),
+          matching: find.text('COMPLETED'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(Key('thread-summary-card-${realDetail.threadId}')),
+          matching: find.text(realDetail.repository),
+        ),
+        findsOneWidget,
+      );
+
+      await controller.loadThreads();
+      await tester.pumpAndSettle();
+
+      expect(find.text(realDetail.title), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(Key('thread-summary-card-${realDetail.threadId}')),
+          matching: find.text('COMPLETED'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(Key('thread-summary-card-${realDetail.threadId}')),
+          matching: find.text(realDetail.repository),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Stale cached title'), findsNothing);
+      expect(find.text('old-workspace'), findsNothing);
+    },
+  );
+
   testWidgets('groups threads by workspace folder and keeps matches scoped', (
     tester,
   ) async {
@@ -414,6 +507,22 @@ ThreadCacheRepository _newCacheRepository() {
     secureStore: InMemorySecureStore(),
     nowUtc: () => DateTime.utc(2026, 3, 18, 10, 0),
   );
+}
+
+const _realThreadFixtureDetailPath =
+    'test/features/threads/fixtures/real_thread_019d_detail.json';
+
+ThreadDetailDto _loadRealThreadDetailFixture() {
+  final detailRaw = File(_realThreadFixtureDetailPath).readAsStringSync();
+  final detailEnvelope = jsonDecode(detailRaw) as Map<String, dynamic>;
+  final detailJson = detailEnvelope['thread'];
+  if (detailJson is! Map<String, dynamic>) {
+    throw const FormatException(
+      'Real thread detail fixture is missing thread.',
+    );
+  }
+
+  return ThreadDetailDto.fromJson(detailJson);
 }
 
 List<ThreadSummaryDto> _sampleThreads() {
