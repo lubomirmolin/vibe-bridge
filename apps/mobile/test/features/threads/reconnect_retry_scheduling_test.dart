@@ -104,15 +104,6 @@ void main() {
                 payload: {'delta': 'Initial history event'},
                 occurredAt: '2026-03-18T10:00:00Z',
               ),
-            ],
-            [
-              _timelineEvent(
-                id: 'evt-history-1',
-                kind: BridgeEventKind.messageDelta,
-                summary: 'Initial history event',
-                payload: {'delta': 'Initial history event'},
-                occurredAt: '2026-03-18T10:00:00Z',
-              ),
               _timelineEvent(
                 id: 'evt-catchup-2',
                 kind: BridgeEventKind.messageDelta,
@@ -138,7 +129,7 @@ void main() {
       addTearDown(detailController.dispose);
 
       await _waitUntil(() => !detailController.state.isLoading);
-      expect(detailApi.detailFetchCount, 0);
+      expect(detailApi.detailFetchCount, 1);
 
       await detailController.retryReconnectCatchUp();
       await Future<void>.delayed(const Duration(seconds: 5));

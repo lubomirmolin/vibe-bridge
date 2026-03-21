@@ -292,12 +292,60 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
   }) async {
-    final page = await fetchThreadTimelinePage(
-      bridgeApiBaseUrl: bridgeApiBaseUrl,
-      threadId: threadId,
-      limit: 1,
-    );
-    return page.thread;
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+
+    try {
+      final request = await client.getUrl(
+        _buildThreadDetailUri(bridgeApiBaseUrl, threadId),
+      );
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      final response = await request.close();
+      final bodyText = await utf8.decodeStream(response);
+      final decoded = _decodeJsonObject(bodyText);
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        try {
+          return _decodeThreadDetailResponse(decoded);
+        } on FormatException {
+          throw const ThreadDetailBridgeException(
+            message: 'Bridge returned an invalid thread detail response.',
+          );
+        }
+      }
+
+      throw ThreadDetailBridgeException(
+        message:
+            _readOptionalString(decoded, 'message') ??
+            'Couldn’t load this thread right now.',
+        isUnavailable: response.statusCode == 404,
+      );
+    } on SocketException {
+      throw const ThreadDetailBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on HandshakeException {
+      throw const ThreadDetailBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on HttpException {
+      throw const ThreadDetailBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on TimeoutException {
+      throw const ThreadDetailBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on FormatException {
+      throw const ThreadDetailBridgeException(
+        message: 'Bridge returned an invalid thread detail response.',
+      );
+    } finally {
+      client.close();
+    }
   }
 
   @override
@@ -708,6 +756,16 @@ Uri _buildThreadTimelineUri(
   );
 }
 
+Uri _buildThreadDetailUri(String baseUrl, String threadId) {
+  final baseUri = Uri.parse(baseUrl);
+  final normalizedBasePath = baseUri.path.endsWith('/')
+      ? baseUri.path.substring(0, baseUri.path.length - 1)
+      : baseUri.path;
+  final fullPath =
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}';
+  return baseUri.replace(path: fullPath, queryParameters: null);
+}
+
 Uri _buildThreadGitStatusUri(String baseUrl, String threadId) {
   final baseUri = Uri.parse(baseUrl);
   final normalizedBasePath = baseUri.path.endsWith('/')
@@ -798,4 +856,13 @@ String? _readOptionalString(Map<String, dynamic> json, String key) {
   }
 
   return value.trim();
+}
+
+ThreadDetailDto _decodeThreadDetailResponse(Map<String, dynamic> decoded) {
+  final thread = decoded['thread'];
+  if (thread is Map<String, dynamic>) {
+    return ThreadDetailDto.fromJson(thread);
+  }
+
+  return ThreadDetailDto.fromJson(decoded);
 }

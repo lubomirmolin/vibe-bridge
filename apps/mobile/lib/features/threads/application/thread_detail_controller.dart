@@ -305,6 +305,10 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       await _closeLiveSubscription();
       _knownEventIds.clear();
 
+      final detail = await _bridgeApi.fetchThreadDetail(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: state.threadId,
+      );
       final page = await _bridgeApi.fetchThreadTimelinePage(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
         threadId: state.threadId,
@@ -321,7 +325,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       }
 
       state = state.copyWith(
-        thread: page.thread,
+        thread: detail,
         items: items,
         isLoading: false,
         isUnavailable: false,
@@ -345,7 +349,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearOpenOnMacErrorMessage: true,
       );
 
-      _threadListController.syncThreadDetail(page.thread);
+      _threadListController.syncThreadDetail(detail);
       await refreshGitStatus(showLoading: true);
       await _startLiveSubscription();
     } on ThreadDetailBridgeException catch (error) {
