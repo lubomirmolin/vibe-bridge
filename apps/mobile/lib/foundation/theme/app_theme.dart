@@ -16,7 +16,7 @@ class AppTheme {
   // Surface colors
   static const Color surfaceZinc100 = Color(0xFFF4F4F5); // zinc-100 (primary buttons)
   static const Color surfaceZinc800 = Color(0xFF27272A); // zinc-800
-  static const Color surfaceZinc900 = Color(0xFF18181B); // zinc-900
+  static const Color surfaceZinc900 = Color(0xFF19191C); // zinc-900
 
   static ThemeData get darkTheme {
     final base = ThemeData.dark();

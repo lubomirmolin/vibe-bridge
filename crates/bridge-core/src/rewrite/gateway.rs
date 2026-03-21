@@ -12,7 +12,9 @@ use std::sync::mpsc;
 use crate::codex_runtime::CodexRuntimeMode;
 use crate::codex_transport::CodexJsonTransport;
 use crate::rewrite::config::RewriteCodexConfig;
-use crate::thread_api::{CodexNotificationNormalizer, CodexNotificationStream};
+use crate::thread_api::{
+    CodexNotificationNormalizer, CodexNotificationStream, load_archive_timeline_entries_for_thread,
+};
 
 #[derive(Debug, Clone)]
 pub struct CodexGateway {
@@ -619,7 +621,11 @@ fn map_thread_summary(thread: CodexThread) -> ThreadSummaryDto {
 
 fn map_thread_snapshot(thread: CodexThread) -> ThreadSnapshotDto {
     let detail = map_thread_detail(&thread);
-    let entries = map_thread_timeline_entries(&thread);
+    let entries = {
+        let rpc_entries = map_thread_timeline_entries(&thread);
+        let archive_entries = load_archive_timeline_entries_for_thread(&thread.id);
+        prefer_archive_timeline_when_rpc_lacks_tool_events(rpc_entries, archive_entries)
+    };
     let git_status = Some(map_git_status(&thread));
 
     ThreadSnapshotDto {
@@ -629,6 +635,30 @@ fn map_thread_snapshot(thread: CodexThread) -> ThreadSnapshotDto {
         approvals: Vec::<ApprovalSummaryDto>::new(),
         git_status,
     }
+}
+
+fn prefer_archive_timeline_when_rpc_lacks_tool_events(
+    rpc_entries: Vec<ThreadTimelineEntryDto>,
+    archive_entries: Vec<ThreadTimelineEntryDto>,
+) -> Vec<ThreadTimelineEntryDto> {
+    if has_tool_events(&rpc_entries) {
+        return rpc_entries;
+    }
+
+    if has_tool_events(&archive_entries) {
+        return archive_entries;
+    }
+
+    rpc_entries
+}
+
+fn has_tool_events(entries: &[ThreadTimelineEntryDto]) -> bool {
+    entries.iter().any(|entry| {
+        matches!(
+            entry.kind,
+            BridgeEventKind::CommandDelta | BridgeEventKind::FileChange
+        )
+    })
 }
 
 fn map_thread_detail(thread: &CodexThread) -> ThreadDetailDto {
@@ -1324,10 +1354,10 @@ fn extract_file_name_from_command(command: &str) -> Option<String> {
 mod tests {
     use super::{
         derive_repository_name_from_cwd, normalize_codex_item_payload, parse_model_options,
-        parse_repository_name_from_origin,
+        parse_repository_name_from_origin, prefer_archive_timeline_when_rpc_lacks_tool_events,
     };
     use serde_json::json;
-    use shared_contracts::BridgeEventKind;
+    use shared_contracts::{BridgeEventKind, ThreadTimelineEntryDto};
 
     #[test]
     fn parses_repository_name_from_origin_url() {
@@ -1386,5 +1416,42 @@ mod tests {
         assert!(models[0].is_default);
         assert_eq!(models[0].default_reasoning_effort.as_deref(), Some("high"));
         assert_eq!(models[0].supported_reasoning_efforts.len(), 2);
+    }
+
+    #[test]
+    fn archive_timeline_is_preferred_when_rpc_has_only_messages() {
+        let rpc_entries = vec![ThreadTimelineEntryDto {
+            event_id: "evt-msg".to_string(),
+            kind: BridgeEventKind::MessageDelta,
+            occurred_at: "2026-03-21T10:00:00.000Z".to_string(),
+            summary: "assistant message".to_string(),
+            payload: json!({"text":"assistant message"}),
+            annotations: None,
+        }];
+
+        let archive_entries = vec![
+            ThreadTimelineEntryDto {
+                event_id: "evt-msg-archive".to_string(),
+                kind: BridgeEventKind::MessageDelta,
+                occurred_at: "2026-03-21T10:00:00.000Z".to_string(),
+                summary: "assistant message".to_string(),
+                payload: json!({"text":"assistant message"}),
+                annotations: None,
+            },
+            ThreadTimelineEntryDto {
+                event_id: "evt-cmd".to_string(),
+                kind: BridgeEventKind::CommandDelta,
+                occurred_at: "2026-03-21T10:00:01.000Z".to_string(),
+                summary: "Called exec_command".to_string(),
+                payload: json!({"command":"exec_command","arguments":"{\"cmd\":\"pwd\"}"}),
+                annotations: None,
+            },
+        ];
+
+        let selected =
+            prefer_archive_timeline_when_rpc_lacks_tool_events(rpc_entries, archive_entries);
+
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[1].kind, BridgeEventKind::CommandDelta);
     }
 }

@@ -3733,6 +3733,28 @@ fn map_timeline_entry(upstream: &UpstreamTimelineEvent) -> ThreadTimelineEntryDt
     }
 }
 
+pub(crate) fn load_archive_timeline_entries_for_thread(
+    thread_id: &str,
+) -> Vec<ThreadTimelineEntryDto> {
+    let Ok(codex_home) = resolve_codex_home_dir() else {
+        return Vec::new();
+    };
+
+    let requested_ids = HashSet::from([thread_id.to_string()]);
+    let Ok((_, mut timeline_by_thread_id)) =
+        load_thread_snapshot_from_codex_archive_for_ids(&codex_home, Some(&requested_ids))
+    else {
+        return Vec::new();
+    };
+
+    timeline_by_thread_id
+        .remove(thread_id)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|event| map_timeline_entry(&event))
+        .collect()
+}
+
 fn build_timeline_event_envelope(
     event_id: impl Into<String>,
     thread_id: impl Into<String>,
