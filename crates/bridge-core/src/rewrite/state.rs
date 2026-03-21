@@ -5,9 +5,9 @@ use std::sync::Mutex;
 use chrono::Utc;
 use serde_json::{Value, json};
 use shared_contracts::{
-    AccessMode, BootstrapDto, BridgeEventEnvelope, BridgeEventKind, ServiceHealthDto,
-    ServiceHealthStatus, ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto, ThreadTimelinePageDto,
-    TrustStateDto, TurnMutationAcceptedDto,
+    AccessMode, BootstrapDto, BridgeEventEnvelope, BridgeEventKind, ModelCatalogDto,
+    ModelOptionDto, ServiceHealthDto, ServiceHealthStatus, ThreadSnapshotDto, ThreadStatus,
+    ThreadSummaryDto, ThreadTimelinePageDto, TrustStateDto, TurnMutationAcceptedDto,
 };
 use tokio::sync::RwLock;
 use tokio::time::{Duration, sleep};
@@ -32,6 +32,7 @@ pub struct RewriteAppState {
 struct RewriteAppStateInner {
     projections: ProjectionStore,
     codex_health: RwLock<ServiceHealthDto>,
+    available_models: RwLock<Vec<ModelOptionDto>>,
     active_turn_ids: RwLock<HashMap<String, String>>,
     gateway: CodexGateway,
     event_hub: EventHub,
@@ -52,6 +53,7 @@ impl RewriteAppState {
                     status: ServiceHealthStatus::Degraded,
                     message: Some("codex bootstrap has not run yet".to_string()),
                 }),
+                available_models: RwLock::new(Vec::new()),
                 active_turn_ids: RwLock::new(HashMap::new()),
                 gateway: CodexGateway::new(config),
                 event_hub: EventHub::new(512),
@@ -76,6 +78,7 @@ impl RewriteAppState {
                     .projections()
                     .replace_summaries(bootstrap.summaries)
                     .await;
+                state.set_available_models(bootstrap.models).await;
                 state
                     .set_codex_health(ServiceHealthDto {
                         status: ServiceHealthStatus::Healthy,
@@ -206,6 +209,10 @@ impl RewriteAppState {
         *self.inner.codex_health.write().await = health;
     }
 
+    async fn set_available_models(&self, models: Vec<ModelOptionDto>) {
+        *self.inner.available_models.write().await = models;
+    }
+
     pub fn start_notification_forwarder(&self) {
         let state = self.clone();
         let handle = tokio::runtime::Handle::current();
@@ -318,6 +325,7 @@ impl RewriteAppState {
                             .projections()
                             .replace_summaries(bootstrap.summaries)
                             .await;
+                        state.set_available_models(bootstrap.models).await;
                         state
                             .set_codex_health(ServiceHealthDto {
                                 status: ServiceHealthStatus::Healthy,
@@ -436,6 +444,7 @@ impl RewriteAppState {
 
     pub async fn bootstrap_payload(&self) -> BootstrapDto {
         let codex = self.inner.codex_health.read().await.clone();
+        let models = self.inner.available_models.read().await.clone();
         let trust_snapshot = self.trust_snapshot();
 
         BootstrapDto {
@@ -450,7 +459,14 @@ impl RewriteAppState {
                 access_mode: AccessMode::ControlWithApprovals,
             },
             threads: self.projections().list_summaries().await,
-            models: vec![],
+            models,
+        }
+    }
+
+    pub async fn model_catalog_payload(&self) -> ModelCatalogDto {
+        ModelCatalogDto {
+            contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+            models: self.inner.available_models.read().await.clone(),
         }
     }
 }

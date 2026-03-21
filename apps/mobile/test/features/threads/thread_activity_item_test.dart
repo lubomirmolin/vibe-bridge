@@ -259,4 +259,21 @@ apps/mobile/lib/main.dart:1:foo
     expect(parsed.command, 'rg -n foo apps/mobile/lib');
     expect(parsed.wallTimeSeconds, 49.2);
   });
+
+  test('command output parses inline markdown zsh command headers', () {
+    final parsed = ParsedCommandOutput.parse('''
+`/bin/zsh -lc 'dart format apps/mobile/lib/main.dart'`
+Formatted 1 file (0 changed) in 0.02 seconds.
+''');
+
+    expect(parsed.command, 'dart format apps/mobile/lib/main.dart');
+    expect(
+      parsed.terminalDisplayTitle,
+      'dart format apps/mobile/lib/main.dart',
+    );
+    expect(
+      parsed.terminalDisplayBody,
+      'Formatted 1 file (0 changed) in 0.02 seconds.',
+    );
+  });
 }

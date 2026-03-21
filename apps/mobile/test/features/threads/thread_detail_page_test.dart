@@ -1594,6 +1594,59 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     );
   });
 
+  testWidgets('composer model sheet prefers bridge-provided models', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-456': [_thread456Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-456': [<ThreadTimelineEntryDto>[]],
+      },
+      modelCatalog: const ModelCatalogDto(
+        contractVersion: contractVersion,
+        models: <ModelOptionDto>[
+          ModelOptionDto(
+            id: 'gpt-5.4',
+            model: 'gpt-5.4',
+            displayName: 'GPT-5.4',
+            description: 'Sharper reasoning',
+            isDefault: true,
+            defaultReasoningEffort: 'high',
+            supportedReasoningEfforts: <ReasoningEffortOptionDto>[
+              ReasoningEffortOptionDto(reasoningEffort: 'medium'),
+              ReasoningEffortOptionDto(reasoningEffort: 'high'),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-456',
+    );
+
+    await _openComposerModelSheet(tester);
+
+    expect(find.text('GPT-5.4'), findsOneWidget);
+    expect(find.text('GPT-5 Mini'), findsNothing);
+    expect(
+      find.byKey(const Key('turn-composer-model-option-gpt-5.4')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('turn-composer-reasoning-option-High')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('turn-composer-reasoning-option-Low')),
+      findsNothing,
+    );
+  });
+
   testWidgets('active composer primary button stops the active turn', (
     tester,
   ) async {
@@ -3210,6 +3263,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required Map<String, List<Object>> detailScriptByThreadId,
     required Map<String, List<Object>> timelineScriptByThreadId,
     Map<String, ThreadDetailDto>? timelineThreadByThreadId,
+    ModelCatalogDto? modelCatalog,
     List<Object>? createThreadScript,
     Map<String, List<Object>>? startTurnScriptByThreadId,
     Map<String, List<Object>>? steerTurnScriptByThreadId,
@@ -3223,6 +3277,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   }) : _detailScriptByThreadId = detailScriptByThreadId,
        _timelineScriptByThreadId = timelineScriptByThreadId,
        _timelineThreadByThreadId = timelineThreadByThreadId ?? {},
+       _modelCatalog = modelCatalog ?? fallbackModelCatalog,
        _createThreadScript = createThreadScript ?? <Object>[],
        _startTurnScriptByThreadId = startTurnScriptByThreadId ?? {},
        _steerTurnScriptByThreadId = steerTurnScriptByThreadId ?? {},
@@ -3236,6 +3291,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   final Map<String, List<Object>> _detailScriptByThreadId;
   final Map<String, List<Object>> _timelineScriptByThreadId;
   final Map<String, ThreadDetailDto> _timelineThreadByThreadId;
+  final ModelCatalogDto _modelCatalog;
   final List<Object> _createThreadScript;
   final Map<String, List<Object>> _startTurnScriptByThreadId;
   final Map<String, List<Object>> _steerTurnScriptByThreadId;
@@ -3267,7 +3323,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   Future<ModelCatalogDto> fetchModelCatalog({
     required String bridgeApiBaseUrl,
   }) async {
-    return fallbackModelCatalog;
+    return _modelCatalog;
   }
 
   @override

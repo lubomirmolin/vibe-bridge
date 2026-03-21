@@ -3,9 +3,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use shared_contracts::{
     AccessMode, ApprovalSummaryDto, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION,
-    GitStatusDto, ThreadDetailDto, ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto,
-    ThreadTimelineAnnotationsDto, ThreadTimelineEntryDto, ThreadTimelineExplorationKind,
-    ThreadTimelineGroupKind, TurnMutationAcceptedDto,
+    GitStatusDto, ModelOptionDto, ReasoningEffortOptionDto, ThreadDetailDto, ThreadSnapshotDto,
+    ThreadStatus, ThreadSummaryDto, ThreadTimelineAnnotationsDto, ThreadTimelineEntryDto,
+    ThreadTimelineExplorationKind, ThreadTimelineGroupKind, TurnMutationAcceptedDto,
 };
 use std::sync::mpsc;
 
@@ -22,6 +22,7 @@ pub struct CodexGateway {
 #[derive(Debug, Clone)]
 pub struct GatewayBootstrap {
     pub summaries: Vec<ThreadSummaryDto>,
+    pub models: Vec<ModelOptionDto>,
     pub message: Option<String>,
 }
 
@@ -116,8 +117,10 @@ impl CodexGateway {
         tokio::task::spawn_blocking(move || {
             let mut transport = connect_transport(&config)?;
             let summaries = fetch_thread_summaries(&mut transport)?;
+            let models = fetch_model_catalog(&mut transport);
             Ok(GatewayBootstrap {
                 summaries,
+                models,
                 message: None,
             })
         })
@@ -434,6 +437,152 @@ fn fetch_thread_summaries(
     }
 
     Ok(summaries)
+}
+
+fn fetch_model_catalog(transport: &mut CodexJsonTransport) -> Vec<ModelOptionDto> {
+    match transport.request(
+        "model/list",
+        serde_json::json!({
+            "cursor": Value::Null,
+            "limit": 50,
+            "includeHidden": false,
+        }),
+    ) {
+        Ok(response) => {
+            let models = parse_model_options(response);
+            if models.is_empty() {
+                fallback_model_options()
+            } else {
+                models
+            }
+        }
+        Err(_) => fallback_model_options(),
+    }
+}
+
+fn fallback_model_options() -> Vec<ModelOptionDto> {
+    vec![
+        ModelOptionDto {
+            id: "gpt-5".to_string(),
+            model: "gpt-5".to_string(),
+            display_name: "GPT-5".to_string(),
+            description: String::new(),
+            is_default: true,
+            default_reasoning_effort: Some("medium".to_string()),
+            supported_reasoning_efforts: fallback_reasoning_efforts(),
+        },
+        ModelOptionDto {
+            id: "gpt-5-mini".to_string(),
+            model: "gpt-5-mini".to_string(),
+            display_name: "GPT-5 Mini".to_string(),
+            description: String::new(),
+            is_default: false,
+            default_reasoning_effort: Some("medium".to_string()),
+            supported_reasoning_efforts: fallback_reasoning_efforts(),
+        },
+        ModelOptionDto {
+            id: "o4-mini".to_string(),
+            model: "o4-mini".to_string(),
+            display_name: "o4-mini".to_string(),
+            description: String::new(),
+            is_default: false,
+            default_reasoning_effort: Some("high".to_string()),
+            supported_reasoning_efforts: fallback_reasoning_efforts(),
+        },
+    ]
+}
+
+fn fallback_reasoning_efforts() -> Vec<ReasoningEffortOptionDto> {
+    vec![
+        ReasoningEffortOptionDto {
+            reasoning_effort: "low".to_string(),
+            description: None,
+        },
+        ReasoningEffortOptionDto {
+            reasoning_effort: "medium".to_string(),
+            description: None,
+        },
+        ReasoningEffortOptionDto {
+            reasoning_effort: "high".to_string(),
+            description: None,
+        },
+    ]
+}
+
+fn parse_model_options(result: Value) -> Vec<ModelOptionDto> {
+    let Some(items) = result.get("data").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+
+    items.iter().filter_map(parse_model_option).collect()
+}
+
+fn parse_model_option(item: &Value) -> Option<ModelOptionDto> {
+    let model = value_text(item.get("model")).or_else(|| value_text(item.get("id")))?;
+    let id = value_text(item.get("id")).unwrap_or_else(|| model.clone());
+    let display_name = value_text(item.get("displayName"))
+        .or_else(|| value_text(item.get("display_name")))
+        .unwrap_or_else(|| model.clone());
+    let description = value_text(item.get("description")).unwrap_or_default();
+    let default_reasoning_effort = value_text(item.get("defaultReasoningEffort"))
+        .or_else(|| value_text(item.get("default_reasoning_effort")));
+    let supported_reasoning_efforts = parse_reasoning_efforts(
+        item.get("supportedReasoningEfforts")
+            .or_else(|| item.get("supported_reasoning_efforts")),
+    );
+    let is_default = item
+        .get("isDefault")
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| {
+            item.get("is_default")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        });
+
+    Some(ModelOptionDto {
+        id,
+        model,
+        display_name,
+        description,
+        is_default,
+        default_reasoning_effort,
+        supported_reasoning_efforts,
+    })
+}
+
+fn parse_reasoning_efforts(value: Option<&Value>) -> Vec<ReasoningEffortOptionDto> {
+    let Some(items) = value.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+
+    items
+        .iter()
+        .filter_map(|item| {
+            let effort = value_text(item.get("reasoningEffort"))
+                .or_else(|| value_text(item.get("reasoning_effort")))?;
+            let description = value_text(item.get("description"));
+            Some(ReasoningEffortOptionDto {
+                reasoning_effort: effort,
+                description,
+            })
+        })
+        .collect()
+}
+
+fn value_text(value: Option<&Value>) -> Option<String> {
+    let value = value?;
+    match value {
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
 }
 
 fn map_thread_summary(thread: CodexThread) -> ThreadSummaryDto {
@@ -806,6 +955,12 @@ fn normalize_plan_item(item: &Value) -> Value {
 }
 
 fn normalize_command_item(item: &Value) -> Value {
+    let arguments = item
+        .get("arguments")
+        .cloned()
+        .or_else(|| item.get("input").cloned())
+        .unwrap_or(Value::Null);
+
     serde_json::json!({
         "id": item.get("id").and_then(Value::as_str).unwrap_or_default(),
         "type": "command",
@@ -814,6 +969,7 @@ fn normalize_command_item(item: &Value) -> Value {
             .or_else(|| item.get("name"))
             .and_then(Value::as_str)
             .unwrap_or_default(),
+        "arguments": arguments,
         "output": item
             .get("output")
             .or_else(|| item.get("aggregatedOutput"))
@@ -1166,7 +1322,12 @@ fn extract_file_name_from_command(command: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_repository_name_from_cwd, parse_repository_name_from_origin};
+    use super::{
+        derive_repository_name_from_cwd, normalize_codex_item_payload, parse_model_options,
+        parse_repository_name_from_origin,
+    };
+    use serde_json::json;
+    use shared_contracts::BridgeEventKind;
 
     #[test]
     fn parses_repository_name_from_origin_url() {
@@ -1182,5 +1343,48 @@ mod tests {
             derive_repository_name_from_cwd("/Users/test/project"),
             Some("project".to_string())
         );
+    }
+
+    #[test]
+    fn function_call_command_payload_preserves_arguments_for_mobile_formatting() {
+        let item = json!({
+            "id": "tool-1",
+            "type": "functionCall",
+            "name": "exec_command",
+            "arguments": "{\"cmd\":\"flutter analyze\"}",
+        });
+
+        let (kind, payload) =
+            normalize_codex_item_payload(&item).expect("function call should normalize");
+        assert_eq!(kind, BridgeEventKind::CommandDelta);
+        assert_eq!(payload["command"], "exec_command");
+        assert_eq!(payload["arguments"], "{\"cmd\":\"flutter analyze\"}");
+    }
+
+    #[test]
+    fn parses_model_catalog_from_codex_response() {
+        let models = parse_model_options(json!({
+            "data": [
+                {
+                    "id": "gpt-5.4",
+                    "model": "gpt-5.4",
+                    "displayName": "GPT-5.4",
+                    "description": "Best reasoning",
+                    "isDefault": true,
+                    "defaultReasoningEffort": "high",
+                    "supportedReasoningEfforts": [
+                        {"reasoningEffort": "medium"},
+                        {"reasoningEffort": "high"}
+                    ]
+                }
+            ]
+        }));
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "gpt-5.4");
+        assert_eq!(models[0].display_name, "GPT-5.4");
+        assert!(models[0].is_default);
+        assert_eq!(models[0].default_reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(models[0].supported_reasoning_efforts.len(), 2);
     }
 }

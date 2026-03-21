@@ -96,28 +96,21 @@ class ParsedCommandOutput {
       command = commandMatch.group(1)?.trim();
 
       // Clean up the command if it's a zsh -lc wrapper
-      if (command != null && command.startsWith('/bin/zsh -lc')) {
-        final innerMatch = RegExp(
-          r'''/bin/zsh\s+-lc\s+(["'])(.*?)\1''',
-        ).firstMatch(command);
-        if (innerMatch != null) {
-          command = innerMatch.group(2)?.trim();
-        } else {
-          // fallback for double quotes or lack of quotes
-          final fallbackMatch = RegExp(
-            r'''/bin/zsh\s+-lc\s+(.*)''',
-          ).firstMatch(command);
-          if (fallbackMatch != null) {
-            command = fallbackMatch.group(1)?.trim();
-            // Remove surrounding quotes if they exist
-            if (command != null && command.length >= 2) {
-              if ((command.startsWith("'") && command.endsWith("'")) ||
-                  (command.startsWith('"') && command.endsWith('"'))) {
-                command = command.substring(1, command.length - 1);
-              }
-            }
-          }
-        }
+      if (command != null && command.isNotEmpty) {
+        command = _unwrapZshCommand(command);
+      }
+    }
+
+    // Fallback for rewrite-backend command outputs where the first line is a
+    // markdown-style command, e.g. `/bin/zsh -lc 'dart format ...'`.
+    if (command == null && body.isNotEmpty) {
+      final lines = body.split('\n');
+      final firstLine = lines.first.trim();
+      final inlineMatch = RegExp(r'^`([^`]+)`?$').firstMatch(firstLine);
+      final inlineCommand = inlineMatch?.group(1)?.trim();
+      if (inlineCommand != null && inlineCommand.isNotEmpty) {
+        command = _unwrapZshCommand(inlineCommand);
+        body = lines.skip(1).join('\n').trim();
       }
     }
 
@@ -242,6 +235,37 @@ class ParsedCommandOutput {
       diffDeletions: diffDeletions,
     );
   }
+}
+
+String _unwrapZshCommand(String value) {
+  var command = value.trim();
+  if (!command.startsWith('/bin/zsh -lc')) {
+    return command;
+  }
+
+  final innerMatch = RegExp(
+    r'''/bin/zsh\s+-lc\s+(["'])(.*?)\1''',
+  ).firstMatch(command);
+  if (innerMatch != null) {
+    return innerMatch.group(2)?.trim() ?? command;
+  }
+
+  // fallback for unquoted invocation payloads
+  final fallbackMatch = RegExp(
+    r'''/bin/zsh\s+-lc\s+(.*)''',
+  ).firstMatch(command);
+  if (fallbackMatch == null) {
+    return command;
+  }
+
+  command = fallbackMatch.group(1)?.trim() ?? command;
+  if (command.length >= 2 &&
+      ((command.startsWith("'") && command.endsWith("'")) ||
+          (command.startsWith('"') && command.endsWith('"')))) {
+    return command.substring(1, command.length - 1);
+  }
+
+  return command;
 }
 
 enum ParsedDiffChangeType { modified, added, deleted }

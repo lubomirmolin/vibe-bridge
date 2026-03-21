@@ -7,8 +7,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
 use shared_contracts::{
-    ApprovalSummaryDto, BootstrapDto, ThreadSnapshotDto, ThreadSummaryDto, ThreadTimelinePageDto,
-    TurnMutationAcceptedDto,
+    ApprovalSummaryDto, BootstrapDto, ModelCatalogDto, ThreadSnapshotDto, ThreadSummaryDto,
+    ThreadTimelinePageDto, TurnMutationAcceptedDto,
 };
 
 use crate::pairing::{
@@ -23,7 +23,11 @@ pub fn router(state: RewriteAppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/bootstrap", get(bootstrap))
-        .route("/pairing/session", get(pairing_session).post(pairing_session))
+        .route("/models", get(model_catalog))
+        .route(
+            "/pairing/session",
+            get(pairing_session).post(pairing_session),
+        )
         .route("/pairing/finalize", post(pairing_finalize))
         .route("/pairing/handshake", post(pairing_handshake))
         .route("/pairing/trust/revoke", post(pairing_revoke))
@@ -49,6 +53,10 @@ async fn healthz() -> Json<serde_json::Value> {
 
 async fn bootstrap(State(state): State<RewriteAppState>) -> Json<BootstrapDto> {
     Json(state.bootstrap_payload().await)
+}
+
+async fn model_catalog(State(state): State<RewriteAppState>) -> Json<ModelCatalogDto> {
+    Json(state.model_catalog_payload().await)
 }
 
 async fn pairing_session(
@@ -361,6 +369,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn model_catalog_route_returns_rewrite_contract() {
+        let app = router(test_state());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/models")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), 200);
+    }
+
+    #[tokio::test]
     async fn pairing_session_route_returns_qr_payload() {
         let app = router(test_state());
         let response = app
@@ -378,7 +402,10 @@ mod tests {
             .await
             .expect("body should read");
         let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
-        assert_eq!(decoded["bridge_identity"]["api_base_url"], "https://bridge.ts.net");
+        assert_eq!(
+            decoded["bridge_identity"]["api_base_url"],
+            "https://bridge.ts.net"
+        );
         assert!(decoded["qr_payload"].as_str().is_some());
     }
 
