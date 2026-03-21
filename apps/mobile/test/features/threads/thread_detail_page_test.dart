@@ -425,6 +425,66 @@ void main() {
   );
 
   testWidgets(
+    'real-thread grouped exploration preserves read labels and bridge search label/count',
+    (tester) async {
+      final detailFixture = _loadRealThreadFixture();
+      final explorationFixture =
+          _loadRealThreadSearchExplorationTimelineFixture();
+
+      final explorationEntries = explorationFixture.entries
+          .where(
+            (entry) =>
+                entry.annotations?.groupKind ==
+                    ThreadTimelineGroupKind.exploration &&
+                (entry.annotations?.explorationKind ==
+                        ThreadTimelineExplorationKind.read ||
+                    entry.annotations?.explorationKind ==
+                        ThreadTimelineExplorationKind.search),
+          )
+          .toList(growable: false);
+      final fileChangeEntry = explorationFixture.entries.firstWhere(
+        (entry) =>
+            entry.eventId == '019d0d0c-07df-7632-81fa-a1636651400a-archive-474',
+      );
+
+      final timeline = <ThreadTimelineEntryDto>[
+        ...explorationEntries,
+        fileChangeEntry,
+      ]..sort((a, b) => a.occurredAt.compareTo(b.occurredAt));
+
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          detailFixture.detail.threadId: [detailFixture.detail],
+        },
+        timelineScriptByThreadId: {
+          detailFixture.detail.threadId: [timeline],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: detailFixture.detail.threadId,
+      );
+      await tester.pumpAndSettle();
+
+      await _scrollUntilVisible(
+        tester,
+        find.byKey(const Key('thread-explored-files-summary')),
+      );
+
+      expect(find.text('Explored 2 files, 4 searches'), findsOneWidget);
+      expect(find.text('Read thread_detail_controller.dart'), findsOneWidget);
+      expect(find.text('Read thread_api.rs'), findsOneWidget);
+      expect(find.text('Search (4)'), findsOneWidget);
+      expect(
+        find.byKey(const Key('thread-file-change-toggle-thread_api.rs')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
     'assistant code blocks infer syntax highlighting from nearby file path',
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(
@@ -3062,6 +3122,8 @@ const _realThreadFixtureTimelinePath =
     'test/features/threads/fixtures/real_thread_019d_timeline_limit_80.json';
 const _realThreadFixtureOlderTimelinePath =
     'test/features/threads/fixtures/real_thread_019d_timeline_before_558_limit_80.json';
+const _realThreadFixtureSearchExplorationTimelinePath =
+    'test/features/threads/fixtures/real_thread_019d_timeline_before_478_limit_80.json';
 
 _RealThreadFixture _loadRealThreadFixture() {
   final detailRaw = File(_realThreadFixtureDetailPath).readAsStringSync();
@@ -3086,6 +3148,14 @@ _RealThreadFixture _loadRealThreadFixture() {
 ThreadTimelinePageDto _loadRealThreadOlderTimelineFixture() {
   final timelineRaw = File(
     _realThreadFixtureOlderTimelinePath,
+  ).readAsStringSync();
+  final timelineJson = jsonDecode(timelineRaw) as Map<String, dynamic>;
+  return ThreadTimelinePageDto.fromJson(timelineJson);
+}
+
+ThreadTimelinePageDto _loadRealThreadSearchExplorationTimelineFixture() {
+  final timelineRaw = File(
+    _realThreadFixtureSearchExplorationTimelinePath,
   ).readAsStringSync();
   final timelineJson = jsonDecode(timelineRaw) as Map<String, dynamic>;
   return ThreadTimelinePageDto.fromJson(timelineJson);

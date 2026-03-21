@@ -414,6 +414,14 @@ class _ExploredFilesCard extends StatefulWidget {
 class _ExploredFilesCardState extends State<_ExploredFilesCard> {
   bool _isExpanded = true;
 
+  List<String> get _explorationRows {
+    final rows = <String>[...widget.exploration.files];
+    widget.exploration.searchLabels.forEach((label, count) {
+      rows.add(count > 1 ? '$label ($count)' : label);
+    });
+    return rows;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -458,12 +466,12 @@ class _ExploredFilesCardState extends State<_ExploredFilesCard> {
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: widget.exploration.files
+                children: _explorationRows
                     .map(
-                      (file) => Padding(
+                      (row) => Padding(
                         padding: const EdgeInsets.only(top: 8),
                         child: Text(
-                          file,
+                          row,
                           style: const TextStyle(
                             color: AppTheme.textMuted,
                             fontSize: 13,

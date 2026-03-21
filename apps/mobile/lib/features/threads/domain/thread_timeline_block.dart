@@ -24,10 +24,12 @@ class ThreadTimelineExplorationSummary {
   const ThreadTimelineExplorationSummary({
     required this.files,
     required this.searchCount,
+    required this.searchLabels,
   });
 
   final List<String> files;
   final int searchCount;
+  final Map<String, int> searchLabels;
 
   String get label {
     final parts = <String>[];
@@ -108,6 +110,7 @@ String timelineLeadingBlockSignature(List<ThreadActivityItem> items) {
 class _ExplorationSummaryBuilder {
   final List<String> _files = <String>[];
   final Set<String> _seenFiles = <String>{};
+  final Map<String, int> _searchLabels = <String, int>{};
   int _searchCount = 0;
 
   bool get hasContent => _files.isNotEmpty || _searchCount > 0;
@@ -121,6 +124,10 @@ class _ExplorationSummaryBuilder {
     switch (presentation.entryKind) {
       case ThreadActivityPresentationEntryKind.search:
         _searchCount += 1;
+        final label = presentation.entryLabel?.trim();
+        if (label != null && label.isNotEmpty) {
+          _searchLabels.update(label, (count) => count + 1, ifAbsent: () => 1);
+        }
         return;
       case ThreadActivityPresentationEntryKind.read:
         final label = presentation.entryLabel;
@@ -137,6 +144,7 @@ class _ExplorationSummaryBuilder {
     return ThreadTimelineExplorationSummary(
       files: List<String>.unmodifiable(_files),
       searchCount: _searchCount,
+      searchLabels: Map<String, int>.unmodifiable(_searchLabels),
     );
   }
 }
