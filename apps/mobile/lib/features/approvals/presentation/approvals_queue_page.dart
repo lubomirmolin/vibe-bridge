@@ -72,15 +72,11 @@ class ApprovalsQueuePage extends ConsumerWidget {
                 ],
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-              child: ConnectionStatusBanner(
-                state: _approvalsConnectionBannerState(
-                  state.liveConnectionState,
-                ),
-                detail: _approvalsConnectionBannerDetail(state),
-                compact: true,
-              ),
+            ConnectionStatusBanner(
+              state: _approvalsConnectionBannerState(state.liveConnectionState),
+              detail: _approvalsConnectionBannerDetail(state),
+              compact: true,
+              margin: const EdgeInsets.fromLTRB(24, 0, 24, 8),
             ),
 
             Expanded(

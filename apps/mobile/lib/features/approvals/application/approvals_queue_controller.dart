@@ -76,7 +76,7 @@ class ApprovalsQueueState {
   const ApprovalsQueueState({
     this.items = const <ApprovalItemState>[],
     this.accessMode,
-    this.liveConnectionState = LiveConnectionState.reconnecting,
+    this.liveConnectionState = LiveConnectionState.connected,
     this.errorMessage,
     this.isLoading = true,
   });
@@ -413,7 +413,7 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
       return;
     }
     state = state.copyWith(
-      liveConnectionState: LiveConnectionState.reconnecting,
+      liveConnectionState: LiveConnectionState.disconnected,
     );
     _scheduleReconnect();
   }
@@ -437,9 +437,20 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
 
     _isReconnectInProgress = true;
     try {
+      if (_canMutateState &&
+          state.liveConnectionState == LiveConnectionState.disconnected) {
+        state = state.copyWith(
+          liveConnectionState: LiveConnectionState.reconnecting,
+        );
+      }
       await _closeLiveSubscription();
       await _startLiveSubscription();
     } catch (_) {
+      if (_canMutateState) {
+        state = state.copyWith(
+          liveConnectionState: LiveConnectionState.disconnected,
+        );
+      }
       _scheduleReconnect();
     } finally {
       _isReconnectInProgress = false;

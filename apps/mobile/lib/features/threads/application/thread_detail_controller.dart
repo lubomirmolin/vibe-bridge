@@ -55,7 +55,7 @@ class ThreadDetailControllerArgs {
 class ThreadDetailState {
   const ThreadDetailState({
     required this.threadId,
-    this.liveConnectionState = LiveConnectionState.reconnecting,
+    this.liveConnectionState = LiveConnectionState.connected,
     this.thread,
     this.items = const <ThreadActivityItem>[],
     this.errorMessage,
@@ -350,7 +350,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       state = state.copyWith(
         thread: scopedDetail,
         items: items,
-        liveConnectionState: LiveConnectionState.reconnecting,
+        liveConnectionState: LiveConnectionState.connected,
         isLoading: false,
         isUnavailable: false,
         clearErrorMessage: true,
@@ -543,7 +543,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     }
 
     state = state.copyWith(
-      liveConnectionState: LiveConnectionState.reconnecting,
+      liveConnectionState: LiveConnectionState.disconnected,
       streamErrorMessage:
           'Live updates disconnected. Reconnecting and catching up…',
       staleMessage:
@@ -574,6 +574,11 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     _isReconnectInProgress = true;
 
     try {
+      if (state.liveConnectionState == LiveConnectionState.disconnected) {
+        state = state.copyWith(
+          liveConnectionState: LiveConnectionState.reconnecting,
+        );
+      }
       await _closeLiveSubscription();
       final requestedThreadId = state.threadId;
 
@@ -633,7 +638,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       }
 
       state = state.copyWith(
-        liveConnectionState: LiveConnectionState.reconnecting,
+        liveConnectionState: LiveConnectionState.disconnected,
         streamErrorMessage: error.message,
         staleMessage:
             'Bridge is offline. Current thread content may be stale until reconnect.',

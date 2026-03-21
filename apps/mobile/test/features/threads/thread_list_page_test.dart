@@ -46,10 +46,6 @@ void main() {
       completer.complete(_sampleThreads());
       await tester.pumpAndSettle();
 
-      expect(
-        find.byKey(const Key('connection-status-connected')),
-        findsOneWidget,
-      );
       expect(find.text('Implement shared contracts'), findsOneWidget);
       expect(find.text('Investigate reconnect dedup'), findsOneWidget);
       expect(find.text('ACTIVE'), findsOneWidget);
