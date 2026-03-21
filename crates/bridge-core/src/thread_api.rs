@@ -48,10 +48,28 @@ type ThreadSnapshot = (
     HashMap<String, Vec<UpstreamTimelineEvent>>,
 );
 
+const THREAD_SYNC_REUSE_WINDOW_MILLIS: u128 = 250;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ThreadSyncReceipt {
+    synced_at_millis: u128,
+    signature: ThreadSnapshotSignature,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ThreadSnapshotSignature {
+    updated_at: String,
+    headline: String,
+    newest_event_id: Option<String>,
+    newest_event_at: Option<String>,
+    timeline_len: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadApiService {
     thread_records: Vec<UpstreamThreadRecord>,
     timeline_by_thread_id: HashMap<String, Vec<UpstreamTimelineEvent>>,
+    thread_sync_receipts_by_id: HashMap<String, ThreadSyncReceipt>,
     next_event_sequence: u64,
     sync_config: Option<ThreadSyncConfig>,
 }
@@ -118,12 +136,15 @@ impl ThreadApiService {
         thread_records: Vec<UpstreamThreadRecord>,
         timeline_by_thread_id: HashMap<String, Vec<UpstreamTimelineEvent>>,
     ) -> Self {
-        Self {
+        let mut service = Self {
             thread_records,
             timeline_by_thread_id,
+            thread_sync_receipts_by_id: HashMap::new(),
             next_event_sequence: 10,
             sync_config: None,
-        }
+        };
+        service.refresh_all_thread_sync_receipts();
+        service
     }
 
     pub fn from_codex_app_server(
@@ -135,9 +156,10 @@ impl ThreadApiService {
         let (thread_records, timeline_by_thread_id) =
             load_thread_snapshot(command, args, endpoint, &codex_home)?;
 
-        Ok(Self {
+        let mut service = Self {
             thread_records,
             timeline_by_thread_id,
+            thread_sync_receipts_by_id: HashMap::new(),
             next_event_sequence: 10,
             sync_config: Some(ThreadSyncConfig {
                 codex_command: command.to_string(),
@@ -145,7 +167,9 @@ impl ThreadApiService {
                 codex_endpoint: endpoint.map(ToOwned::to_owned),
                 codex_home,
             }),
-        })
+        };
+        service.refresh_all_thread_sync_receipts();
+        Ok(service)
     }
 
     pub fn sync_from_upstream(&mut self) -> Result<(), String> {
@@ -161,6 +185,7 @@ impl ThreadApiService {
         )?;
         self.thread_records = thread_records;
         self.timeline_by_thread_id = timeline_by_thread_id;
+        self.refresh_all_thread_sync_receipts();
         Ok(())
     }
 
@@ -168,6 +193,10 @@ impl ThreadApiService {
         let Some(sync_config) = &self.sync_config else {
             return Ok(());
         };
+
+        if self.should_reuse_recent_thread_sync(thread_id) {
+            return Ok(());
+        }
 
         let (thread_records, timeline_by_thread_id) = load_thread_snapshot_for_id(
             &sync_config.codex_command,
@@ -202,6 +231,8 @@ impl ThreadApiService {
         } else {
             self.timeline_by_thread_id.remove(thread_id);
         }
+
+        self.refresh_thread_sync_receipt(thread_id);
 
         Ok(())
     }
@@ -296,6 +327,7 @@ impl ThreadApiService {
 
         self.thread_records = thread_records;
         self.timeline_by_thread_id = merged_timeline_by_thread_id;
+        self.refresh_all_thread_sync_receipts();
         events
     }
 
@@ -344,6 +376,8 @@ impl ThreadApiService {
                 thread.last_turn_summary = upstream_event.summary_text;
             }
         }
+
+        self.refresh_thread_sync_receipt(&thread_id);
     }
 
     pub fn sample() -> Self {
@@ -968,6 +1002,64 @@ impl ThreadApiService {
                 status,
             },
             events: vec![event],
+        })
+    }
+
+    fn should_reuse_recent_thread_sync(&self, thread_id: &str) -> bool {
+        let Some(receipt) = self.thread_sync_receipts_by_id.get(thread_id) else {
+            return false;
+        };
+
+        let elapsed = current_unix_epoch_millis().saturating_sub(receipt.synced_at_millis);
+        if elapsed > THREAD_SYNC_REUSE_WINDOW_MILLIS {
+            return false;
+        }
+
+        self.thread_snapshot_signature(thread_id)
+            .is_some_and(|signature| signature == receipt.signature)
+    }
+
+    fn refresh_thread_sync_receipt(&mut self, thread_id: &str) {
+        let Some(signature) = self.thread_snapshot_signature(thread_id) else {
+            self.thread_sync_receipts_by_id.remove(thread_id);
+            return;
+        };
+
+        self.thread_sync_receipts_by_id.insert(
+            thread_id.to_string(),
+            ThreadSyncReceipt {
+                synced_at_millis: current_unix_epoch_millis(),
+                signature,
+            },
+        );
+    }
+
+    fn refresh_all_thread_sync_receipts(&mut self) {
+        let thread_ids = self
+            .thread_records
+            .iter()
+            .map(|thread| thread.id.clone())
+            .collect::<Vec<_>>();
+        self.thread_sync_receipts_by_id.clear();
+        for thread_id in thread_ids {
+            self.refresh_thread_sync_receipt(&thread_id);
+        }
+    }
+
+    fn thread_snapshot_signature(&self, thread_id: &str) -> Option<ThreadSnapshotSignature> {
+        let thread = self
+            .thread_records
+            .iter()
+            .find(|thread| thread.id == thread_id)?;
+        let timeline = self.timeline_by_thread_id.get(thread_id);
+        let newest_event = timeline.and_then(|events| events.last());
+
+        Some(ThreadSnapshotSignature {
+            updated_at: thread.updated_at.clone(),
+            headline: thread.headline.clone(),
+            newest_event_id: newest_event.map(|event| event.id.clone()),
+            newest_event_at: newest_event.map(|event| event.happened_at.clone()),
+            timeline_len: timeline.map_or(0, Vec::len),
         })
     }
 
@@ -3580,11 +3672,15 @@ fn map_wire_thread_status_to_lifecycle_state(raw: &str) -> String {
 }
 
 fn current_timestamp_string() -> String {
-    let now = SystemTime::now()
+    let now = current_unix_epoch_millis() as i64;
+    unix_timestamp_to_iso8601(now)
+}
+
+fn current_unix_epoch_millis() -> u128 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis() as i64;
-    unix_timestamp_to_iso8601(now)
+        .as_millis()
 }
 
 fn unix_timestamp_to_iso8601(timestamp: i64) -> String {
@@ -3853,7 +3949,7 @@ fn apply_delta_to_item_payload(item: &mut Value, delta: &str, target: DeltaTarge
 mod tests {
     use std::collections::{HashMap, HashSet};
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use super::{
         CodexNotificationNormalizer, CodexThread, CodexThreadStatus, CodexTurn, ThreadApiService,
@@ -5274,6 +5370,7 @@ mod tests {
                     }],
                 ),
             ]),
+            thread_sync_receipts_by_id: HashMap::new(),
             next_event_sequence: 10,
             sync_config: Some(ThreadSyncConfig {
                 codex_command: "/definitely/missing/codex".to_string(),
@@ -5316,6 +5413,142 @@ mod tests {
             .expect("other timeline should still exist");
         assert_eq!(other_timeline.len(), 1);
         assert_eq!(other_timeline[0].id, "other-event");
+
+        let _ = fs::remove_dir_all(codex_home);
+    }
+
+    #[test]
+    fn sync_thread_from_upstream_reuses_fresh_snapshot_for_detail_then_timeline_pair() {
+        let thread_id = "019d0d0c-07df-7632-81fa-a1636651400a";
+        let codex_home = unique_test_codex_home();
+
+        write_archived_thread_fixture(
+            &codex_home,
+            thread_id,
+            "2026-03-19T10:00:00Z",
+            "Cold snapshot title",
+            "Cold snapshot summary.",
+        );
+
+        let mut service = ThreadApiService::with_seed_data(Vec::new(), HashMap::new());
+        service.sync_config = Some(ThreadSyncConfig {
+            codex_command: "/definitely/missing/codex".to_string(),
+            codex_args: Vec::new(),
+            codex_endpoint: None,
+            codex_home: codex_home.clone(),
+        });
+
+        service
+            .sync_thread_from_upstream(thread_id)
+            .expect("initial cold sync should load archive snapshot");
+
+        write_archived_thread_fixture(
+            &codex_home,
+            thread_id,
+            "2026-03-19T10:30:00Z",
+            "Updated archive title",
+            "Updated archive summary should not appear in immediate companion request.",
+        );
+
+        service
+            .sync_thread_from_upstream(thread_id)
+            .expect("immediate companion sync should succeed");
+
+        let detail = service
+            .detail_response(thread_id)
+            .expect("thread detail should remain present");
+        assert_eq!(detail.thread.title, "Cold snapshot title");
+        assert_eq!(detail.thread.updated_at, "2026-03-19T10:00:00Z");
+
+        let timeline = service
+            .timeline_page_response(thread_id, None, 80)
+            .expect("timeline should remain available");
+        assert_eq!(timeline.thread.title, "Cold snapshot title");
+        assert_eq!(timeline.thread.updated_at, "2026-03-19T10:00:00Z");
+
+        let _ = fs::remove_dir_all(codex_home);
+    }
+
+    #[test]
+    fn sync_thread_from_upstream_reuses_single_refresh_generation_for_reconnect_style_pair() {
+        let thread_id = "019d0d0c-07df-7632-81fa-a1636651400a";
+        let codex_home = unique_test_codex_home();
+
+        write_archived_thread_fixture(
+            &codex_home,
+            thread_id,
+            "2026-03-19T10:00:00Z",
+            "Initial title",
+            "Initial summary.",
+        );
+
+        let mut service = ThreadApiService::with_seed_data(Vec::new(), HashMap::new());
+        service.sync_config = Some(ThreadSyncConfig {
+            codex_command: "/definitely/missing/codex".to_string(),
+            codex_args: Vec::new(),
+            codex_endpoint: None,
+            codex_home: codex_home.clone(),
+        });
+
+        service
+            .sync_thread_from_upstream(thread_id)
+            .expect("initial sync should load first snapshot");
+
+        write_archived_thread_fixture(
+            &codex_home,
+            thread_id,
+            "2026-03-19T10:30:00Z",
+            "Reconnect title",
+            "Reconnect refresh summary.",
+        );
+
+        service
+            .sync_thread_from_upstream(thread_id)
+            .expect("timeline companion request should succeed");
+        assert_eq!(
+            service
+                .detail_response(thread_id)
+                .expect("detail should stay present")
+                .thread
+                .title,
+            "Initial title"
+        );
+
+        std::thread::sleep(std::time::Duration::from_millis(
+            super::THREAD_SYNC_REUSE_WINDOW_MILLIS as u64 + 50,
+        ));
+
+        service
+            .sync_thread_from_upstream(thread_id)
+            .expect("reconnect detail request should refresh from archive");
+        assert_eq!(
+            service
+                .detail_response(thread_id)
+                .expect("detail should stay present")
+                .thread
+                .title,
+            "Reconnect title"
+        );
+
+        write_archived_thread_fixture(
+            &codex_home,
+            thread_id,
+            "2026-03-19T11:00:00Z",
+            "Second-pair title",
+            "Second-pair archive summary should be deferred.",
+        );
+
+        service
+            .sync_thread_from_upstream(thread_id)
+            .expect("reconnect timeline companion request should succeed");
+        assert_eq!(
+            service
+                .detail_response(thread_id)
+                .expect("detail should stay present")
+                .thread
+                .title,
+            "Reconnect title"
+        );
 
         let _ = fs::remove_dir_all(codex_home);
     }
@@ -6082,6 +6315,59 @@ mod tests {
             timeline[1].happened_at,
             super::unix_timestamp_to_iso8601(1_774_042_809)
         );
+    }
+
+    fn write_archived_thread_fixture(
+        codex_home: &Path,
+        thread_id: &str,
+        updated_at: &str,
+        title: &str,
+        summary: &str,
+    ) {
+        let sessions_directory = codex_home.join("sessions/2026/03/19");
+        fs::create_dir_all(&sessions_directory).expect("test sessions directory should exist");
+
+        let index_line = json!({
+            "id": thread_id,
+            "thread_name": title,
+            "updated_at": updated_at,
+        })
+        .to_string();
+        fs::write(
+            codex_home.join("session_index.jsonl"),
+            format!("{index_line}\n"),
+        )
+        .expect("session index should be writable");
+
+        let session_meta_line = json!({
+            "timestamp": "2026-03-19T09:55:00Z",
+            "type": "session_meta",
+            "payload": {
+                "id": thread_id,
+                "timestamp": "2026-03-19T09:55:00Z",
+                "cwd": "/Users/test/workspace",
+                "source": "vscode",
+                "git": {
+                    "branch": "master",
+                    "repository_url": "git@github.com:example/codex-mobile-companion.git",
+                }
+            }
+        })
+        .to_string();
+        let event_line = json!({
+            "timestamp": updated_at,
+            "type": "event_msg",
+            "payload": {
+                "type": "agent_message",
+                "message": summary,
+            }
+        })
+        .to_string();
+        fs::write(
+            sessions_directory.join(format!("rollout-2026-03-19T10-00-00-{thread_id}.jsonl")),
+            format!("{session_meta_line}\n{event_line}\n"),
+        )
+        .expect("session log should be writable");
     }
 
     fn unique_test_codex_home() -> PathBuf {
