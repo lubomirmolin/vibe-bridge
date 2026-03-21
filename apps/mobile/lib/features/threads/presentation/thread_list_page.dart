@@ -23,9 +23,11 @@ class ThreadListPage extends ConsumerStatefulWidget {
 }
 
 class _ThreadListPageState extends ConsumerState<ThreadListPage> {
+  static const int _defaultVisibleThreadsPerGroup = 3;
+
   late final TextEditingController _searchController;
   final Set<String> _collapsedGroupIds = <String>{};
-  bool _didRestoreSelectedThread = false;
+  final Set<String> _expandedThreadGroupIds = <String>{};
 
   @override
   void initState() {
@@ -39,31 +41,10 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
     super.dispose();
   }
 
-  void _restoreSelectedThreadIfNeeded(
-    ThreadListState state,
-    ThreadListController controller,
-  ) {
-    if (_didRestoreSelectedThread ||
-        !state.hasSelectedThread ||
-        state.isLoading ||
-        state.isShowingCachedData) {
-      return;
-    }
-
-    _didRestoreSelectedThread = true;
-    final selectedThreadId = state.selectedThreadId!;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      unawaited(_openThreadDetail(controller, selectedThreadId));
-    });
-  }
-
   Future<void> _openThreadDetail(
     ThreadListController controller,
     String threadId,
   ) async {
-    _didRestoreSelectedThread = true;
     await controller.selectThread(threadId);
     if (!mounted) return;
 
@@ -166,6 +147,23 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
     });
   }
 
+  bool _isGroupThreadListExpanded(ThreadListState state, String groupId) {
+    if (state.hasQuery) {
+      return true;
+    }
+    return _expandedThreadGroupIds.contains(groupId);
+  }
+
+  void _toggleGroupThreadExpansion(String groupId) {
+    setState(() {
+      if (_expandedThreadGroupIds.contains(groupId)) {
+        _expandedThreadGroupIds.remove(groupId);
+      } else {
+        _expandedThreadGroupIds.add(groupId);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(
@@ -174,8 +172,6 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
     final controller = ref.read(
       threadListControllerProvider(widget.bridgeApiBaseUrl).notifier,
     );
-
-    _restoreSelectedThreadIfNeeded(state, controller);
 
     return Scaffold(
       backgroundColor: AppTheme.background,
@@ -448,7 +444,14 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
           return _ThreadWorkspaceSection(
             group: group,
             isCollapsed: _isGroupCollapsed(state, group.groupId),
+            isThreadListExpanded: _isGroupThreadListExpanded(
+              state,
+              group.groupId,
+            ),
+            visibleThreadLimit: _defaultVisibleThreadsPerGroup,
             onToggleCollapsed: () => _toggleGroupCollapsed(group.groupId),
+            onToggleThreadExpansion: () =>
+                _toggleGroupThreadExpansion(group.groupId),
             onOpenDetail: (threadId) =>
                 unawaited(_openThreadDetail(controller, threadId)),
           );
@@ -462,17 +465,28 @@ class _ThreadWorkspaceSection extends StatelessWidget {
   const _ThreadWorkspaceSection({
     required this.group,
     required this.isCollapsed,
+    required this.isThreadListExpanded,
+    required this.visibleThreadLimit,
     required this.onToggleCollapsed,
+    required this.onToggleThreadExpansion,
     required this.onOpenDetail,
   });
 
   final ThreadWorkspaceGroup group;
   final bool isCollapsed;
+  final bool isThreadListExpanded;
+  final int visibleThreadLimit;
   final VoidCallback onToggleCollapsed;
+  final VoidCallback onToggleThreadExpansion;
   final ValueChanged<String> onOpenDetail;
 
   @override
   Widget build(BuildContext context) {
+    final hasHiddenThreads = group.threads.length > visibleThreadLimit;
+    final visibleThreads = isThreadListExpanded
+        ? group.threads
+        : group.threads.take(visibleThreadLimit).toList(growable: false);
+
     return Column(
       key: Key('thread-folder-group-${group.groupId}'),
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -530,16 +544,40 @@ class _ThreadWorkspaceSection extends StatelessWidget {
                   children: [
                     for (
                       var index = 0;
-                      index < group.threads.length;
+                      index < visibleThreads.length;
                       index++
                     ) ...[
                       _ThreadSummaryCard(
-                        thread: group.threads[index],
+                        thread: visibleThreads[index],
                         onOpenDetail: () =>
-                            onOpenDetail(group.threads[index].threadId),
+                            onOpenDetail(visibleThreads[index].threadId),
                       ),
-                      if (index < group.threads.length - 1)
+                      if (index < visibleThreads.length - 1)
                         const SizedBox(height: 4),
+                    ],
+                    if (hasHiddenThreads) ...[
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton(
+                          key: Key('thread-group-show-more-${group.groupId}'),
+                          onPressed: onToggleThreadExpansion,
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppTheme.emerald,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 0,
+                              vertical: 6,
+                            ),
+                            textStyle: GoogleFonts.jetBrainsMono(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          child: Text(
+                            isThreadListExpanded ? 'Show less' : 'Show more',
+                          ),
+                        ),
+                      ),
                     ],
                   ],
                 ),
@@ -677,6 +715,7 @@ class _ThreadSummaryCard extends StatelessWidget {
     return '${diff.inDays}d ago';
   }
 }
+
 class _NewThreadWorkspaceSheet extends StatelessWidget {
   const _NewThreadWorkspaceSheet({required this.groups});
 

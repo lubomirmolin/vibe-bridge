@@ -258,7 +258,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String branch,
   }) {
     throw const ThreadGitMutationBridgeException(
-      message: 'Git mutations are not exposed by the rewrite backend yet.',
+      message: 'Git controls are unavailable in this build.',
     );
   }
 
@@ -269,7 +269,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     String? remote,
   }) {
     throw const ThreadGitMutationBridgeException(
-      message: 'Git mutations are not exposed by the rewrite backend yet.',
+      message: 'Git controls are unavailable in this build.',
     );
   }
 
@@ -280,7 +280,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     String? remote,
   }) {
     throw const ThreadGitMutationBridgeException(
-      message: 'Git mutations are not exposed by the rewrite backend yet.',
+      message: 'Git controls are unavailable in this build.',
     );
   }
 
@@ -334,7 +334,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String threadId,
   }) async {
     throw const ThreadOpenOnMacBridgeException(
-      message: 'Open-on-Mac is not available in the rewrite backend yet.',
+      message: 'Open-on-Mac is unavailable in this build.',
     );
   }
 

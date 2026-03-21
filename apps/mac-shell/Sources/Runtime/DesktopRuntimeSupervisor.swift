@@ -375,17 +375,12 @@ struct BridgeBinaryPathResolver {
         let searchRoots = [currentDirectoryURL, bundleResourceURL].compactMap { $0 }
         for root in searchRoots {
             if let workspaceRoot = workspaceRoot(startingAt: root) {
-                candidates.append(workspaceRoot.appending(path: "target").appending(path: "debug").appending(path: "bridge-server-next"))
-                candidates.append(workspaceRoot.appending(path: "target").appending(path: "release").appending(path: "bridge-server-next"))
                 candidates.append(workspaceRoot.appending(path: "target").appending(path: "debug").appending(path: "bridge-server"))
                 candidates.append(workspaceRoot.appending(path: "target").appending(path: "release").appending(path: "bridge-server"))
             }
         }
 
-        candidates.append(contentsOf: pathExecutableCandidates(named: "bridge-server-next"))
         candidates.append(contentsOf: pathExecutableCandidates(named: "bridge-server"))
-        candidates.append(URL(fileURLWithPath: "/usr/local/bin/bridge-server-next"))
-        candidates.append(URL(fileURLWithPath: "/opt/homebrew/bin/bridge-server-next"))
         candidates.append(URL(fileURLWithPath: "/usr/local/bin/bridge-server"))
         candidates.append(URL(fileURLWithPath: "/opt/homebrew/bin/bridge-server"))
 

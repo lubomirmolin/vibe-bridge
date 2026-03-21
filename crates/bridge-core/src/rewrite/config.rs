@@ -121,7 +121,7 @@ impl RewriteConfig {
                 }
                 "--help" | "-h" => {
                     return Err(
-                        "usage: bridge-server-next [--host <ip-or-hostname>] [--port <u16>] [--admin-port <u16>] [--state-directory <path>] [--pairing-base-url <https://bridge.ts.net>] [--codex-mode <auto|spawn|attach>] [--codex-endpoint <ws-url>] [--codex-command <binary>] [--codex-arg <arg>]".to_string()
+                        "usage: bridge-server [--host <ip-or-hostname>] [--port <u16>] [--admin-port <u16>] [--state-directory <path>] [--pairing-base-url <https://bridge.ts.net>] [--codex-mode <auto|spawn|attach>] [--codex-endpoint <ws-url>] [--codex-command <binary>] [--codex-arg <arg>]".to_string()
                     );
                 }
                 _ => return Err(format!("unknown argument: {arg}")),

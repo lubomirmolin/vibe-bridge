@@ -1868,7 +1868,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
   );
 
   testWidgets(
-    'rewrite backend disables git mutations while still showing thread context',
+    'bridge disables git mutations while still showing thread context',
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(
         detailScriptByThreadId: {
@@ -1891,7 +1891,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       expect(find.text('Remote: unknown'), findsOneWidget);
       expect(find.text('Resolving git status'), findsOneWidget);
       expect(
-        find.text('Git controls are disabled in the rewrite backend.'),
+        find.text('Git controls are unavailable in this build.'),
         findsWidgets,
       );
 
@@ -1915,7 +1915,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       expect(pullButton.onPressed, isNull);
       expect(pushButton.onPressed, isNull);
       expect(
-        find.text('Git controls are disabled in the rewrite backend.'),
+        find.text('Git controls are unavailable in this build.'),
         findsWidgets,
       );
       expect(detailApi.branchSwitchRequestsByThreadId['thread-123'], isNull);
@@ -1924,56 +1924,55 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     },
   );
 
-  testWidgets(
-    'full-control mode does not bypass rewrite backend git disablement',
-    (tester) async {
-      final detailApi = FakeThreadDetailBridgeApi(
-        detailScriptByThreadId: {
-          'thread-123': [_thread123Detail(accessMode: AccessMode.fullControl)],
-        },
-        timelineScriptByThreadId: {
-          'thread-123': [<ThreadTimelineEntryDto>[]],
-        },
-      );
+  testWidgets('full-control mode does not bypass bridge git disablement', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail(accessMode: AccessMode.fullControl)],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+    );
 
-      await _pumpThreadDetailApp(
-        tester,
-        detailApi: detailApi,
-        threadId: 'thread-123',
-        settingsApi: FakeSettingsBridgeApi(accessMode: AccessMode.fullControl),
-      );
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+      settingsApi: FakeSettingsBridgeApi(accessMode: AccessMode.fullControl),
+    );
 
-      await _openGitBranchSheet(tester);
-      expect(
-        find.text('Git controls are disabled in the rewrite backend.'),
-        findsWidgets,
-      );
-      final switchButton = tester.widget<FilledButton>(
-        find.byKey(const Key('git-branch-switch-button')),
-      );
-      expect(switchButton.onPressed, isNull);
-      await _closeModalSheet(tester);
+    await _openGitBranchSheet(tester);
+    expect(
+      find.text('Git controls are unavailable in this build.'),
+      findsWidgets,
+    );
+    final switchButton = tester.widget<FilledButton>(
+      find.byKey(const Key('git-branch-switch-button')),
+    );
+    expect(switchButton.onPressed, isNull);
+    await _closeModalSheet(tester);
 
-      await _openGitSyncSheet(tester);
-      final pullButton = tester.widget<OutlinedButton>(
-        find.byKey(const Key('git-pull-button')),
-      );
-      final pushButton = tester.widget<OutlinedButton>(
-        find.byKey(const Key('git-push-button')),
-      );
-      expect(
-        find.text('Git controls are disabled in the rewrite backend.'),
-        findsWidgets,
-      );
-      expect(pullButton.onPressed, isNull);
-      expect(pushButton.onPressed, isNull);
-      expect(detailApi.branchSwitchRequestsByThreadId['thread-123'], isNull);
-      expect(detailApi.pullCallsByThreadId['thread-123'], isNull);
-      expect(detailApi.pushCallsByThreadId['thread-123'], isNull);
-    },
-  );
+    await _openGitSyncSheet(tester);
+    final pullButton = tester.widget<OutlinedButton>(
+      find.byKey(const Key('git-pull-button')),
+    );
+    final pushButton = tester.widget<OutlinedButton>(
+      find.byKey(const Key('git-push-button')),
+    );
+    expect(
+      find.text('Git controls are unavailable in this build.'),
+      findsWidgets,
+    );
+    expect(pullButton.onPressed, isNull);
+    expect(pushButton.onPressed, isNull);
+    expect(detailApi.branchSwitchRequestsByThreadId['thread-123'], isNull);
+    expect(detailApi.pullCallsByThreadId['thread-123'], isNull);
+    expect(detailApi.pushCallsByThreadId['thread-123'], isNull);
+  });
 
-  testWidgets('open-on-Mac is surfaced as unavailable in rewrite backend', (
+  testWidgets('open-on-Mac is surfaced as unavailable in this build', (
     tester,
   ) async {
     final detailApi = FakeThreadDetailBridgeApi(
@@ -1996,7 +1995,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(detailApi.openOnMacCallsByThreadId['thread-123'], isNull);
     expect(find.byKey(const Key('open-on-mac-error-message')), findsOneWidget);
     expect(
-      find.text('Open-on-Mac is disabled in the rewrite backend.'),
+      find.text('Open-on-Mac is unavailable in this build.'),
       findsOneWidget,
     );
   });
@@ -2061,7 +2060,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
   });
 
   testWidgets(
-    'changing access mode from settings still gates turn controls on rewrite backend',
+    'changing access mode from settings still gates turn controls in this build',
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(
         detailScriptByThreadId: {
@@ -2101,15 +2100,13 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       expect(pullAfter.onPressed, isNull);
       expect(openOnMacAfter.onPressed, isNotNull);
       expect(
-        find.text('Git controls are disabled in the rewrite backend.'),
+        find.text('Git controls are unavailable in this build.'),
         findsWidgets,
       );
     },
   );
 
-  testWidgets('rewrite backend keeps blank branch switch disabled', (
-    tester,
-  ) async {
+  testWidgets('bridge keeps blank branch switch disabled', (tester) async {
     final detailApi = FakeThreadDetailBridgeApi(
       detailScriptByThreadId: {
         'thread-123': [_thread123Detail()],
@@ -2132,14 +2129,14 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     );
 
     expect(
-      find.text('Git controls are disabled in the rewrite backend.'),
+      find.text('Git controls are unavailable in this build.'),
       findsWidgets,
     );
     expect(switchButton.onPressed, isNull);
     expect(detailApi.branchSwitchRequestsByThreadId['thread-123'], isNull);
   });
 
-  testWidgets('git mutation buttons stay disabled on rewrite backend', (
+  testWidgets('git mutation buttons stay disabled in this build', (
     tester,
   ) async {
     final detailApi = FakeThreadDetailBridgeApi(
@@ -2171,7 +2168,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     );
 
     expect(
-      find.text('Git controls are disabled in the rewrite backend.'),
+      find.text('Git controls are unavailable in this build.'),
       findsWidgets,
     );
     expect(switchButton.onPressed, isNull);
@@ -2294,9 +2291,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(pullButton.onPressed, isNull);
   });
 
-  testWidgets('rewrite backend never attempts failing git mutations', (
-    tester,
-  ) async {
+  testWidgets('bridge never attempts failing git mutations', (tester) async {
     final detailApi = FakeThreadDetailBridgeApi(
       detailScriptByThreadId: {
         'thread-123': [_thread123Detail()],
@@ -2319,7 +2314,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(pullButton.onPressed, isNull);
     expect(detailApi.pullCallsByThreadId['thread-123'], isNull);
     expect(
-      find.text('Git controls are disabled in the rewrite backend.'),
+      find.text('Git controls are unavailable in this build.'),
       findsWidgets,
     );
   });

@@ -15,7 +15,7 @@ struct BridgeShellAPIClient: ShellBridgeClient {
     }
 
     func fetchHealth() async throws -> BridgeHealthResponseDTO {
-        let bootstrap: RewriteBootstrapDTO = try await fetch(path: "/bootstrap", method: "GET")
+        let bootstrap: BridgeBootstrapDTO = try await fetch(path: "/bootstrap", method: "GET")
         let pairingRoute: BridgePairingRouteHealthDTO = try await fetch(path: "/pairing/route", method: "GET")
         let trust: BridgeTrustStatusDTO = try await fetch(path: "/pairing/trust", method: "GET")
         return BridgeHealthResponseDTO(
@@ -25,7 +25,7 @@ struct BridgeShellAPIClient: ShellBridgeClient {
                 state: bootstrap.codex.status == "healthy" ? "managed" : "degraded",
                 endpoint: nil,
                 pid: nil,
-                detail: bootstrap.codex.message ?? "Rewrite bridge is running."
+                detail: bootstrap.codex.message ?? "Bridge is running."
             ),
             pairingRoute: pairingRoute,
             trust: trust,
@@ -127,10 +127,10 @@ enum BridgeShellAPIClientError: LocalizedError {
     }
 }
 
-private struct RewriteBootstrapDTO: Decodable {
+private struct BridgeBootstrapDTO: Decodable {
     let contractVersion: String
-    let bridge: RewriteServiceHealthDTO
-    let codex: RewriteServiceHealthDTO
+    let bridge: BridgeServiceHealthDTO
+    let codex: BridgeServiceHealthDTO
     let threads: [ThreadSummaryDTO]
 
     enum CodingKeys: String, CodingKey {
@@ -141,7 +141,7 @@ private struct RewriteBootstrapDTO: Decodable {
     }
 }
 
-private struct RewriteServiceHealthDTO: Decodable {
+private struct BridgeServiceHealthDTO: Decodable {
     let status: String
     let message: String?
 }

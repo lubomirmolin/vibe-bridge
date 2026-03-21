@@ -345,7 +345,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearGitMutationMessage: true,
         clearGitControlsUnavailableReason: false,
         gitControlsUnavailableReason:
-            'Git controls are disabled in the rewrite backend.',
+            'Git controls are unavailable in this build.',
         isOpenOnMacInFlight: false,
         clearOpenOnMacMessage: true,
         clearOpenOnMacErrorMessage: true,
@@ -397,7 +397,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearGitMutationMessage: true,
         clearGitControlsUnavailableReason: false,
         gitControlsUnavailableReason:
-            'Git controls are disabled in the rewrite backend.',
+            'Git controls are unavailable in this build.',
         isOpenOnMacInFlight: false,
         clearOpenOnMacMessage: true,
         clearOpenOnMacErrorMessage: true,
@@ -637,7 +637,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearGitMutationMessage: true,
         clearGitControlsUnavailableReason: false,
         gitControlsUnavailableReason:
-            'Git controls are disabled in the rewrite backend.',
+            'Git controls are unavailable in this build.',
       );
       _threadListController.syncThreadDetail(scopedDetail);
 
@@ -680,7 +680,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearGitMutationMessage: true,
         clearGitControlsUnavailableReason: false,
         gitControlsUnavailableReason:
-            'Git controls are disabled in the rewrite backend.',
+            'Git controls are unavailable in this build.',
       );
 
       await _startLiveSubscription();
@@ -991,7 +991,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     if (input.isEmpty) {
       state = state.copyWith(
         turnControlErrorMessage: state.isTurnActive
-            ? 'Steering active turns is disabled in the rewrite backend. Interrupt the turn or wait for it to finish before sending a new prompt.'
+            ? 'Active-turn steering is unavailable in this build. Interrupt the turn or wait for it to finish before sending a new prompt.'
             : 'Enter a prompt to start a turn.',
       );
       return false;
@@ -1000,7 +1000,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     if (state.isTurnActive) {
       state = state.copyWith(
         turnControlErrorMessage:
-            'Steering active turns is disabled in the rewrite backend. Interrupt the turn or wait for it to finish before sending a new prompt.',
+            'Active-turn steering is unavailable in this build. Interrupt the turn or wait for it to finish before sending a new prompt.',
       );
       return false;
     }
@@ -1044,7 +1044,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     state = state.copyWith(
       isOpenOnMacInFlight: false,
       openOnMacMessage: null,
-      openOnMacErrorMessage: 'Open-on-Mac is disabled in the rewrite backend.',
+      openOnMacErrorMessage: 'Open-on-Mac is unavailable in this build.',
       clearOpenOnMacMessage: true,
     );
     return false;
@@ -1104,13 +1104,13 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       clearGitMutationMessage: showLoading,
       clearGitControlsUnavailableReason: false,
       gitControlsUnavailableReason:
-          'Git controls are disabled in the rewrite backend.',
+          'Git controls are unavailable in this build.',
     );
   }
 
   Future<bool> switchBranch(String rawBranch) async {
     state = state.copyWith(
-      gitErrorMessage: 'Git controls are disabled in the rewrite backend.',
+      gitErrorMessage: 'Git controls are unavailable in this build.',
       clearGitMutationMessage: true,
     );
     return false;
@@ -1118,7 +1118,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
   Future<bool> pullRepository() async {
     state = state.copyWith(
-      gitErrorMessage: 'Git controls are disabled in the rewrite backend.',
+      gitErrorMessage: 'Git controls are unavailable in this build.',
       clearGitMutationMessage: true,
     );
     return false;
@@ -1126,7 +1126,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
   Future<bool> pushRepository() async {
     state = state.copyWith(
-      gitErrorMessage: 'Git controls are disabled in the rewrite backend.',
+      gitErrorMessage: 'Git controls are unavailable in this build.',
       clearGitMutationMessage: true,
     );
     return false;

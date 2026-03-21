@@ -277,6 +277,38 @@ void main() {
   });
 
   testWidgets(
+    'saved selected thread does not auto-open detail on thread list load',
+    (tester) async {
+      final cacheRepository = _newCacheRepository();
+      await cacheRepository.saveSelectedThreadId('thread-123');
+
+      final bridgeApi = FakeThreadListBridgeApi(
+        scriptedResults: [_sampleThreads()],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+            approvalBridgeApiProvider.overrideWithValue(
+              EmptyApprovalBridgeApi(),
+            ),
+            threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+            threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
+          ],
+          child: const MaterialApp(
+            home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Implement shared contracts'), findsOneWidget);
+      expect(find.byKey(const Key('thread-detail-back-button')), findsNothing);
+    },
+  );
+
+  testWidgets(
     'stale thread-list reload does not overwrite newer detail-synced metadata',
     (tester) async {
       final realDetail = _loadRealThreadDetailFixture();
@@ -502,6 +534,62 @@ void main() {
   });
 
   testWidgets(
+    'workspace groups show three threads by default and expand on demand',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(430, 1400);
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final cacheRepository = _newCacheRepository();
+      final bridgeApi = FakeThreadListBridgeApi(
+        scriptedResults: [_overflowGroupedThreads()],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+            approvalBridgeApiProvider.overrideWithValue(
+              EmptyApprovalBridgeApi(),
+            ),
+            threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+            threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
+          ],
+          child: const MaterialApp(
+            home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Implement shared contracts'), findsOneWidget);
+      expect(find.text('Investigate reconnect dedup'), findsOneWidget);
+      expect(find.text('Ship bridge offline banner'), findsOneWidget);
+      expect(find.text('Tune timeline chunking'), findsNothing);
+      expect(
+        find.byKey(
+          const Key('thread-group-show-more-/workspace/codex-mobile-companion'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Show more'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(
+          const Key('thread-group-show-more-/workspace/codex-mobile-companion'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Tune timeline chunking'), findsOneWidget);
+      expect(find.text('Show less'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'new thread workspace picker excludes groups without workspace paths',
     (tester) async {
       final cacheRepository = _newCacheRepository();
@@ -667,6 +755,61 @@ List<ThreadSummaryDto> _threadsWithMissingWorkspace() {
       repository: 'portable-client',
       branch: 'main',
       updatedAt: '2026-03-17T16:30:00Z',
+    ),
+  ];
+}
+
+List<ThreadSummaryDto> _overflowGroupedThreads() {
+  return const [
+    ThreadSummaryDto(
+      contractVersion: contractVersion,
+      threadId: 'thread-123',
+      title: 'Implement shared contracts',
+      status: ThreadStatus.running,
+      workspace: '/workspace/codex-mobile-companion',
+      repository: 'codex-mobile-companion',
+      branch: 'master',
+      updatedAt: '2026-03-17T18:00:00Z',
+    ),
+    ThreadSummaryDto(
+      contractVersion: contractVersion,
+      threadId: 'thread-456',
+      title: 'Investigate reconnect dedup',
+      status: ThreadStatus.completed,
+      workspace: '/workspace/codex-mobile-companion',
+      repository: 'codex-mobile-companion',
+      branch: 'develop',
+      updatedAt: '2026-03-17T17:30:00Z',
+    ),
+    ThreadSummaryDto(
+      contractVersion: contractVersion,
+      threadId: 'thread-457',
+      title: 'Ship bridge offline banner',
+      status: ThreadStatus.idle,
+      workspace: '/workspace/codex-mobile-companion',
+      repository: 'codex-mobile-companion',
+      branch: 'feature/offline-banner',
+      updatedAt: '2026-03-17T17:00:00Z',
+    ),
+    ThreadSummaryDto(
+      contractVersion: contractVersion,
+      threadId: 'thread-458',
+      title: 'Tune timeline chunking',
+      status: ThreadStatus.failed,
+      workspace: '/workspace/codex-mobile-companion',
+      repository: 'codex-mobile-companion',
+      branch: 'feature/timeline-chunking',
+      updatedAt: '2026-03-17T16:30:00Z',
+    ),
+    ThreadSummaryDto(
+      contractVersion: contractVersion,
+      threadId: 'thread-789',
+      title: 'Add remote config to setup flow',
+      status: ThreadStatus.idle,
+      workspace: '/workspace/portable-client',
+      repository: 'portable-client',
+      branch: 'main',
+      updatedAt: '2026-03-17T16:00:00Z',
     ),
   ];
 }

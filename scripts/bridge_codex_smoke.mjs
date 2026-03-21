@@ -3,7 +3,7 @@
 const [, , threadIdArg, baseUrlArg] = process.argv;
 
 if (!threadIdArg) {
-  console.error('usage: node scripts/rewrite_codex_smoke.mjs <thread-id> [base-url]');
+  console.error('usage: node scripts/bridge_codex_smoke.mjs <thread-id> [base-url]');
   process.exit(1);
 }
 
