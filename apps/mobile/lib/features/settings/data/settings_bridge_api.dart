@@ -34,26 +34,42 @@ class HttpSettingsBridgeApi implements SettingsBridgeApi {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
 
     try {
-      final request = await client.getUrl(
-        _buildUri(bridgeApiBaseUrl, '/policy/access-mode'),
+      final policyResult = await _fetchJson(
+        client: client,
+        uri: _buildUri(bridgeApiBaseUrl, '/policy/access-mode'),
       );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      final decoded = _decodeJsonObject(await utf8.decodeStream(response));
 
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final accessMode = decoded['access_mode'];
-        if (accessMode is! String) {
-          throw const FormatException(
-            'Missing or invalid "access_mode" in policy response.',
-          );
+      if (policyResult.statusCode >= 200 && policyResult.statusCode < 300) {
+        final accessMode = policyResult.json['access_mode'];
+        if (accessMode is String) {
+          return accessModeFromWire(accessMode);
         }
-        return accessModeFromWire(accessMode);
+      } else if (policyResult.statusCode != HttpStatus.notFound) {
+        throw SettingsBridgeException(
+          message:
+              _readOptionalString(policyResult.json, 'message') ??
+              'Couldn’t load the access mode right now.',
+        );
+      }
+
+      final bootstrapResult = await _fetchJson(
+        client: client,
+        uri: _buildUri(bridgeApiBaseUrl, '/bootstrap'),
+      );
+      if (bootstrapResult.statusCode >= 200 &&
+          bootstrapResult.statusCode < 300) {
+        final trust = bootstrapResult.json['trust'];
+        if (trust is Map<String, dynamic>) {
+          final accessMode = trust['access_mode'];
+          if (accessMode is String) {
+            return accessModeFromWire(accessMode);
+          }
+        }
       }
 
       throw SettingsBridgeException(
         message:
-            _readOptionalString(decoded, 'message') ??
+            _readOptionalString(bootstrapResult.json, 'message') ??
             'Couldn’t load the access mode right now.',
       );
     } on SocketException {
@@ -224,6 +240,13 @@ class HttpSettingsBridgeApi implements SettingsBridgeApi {
   }
 }
 
+class _JsonResponse {
+  const _JsonResponse({required this.statusCode, required this.json});
+
+  final int statusCode;
+  final Map<String, dynamic> json;
+}
+
 class SettingsBridgeException implements Exception {
   const SettingsBridgeException({
     required this.message,
@@ -265,6 +288,19 @@ Map<String, dynamic> _decodeJsonObject(String bodyText) {
   }
 
   return decoded;
+}
+
+Future<_JsonResponse> _fetchJson({
+  required HttpClient client,
+  required Uri uri,
+}) async {
+  final request = await client.getUrl(uri);
+  request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+  final response = await request.close();
+  return _JsonResponse(
+    statusCode: response.statusCode,
+    json: _decodeJsonObject(await utf8.decodeStream(response)),
+  );
 }
 
 String? _readOptionalString(Map<String, dynamic> json, String key) {

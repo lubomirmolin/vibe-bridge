@@ -210,6 +210,81 @@ void main() {
   );
 
   testWidgets(
+    'draft thread submission navigates even when selected-thread persistence stalls',
+    (tester) async {
+      final createdThread = ThreadDetailDto(
+        contractVersion: contractVersion,
+        threadId: 'thread-new',
+        title: 'Fresh session',
+        status: ThreadStatus.idle,
+        workspace: '/workspace/codex-mobile-companion',
+        repository: 'codex-mobile-companion',
+        branch: 'main',
+        createdAt: '2026-03-18T12:00:00Z',
+        updatedAt: '2026-03-18T12:00:00Z',
+        source: 'cli',
+        accessMode: AccessMode.controlWithApprovals,
+        lastTurnSummary: '',
+      );
+      final listApi = FakeThreadListBridgeApi(
+        scriptedResults: [_threadSummaries()],
+      );
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-new': [createdThread],
+        },
+        timelineScriptByThreadId: {
+          'thread-new': [<ThreadTimelineEntryDto>[]],
+        },
+        createThreadScript: [
+          ThreadSnapshotDto(
+            contractVersion: contractVersion,
+            thread: createdThread,
+            entries: const <ThreadTimelineEntryDto>[],
+            approvals: const <ApprovalSummaryDto>[],
+          ),
+        ],
+      );
+
+      await _pumpThreadListApp(
+        tester,
+        listApi: listApi,
+        detailApi: detailApi,
+        liveStream: FakeThreadLiveStream(),
+        cacheRepository: _HangingSelectedThreadCacheRepository(),
+      );
+
+      await tester.tap(find.byKey(const Key('thread-list-create-button')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(
+          const Key(
+            'thread-list-workspace-option-/workspace/codex-mobile-companion',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const Key('turn-composer-input')),
+        'Plan the release',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('turn-composer-submit')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text('Fresh session'), findsOneWidget);
+      expect(detailApi.createThreadCallCount, 1);
+      expect(
+        detailApi.startTurnPromptsByThreadId['thread-new'],
+        equals(<String>['Plan the release']),
+      );
+    },
+  );
+
+  testWidgets(
     'real-thread initial 80-entry slice keeps latest context and meaningful command/file activity visible',
     (tester) async {
       final fixture = _loadRealThreadFixture();
@@ -2978,6 +3053,22 @@ ThreadCacheRepository _newCacheRepository({
     secureStore: store ?? InMemorySecureStore(),
     nowUtc: nowUtc ?? () => DateTime.utc(2026, 3, 18, 10, 0),
   );
+}
+
+class _HangingSelectedThreadCacheRepository implements ThreadCacheRepository {
+  @override
+  Future<CachedThreadListSnapshot?> readThreadList() async => null;
+
+  @override
+  Future<String?> readSelectedThreadId() async => null;
+
+  @override
+  Future<void> saveSelectedThreadId(String threadId) {
+    return Completer<void>().future;
+  }
+
+  @override
+  Future<void> saveThreadList(List<ThreadSummaryDto> threads) async {}
 }
 
 const _bridgeApiBaseUrl = 'https://bridge.ts.net';

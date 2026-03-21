@@ -7,18 +7,28 @@ use shared_contracts::{
     ThreadStatus, ThreadSummaryDto, ThreadTimelineAnnotationsDto, ThreadTimelineEntryDto,
     ThreadTimelineExplorationKind, ThreadTimelineGroupKind, TurnMutationAcceptedDto,
 };
-use std::sync::mpsc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::{Duration, Instant};
 
 use crate::codex_runtime::CodexRuntimeMode;
 use crate::codex_transport::CodexJsonTransport;
 use crate::rewrite::config::RewriteCodexConfig;
 use crate::thread_api::{
-    CodexNotificationNormalizer, CodexNotificationStream, load_archive_timeline_entries_for_thread,
+    CodexNotificationNormalizer, CodexNotificationStream,
+    load_archive_timeline_entries_for_session_path, load_archive_timeline_entries_for_thread,
 };
 
 #[derive(Debug, Clone)]
 pub struct CodexGateway {
     config: RewriteCodexConfig,
+    reserved_transports: Arc<Mutex<HashMap<String, ReservedTransport>>>,
+}
+
+#[derive(Debug)]
+struct ReservedTransport {
+    reserved_at: Instant,
+    transport: CodexJsonTransport,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +85,8 @@ struct CodexThread {
     preview: Option<String>,
     status: CodexThreadStatus,
     cwd: String,
+    #[serde(default)]
+    path: Option<String>,
     #[serde(rename = "gitInfo")]
     git_info: Option<CodexGitInfo>,
     #[serde(rename = "createdAt", default)]
@@ -109,9 +121,13 @@ struct CodexTurn {
 
 impl CodexGateway {
     const MAX_THREADS_TO_FETCH: usize = 100;
+    const RESERVED_TRANSPORT_TTL: Duration = Duration::from_secs(120);
 
     pub fn new(config: RewriteCodexConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            reserved_transports: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     pub async fn bootstrap(&self) -> Result<GatewayBootstrap, String> {
@@ -136,10 +152,14 @@ impl CodexGateway {
     ) -> Result<ThreadSnapshotDto, String> {
         let config = self.config.clone();
         let thread_id = thread_id.to_string();
+        let reserved_transports = Arc::clone(&self.reserved_transports);
         tokio::task::spawn_blocking(move || {
-            let mut transport = connect_transport(&config)?;
+            let mut transport = take_reserved_transport(&reserved_transports, &thread_id)
+                .unwrap_or(connect_transport(&config)?);
             let payload = read_thread_with_resume(&mut transport, &thread_id, true)?;
-            Ok(map_thread_snapshot(payload.thread))
+            let snapshot = map_thread_snapshot(payload.thread);
+            reserve_transport(&reserved_transports, thread_id, transport);
+            Ok(snapshot)
         })
         .await
         .map_err(|error| format!("codex thread snapshot task failed: {error}"))?
@@ -153,6 +173,7 @@ impl CodexGateway {
         let config = self.config.clone();
         let workspace = workspace.to_string();
         let model = model.map(str::to_string);
+        let reserved_transports = Arc::clone(&self.reserved_transports);
         tokio::task::spawn_blocking(move || -> Result<ThreadSnapshotDto, String> {
             let mut transport = connect_transport(&config)?;
             let mut params = serde_json::Map::new();
@@ -164,17 +185,22 @@ impl CodexGateway {
             let response = transport.request("thread/start", Value::Object(params))?;
             let payload: CodexThreadStartResult = serde_json::from_value(response)
                 .map_err(|error| format!("invalid thread/start response from codex: {error}"))?;
+            let thread_id = payload.thread.id.clone();
             let thread = match read_thread_with_resume(&mut transport, &payload.thread.id, true) {
                 Ok(thread) => thread,
                 Err(error) if should_read_without_turns(&error) => {
                     read_thread_with_resume(&mut transport, &payload.thread.id, false)?
                 }
                 Err(error) if should_resume_thread(&error) => {
-                    return Ok(map_thread_snapshot(payload.thread));
+                    let snapshot = map_thread_snapshot(payload.thread);
+                    reserve_transport(&reserved_transports, thread_id, transport);
+                    return Ok(snapshot);
                 }
                 Err(error) => return Err(error),
             };
-            Ok(map_thread_snapshot(thread.thread))
+            let snapshot = map_thread_snapshot(thread.thread);
+            reserve_transport(&reserved_transports, thread_id, transport);
+            Ok(snapshot)
         })
         .await
         .map_err(|error| format!("codex create_thread task failed: {error}"))?
@@ -200,21 +226,30 @@ impl CodexGateway {
         let config = self.config.clone();
         let thread_id = thread_id.to_string();
         let prompt = prompt.to_string();
+        let reserved_transports = Arc::clone(&self.reserved_transports);
         let (result_tx, result_rx) = mpsc::sync_channel(1);
 
         std::thread::spawn(move || {
-            let mut transport = match connect_transport(&config) {
-                Ok(transport) => transport,
-                Err(error) => {
-                    let _ = result_tx.send(Err(error));
-                    return;
-                }
+            let reserved_transport = take_reserved_transport(&reserved_transports, &thread_id);
+            let had_reserved_transport = reserved_transport.is_some();
+            let mut transport = match reserved_transport {
+                Some(transport) => transport,
+                None => match connect_transport(&config) {
+                    Ok(transport) => transport,
+                    Err(error) => {
+                        let _ = result_tx.send(Err(error));
+                        return;
+                    }
+                },
             };
 
             let _ = resume_thread(&mut transport, &thread_id);
             let payload = match start_turn_with_resume(&mut transport, &thread_id, &prompt) {
                 Ok(payload) => payload,
                 Err(error) => {
+                    if had_reserved_transport {
+                        reserve_transport(&reserved_transports, thread_id.clone(), transport);
+                    }
                     let _ = result_tx.send(Err(error));
                     return;
                 }
@@ -400,6 +435,39 @@ fn connect_transport(config: &RewriteCodexConfig) -> Result<CodexJsonTransport, 
             CodexJsonTransport::start(&config.command, &config.args, None)
         }
     }
+}
+
+fn take_reserved_transport(
+    reserved_transports: &Arc<Mutex<HashMap<String, ReservedTransport>>>,
+    thread_id: &str,
+) -> Option<CodexJsonTransport> {
+    let mut reserved = reserved_transports
+        .lock()
+        .expect("reserved transport lock should not be poisoned");
+    prune_reserved_transports(&mut reserved);
+    reserved.remove(thread_id).map(|entry| entry.transport)
+}
+
+fn reserve_transport(
+    reserved_transports: &Arc<Mutex<HashMap<String, ReservedTransport>>>,
+    thread_id: String,
+    transport: CodexJsonTransport,
+) {
+    let mut reserved = reserved_transports
+        .lock()
+        .expect("reserved transport lock should not be poisoned");
+    prune_reserved_transports(&mut reserved);
+    reserved.insert(
+        thread_id,
+        ReservedTransport {
+            reserved_at: Instant::now(),
+            transport,
+        },
+    );
+}
+
+fn prune_reserved_transports(reserved: &mut HashMap<String, ReservedTransport>) {
+    reserved.retain(|_, entry| entry.reserved_at.elapsed() <= CodexGateway::RESERVED_TRANSPORT_TTL);
 }
 
 fn fetch_thread_summaries(
@@ -623,7 +691,13 @@ fn map_thread_snapshot(thread: CodexThread) -> ThreadSnapshotDto {
     let detail = map_thread_detail(&thread);
     let entries = {
         let rpc_entries = map_thread_timeline_entries(&thread);
-        let archive_entries = load_archive_timeline_entries_for_thread(&thread.id);
+        let archive_entries = thread
+            .path
+            .as_deref()
+            .map(std::path::Path::new)
+            .filter(|path| path.is_absolute() && path.exists())
+            .map(|path| load_archive_timeline_entries_for_session_path(&thread.id, path))
+            .unwrap_or_else(|| load_archive_timeline_entries_for_thread(&thread.id));
         prefer_archive_timeline_when_rpc_lacks_tool_events(rpc_entries, archive_entries)
     };
     let git_status = Some(map_git_status(&thread));
@@ -1353,11 +1427,16 @@ fn extract_file_name_from_command(command: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        derive_repository_name_from_cwd, normalize_codex_item_payload, parse_model_options,
-        parse_repository_name_from_origin, prefer_archive_timeline_when_rpc_lacks_tool_events,
+        CodexGateway, derive_repository_name_from_cwd, normalize_codex_item_payload,
+        parse_model_options, parse_repository_name_from_origin,
+        prefer_archive_timeline_when_rpc_lacks_tool_events,
     };
+    use crate::codex_runtime::CodexRuntimeMode;
+    use crate::rewrite::config::RewriteCodexConfig;
     use serde_json::json;
     use shared_contracts::{BridgeEventKind, ThreadTimelineEntryDto};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn parses_repository_name_from_origin_url() {
@@ -1453,5 +1532,84 @@ mod tests {
 
         assert_eq!(selected.len(), 2);
         assert_eq!(selected[1].kind, BridgeEventKind::CommandDelta);
+    }
+
+    #[test]
+    #[ignore = "requires a live local Codex app-server"]
+    fn live_create_thread_and_stream_turn_response() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime should build");
+        runtime.block_on(async {
+            let workspace = std::env::var("CODEX_LIVE_TEST_WORKSPACE")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| {
+                    std::env::current_dir()
+                        .expect("cwd should resolve")
+                        .display()
+                        .to_string()
+                });
+            let codex_bin = std::env::var("CODEX_LIVE_TEST_CODEX_BIN")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "codex".to_string());
+
+            let gateway = CodexGateway::new(RewriteCodexConfig {
+                mode: CodexRuntimeMode::Spawn,
+                endpoint: None,
+                command: codex_bin,
+                args: vec!["app-server".to_string()],
+            });
+
+            let create_started_at = Instant::now();
+            let snapshot = tokio::time::timeout(
+                Duration::from_secs(10),
+                gateway.create_thread(&workspace, None),
+            )
+            .await
+            .expect("create_thread should not hang")
+            .expect("create_thread should succeed");
+            assert!(
+                !snapshot.thread.thread_id.trim().is_empty(),
+                "create_thread returned an empty thread id"
+            );
+            assert_eq!(snapshot.thread.workspace, workspace);
+            eprintln!(
+                "LIVE_GATEWAY_CREATE thread_id={} create_ms={}",
+                snapshot.thread.thread_id,
+                create_started_at.elapsed().as_millis()
+            );
+
+            let token = format!("LIVE_GATEWAY_TOKEN_{}", snapshot.thread.thread_id);
+            let prompt = format!("Reply with exactly {token}");
+            let (event_tx, event_rx) = mpsc::channel();
+            gateway
+                .start_turn_streaming(&snapshot.thread.thread_id, &prompt, move |event| {
+                    let _ = event_tx.send(event);
+                })
+                .expect("turn should start");
+
+            let wait_deadline = Instant::now() + Duration::from_secs(60);
+            let mut saw_token = false;
+            while Instant::now() < wait_deadline {
+                let Ok(event) = event_rx.recv_timeout(Duration::from_secs(5)) else {
+                    continue;
+                };
+                if event.kind != BridgeEventKind::MessageDelta {
+                    continue;
+                }
+
+                let payload_text =
+                    serde_json::to_string(&event.payload).expect("payload should serialize");
+                if payload_text.contains(&token) {
+                    saw_token = true;
+                    break;
+                }
+            }
+
+            assert!(
+                saw_token,
+                "did not observe assistant stream payload containing {token}"
+            );
+        });
     }
 }

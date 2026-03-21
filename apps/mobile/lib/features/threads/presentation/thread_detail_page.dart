@@ -488,7 +488,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         threadListControllerProvider(widget.bridgeApiBaseUrl).notifier,
       );
       listController.syncThreadDetail(thread);
-      await listController.selectThread(thread.threadId);
+      _persistSelectedThreadId(listController, thread.threadId);
       if (!mounted) {
         return true;
       }
@@ -525,6 +525,19 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       });
       return false;
     }
+  }
+
+  void _persistSelectedThreadId(
+    ThreadListController listController,
+    String threadId,
+  ) {
+    unawaited(() async {
+      try {
+        await listController.selectThread(threadId);
+      } catch (_) {
+        // Avoid trapping the draft screen on storage/plugin failures.
+      }
+    }());
   }
 
   @override

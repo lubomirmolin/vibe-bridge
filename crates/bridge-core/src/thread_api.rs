@@ -3755,6 +3755,28 @@ pub(crate) fn load_archive_timeline_entries_for_thread(
         .collect()
 }
 
+pub(crate) fn load_archive_timeline_entries_for_session_path(
+    thread_id: &str,
+    session_path: &Path,
+) -> Vec<ThreadTimelineEntryDto> {
+    let index_entry = SessionIndexEntry {
+        id: thread_id.to_string(),
+        thread_name: "Untitled thread".to_string(),
+        updated_at: session_meta_timestamp_from_archive(session_path)
+            .or_else(|| archive_path_modified_at(session_path))
+            .unwrap_or_else(|| "1970-01-01T00:00:00.000Z".to_string()),
+    };
+
+    parse_archived_session(session_path, &index_entry)
+        .map(|(_, timeline)| {
+            timeline
+                .into_iter()
+                .map(|event| map_timeline_entry(&event))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn build_timeline_event_envelope(
     event_id: impl Into<String>,
     thread_id: impl Into<String>,
