@@ -194,6 +194,157 @@ void main() {
   );
 
   testWidgets(
+    'real-thread apply_patch activity renders as file-change UI without raw patch scaffolding as the primary view',
+    (tester) async {
+      final fixture = _loadRealThreadFixture();
+      final applyPatchEntry = fixture.timelineEntries.firstWhere(
+        (entry) =>
+            entry.kind == BridgeEventKind.fileChange &&
+            (entry.payload['change'] as String?)?.contains('*** Begin Patch') ==
+                true,
+      );
+
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          fixture.detail.threadId: [fixture.detail],
+        },
+        timelineScriptByThreadId: {
+          fixture.detail.threadId: [
+            <ThreadTimelineEntryDto>[applyPatchEntry],
+          ],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: fixture.detail.threadId,
+      );
+      await tester.pumpAndSettle();
+
+      final toggle = find.byKey(
+        const Key('thread-file-change-toggle-thread_api.rs'),
+      );
+      await _scrollUntilVisible(tester, toggle);
+
+      expect(toggle, findsOneWidget);
+      expect(find.textContaining('*** Begin Patch'), findsNothing);
+
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('thread-diff-file-thread_api.rs')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'real-thread hidden noise suppression keeps labeled exploration grouping and meaningful activity visible',
+    (tester) async {
+      final fixture = _loadRealThreadFixture();
+
+      final hiddenNoiseEntry = fixture.timelineEntries.firstWhere(
+        (entry) =>
+            entry.kind == BridgeEventKind.commandDelta &&
+            entry.payload['command'] == 'write_stdin',
+      );
+      final readExplorationEntry = fixture.timelineEntries.firstWhere(
+        (entry) =>
+            entry.annotations?.groupKind ==
+                ThreadTimelineGroupKind.exploration &&
+            entry.annotations?.explorationKind ==
+                ThreadTimelineExplorationKind.read &&
+            entry.annotations?.entryLabel == 'Read thread_api.rs',
+      );
+      final searchExplorationSource = fixture.timelineEntries.firstWhere((
+        entry,
+      ) {
+        if (entry.kind != BridgeEventKind.commandDelta) {
+          return false;
+        }
+        final arguments = entry.payload['arguments'];
+        return arguments is String && arguments.contains(' rg ');
+      });
+      final searchExplorationEntry = ThreadTimelineEntryDto(
+        eventId: '${searchExplorationSource.eventId}-search-annotation',
+        kind: searchExplorationSource.kind,
+        occurredAt: searchExplorationSource.occurredAt,
+        summary: searchExplorationSource.summary,
+        payload: searchExplorationSource.payload,
+        annotations: _explorationAnnotations(
+          explorationKind: ThreadTimelineExplorationKind.search,
+          entryLabel: 'Search process state',
+        ),
+      );
+      final fileChangeEntry = fixture.timelineEntries.firstWhere(
+        (entry) =>
+            entry.kind == BridgeEventKind.fileChange &&
+            (entry.payload['change'] as String?)?.contains('*** Begin Patch') ==
+                true,
+      );
+      final messageEntry = fixture.timelineEntries.firstWhere((entry) {
+        if (entry.kind != BridgeEventKind.messageDelta) {
+          return false;
+        }
+        final delta = entry.payload['delta'];
+        return delta is String &&
+            delta.contains(
+              'All of the old local app/server processes are down.',
+            );
+      });
+
+      final timeline = <ThreadTimelineEntryDto>[
+        hiddenNoiseEntry,
+        readExplorationEntry,
+        searchExplorationEntry,
+        fileChangeEntry,
+        messageEntry,
+      ]..sort((a, b) => a.occurredAt.compareTo(b.occurredAt));
+
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          fixture.detail.threadId: [fixture.detail],
+        },
+        timelineScriptByThreadId: {
+          fixture.detail.threadId: [timeline],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: fixture.detail.threadId,
+      );
+      await tester.pumpAndSettle();
+
+      await _scrollUntilVisible(
+        tester,
+        find.byKey(const Key('thread-explored-files-summary')),
+      );
+
+      expect(find.text('write_stdin'), findsNothing);
+      expect(
+        find.byKey(const Key('thread-explored-files-summary')),
+        findsOneWidget,
+      );
+      expect(find.text('Explored 1 file, 1 search'), findsOneWidget);
+      expect(find.text('Read thread_api.rs'), findsOneWidget);
+      expect(
+        find.byKey(const Key('thread-file-change-toggle-thread_api.rs')),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining(
+          'All of the old local app/server processes are down.',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
     'assistant code blocks infer syntax highlighting from nearby file path',
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(
