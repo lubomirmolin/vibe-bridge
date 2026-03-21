@@ -304,18 +304,36 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     try {
       await _closeLiveSubscription();
       _knownEventIds.clear();
+      final requestedThreadId = state.threadId;
 
       final detail = await _bridgeApi.fetchThreadDetail(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
-        threadId: state.threadId,
+        threadId: requestedThreadId,
       );
-      final page = await _bridgeApi.fetchThreadTimelinePage(
-        bridgeApiBaseUrl: _bridgeApiBaseUrl,
-        threadId: state.threadId,
-        limit: _initialVisibleTimelineEntries,
+      if (!_isRequestCurrent(requestedThreadId)) {
+        return;
+      }
+      final scopedDetail = _ensureScopedThreadDetail(
+        detail: detail,
+        expectedThreadId: requestedThreadId,
+        context: 'loading thread detail',
       );
 
-      final items = page.entries
+      final page = await _bridgeApi.fetchThreadTimelinePage(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: requestedThreadId,
+        limit: _initialVisibleTimelineEntries,
+      );
+      if (!_isRequestCurrent(requestedThreadId)) {
+        return;
+      }
+      final scopedPage = _ensureScopedTimelinePage(
+        page: page,
+        expectedThreadId: requestedThreadId,
+        context: 'loading thread timeline',
+      );
+
+      final items = scopedPage.entries
           .map(ThreadActivityItem.fromTimelineEntry)
           .toList(growable: false);
       _knownEventIds.addAll(items.map((item) => item.eventId));
@@ -325,7 +343,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       }
 
       state = state.copyWith(
-        thread: detail,
+        thread: scopedDetail,
         items: items,
         isLoading: false,
         isUnavailable: false,
@@ -335,8 +353,8 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearTurnControlError: true,
         isShowingCachedData: false,
         isConnectivityUnavailable: false,
-        hasMoreBefore: page.hasMoreBefore,
-        nextBefore: page.nextBefore,
+        hasMoreBefore: scopedPage.hasMoreBefore,
+        nextBefore: scopedPage.nextBefore,
         isLoadingEarlierHistory: false,
         clearGitStatus: true,
         isGitStatusLoading: false,
@@ -349,7 +367,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearOpenOnMacErrorMessage: true,
       );
 
-      _threadListController.syncThreadDetail(detail);
+      _threadListController.syncThreadDetail(scopedDetail);
       await refreshGitStatus(showLoading: true);
       await _startLiveSubscription();
     } on ThreadDetailBridgeException catch (error) {
@@ -380,6 +398,8 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       return;
     }
 
+    final requestedThreadId = state.threadId;
+
     final previousBlockSignatures = _visibleBlockSignatures(state.visibleItems);
 
     state = state.copyWith(
@@ -396,17 +416,25 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       while (hasMoreBefore && nextBefore != null) {
         final page = await _bridgeApi.fetchThreadTimelinePage(
           bridgeApiBaseUrl: _bridgeApiBaseUrl,
-          threadId: state.threadId,
+          threadId: requestedThreadId,
           before: nextBefore,
           limit: _initialVisibleTimelineEntries,
         );
+        if (!_isRequestCurrent(requestedThreadId)) {
+          return;
+        }
+        final scopedPage = _ensureScopedTimelinePage(
+          page: page,
+          expectedThreadId: requestedThreadId,
+          context: 'loading older history',
+        );
         latestThread = _fresherThreadDetail(
           current: latestThread,
-          candidate: page.thread,
+          candidate: scopedPage.thread,
         );
-        items = _prependTimelineEntries(items, page.entries);
-        hasMoreBefore = page.hasMoreBefore;
-        nextBefore = page.nextBefore;
+        items = _prependTimelineEntries(items, scopedPage.entries);
+        hasMoreBefore = scopedPage.hasMoreBefore;
+        nextBefore = scopedPage.nextBefore;
 
         if (_didRevealNewVisibleBlock(
           previousBlockSignatures: previousBlockSignatures,
@@ -434,7 +462,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         _threadListController.syncThreadDetail(latestThread);
       }
     } on ThreadDetailBridgeException catch (error) {
-      if (_isDisposed) {
+      if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
         return;
       }
 
@@ -444,7 +472,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         isConnectivityUnavailable: error.isConnectivityError,
       );
     } catch (_) {
-      if (_isDisposed) {
+      if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
         return;
       }
 
@@ -531,25 +559,43 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
     try {
       await _closeLiveSubscription();
+      final requestedThreadId = state.threadId;
 
       final detail = await _bridgeApi.fetchThreadDetail(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
-        threadId: state.threadId,
+        threadId: requestedThreadId,
       );
-      final page = await _bridgeApi.fetchThreadTimelinePage(
-        bridgeApiBaseUrl: _bridgeApiBaseUrl,
-        threadId: state.threadId,
-        limit: _initialVisibleTimelineEntries,
+      if (!_isRequestCurrent(requestedThreadId)) {
+        return;
+      }
+      final scopedDetail = _ensureScopedThreadDetail(
+        detail: detail,
+        expectedThreadId: requestedThreadId,
+        context: 'running reconnect catch-up detail refresh',
       );
 
-      final mergedItems = _mergeTimeline(page.entries);
+      final page = await _bridgeApi.fetchThreadTimelinePage(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: requestedThreadId,
+        limit: _initialVisibleTimelineEntries,
+      );
+      if (!_isRequestCurrent(requestedThreadId)) {
+        return;
+      }
+      final scopedPage = _ensureScopedTimelinePage(
+        page: page,
+        expectedThreadId: requestedThreadId,
+        context: 'running reconnect catch-up timeline refresh',
+      );
+
+      final mergedItems = _mergeTimeline(scopedPage.entries);
 
       if (_isDisposed) {
         return;
       }
 
       state = state.copyWith(
-        thread: detail,
+        thread: scopedDetail,
         items: mergedItems,
         clearErrorMessage: true,
         clearStreamErrorMessage: true,
@@ -561,7 +607,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         isConnectivityUnavailable: false,
       );
 
-      _threadListController.syncThreadDetail(detail);
+      _threadListController.syncThreadDetail(scopedDetail);
       await refreshGitStatus(showLoading: false);
       await _startLiveSubscription();
     } on ThreadDetailBridgeException catch (error) {
@@ -658,6 +704,38 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     }
 
     return candidateUpdatedAt.isAfter(currentUpdatedAt) ? candidate : current;
+  }
+
+  bool _isRequestCurrent(String requestThreadId) {
+    return !_isDisposed && state.threadId == requestThreadId;
+  }
+
+  ThreadDetailDto _ensureScopedThreadDetail({
+    required ThreadDetailDto detail,
+    required String expectedThreadId,
+    required String context,
+  }) {
+    if (detail.threadId == expectedThreadId) {
+      return detail;
+    }
+
+    throw ThreadDetailBridgeException(
+      message:
+          'Live thread data fell out of sync while $context. Retry the thread view and reconnect if needed.',
+    );
+  }
+
+  ThreadTimelinePageDto _ensureScopedTimelinePage({
+    required ThreadTimelinePageDto page,
+    required String expectedThreadId,
+    required String context,
+  }) {
+    _ensureScopedThreadDetail(
+      detail: page.thread,
+      expectedThreadId: expectedThreadId,
+      context: context,
+    );
+    return page;
   }
 
   bool _didRevealNewVisibleBlock({
