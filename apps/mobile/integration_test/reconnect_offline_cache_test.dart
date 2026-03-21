@@ -551,9 +551,9 @@ void main() {
   );
 
   testWidgets(
-    'thread switch reconnect catch-up ignores stale previous-thread payloads',
+    'thread switch reconnect catch-up ignores late previous-thread detail and deduplicates selected-thread event ids',
     (tester) async {
-      final staleCatchUpPage = Completer<ThreadTimelinePageDto>();
+      final stalePreviousThreadDetail = Completer<ThreadDetailDto>();
       final thread123Detail = _threadDetail(
         threadId: 'thread-123',
         title: 'Implement shared contracts',
@@ -566,8 +566,14 @@ void main() {
       );
       final detailApi = FakeThreadDetailBridgeApi(
         detailScriptByThreadId: {
-          'thread-123': [thread123Detail],
-          'thread-456': [thread456Detail],
+          'thread-123': [thread123Detail, thread123Detail],
+          'thread-456': [
+            thread456Detail,
+            thread456Detail,
+            stalePreviousThreadDetail.future,
+            thread456Detail,
+            thread456Detail,
+          ],
         },
         timelineScriptByThreadId: {
           'thread-123': [
@@ -623,7 +629,34 @@ void main() {
               nextBefore: null,
               hasMoreBefore: false,
             ),
-            staleCatchUpPage.future,
+            ThreadTimelinePageDto(
+              contractVersion: contractVersion,
+              thread: thread456Detail,
+              entries: [
+                _timelineEvent(
+                  id: 'evt-thread456-base',
+                  summary: 'Thread 456 base event (duplicate)',
+                  payload: {'delta': 'Thread 456 base event (duplicate)'},
+                  occurredAt: '2026-03-18T10:01:00Z',
+                ),
+                _timelineEvent(
+                  id: 'evt-thread456-catchup',
+                  summary: 'Thread 456 reconnect catch-up event',
+                  payload: {'delta': 'Thread 456 reconnect catch-up event'},
+                  occurredAt: '2026-03-18T10:05:30Z',
+                ),
+                _timelineEvent(
+                  id: 'evt-thread456-catchup',
+                  summary: 'Thread 456 reconnect catch-up event (duplicate)',
+                  payload: {
+                    'delta': 'Thread 456 reconnect catch-up event (duplicate)',
+                  },
+                  occurredAt: '2026-03-18T10:05:30Z',
+                ),
+              ],
+              nextBefore: null,
+              hasMoreBefore: false,
+            ),
           ],
         },
       );
@@ -659,9 +692,22 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Investigate reconnect dedup'), findsOneWidget);
 
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(MaterialApp).first),
+      );
+      const thread456ControllerArgs = ThreadDetailControllerArgs(
+        bridgeApiBaseUrl: 'https://bridge.ts.net',
+        threadId: 'thread-456',
+      );
+      final thread456Controller = container.read(
+        threadDetailControllerProvider(thread456ControllerArgs).notifier,
+      );
+
       liveStream.emitError('thread-456');
       await tester.pump();
-      await tester.pump(const Duration(seconds: 3));
+
+      final firstReconnectAttempt = thread456Controller.retryReconnectCatchUp();
+      await tester.pump();
 
       liveStream.emit(
         const BridgeEventEnvelope<Map<String, dynamic>>(
@@ -674,28 +720,42 @@ void main() {
         ),
       );
 
-      staleCatchUpPage.complete(
-        ThreadTimelinePageDto(
-          contractVersion: contractVersion,
-          thread: thread123Detail,
-          entries: [
-            _timelineEvent(
-              id: 'evt-thread123-stale-catchup',
-              summary: 'Stale catch-up from previous thread',
-              payload: {'delta': 'Stale catch-up from previous thread'},
-              occurredAt: '2026-03-18T10:05:30Z',
-            ),
-          ],
-          nextBefore: null,
-          hasMoreBefore: false,
-        ),
+      stalePreviousThreadDetail.complete(thread123Detail);
+      await firstReconnectAttempt;
+      await tester.pumpAndSettle();
+
+      await thread456Controller.retryReconnectCatchUp();
+      await tester.pumpAndSettle();
+
+      final thread456State = container.read(
+        threadDetailControllerProvider(thread456ControllerArgs),
       );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
+      final thread456EventIds = thread456State.items
+          .map((item) => item.eventId)
+          .toList(growable: false);
 
       expect(find.text('Investigate reconnect dedup'), findsOneWidget);
-      expect(find.text('Stale catch-up from previous thread'), findsNothing);
       expect(find.text('Late update from previous thread'), findsNothing);
+      expect(thread456State.thread?.threadId, 'thread-456');
+      expect(thread456EventIds.toSet().length, thread456EventIds.length);
+      expect(
+        thread456EventIds
+            .where((eventId) => eventId == 'evt-thread456-base')
+            .length,
+        1,
+      );
+      expect(
+        thread456EventIds
+            .where((eventId) => eventId == 'evt-thread456-catchup')
+            .length,
+        1,
+      );
+      expect(
+        thread456EventIds
+            .where((eventId) => eventId == 'evt-thread123-late-live')
+            .length,
+        0,
+      );
     },
   );
 
