@@ -115,7 +115,9 @@ pub fn resolve_pairing_route_contract(
 ) -> Result<PairingRouteContract, String> {
     if let Some(explicit_pairing_base_url) = pairing_base_url {
         if !is_private_bridge_api_base_url(&explicit_pairing_base_url) {
-            return Err("--pairing-base-url must be a private https Tailscale hostname".to_string());
+            return Err(
+                "--pairing-base-url must be a private https Tailscale hostname".to_string(),
+            );
         }
 
         return Ok(PairingRouteContract::explicit(explicit_pairing_base_url));
@@ -294,15 +296,16 @@ fn serve_status_has_exact_https_bridge_proxy(
     }
 
     let expected_web_key = format!("{}:443", dns_name.to_ascii_lowercase());
-    let Some(web_entry) = serve_status
-        .get("Web")
-        .and_then(Value::as_object)
-        .and_then(|web_routes| {
-            web_routes.iter().find_map(|(key, route)| {
-                (key.trim().trim_end_matches('.').to_ascii_lowercase() == expected_web_key)
-                    .then_some(route)
+    let Some(web_entry) =
+        serve_status
+            .get("Web")
+            .and_then(Value::as_object)
+            .and_then(|web_routes| {
+                web_routes.iter().find_map(|(key, route)| {
+                    (key.trim().trim_end_matches('.').to_ascii_lowercase() == expected_web_key)
+                        .then_some(route)
+                })
             })
-        })
     else {
         return false;
     };

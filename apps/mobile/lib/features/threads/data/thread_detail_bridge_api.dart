@@ -207,12 +207,15 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
   }) async {
     final bootstrap = await _getBootstrap(bridgeApiBaseUrl);
-    return bootstrap?.models.isNotEmpty == true
-        ? ModelCatalogDto(
-            contractVersion: bootstrap!.contractVersion,
-            models: bootstrap.models,
-          )
-        : fallbackModelCatalog;
+    if (bootstrap?.models.isNotEmpty == true) {
+      return ModelCatalogDto(
+        contractVersion: bootstrap!.contractVersion,
+        models: bootstrap.models,
+      );
+    }
+
+    final catalog = await _getModelCatalog(bridgeApiBaseUrl);
+    return catalog?.models.isNotEmpty == true ? catalog! : fallbackModelCatalog;
   }
 
   @override
@@ -747,6 +750,40 @@ Future<BootstrapDto?> _getBootstrap(String bridgeApiBaseUrl) async {
   }
 }
 
+Future<ModelCatalogDto?> _getModelCatalog(String bridgeApiBaseUrl) async {
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+
+  try {
+    final request = await client.getUrl(_buildModelsUri(bridgeApiBaseUrl));
+    request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+    final response = await request.close();
+    final bodyText = await utf8.decodeStream(response);
+    final decoded = _decodeJsonObject(bodyText);
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      try {
+        return ModelCatalogDto.fromJson(decoded);
+      } on FormatException {
+        return null;
+      }
+    }
+
+    return null;
+  } on SocketException {
+    return null;
+  } on HandshakeException {
+    return null;
+  } on HttpException {
+    return null;
+  } on TimeoutException {
+    return null;
+  } on FormatException {
+    return null;
+  } finally {
+    client.close();
+  }
+}
+
 Uri _buildBootstrapUri(String baseUrl) {
   final baseUri = Uri.parse(baseUrl);
   final normalizedBasePath = baseUri.path.endsWith('/')
@@ -754,6 +791,16 @@ Uri _buildBootstrapUri(String baseUrl) {
       : baseUri.path;
   final fullPath =
       '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/bootstrap';
+  return baseUri.replace(path: fullPath, queryParameters: null);
+}
+
+Uri _buildModelsUri(String baseUrl) {
+  final baseUri = Uri.parse(baseUrl);
+  final normalizedBasePath = baseUri.path.endsWith('/')
+      ? baseUri.path.substring(0, baseUri.path.length - 1)
+      : baseUri.path;
+  final fullPath =
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/models';
   return baseUri.replace(path: fullPath, queryParameters: null);
 }
 
