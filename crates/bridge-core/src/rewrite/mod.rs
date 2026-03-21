@@ -22,12 +22,12 @@ pub async fn run_from_env() -> Result<(), String> {
         .await
         .map_err(|error| {
             format!(
-                "failed to bind rewrite listener on {}:{}: {error}",
+                "failed to bind bridge listener on {}:{}: {error}",
                 config.host, config.port
             )
         })?;
 
     serve(listener, app)
         .await
-        .map_err(|error| format!("rewrite server failed: {error}"))
+        .map_err(|error| format!("bridge server failed: {error}"))
 }

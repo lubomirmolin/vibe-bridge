@@ -101,7 +101,7 @@ class ParsedCommandOutput {
       }
     }
 
-    // Fallback for rewrite-backend command outputs where the first line is a
+    // Fallback for bridge command outputs where the first line is a
     // markdown-style command, e.g. `/bin/zsh -lc 'dart format ...'`.
     if (command == null && body.isNotEmpty) {
       final lines = body.split('\n');

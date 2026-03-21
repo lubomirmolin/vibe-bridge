@@ -51,7 +51,7 @@ pub fn router(state: RewriteAppState) -> Router {
 async fn healthz() -> Json<serde_json::Value> {
     Json(json!({
         "status": "ok",
-        "backend": "rewrite",
+        "backend": "bridge-server",
         "contract_version": shared_contracts::CONTRACT_VERSION,
     }))
 }

@@ -5,11 +5,11 @@ edition = "2024"
 
 [[bin]]
 name = "bridge-server"
-path = "src/main.rs"
+path = "src/bin/bridge_server.rs"
 
 [[bin]]
-name = "bridge-server-next"
-path = "src/bin/bridge_server_next.rs"
+name = "bridge-server-legacy"
+path = "src/main.rs"
 
 [dependencies]
 axum = { version = "0.7", features = ["http1", "json", "ws"] }

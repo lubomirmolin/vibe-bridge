@@ -85,7 +85,7 @@ case "${CONFIGURATION}" in
     ;;
 esac
 
-echo "Embedding bridge-server-next into app bundle"
+echo "Embedding bridge-server into app bundle"
 mkdir -p "${PRODUCT_BINARY_DIR}"
 
 cd "${REPO_ROOT}"
@@ -93,10 +93,10 @@ cd "${REPO_ROOT}"
 "${CARGO_BIN}" build \
   --manifest-path "${MANIFEST_PATH}" \
   -p bridge-core \
-  --bin bridge-server-next \
+  --bin bridge-server \
   ${CARGO_PROFILE_FLAG}
 
-cp "${REPO_ROOT}/target/${CARGO_TARGET_SUBDIR}/bridge-server-next" "${PRODUCT_BINARY_PATH}"
+cp "${REPO_ROOT}/target/${CARGO_TARGET_SUBDIR}/bridge-server" "${PRODUCT_BINARY_PATH}"
 chmod 755 "${PRODUCT_BINARY_PATH}"
 
-echo "Embedded rewrite bridge helper at ${PRODUCT_BINARY_PATH}"
+echo "Embedded bridge helper at ${PRODUCT_BINARY_PATH}"

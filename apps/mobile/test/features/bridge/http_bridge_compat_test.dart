@@ -52,7 +52,7 @@ void main() {
       expect(mode, AccessMode.fullControl);
     });
 
-    test('approvals api accepts summary-style rewrite responses', () async {
+    test('approvals api accepts summary-style bridge responses', () async {
       final server = await _startServer((request) async {
         if (request.uri.path == '/approvals') {
           request.response.statusCode = HttpStatus.ok;
