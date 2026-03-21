@@ -64,10 +64,6 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(
-        find.byKey(const Key('connection-status-connected')),
-        findsOneWidget,
-      );
       expect(find.text('Paired Bridge'), findsOneWidget);
       expect(find.text('Codex Mobile Companion'), findsAtLeastNWidgets(1));
       expect(find.textContaining('Session: session-abc'), findsOneWidget);

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
 import 'package:codex_mobile_companion/foundation/theme/liquid_styles.dart';
 import 'package:flutter/material.dart';
@@ -6,12 +8,115 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 enum ConnectionBannerState { connected, reconnecting, disconnected }
 
-class ConnectionStatusBanner extends StatelessWidget {
+class ConnectionStatusBanner extends StatefulWidget {
   const ConnectionStatusBanner({
     super.key,
     required this.state,
     this.detail,
     this.compact = false,
+    this.margin,
+    this.showConnectedFor = const Duration(milliseconds: 900),
+  });
+
+  final ConnectionBannerState state;
+  final String? detail;
+  final bool compact;
+  final EdgeInsetsGeometry? margin;
+  final Duration showConnectedFor;
+
+  @override
+  State<ConnectionStatusBanner> createState() => _ConnectionStatusBannerState();
+}
+
+class _ConnectionStatusBannerState extends State<ConnectionStatusBanner> {
+  Timer? _hideTimer;
+  bool _isVisible = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _isVisible = true;
+    if (widget.state == ConnectionBannerState.connected) {
+      _startHideTimer();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ConnectionStatusBanner oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.state != widget.state) {
+      _syncVisibility(showConnectedBanner: true);
+      return;
+    }
+
+    if (widget.state != ConnectionBannerState.connected && !_isVisible) {
+      _syncVisibility(showConnectedBanner: false);
+    }
+  }
+
+  void _syncVisibility({required bool showConnectedBanner}) {
+    _hideTimer?.cancel();
+
+    if (widget.state == ConnectionBannerState.connected) {
+      if (showConnectedBanner && !_isVisible) {
+        setState(() {
+          _isVisible = true;
+        });
+      }
+      _startHideTimer();
+      return;
+    }
+
+    if (!_isVisible) {
+      setState(() {
+        _isVisible = true;
+      });
+    }
+  }
+
+  void _startHideTimer() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(widget.showConnectedFor, () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isVisible = false;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      child: !_isVisible
+          ? const SizedBox.shrink()
+          : Padding(
+              padding: widget.margin ?? EdgeInsets.zero,
+              child: _ConnectionStatusBannerBody(
+                state: widget.state,
+                detail: widget.detail,
+                compact: widget.compact,
+              ),
+            ),
+    );
+  }
+}
+
+class _ConnectionStatusBannerBody extends StatelessWidget {
+  const _ConnectionStatusBannerBody({
+    required this.state,
+    required this.detail,
+    required this.compact,
   });
 
   final ConnectionBannerState state;

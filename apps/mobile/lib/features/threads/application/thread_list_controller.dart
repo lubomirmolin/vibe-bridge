@@ -58,7 +58,7 @@ class ThreadListState {
     return const ThreadListState(
       threads: <ThreadSummaryDto>[],
       searchQuery: '',
-      liveConnectionState: LiveConnectionState.reconnecting,
+      liveConnectionState: LiveConnectionState.connected,
     );
   }
 
@@ -505,7 +505,7 @@ class ThreadListController extends StateNotifier<ThreadListState> {
       staleMessage:
           'Live thread updates are reconnecting. Pull to refresh if statuses look stale.',
       isShowingCachedData: true,
-      liveConnectionState: LiveConnectionState.reconnecting,
+      liveConnectionState: LiveConnectionState.disconnected,
     );
     _scheduleReconnect();
   }
@@ -527,6 +527,12 @@ class ThreadListController extends StateNotifier<ThreadListState> {
 
     _isReconnectInProgress = true;
     try {
+      if (_canMutateState &&
+          state.liveConnectionState == LiveConnectionState.disconnected) {
+        state = state.copyWith(
+          liveConnectionState: LiveConnectionState.reconnecting,
+        );
+      }
       await _closeLiveSubscription();
       await _startLiveSubscription();
       final didCatchUp = await _catchUpThreadListAfterReconnect();
@@ -572,7 +578,7 @@ class ThreadListController extends StateNotifier<ThreadListState> {
             clearErrorMessage: true,
             isLoading: false,
             isShowingCachedData: true,
-            liveConnectionState: LiveConnectionState.reconnecting,
+            liveConnectionState: LiveConnectionState.disconnected,
           );
         } else {
           state = state.copyWith(

@@ -173,13 +173,11 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
               ),
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(36, 12, 0, 0),
-            child: ConnectionStatusBanner(
-              state: _threadDetailConnectionBannerState(connectionState),
-              detail: connectionDetail,
-              compact: true,
-            ),
+          ConnectionStatusBanner(
+            state: _threadDetailConnectionBannerState(connectionState),
+            detail: connectionDetail,
+            compact: true,
+            margin: const EdgeInsets.fromLTRB(36, 12, 0, 0),
           ),
           ValueListenableBuilder<bool>(
             valueListenable: isHeaderCollapsed,
@@ -367,11 +365,11 @@ class _UnavailableThreadDetailHeader extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 8),
           ConnectionStatusBanner(
             state: _threadDetailConnectionBannerState(connectionState),
             detail: connectionDetail,
             compact: true,
+            margin: const EdgeInsets.only(top: 8),
           ),
         ],
       ),

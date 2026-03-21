@@ -72,15 +72,13 @@ class SettingsPage extends ConsumerWidget {
                 ],
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-              child: ConnectionStatusBanner(
-                state: _settingsConnectionBannerState(
-                  pairingState.bridgeConnectionState,
-                ),
-                detail: _settingsConnectionBannerDetail(pairingState),
-                compact: true,
+            ConnectionStatusBanner(
+              state: _settingsConnectionBannerState(
+                pairingState.bridgeConnectionState,
               ),
+              detail: _settingsConnectionBannerDetail(pairingState),
+              compact: true,
+              margin: const EdgeInsets.fromLTRB(24, 0, 24, 8),
             ),
 
             Expanded(

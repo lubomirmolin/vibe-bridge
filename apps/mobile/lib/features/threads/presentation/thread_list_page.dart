@@ -153,15 +153,13 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                 ],
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
-              child: ConnectionStatusBanner(
-                state: _threadListConnectionBannerState(
-                  state.liveConnectionState,
-                ),
-                detail: _threadListConnectionBannerDetail(state),
-                compact: true,
+            ConnectionStatusBanner(
+              state: _threadListConnectionBannerState(
+                state.liveConnectionState,
               ),
+              detail: _threadListConnectionBannerDetail(state),
+              compact: true,
+              margin: const EdgeInsets.fromLTRB(24, 0, 24, 4),
             ),
 
             // Search Bar
