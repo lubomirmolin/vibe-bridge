@@ -84,3 +84,13 @@ xcodebuild test -project apps/mac-shell/CodexMobileCompanion.xcodeproj -scheme C
 cargo build --manifest-path Cargo.toml --workspace
 xcodebuild -project apps/mac-shell/CodexMobileCompanion.xcodeproj -scheme CodexMobileCompanion -destination 'platform=macOS' build
 ```
+
+### Real-data thread-detail parity
+
+For the canonical real-data regression thread `019d0d0c-07df-7632-81fa-a1636651400a` (`Investigate thread detail sync`), run the live bridge checks directly:
+
+```bash
+curl -sf http://127.0.0.1:3110/threads/019d0d0c-07df-7632-81fa-a1636651400a
+curl -sf http://127.0.0.1:3110/threads/019d0d0c-07df-7632-81fa-a1636651400a/timeline?limit=80
+curl -sf http://127.0.0.1:3110/policy/access-mode
+```
