@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
 import 'package:codex_mobile_companion/features/threads/application/thread_list_controller.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
@@ -54,6 +55,7 @@ class ThreadDetailControllerArgs {
 class ThreadDetailState {
   const ThreadDetailState({
     required this.threadId,
+    this.liveConnectionState = LiveConnectionState.reconnecting,
     this.thread,
     this.items = const <ThreadActivityItem>[],
     this.errorMessage,
@@ -81,6 +83,7 @@ class ThreadDetailState {
   });
 
   final String threadId;
+  final LiveConnectionState liveConnectionState;
   final ThreadDetailDto? thread;
   final List<ThreadActivityItem> items;
   final String? errorMessage;
@@ -136,6 +139,7 @@ class ThreadDetailState {
   List<ThreadActivityItem> get visibleItems => conversationItems;
 
   ThreadDetailState copyWith({
+    LiveConnectionState? liveConnectionState,
     ThreadDetailDto? thread,
     bool clearThread = false,
     List<ThreadActivityItem>? items,
@@ -175,6 +179,7 @@ class ThreadDetailState {
   }) {
     return ThreadDetailState(
       threadId: threadId,
+      liveConnectionState: liveConnectionState ?? this.liveConnectionState,
       thread: clearThread ? null : (thread ?? this.thread),
       items: items ?? this.items,
       errorMessage: clearErrorMessage
@@ -345,6 +350,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       state = state.copyWith(
         thread: scopedDetail,
         items: items,
+        liveConnectionState: LiveConnectionState.reconnecting,
         isLoading: false,
         isUnavailable: false,
         clearErrorMessage: true,
@@ -380,6 +386,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         errorMessage: error.message,
         isUnavailable: error.isUnavailable,
         isConnectivityUnavailable: error.isConnectivityError,
+        liveConnectionState: error.isConnectivityError
+            ? LiveConnectionState.disconnected
+            : state.liveConnectionState,
       );
     } catch (_) {
       if (_isDisposed) {
@@ -389,6 +398,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       state = state.copyWith(
         isLoading: false,
         errorMessage: 'Couldn’t load this thread right now.',
+        liveConnectionState: LiveConnectionState.disconnected,
       );
     }
   }
@@ -470,6 +480,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         isLoadingEarlierHistory: false,
         streamErrorMessage: error.message,
         isConnectivityUnavailable: error.isConnectivityError,
+        liveConnectionState: error.isConnectivityError
+            ? LiveConnectionState.disconnected
+            : state.liveConnectionState,
       );
     } catch (_) {
       if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
@@ -479,6 +492,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       state = state.copyWith(
         isLoadingEarlierHistory: false,
         streamErrorMessage: 'Couldn’t load older history right now.',
+        liveConnectionState: LiveConnectionState.disconnected,
       );
     }
   }
@@ -511,6 +525,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       );
 
       state = state.copyWith(
+        liveConnectionState: LiveConnectionState.connected,
         clearStreamErrorMessage: true,
         clearStaleMessage: true,
         clearTurnControlError: true,
@@ -528,6 +543,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     }
 
     state = state.copyWith(
+      liveConnectionState: LiveConnectionState.reconnecting,
       streamErrorMessage:
           'Live updates disconnected. Reconnecting and catching up…',
       staleMessage:
@@ -597,6 +613,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       state = state.copyWith(
         thread: scopedDetail,
         items: mergedItems,
+        liveConnectionState: LiveConnectionState.connected,
         clearErrorMessage: true,
         clearStreamErrorMessage: true,
         clearStaleMessage: true,
@@ -616,6 +633,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       }
 
       state = state.copyWith(
+        liveConnectionState: LiveConnectionState.reconnecting,
         streamErrorMessage: error.message,
         staleMessage:
             'Bridge is offline. Current thread content may be stale until reconnect.',

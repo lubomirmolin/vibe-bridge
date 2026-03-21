@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
 import 'package:codex_mobile_companion/foundation/theme/liquid_styles.dart';
 import 'package:codex_mobile_companion/shared/widgets/badges.dart';
+import 'package:codex_mobile_companion/shared/widgets/connection_status_banner.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -69,6 +70,16 @@ class SettingsPage extends ConsumerWidget {
                     icon: PhosphorIcon(PhosphorIcons.arrowsClockwise()),
                   ),
                 ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: ConnectionStatusBanner(
+                state: _settingsConnectionBannerState(
+                  pairingState.bridgeConnectionState,
+                ),
+                detail: _settingsConnectionBannerDetail(pairingState),
+                compact: true,
               ),
             ),
 
@@ -135,6 +146,30 @@ class SettingsPage extends ConsumerWidget {
   }
 }
 
+ConnectionBannerState _settingsConnectionBannerState(
+  BridgeConnectionState state,
+) {
+  switch (state) {
+    case BridgeConnectionState.connected:
+      return ConnectionBannerState.connected;
+    case BridgeConnectionState.reconnecting:
+      return ConnectionBannerState.reconnecting;
+    case BridgeConnectionState.disconnected:
+      return ConnectionBannerState.disconnected;
+  }
+}
+
+String _settingsConnectionBannerDetail(PairingState pairingState) {
+  switch (pairingState.bridgeConnectionState) {
+    case BridgeConnectionState.connected:
+      return 'Trusted bridge session is healthy.';
+    case BridgeConnectionState.reconnecting:
+      return 'Re-establishing the trusted bridge session.';
+    case BridgeConnectionState.disconnected:
+      return pairingState.errorMessage ?? 'Private bridge path is unreachable.';
+  }
+}
+
 class _PairedBridgeCard extends StatelessWidget {
   const _PairedBridgeCard({
     required this.trustedBridge,
@@ -148,6 +183,8 @@ class _PairedBridgeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isConnected =
         bridgeConnectionState == BridgeConnectionState.connected;
+    final isReconnecting =
+        bridgeConnectionState == BridgeConnectionState.reconnecting;
     final bridge = trustedBridge;
 
     return Container(
@@ -173,9 +210,15 @@ class _PairedBridgeCard extends StatelessWidget {
                 ),
               ),
               StatusBadge(
-                text: isConnected ? 'CONNECTED' : 'DISCONNECTED',
+                text: isConnected
+                    ? 'CONNECTED'
+                    : isReconnecting
+                    ? 'RECONNECTING'
+                    : 'DISCONNECTED',
                 variant: isConnected
                     ? BadgeVariant.active
+                    : isReconnecting
+                    ? BadgeVariant.warning
                     : BadgeVariant.danger,
               ),
             ],

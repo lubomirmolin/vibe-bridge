@@ -10,6 +10,8 @@ class _PinnedTurnComposer extends StatelessWidget {
     required this.isInterruptMutationInFlight,
     required this.isComposerFocused,
     required this.attachedImages,
+    required this.modelOptions,
+    required this.reasoningOptions,
     required this.selectedModel,
     required this.selectedReasoning,
     required this.accessMode,
@@ -33,6 +35,8 @@ class _PinnedTurnComposer extends StatelessWidget {
   final bool isInterruptMutationInFlight;
   final bool isComposerFocused;
   final List<XFile> attachedImages;
+  final List<ModelOptionDto> modelOptions;
+  final List<String> reasoningOptions;
   final String selectedModel;
   final String selectedReasoning;
   final AccessMode accessMode;
@@ -140,6 +144,9 @@ class _PinnedTurnComposer extends StatelessWidget {
                                         isScrollControlled: true,
                                         builder: (context) =>
                                             _ComposerModelSheet(
+                                              modelOptions: modelOptions,
+                                              reasoningOptions:
+                                                  reasoningOptions,
                                               initialModel: selectedModel,
                                               initialReasoning:
                                                   selectedReasoning,
@@ -359,6 +366,8 @@ class _ComposerUtilityButton extends StatelessWidget {
 
 class _ComposerModelSheet extends StatefulWidget {
   const _ComposerModelSheet({
+    required this.modelOptions,
+    required this.reasoningOptions,
     required this.initialModel,
     required this.initialReasoning,
     required this.selectedAccessMode,
@@ -369,6 +378,8 @@ class _ComposerModelSheet extends StatefulWidget {
     required this.onAccessModeChanged,
   });
 
+  final List<ModelOptionDto> modelOptions;
+  final List<String> reasoningOptions;
   final String initialModel;
   final String initialReasoning;
   final AccessMode selectedAccessMode;
@@ -456,17 +467,17 @@ class _ComposerModelSheetState extends State<_ComposerModelSheet> {
                 const SizedBox(height: 18),
                 _ComposerSheetSection(
                   title: 'Models',
-                  children: _ThreadDetailPageState._modelOptions
+                  children: widget.modelOptions
                       .map(
                         (model) => _ComposerSheetOption(
-                          key: Key('turn-composer-model-option-$model'),
-                          label: model,
-                          selected: _selectedModel == model,
+                          key: Key('turn-composer-model-option-${model.id}'),
+                          label: model.displayName,
+                          selected: _selectedModel == model.id,
                           onTap: () {
                             setState(() {
-                              _selectedModel = model;
+                              _selectedModel = model.id;
                             });
-                            widget.onModelChanged(model);
+                            widget.onModelChanged(model.id);
                           },
                         ),
                       )
@@ -475,7 +486,7 @@ class _ComposerModelSheetState extends State<_ComposerModelSheet> {
                 const SizedBox(height: 18),
                 _ComposerSheetSection(
                   title: 'Intelligence',
-                  children: _ThreadDetailPageState._reasoningOptions
+                  children: widget.reasoningOptions
                       .map(
                         (reasoning) => _ComposerSheetOption(
                           key: Key('turn-composer-reasoning-option-$reasoning'),

@@ -2,12 +2,14 @@ import 'package:codex_mobile_companion/features/approvals/application/approvals_
 import 'package:codex_mobile_companion/features/approvals/presentation/approval_detail_page.dart';
 import 'package:codex_mobile_companion/features/approvals/presentation/approval_presenter.dart';
 import 'package:codex_mobile_companion/features/settings/presentation/settings_page.dart';
+import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
 import 'package:codex_mobile_companion/foundation/theme/liquid_styles.dart';
 import 'package:codex_mobile_companion/shared/widgets/badges.dart';
+import 'package:codex_mobile_companion/shared/widgets/connection_status_banner.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -70,6 +72,16 @@ class ApprovalsQueuePage extends ConsumerWidget {
                 ],
               ),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: ConnectionStatusBanner(
+                state: _approvalsConnectionBannerState(
+                  state.liveConnectionState,
+                ),
+                detail: _approvalsConnectionBannerDetail(state),
+                compact: true,
+              ),
+            ),
 
             Expanded(
               child: _buildBody(
@@ -83,6 +95,30 @@ class ApprovalsQueuePage extends ConsumerWidget {
         ),
       ),
     );
+  }
+}
+
+ConnectionBannerState _approvalsConnectionBannerState(
+  LiveConnectionState state,
+) {
+  switch (state) {
+    case LiveConnectionState.connected:
+      return ConnectionBannerState.connected;
+    case LiveConnectionState.reconnecting:
+      return ConnectionBannerState.reconnecting;
+    case LiveConnectionState.disconnected:
+      return ConnectionBannerState.disconnected;
+  }
+}
+
+String _approvalsConnectionBannerDetail(ApprovalsQueueState state) {
+  switch (state.liveConnectionState) {
+    case LiveConnectionState.connected:
+      return 'Approval socket is live.';
+    case LiveConnectionState.reconnecting:
+      return 'Approval stream dropped. Reconnecting now.';
+    case LiveConnectionState.disconnected:
+      return state.errorMessage ?? 'Bridge is offline. Approvals are stale.';
   }
 }
 

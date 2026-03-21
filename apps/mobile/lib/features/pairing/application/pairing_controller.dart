@@ -34,7 +34,7 @@ final pairingControllerProvider =
 
 enum PairingStep { unpaired, scanning, review, paired }
 
-enum BridgeConnectionState { connected, disconnected }
+enum BridgeConnectionState { connected, reconnecting, disconnected }
 
 class PairingState {
   const PairingState({
@@ -302,6 +302,11 @@ class PairingController extends StateNotifier<PairingState> {
       return;
     }
 
+    state = state.copyWith(
+      bridgeConnectionState: BridgeConnectionState.reconnecting,
+      clearErrorMessage: true,
+    );
+
     await _restoreTrustedBridgeSession(
       trustedBridge: trustedBridge,
       sessionToken: sessionToken,
@@ -411,6 +416,10 @@ class PairingController extends StateNotifier<PairingState> {
 
     _isReconnectInProgress = true;
     try {
+      state = state.copyWith(
+        bridgeConnectionState: BridgeConnectionState.reconnecting,
+        clearErrorMessage: true,
+      );
       await _restoreTrustedBridgeSession(
         trustedBridge: trustedBridge,
         sessionToken: sessionToken,

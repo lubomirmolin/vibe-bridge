@@ -901,6 +901,13 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   int fetchThreadTimelinePageCallCount = 0;
 
   @override
+  Future<ModelCatalogDto> fetchModelCatalog({
+    required String bridgeApiBaseUrl,
+  }) async {
+    return fallbackModelCatalog;
+  }
+
+  @override
   Future<ThreadDetailDto> fetchThreadDetail({
     required String bridgeApiBaseUrl,
     required String threadId,

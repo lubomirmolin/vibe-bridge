@@ -1,12 +1,13 @@
 import 'package:codex_mobile_companion/features/approvals/presentation/approvals_queue_page.dart';
+import 'package:codex_mobile_companion/features/pairing/application/pairing_controller.dart';
 import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
 import 'package:codex_mobile_companion/features/settings/presentation/settings_page.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
 import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
 import 'package:codex_mobile_companion/foundation/theme/liquid_styles.dart';
 import 'package:codex_mobile_companion/shared/widgets/badges.dart';
+import 'package:codex_mobile_companion/shared/widgets/connection_status_banner.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
@@ -26,6 +27,7 @@ class HomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final accessMode = ref.watch(runtimeAccessModeProvider(bridgeApiBaseUrl));
+    final pairingState = ref.watch(pairingControllerProvider);
 
     String modeString = 'READ ONLY';
     if (accessMode == AccessMode.controlWithApprovals) {
@@ -42,35 +44,19 @@ class HomeScreen extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const SizedBox(height: 32),
-              Row(
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: const BoxDecoration(
-                      color: AppTheme.emerald,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppTheme.emerald,
-                          blurRadius: 10,
-                          spreadRadius: 2,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    'CONNECTED',
-                    style: GoogleFonts.jetBrainsMono(
-                      color: AppTheme.emerald,
-                      fontSize: 12,
-                      letterSpacing: 2.0,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
+              Text(
+                'Codex Mobile',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: -0.5,
+                ),
+              ),
+              const SizedBox(height: 16),
+              ConnectionStatusBanner(
+                state: _homeConnectionBannerState(
+                  pairingState.bridgeConnectionState,
+                ),
+                detail: _homeConnectionBannerDetail(pairingState),
               ),
               const SizedBox(height: 24),
               Text(bridgeName, style: Theme.of(context).textTheme.displaySmall),
@@ -260,5 +246,28 @@ class _FeatureCard extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+ConnectionBannerState _homeConnectionBannerState(BridgeConnectionState state) {
+  switch (state) {
+    case BridgeConnectionState.connected:
+      return ConnectionBannerState.connected;
+    case BridgeConnectionState.reconnecting:
+      return ConnectionBannerState.reconnecting;
+    case BridgeConnectionState.disconnected:
+      return ConnectionBannerState.disconnected;
+  }
+}
+
+String _homeConnectionBannerDetail(PairingState pairingState) {
+  switch (pairingState.bridgeConnectionState) {
+    case BridgeConnectionState.connected:
+      return 'Bridge reachable. Controls are live.';
+    case BridgeConnectionState.reconnecting:
+      return 'Trying to restore the trusted bridge session.';
+    case BridgeConnectionState.disconnected:
+      return pairingState.errorMessage ??
+          'Private bridge path is unreachable right now.';
   }
 }

@@ -64,6 +64,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      expect(
+        find.byKey(const Key('connection-status-connected')),
+        findsOneWidget,
+      );
       expect(find.text('Paired Bridge'), findsOneWidget);
       expect(find.text('Codex Mobile Companion'), findsAtLeastNWidgets(1));
       expect(find.textContaining('Session: session-abc'), findsOneWidget);
@@ -140,6 +144,13 @@ void main() {
           home: SettingsPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
         ),
       ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('Actor: mobile-settings-10'),
+      200,
+      scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
 

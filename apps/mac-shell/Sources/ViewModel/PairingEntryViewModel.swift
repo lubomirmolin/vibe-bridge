@@ -126,6 +126,7 @@ final class PairingEntryViewModel: ObservableObject {
     private let bridgeClient: ShellBridgeClient
     private let runtimeSupervisor: DesktopRuntimeSupervisorClient
     private var supervisionTask: Task<Void, Never>?
+    private var terminationObserver: NSObjectProtocol?
     private let degradedPollIntervalNanoseconds: UInt64
     private let healthyPollIntervalNanoseconds: UInt64
 
@@ -152,6 +153,15 @@ final class PairingEntryViewModel: ObservableObject {
         self.runtimeSupervisor = runtimeSupervisor
         self.degradedPollIntervalNanoseconds = degradedPollIntervalNanoseconds
         self.healthyPollIntervalNanoseconds = healthyPollIntervalNanoseconds
+        self.terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.stopRuntimeSupervision()
+            }
+        }
 
         if startSupervisionOnInit {
             startRuntimeSupervision()
@@ -159,7 +169,12 @@ final class PairingEntryViewModel: ObservableObject {
     }
 
     deinit {
+        if let terminationObserver {
+            NotificationCenter.default.removeObserver(terminationObserver)
+        }
         supervisionTask?.cancel()
+        supervisionTask = nil
+        runtimeSupervisor.shutdownBridgeIfManaged()
     }
 
     func startRuntimeSupervision() {
@@ -184,6 +199,7 @@ final class PairingEntryViewModel: ObservableObject {
     func stopRuntimeSupervision() {
         supervisionTask?.cancel()
         supervisionTask = nil
+        runtimeSupervisor.shutdownBridgeIfManaged()
     }
 
     func refreshRuntimeState() async {

@@ -322,6 +322,23 @@ final class CodexMobileCompanionTests: XCTestCase {
     }
 
     @MainActor
+    func testPairingViewModelStopRuntimeSupervisionShutsDownManagedBridge() async {
+        let runtimeSupervisor = StubDesktopRuntimeSupervisor()
+        let viewModel = PairingEntryViewModel(
+            bridgeClient: StubShellBridgeClient(
+                healthResults: [],
+                threadResults: [],
+                pairingResults: []
+            ),
+            runtimeSupervisor: runtimeSupervisor
+        )
+
+        viewModel.stopRuntimeSupervision()
+
+        XCTAssertEqual(runtimeSupervisor.shutdownBridgeCallCount, 1)
+    }
+
+    @MainActor
     func testPairingViewModelShowsPairedActiveWhenRunningThreadsExist() async {
         let client = StubShellBridgeClient(
             healthResults: [.success(Self.healthResponse(runtimeState: "managed", trustStatus: Self.trustStatus()))],
@@ -586,6 +603,7 @@ private struct StubShellBridgeClient: ShellBridgeClient {
 
 private final class StubDesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
     private let store: StubDesktopRuntimeSupervisorStore
+    private(set) var shutdownBridgeCallCount = 0
 
     init(
         prepareResults: [Result<DesktopRuntimeLaunchSnapshot, Error>] = [
@@ -611,6 +629,10 @@ private final class StubDesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient
 
     func restartBridge() async throws -> DesktopRuntimeLaunchSnapshot {
         try await store.nextRestart()
+    }
+
+    func shutdownBridgeIfManaged() {
+        shutdownBridgeCallCount += 1
     }
 }
 

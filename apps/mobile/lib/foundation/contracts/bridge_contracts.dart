@@ -116,6 +116,129 @@ ApprovalStatus approvalStatusFromWire(String wireValue) {
   );
 }
 
+class ReasoningEffortOptionDto {
+  const ReasoningEffortOptionDto({
+    required this.reasoningEffort,
+    this.description,
+  });
+
+  final String reasoningEffort;
+  final String? description;
+
+  factory ReasoningEffortOptionDto.fromJson(Map<String, dynamic> json) {
+    return ReasoningEffortOptionDto(
+      reasoningEffort: json['reasoning_effort'] as String,
+      description: json['description'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'reasoning_effort': reasoningEffort,
+      if (description != null) 'description': description,
+    };
+  }
+}
+
+class ModelOptionDto {
+  const ModelOptionDto({
+    required this.id,
+    required this.model,
+    required this.displayName,
+    required this.description,
+    required this.isDefault,
+    required this.defaultReasoningEffort,
+    required this.supportedReasoningEfforts,
+  });
+
+  final String id;
+  final String model;
+  final String displayName;
+  final String description;
+  final bool isDefault;
+  final String? defaultReasoningEffort;
+  final List<ReasoningEffortOptionDto> supportedReasoningEfforts;
+
+  factory ModelOptionDto.fromJson(Map<String, dynamic> json) {
+    final supported = json['supported_reasoning_efforts'];
+    if (supported is! List<dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "supported_reasoning_efforts" array in model option.',
+      );
+    }
+
+    return ModelOptionDto(
+      id: json['id'] as String,
+      model: json['model'] as String,
+      displayName: json['display_name'] as String,
+      description: (json['description'] as String?) ?? '',
+      isDefault: (json['is_default'] as bool?) ?? false,
+      defaultReasoningEffort: json['default_reasoning_effort'] as String?,
+      supportedReasoningEfforts: supported
+          .map((entry) {
+            if (entry is! Map<String, dynamic>) {
+              throw const FormatException(
+                'Invalid reasoning effort option in model option.',
+              );
+            }
+            return ReasoningEffortOptionDto.fromJson(entry);
+          })
+          .toList(growable: false),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'id': id,
+      'model': model,
+      'display_name': displayName,
+      'description': description,
+      'is_default': isDefault,
+      'default_reasoning_effort': defaultReasoningEffort,
+      'supported_reasoning_efforts': supportedReasoningEfforts
+          .map((option) => option.toJson())
+          .toList(growable: false),
+    };
+  }
+}
+
+class ModelCatalogDto {
+  const ModelCatalogDto({required this.contractVersion, required this.models});
+
+  final String contractVersion;
+  final List<ModelOptionDto> models;
+
+  factory ModelCatalogDto.fromJson(Map<String, dynamic> json) {
+    final models = json['models'];
+    if (models is! List<dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "models" array in model catalog response.',
+      );
+    }
+
+    return ModelCatalogDto(
+      contractVersion: json['contract_version'] as String,
+      models: models
+          .map((entry) {
+            if (entry is! Map<String, dynamic>) {
+              throw const FormatException(
+                'Invalid model option in model catalog response.',
+              );
+            }
+            return ModelOptionDto.fromJson(entry);
+          })
+          .toList(growable: false),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'contract_version': contractVersion,
+      'models': models.map((model) => model.toJson()).toList(growable: false),
+    };
+  }
+}
+
 class RepositoryContextDto {
   const RepositoryContextDto({
     required this.workspace,

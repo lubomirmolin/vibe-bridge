@@ -4,6 +4,7 @@ import Foundation
 protocol DesktopRuntimeSupervisorClient: AnyObject {
     func prepareBridgeForConnection() async throws -> DesktopRuntimeLaunchSnapshot
     func restartBridge() async throws -> DesktopRuntimeLaunchSnapshot
+    func shutdownBridgeIfManaged()
 }
 
 enum DesktopRuntimeSupervisorError: LocalizedError {
@@ -143,6 +144,23 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
 
         stopManagedProcess()
         return try startBridgeProcess()
+    }
+
+    func shutdownBridgeIfManaged() {
+        stopManagedProcess()
+
+        guard let bridgeBinaryURL = try? pathResolver.resolveBridgeBinaryURL(),
+              let listener = portProcessInspector.listener(on: bridgePort),
+              listener.isManagedBridge(matching: bridgeBinaryURL, ownedBy: currentProcessID)
+        else {
+            return
+        }
+
+        try? terminateBridgeListener(listener)
+    }
+
+    deinit {
+        shutdownBridgeIfManaged()
     }
 
     private func startBridgeProcess() throws -> DesktopRuntimeLaunchSnapshot {

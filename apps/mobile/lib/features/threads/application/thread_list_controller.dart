@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
@@ -36,6 +37,7 @@ class ThreadListState {
   const ThreadListState({
     required this.threads,
     required this.searchQuery,
+    required this.liveConnectionState,
     this.selectedThreadId,
     this.errorMessage,
     this.staleMessage,
@@ -45,6 +47,7 @@ class ThreadListState {
 
   final List<ThreadSummaryDto> threads;
   final String searchQuery;
+  final LiveConnectionState liveConnectionState;
   final String? selectedThreadId;
   final String? errorMessage;
   final String? staleMessage;
@@ -55,6 +58,7 @@ class ThreadListState {
     return const ThreadListState(
       threads: <ThreadSummaryDto>[],
       searchQuery: '',
+      liveConnectionState: LiveConnectionState.reconnecting,
     );
   }
 
@@ -119,6 +123,7 @@ class ThreadListState {
   ThreadListState copyWith({
     List<ThreadSummaryDto>? threads,
     String? searchQuery,
+    LiveConnectionState? liveConnectionState,
     String? selectedThreadId,
     bool clearSelectedThreadId = false,
     String? errorMessage,
@@ -131,6 +136,7 @@ class ThreadListState {
     return ThreadListState(
       threads: threads ?? this.threads,
       searchQuery: searchQuery ?? this.searchQuery,
+      liveConnectionState: liveConnectionState ?? this.liveConnectionState,
       selectedThreadId: clearSelectedThreadId
           ? null
           : (selectedThreadId ?? this.selectedThreadId),
@@ -232,6 +238,7 @@ class ThreadListController extends StateNotifier<ThreadListState> {
         clearStaleMessage: true,
         isLoading: false,
         isShowingCachedData: false,
+        liveConnectionState: LiveConnectionState.connected,
       );
     } on ThreadListBridgeException catch (error) {
       if (!_canMutateState) {
@@ -250,6 +257,7 @@ class ThreadListController extends StateNotifier<ThreadListState> {
             clearErrorMessage: true,
             isLoading: false,
             isShowingCachedData: true,
+            liveConnectionState: LiveConnectionState.disconnected,
           );
           return;
         }
@@ -261,12 +269,19 @@ class ThreadListController extends StateNotifier<ThreadListState> {
             clearErrorMessage: true,
             isLoading: false,
             isShowingCachedData: true,
+            liveConnectionState: LiveConnectionState.disconnected,
           );
           return;
         }
       }
 
-      state = state.copyWith(errorMessage: error.message, isLoading: false);
+      state = state.copyWith(
+        errorMessage: error.message,
+        isLoading: false,
+        liveConnectionState: error.isConnectivityError
+            ? LiveConnectionState.disconnected
+            : state.liveConnectionState,
+      );
     } catch (_) {
       if (!_canMutateState) {
         return;
@@ -274,6 +289,7 @@ class ThreadListController extends StateNotifier<ThreadListState> {
       state = state.copyWith(
         errorMessage: 'Couldn’t load threads from the bridge.',
         isLoading: false,
+        liveConnectionState: LiveConnectionState.disconnected,
       );
     }
   }
@@ -364,6 +380,11 @@ class ThreadListController extends StateNotifier<ThreadListState> {
         return;
       }
       _liveSubscription = subscription;
+      if (!state.hasStaleMessage && state.errorMessage == null) {
+        state = state.copyWith(
+          liveConnectionState: LiveConnectionState.connected,
+        );
+      }
       _liveEventSubscription = subscription.events.listen(
         _handleLiveEvent,
         onError: (_) {
@@ -484,6 +505,7 @@ class ThreadListController extends StateNotifier<ThreadListState> {
       staleMessage:
           'Live thread updates are reconnecting. Pull to refresh if statuses look stale.',
       isShowingCachedData: true,
+      liveConnectionState: LiveConnectionState.reconnecting,
     );
     _scheduleReconnect();
   }
@@ -550,19 +572,25 @@ class ThreadListController extends StateNotifier<ThreadListState> {
             clearErrorMessage: true,
             isLoading: false,
             isShowingCachedData: true,
+            liveConnectionState: LiveConnectionState.reconnecting,
           );
         } else {
           state = state.copyWith(
             errorMessage: error.message,
             isLoading: false,
             isShowingCachedData: false,
+            liveConnectionState: LiveConnectionState.disconnected,
           );
         }
 
         return false;
       }
 
-      state = state.copyWith(errorMessage: error.message, isLoading: false);
+      state = state.copyWith(
+        errorMessage: error.message,
+        isLoading: false,
+        liveConnectionState: LiveConnectionState.disconnected,
+      );
       return true;
     } catch (_) {
       return false;

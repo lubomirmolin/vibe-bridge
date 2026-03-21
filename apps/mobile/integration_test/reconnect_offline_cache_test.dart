@@ -1469,6 +1469,13 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   final Map<String, List<Object>> _timelinePageScriptByThreadId;
 
   @override
+  Future<ModelCatalogDto> fetchModelCatalog({
+    required String bridgeApiBaseUrl,
+  }) async {
+    return fallbackModelCatalog;
+  }
+
+  @override
   Future<ThreadDetailDto> fetchThreadDetail({
     required String bridgeApiBaseUrl,
     required String threadId,

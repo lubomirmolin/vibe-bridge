@@ -3489,6 +3489,13 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   final Map<String, int> openOnMacCallsByThreadId = <String, int>{};
 
   @override
+  Future<ModelCatalogDto> fetchModelCatalog({
+    required String bridgeApiBaseUrl,
+  }) async {
+    return fallbackModelCatalog;
+  }
+
+  @override
   Future<ThreadDetailDto> fetchThreadDetail({
     required String bridgeApiBaseUrl,
     required String threadId,

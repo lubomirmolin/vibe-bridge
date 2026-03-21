@@ -1249,6 +1249,7 @@ fn route_request(request_line: &str, app: &BridgeApplication) -> String {
                         "POST /pairing/trust/revoke",
                         "GET /policy/access-mode",
                         "POST /policy/access-mode?mode=<read_only|control_with_approvals|full_control>",
+                        "GET /models",
                         "GET /threads",
                         "GET /threads/:id",
                         "GET /threads/:id/timeline?before=<event_id>&limit=<n>",
@@ -1366,6 +1367,14 @@ fn route_request(request_line: &str, app: &BridgeApplication) -> String {
                 contract_version: CONTRACT_VERSION.to_string(),
                 events: app.security_events_snapshot(),
             };
+            json_response("200 OK", &payload)
+        }
+        ("GET", "/models") => {
+            let thread_api = app
+                .thread_api
+                .lock()
+                .expect("thread API mutex should not be poisoned");
+            let payload = thread_api.model_catalog_response();
             json_response("200 OK", &payload)
         }
         ("GET", "/threads") => {
@@ -2928,6 +2937,11 @@ mod tests {
     #[test]
     fn thread_routes_are_available() {
         let app = test_application();
+
+        let models_response = route_request("GET /models HTTP/1.1", &app);
+        assert!(models_response.starts_with("HTTP/1.1 200 OK"));
+        assert!(models_response.contains("\"models\""));
+        assert!(models_response.contains("\"display_name\":\"GPT-5\""));
 
         let list_response = route_request("GET /threads HTTP/1.1", &app);
         assert!(list_response.starts_with("HTTP/1.1 200 OK"));
