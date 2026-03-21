@@ -32,13 +32,17 @@ class HttpThreadListBridgeApi implements ThreadListBridgeApi {
 
       final response = await request.close();
       final bodyText = await utf8.decodeStream(response);
-      final decoded = _decodeJsonObject(bodyText);
+      final decoded = _decodeJsonValue(bodyText);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        final threadItems = decoded['threads'];
+        final threadItems = decoded is List
+            ? decoded
+            : decoded is Map<String, dynamic>
+            ? decoded['threads']
+            : null;
         if (threadItems is! List) {
           throw const FormatException(
-            'Missing or invalid "threads" list in bridge response.',
+            'Missing or invalid threads list in bridge response.',
           );
         }
 
@@ -113,16 +117,12 @@ Uri _buildThreadListUri(String baseUrl) {
   return baseUri.replace(path: fullPath, queryParameters: null);
 }
 
-Map<String, dynamic> _decodeJsonObject(String bodyText) {
+dynamic _decodeJsonValue(String bodyText) {
   if (bodyText.trim().isEmpty) {
     return <String, dynamic>{};
   }
 
-  final decoded = jsonDecode(bodyText);
-  if (decoded is! Map<String, dynamic>) {
-    throw const FormatException('Expected JSON object response.');
-  }
-  return decoded;
+  return jsonDecode(bodyText);
 }
 
 String? _readOptionalString(Map<String, dynamic> json, String key) {

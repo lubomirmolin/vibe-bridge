@@ -239,6 +239,351 @@ class ModelCatalogDto {
   }
 }
 
+enum ServiceHealthStatus { healthy, degraded, unavailable }
+
+ServiceHealthStatus serviceHealthStatusFromWire(String wireValue) {
+  return ServiceHealthStatus.values.firstWhere(
+    (status) => status.name == wireValue,
+    orElse: () => throw FormatException(
+      'Unknown ServiceHealthStatus wire value "$wireValue".',
+    ),
+  );
+}
+
+class ServiceHealthDto {
+  const ServiceHealthDto({required this.status, this.message});
+
+  final ServiceHealthStatus status;
+  final String? message;
+
+  factory ServiceHealthDto.fromJson(Map<String, dynamic> json) {
+    return ServiceHealthDto(
+      status: serviceHealthStatusFromWire(json['status'] as String),
+      message: json['message'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'status': status.name,
+      if (message != null) 'message': message,
+    };
+  }
+}
+
+class TrustStateDto {
+  const TrustStateDto({required this.trusted, required this.accessMode});
+
+  final bool trusted;
+  final AccessMode accessMode;
+
+  factory TrustStateDto.fromJson(Map<String, dynamic> json) {
+    return TrustStateDto(
+      trusted: json['trusted'] as bool,
+      accessMode: accessModeFromWire(json['access_mode'] as String),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'trusted': trusted,
+      'access_mode': accessMode.wireValue,
+    };
+  }
+}
+
+class ApprovalSummaryDto {
+  const ApprovalSummaryDto({
+    required this.approvalId,
+    required this.threadId,
+    required this.action,
+    required this.status,
+    required this.reason,
+    this.target,
+  });
+
+  final String approvalId;
+  final String threadId;
+  final String action;
+  final ApprovalStatus status;
+  final String reason;
+  final String? target;
+
+  factory ApprovalSummaryDto.fromJson(Map<String, dynamic> json) {
+    return ApprovalSummaryDto(
+      approvalId: json['approval_id'] as String,
+      threadId: json['thread_id'] as String,
+      action: json['action'] as String,
+      status: approvalStatusFromWire(json['status'] as String),
+      reason: json['reason'] as String,
+      target: json['target'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'approval_id': approvalId,
+      'thread_id': threadId,
+      'action': action,
+      'status': status.name,
+      'reason': reason,
+      if (target != null) 'target': target,
+    };
+  }
+}
+
+class ThreadGitStatusDto {
+  const ThreadGitStatusDto({
+    required this.workspace,
+    required this.repository,
+    required this.branch,
+    this.remote,
+    required this.dirty,
+    required this.aheadBy,
+    required this.behindBy,
+  });
+
+  final String workspace;
+  final String repository;
+  final String branch;
+  final String? remote;
+  final bool dirty;
+  final int aheadBy;
+  final int behindBy;
+
+  factory ThreadGitStatusDto.fromJson(Map<String, dynamic> json) {
+    return ThreadGitStatusDto(
+      workspace: json['workspace'] as String,
+      repository: json['repository'] as String,
+      branch: json['branch'] as String,
+      remote: json['remote'] as String?,
+      dirty: json['dirty'] as bool,
+      aheadBy: json['ahead_by'] as int,
+      behindBy: json['behind_by'] as int,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'workspace': workspace,
+      'repository': repository,
+      'branch': branch,
+      if (remote != null) 'remote': remote,
+      'dirty': dirty,
+      'ahead_by': aheadBy,
+      'behind_by': behindBy,
+    };
+  }
+}
+
+class ThreadSnapshotDto {
+  const ThreadSnapshotDto({
+    required this.contractVersion,
+    required this.thread,
+    required this.entries,
+    required this.approvals,
+    this.gitStatus,
+  });
+
+  final String contractVersion;
+  final ThreadDetailDto thread;
+  final List<ThreadTimelineEntryDto> entries;
+  final List<ApprovalSummaryDto> approvals;
+  final ThreadGitStatusDto? gitStatus;
+
+  factory ThreadSnapshotDto.fromJson(Map<String, dynamic> json) {
+    final threadJson = json['thread'];
+    if (threadJson is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "thread" in thread snapshot response.',
+      );
+    }
+
+    final entriesJson = json['entries'];
+    if (entriesJson is! List<dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "entries" in thread snapshot response.',
+      );
+    }
+
+    final approvalsJson = json['approvals'];
+    if (approvalsJson is! List<dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "approvals" in thread snapshot response.',
+      );
+    }
+
+    return ThreadSnapshotDto(
+      contractVersion: json['contract_version'] as String,
+      thread: ThreadDetailDto.fromJson(threadJson),
+      entries: entriesJson
+          .map((item) {
+            if (item is! Map<String, dynamic>) {
+              throw const FormatException(
+                'Thread snapshot entry must be a JSON object.',
+              );
+            }
+            return ThreadTimelineEntryDto.fromJson(item);
+          })
+          .toList(growable: false),
+      approvals: approvalsJson
+          .map((item) {
+            if (item is! Map<String, dynamic>) {
+              throw const FormatException(
+                'Thread snapshot approval must be a JSON object.',
+              );
+            }
+            return ApprovalSummaryDto.fromJson(item);
+          })
+          .toList(growable: false),
+      gitStatus: json['git_status'] is Map<String, dynamic>
+          ? ThreadGitStatusDto.fromJson(
+              json['git_status'] as Map<String, dynamic>,
+            )
+          : null,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'contract_version': contractVersion,
+      'thread': thread.toJson(),
+      'entries': entries.map((entry) => entry.toJson()).toList(growable: false),
+      'approvals': approvals
+          .map((approval) => approval.toJson())
+          .toList(growable: false),
+      if (gitStatus != null) 'git_status': gitStatus!.toJson(),
+    };
+  }
+}
+
+class TurnMutationAcceptedDto {
+  const TurnMutationAcceptedDto({
+    required this.contractVersion,
+    required this.threadId,
+    required this.threadStatus,
+    required this.message,
+  });
+
+  final String contractVersion;
+  final String threadId;
+  final ThreadStatus threadStatus;
+  final String message;
+
+  factory TurnMutationAcceptedDto.fromJson(Map<String, dynamic> json) {
+    return TurnMutationAcceptedDto(
+      contractVersion: json['contract_version'] as String,
+      threadId: json['thread_id'] as String,
+      threadStatus: threadStatusFromWire(json['thread_status'] as String),
+      message: json['message'] as String,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'contract_version': contractVersion,
+      'thread_id': threadId,
+      'thread_status': threadStatus.wireValue,
+      'message': message,
+    };
+  }
+}
+
+class BootstrapDto {
+  const BootstrapDto({
+    required this.contractVersion,
+    required this.bridge,
+    required this.codex,
+    required this.trust,
+    required this.threads,
+    required this.models,
+  });
+
+  final String contractVersion;
+  final ServiceHealthDto bridge;
+  final ServiceHealthDto codex;
+  final TrustStateDto trust;
+  final List<ThreadSummaryDto> threads;
+  final List<ModelOptionDto> models;
+
+  factory BootstrapDto.fromJson(Map<String, dynamic> json) {
+    final threadsJson = json['threads'];
+    if (threadsJson is! List<dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "threads" in bootstrap response.',
+      );
+    }
+
+    final modelsJson = json['models'];
+    if (modelsJson is! List<dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "models" in bootstrap response.',
+      );
+    }
+
+    final bridgeJson = json['bridge'];
+    if (bridgeJson is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "bridge" in bootstrap response.',
+      );
+    }
+
+    final codexJson = json['codex'];
+    if (codexJson is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "codex" in bootstrap response.',
+      );
+    }
+
+    final trustJson = json['trust'];
+    if (trustJson is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "trust" in bootstrap response.',
+      );
+    }
+
+    return BootstrapDto(
+      contractVersion: json['contract_version'] as String,
+      bridge: ServiceHealthDto.fromJson(bridgeJson),
+      codex: ServiceHealthDto.fromJson(codexJson),
+      trust: TrustStateDto.fromJson(trustJson),
+      threads: threadsJson
+          .map((item) {
+            if (item is! Map<String, dynamic>) {
+              throw const FormatException(
+                'Bootstrap thread must be a JSON object.',
+              );
+            }
+            return ThreadSummaryDto.fromJson(item);
+          })
+          .toList(growable: false),
+      models: modelsJson
+          .map((item) {
+            if (item is! Map<String, dynamic>) {
+              throw const FormatException(
+                'Bootstrap model must be a JSON object.',
+              );
+            }
+            return ModelOptionDto.fromJson(item);
+          })
+          .toList(growable: false),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'contract_version': contractVersion,
+      'bridge': bridge.toJson(),
+      'codex': codex.toJson(),
+      'trust': trust.toJson(),
+      'threads': threads
+          .map((thread) => thread.toJson())
+          .toList(growable: false),
+      'models': models.map((model) => model.toJson()).toList(growable: false),
+    };
+  }
+}
+
 class RepositoryContextDto {
   const RepositoryContextDto({
     required this.workspace,

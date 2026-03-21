@@ -15,7 +15,7 @@ enum DesktopRuntimeSupervisorError: LocalizedError {
         switch self {
         case let .bridgeBinaryNotFound(candidates):
             let candidateList = candidates.joined(separator: ", ")
-            return "bridge-server binary was not found. Checked \(candidateList). Set CODEX_MOBILE_COMPANION_BRIDGE_BINARY or bundle the helper into the app."
+            return "bridge helper binary was not found. Checked \(candidateList). Set CODEX_MOBILE_COMPANION_BRIDGE_BINARY or bundle the helper into the app."
         case let .launchFailed(message):
             return message
         }
@@ -110,14 +110,14 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
             if managedProcess.isRunning {
                 return DesktopRuntimeLaunchSnapshot(
                     statusLabel: "Launching bridge",
-                    detail: "Desktop shell started bridge-server (pid \(managedProcess.processIdentifier)). Waiting for health on \(bridgeHost):\(bridgePort)…",
+                    detail: "Desktop shell started the bridge helper (pid \(managedProcess.processIdentifier)). Waiting for health on \(bridgeHost):\(bridgePort)…",
                     isLaunching: true
                 )
             }
 
             let exitSummary = lastExitSummary
             self.managedProcess = nil
-            let exitDetail = exitSummary ?? "bridge-server exited before reporting healthy"
+            let exitDetail = exitSummary ?? "bridge helper exited before reporting healthy"
             recentLogLines.removeAll()
             lastExitSummary = nil
             throw DesktopRuntimeSupervisorError.launchFailed(exitDetail)
@@ -201,14 +201,14 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
             try process.run()
         } catch {
             throw DesktopRuntimeSupervisorError.launchFailed(
-                "failed to launch bridge-server at \(bridgeBinaryURL.path): \(error.localizedDescription)"
+                "failed to launch bridge helper at \(bridgeBinaryURL.path): \(error.localizedDescription)"
             )
         }
 
         managedProcess = process
         return DesktopRuntimeLaunchSnapshot(
             statusLabel: "Launching bridge",
-            detail: "Desktop shell launched bridge-server (pid \(process.processIdentifier)). Waiting for health on \(bridgeHost):\(bridgePort)…",
+            detail: "Desktop shell launched the bridge helper (pid \(process.processIdentifier)). Waiting for health on \(bridgeHost):\(bridgePort)…",
             isLaunching: true
         )
     }
@@ -294,7 +294,7 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
     }
 
     private func handleTermination(_ process: Process) {
-        let summary = "bridge-server exited with status \(process.terminationStatus). \(recentLogTail())"
+        let summary = "bridge helper exited with status \(process.terminationStatus). \(recentLogTail())"
         lastExitSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if managedProcess === process {
@@ -375,12 +375,17 @@ struct BridgeBinaryPathResolver {
         let searchRoots = [currentDirectoryURL, bundleResourceURL].compactMap { $0 }
         for root in searchRoots {
             if let workspaceRoot = workspaceRoot(startingAt: root) {
+                candidates.append(workspaceRoot.appending(path: "target").appending(path: "debug").appending(path: "bridge-server-next"))
+                candidates.append(workspaceRoot.appending(path: "target").appending(path: "release").appending(path: "bridge-server-next"))
                 candidates.append(workspaceRoot.appending(path: "target").appending(path: "debug").appending(path: "bridge-server"))
                 candidates.append(workspaceRoot.appending(path: "target").appending(path: "release").appending(path: "bridge-server"))
             }
         }
 
+        candidates.append(contentsOf: pathExecutableCandidates(named: "bridge-server-next"))
         candidates.append(contentsOf: pathExecutableCandidates(named: "bridge-server"))
+        candidates.append(URL(fileURLWithPath: "/usr/local/bin/bridge-server-next"))
+        candidates.append(URL(fileURLWithPath: "/opt/homebrew/bin/bridge-server-next"))
         candidates.append(URL(fileURLWithPath: "/usr/local/bin/bridge-server"))
         candidates.append(URL(fileURLWithPath: "/opt/homebrew/bin/bridge-server"))
 
@@ -528,23 +533,29 @@ protocol BridgeHealthProbe {
 
 struct HTTPBridgeHealthProbe: BridgeHealthProbe {
     func isReachable(host: String, port: Int) async -> Bool {
-        guard let url = URL(string: "http://\(host):\(port)/health") else {
-            return false
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 1
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        do {
-            let (_, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                return false
+        for path in ["/healthz", "/health"] {
+            guard let url = URL(string: "http://\(host):\(port)\(path)") else {
+                continue
             }
-            return (200 ..< 300).contains(httpResponse.statusCode)
-        } catch {
-            return false
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.timeoutInterval = 1
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+            do {
+                let (_, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    continue
+                }
+                if (200 ..< 300).contains(httpResponse.statusCode) {
+                    return true
+                }
+            } catch {
+                continue
+            }
         }
+
+        return false
     }
 }

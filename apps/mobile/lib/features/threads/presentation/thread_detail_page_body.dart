@@ -187,10 +187,7 @@ class _ThreadDetailBody extends StatelessWidget {
                         : _ExploredFilesCard(exploration: block.exploration!),
                   )
                   .expand((widget) => [widget, const SizedBox(height: 12)]),
-            if (state.isTurnActive &&
-                (state.visibleItems.isEmpty ||
-                    state.visibleItems.last.type !=
-                        ThreadActivityItemType.assistantOutput)) ...const [
+            if (state.isTurnActive) ...const [
               _ChatLoadingMessageCard(),
               SizedBox(height: 12),
             ],

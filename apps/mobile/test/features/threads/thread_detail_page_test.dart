@@ -1655,306 +1655,113 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     },
   );
 
-  testWidgets('git status and mutations show context and refresh state', (
-    tester,
-  ) async {
-    final approvalApi = MutableApprovalBridgeApi(
-      accessMode: AccessMode.controlWithApprovals,
-    );
-    final detailApi = FakeThreadDetailBridgeApi(
-      detailScriptByThreadId: {
-        'thread-123': [_thread123Detail()],
-      },
-      timelineScriptByThreadId: {
-        'thread-123': [<ThreadTimelineEntryDto>[]],
-      },
-      gitStatusScriptByThreadId: {
-        'thread-123': [
-          _gitStatus(
-            threadId: 'thread-123',
-            repository: 'codex-mobile-companion',
-            branch: 'master',
-            remote: 'origin',
-            dirty: true,
-            aheadBy: 2,
-            behindBy: 3,
-          ),
-          _gitStatus(
-            threadId: 'thread-123',
-            repository: 'codex-mobile-companion',
-            branch: 'master',
-            remote: 'origin',
-            dirty: true,
-            aheadBy: 2,
-            behindBy: 3,
-          ),
-          _gitStatus(
-            threadId: 'thread-123',
-            repository: 'codex-mobile-companion',
-            branch: 'master',
-            remote: 'origin',
-            dirty: true,
-            aheadBy: 2,
-            behindBy: 3,
-          ),
-          _gitStatus(
-            threadId: 'thread-123',
-            repository: 'codex-mobile-companion',
-            branch: 'master',
-            remote: 'origin',
-            dirty: true,
-            aheadBy: 2,
-            behindBy: 3,
-          ),
-        ],
-      },
-      branchSwitchScriptByThreadId: {
-        'thread-123': [
-          _gitApprovalRequired(
-            approvalId: 'approval-branch-switch',
-            action: 'git_branch_switch',
-            target: 'release/2026',
-            reason: 'dangerous_action_requires_approval',
-            threadId: 'thread-123',
-            repository: 'codex-mobile-companion',
-            branch: 'master',
-            remote: 'origin',
-            workspace: '/workspace/codex-mobile-companion',
-            dirty: true,
-            aheadBy: 2,
-            behindBy: 3,
-          ),
-        ],
-      },
-      pullScriptByThreadId: {
-        'thread-123': [
-          _gitApprovalRequired(
-            approvalId: 'approval-pull',
-            action: 'git_pull',
-            target: 'origin',
-            reason: 'dangerous_action_requires_approval',
-            threadId: 'thread-123',
-            repository: 'codex-mobile-companion',
-            branch: 'master',
-            remote: 'origin',
-            workspace: '/workspace/codex-mobile-companion',
-            dirty: true,
-            aheadBy: 2,
-            behindBy: 3,
-          ),
-        ],
-      },
-      pushScriptByThreadId: {
-        'thread-123': [
-          _gitApprovalRequired(
-            approvalId: 'approval-push',
-            action: 'git_push',
-            target: 'origin',
-            reason: 'dangerous_action_requires_approval',
-            threadId: 'thread-123',
-            repository: 'codex-mobile-companion',
-            branch: 'master',
-            remote: 'origin',
-            workspace: '/workspace/codex-mobile-companion',
-            dirty: true,
-            aheadBy: 2,
-            behindBy: 3,
-          ),
-        ],
-      },
-      onGitApprovalRequired: approvalApi.upsertApproval,
-    );
+  testWidgets(
+    'rewrite backend disables git mutations while still showing thread context',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+      );
 
-    await _pumpThreadDetailApp(
-      tester,
-      detailApi: detailApi,
-      threadId: 'thread-123',
-      approvalApi: approvalApi,
-    );
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+      );
 
-    await _openGitBranchSheet(tester);
-    expect(find.text('Repository: codex-mobile-companion'), findsOneWidget);
-    expect(find.text('Branch: master'), findsOneWidget);
-    expect(find.text('Remote: origin'), findsOneWidget);
-    expect(find.text('Status: Dirty • Ahead 2 • Behind 3'), findsOneWidget);
+      await _openGitBranchSheet(tester);
+      expect(find.text('Repository: codex-mobile-companion'), findsOneWidget);
+      expect(find.text('Branch: master'), findsOneWidget);
+      expect(find.text('Remote: unknown'), findsOneWidget);
+      expect(find.text('Resolving git status'), findsOneWidget);
+      expect(
+        find.text('Git controls are disabled in the rewrite backend.'),
+        findsWidgets,
+      );
 
-    await tester.enterText(
-      find.byKey(const Key('git-branch-input')),
-      '  release/2026  ',
-    );
-    await tester.tap(find.byKey(const Key('git-branch-switch-button')));
-    await tester.pumpAndSettle();
+      final switchButton = tester.widget<FilledButton>(
+        find.byKey(const Key('git-branch-switch-button')),
+      );
+      await tester.enterText(
+        find.byKey(const Key('git-branch-input')),
+        '  release/2026  ',
+      );
+      expect(switchButton.onPressed, isNull);
+      await _closeModalSheet(tester);
 
-    expect(detailApi.branchSwitchRequestsByThreadId['thread-123'], [
-      'release/2026',
-    ]);
-    await _openGitBranchSheet(tester);
-    expect(find.text('Branch: master'), findsOneWidget);
-    await _closeModalSheet(tester);
-    expect(find.text('Switched branch to release/2026'), findsNothing);
-    expect(
-      find.text(
-        'Branch switch to release/2026 is pending approval for codex-mobile-companion (current branch: master).',
-      ),
-      findsOneWidget,
-    );
-    await _openGitSyncSheet(tester);
-    await tester.tap(find.byKey(const Key('git-pull-button')));
-    await tester.pumpAndSettle();
-    expect(detailApi.pullCallsByThreadId['thread-123'], 1);
-    expect(
-      find.text(
-        'Pull from origin is pending approval for codex-mobile-companion on master.',
-      ),
-      findsOneWidget,
-    );
-    await _openGitSyncSheet(tester);
-    await tester.tap(find.byKey(const Key('git-push-button')));
-    await tester.pumpAndSettle();
-    expect(detailApi.pushCallsByThreadId['thread-123'], 1);
-    expect(
-      find.text(
-        'Push to origin is pending approval for codex-mobile-companion on master.',
-      ),
-      findsOneWidget,
-    );
-    await _openGitSyncSheet(tester);
-    expect(find.text('Status: Dirty • Ahead 2 • Behind 3'), findsOneWidget);
-    await _closeModalSheet(tester);
-    expect(detailApi.gitStatusFetchCountByThreadId['thread-123'], 4);
-  });
+      await _openGitSyncSheet(tester);
+      final pullButton = tester.widget<OutlinedButton>(
+        find.byKey(const Key('git-pull-button')),
+      );
+      final pushButton = tester.widget<OutlinedButton>(
+        find.byKey(const Key('git-push-button')),
+      );
+      expect(pullButton.onPressed, isNull);
+      expect(pushButton.onPressed, isNull);
+      expect(
+        find.text('Git controls are disabled in the rewrite backend.'),
+        findsWidgets,
+      );
+      expect(detailApi.branchSwitchRequestsByThreadId['thread-123'], isNull);
+      expect(detailApi.pullCallsByThreadId['thread-123'], isNull);
+      expect(detailApi.pushCallsByThreadId['thread-123'], isNull);
+    },
+  );
 
-  testWidgets('full-control git mutations execute and refresh state', (
-    tester,
-  ) async {
-    final detailApi = FakeThreadDetailBridgeApi(
-      detailScriptByThreadId: {
-        'thread-123': [_thread123Detail(accessMode: AccessMode.fullControl)],
-      },
-      timelineScriptByThreadId: {
-        'thread-123': [<ThreadTimelineEntryDto>[]],
-      },
-      gitStatusScriptByThreadId: {
-        'thread-123': [
-          _gitStatus(
-            threadId: 'thread-123',
-            repository: 'codex-mobile-companion',
-            branch: 'master',
-            remote: 'origin',
-            dirty: true,
-            aheadBy: 2,
-            behindBy: 3,
-          ),
-          _gitStatus(
-            threadId: 'thread-123',
-            repository: 'codex-mobile-companion',
-            branch: 'release/2026',
-            remote: 'origin',
-            dirty: false,
-            aheadBy: 2,
-            behindBy: 3,
-          ),
-          _gitStatus(
-            threadId: 'thread-123',
-            repository: 'codex-mobile-companion',
-            branch: 'release/2026',
-            remote: 'origin',
-            dirty: false,
-            aheadBy: 2,
-            behindBy: 0,
-          ),
-          _gitStatus(
-            threadId: 'thread-123',
-            repository: 'codex-mobile-companion',
-            branch: 'release/2026',
-            remote: 'origin',
-            dirty: false,
-            aheadBy: 0,
-            behindBy: 0,
-          ),
-        ],
-      },
-      branchSwitchScriptByThreadId: {
-        'thread-123': [
-          _gitMutationResult(
-            threadId: 'thread-123',
-            operation: 'git_branch_switch',
-            message: 'Switched branch to release/2026',
-            repository: 'codex-mobile-companion',
-            branch: 'release/2026',
-            remote: 'origin',
-            dirty: false,
-            aheadBy: 2,
-            behindBy: 3,
-          ),
-        ],
-      },
-      pullScriptByThreadId: {
-        'thread-123': [
-          _gitMutationResult(
-            threadId: 'thread-123',
-            operation: 'git_pull',
-            message: 'Pulled latest changes from origin for release/2026',
-            repository: 'codex-mobile-companion',
-            branch: 'release/2026',
-            remote: 'origin',
-            dirty: false,
-            aheadBy: 2,
-            behindBy: 0,
-          ),
-        ],
-      },
-      pushScriptByThreadId: {
-        'thread-123': [
-          _gitMutationResult(
-            threadId: 'thread-123',
-            operation: 'git_push',
-            message: 'Pushed local commits to origin for release/2026',
-            repository: 'codex-mobile-companion',
-            branch: 'release/2026',
-            remote: 'origin',
-            dirty: false,
-            aheadBy: 0,
-            behindBy: 0,
-          ),
-        ],
-      },
-    );
+  testWidgets(
+    'full-control mode does not bypass rewrite backend git disablement',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail(accessMode: AccessMode.fullControl)],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+      );
 
-    await _pumpThreadDetailApp(
-      tester,
-      detailApi: detailApi,
-      threadId: 'thread-123',
-      settingsApi: FakeSettingsBridgeApi(accessMode: AccessMode.fullControl),
-    );
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+        settingsApi: FakeSettingsBridgeApi(accessMode: AccessMode.fullControl),
+      );
 
-    await _openGitBranchSheet(tester);
-    await tester.enterText(
-      find.byKey(const Key('git-branch-input')),
-      'release/2026',
-    );
-    await tester.tap(find.byKey(const Key('git-branch-switch-button')));
-    await tester.pumpAndSettle();
+      await _openGitBranchSheet(tester);
+      expect(
+        find.text('Git controls are disabled in the rewrite backend.'),
+        findsWidgets,
+      );
+      final switchButton = tester.widget<FilledButton>(
+        find.byKey(const Key('git-branch-switch-button')),
+      );
+      expect(switchButton.onPressed, isNull);
+      await _closeModalSheet(tester);
 
-    expect(find.text('Switched branch to release/2026'), findsOneWidget);
+      await _openGitSyncSheet(tester);
+      final pullButton = tester.widget<OutlinedButton>(
+        find.byKey(const Key('git-pull-button')),
+      );
+      final pushButton = tester.widget<OutlinedButton>(
+        find.byKey(const Key('git-push-button')),
+      );
+      expect(
+        find.text('Git controls are disabled in the rewrite backend.'),
+        findsWidgets,
+      );
+      expect(pullButton.onPressed, isNull);
+      expect(pushButton.onPressed, isNull);
+      expect(detailApi.branchSwitchRequestsByThreadId['thread-123'], isNull);
+      expect(detailApi.pullCallsByThreadId['thread-123'], isNull);
+      expect(detailApi.pushCallsByThreadId['thread-123'], isNull);
+    },
+  );
 
-    await _openGitSyncSheet(tester);
-    await tester.tap(find.byKey(const Key('git-pull-button')));
-    await tester.pumpAndSettle();
-    expect(
-      find.text('Pulled latest changes from origin for release/2026'),
-      findsOneWidget,
-    );
-
-    await _openGitSyncSheet(tester);
-    await tester.tap(find.byKey(const Key('git-push-button')));
-    await tester.pumpAndSettle();
-    await _openGitSyncSheet(tester);
-    expect(find.text('Status: Clean • Ahead 0 • Behind 0'), findsOneWidget);
-    await _closeModalSheet(tester);
-  });
-
-  testWidgets('open-on-Mac success and failure are surfaced clearly', (
+  testWidgets('open-on-Mac is surfaced as unavailable in rewrite backend', (
     tester,
   ) async {
     final detailApi = FakeThreadDetailBridgeApi(
@@ -1963,18 +1770,6 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       },
       timelineScriptByThreadId: {
         'thread-123': [<ThreadTimelineEntryDto>[]],
-      },
-      gitStatusScriptByThreadId: {
-        'thread-123': [_gitStatus(threadId: 'thread-123')],
-      },
-      openOnMacScriptByThreadId: {
-        'thread-123': [
-          _openOnMacResponse(threadId: 'thread-123'),
-          const ThreadOpenOnMacBridgeException(
-            message:
-                'Codex.app is unavailable or could not be opened. Mobile remains usable and open-on-Mac is best effort.',
-          ),
-        ],
       },
     );
 
@@ -1986,16 +1781,12 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
 
     await tester.tap(find.byKey(const Key('open-on-mac-button')));
     await tester.pumpAndSettle();
-    expect(detailApi.openOnMacCallsByThreadId['thread-123'], 1);
-    expect(
-      find.byKey(const Key('open-on-mac-success-message')),
-      findsOneWidget,
-    );
-
-    await tester.tap(find.byKey(const Key('open-on-mac-button')));
-    await tester.pumpAndSettle();
-    expect(detailApi.openOnMacCallsByThreadId['thread-123'], 2);
+    expect(detailApi.openOnMacCallsByThreadId['thread-123'], isNull);
     expect(find.byKey(const Key('open-on-mac-error-message')), findsOneWidget);
+    expect(
+      find.text('Open-on-Mac is disabled in the rewrite backend.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('desktop integration toggle updates open-on-Mac affordances', (
@@ -2058,7 +1849,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
   });
 
   testWidgets(
-    'changing access mode from settings immediately gates turn and git controls',
+    'changing access mode from settings still gates turn controls on rewrite backend',
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(
         detailScriptByThreadId: {
@@ -2067,23 +1858,12 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
         timelineScriptByThreadId: {
           'thread-123': [<ThreadTimelineEntryDto>[]],
         },
-        gitStatusScriptByThreadId: {
-          'thread-123': [_gitStatus(threadId: 'thread-123')],
-        },
       );
       await _pumpThreadDetailApp(
         tester,
         detailApi: detailApi,
         threadId: 'thread-123',
       );
-
-      await _openGitSyncSheet(tester);
-
-      final pullBefore = tester.widget<OutlinedButton>(
-        find.byKey(const Key('git-pull-button')),
-      );
-      expect(pullBefore.onPressed, isNotNull);
-      await _closeModalSheet(tester);
 
       final container = ProviderScope.containerOf(
         tester.element(find.byType(ThreadDetailPage)),
@@ -2108,19 +1888,22 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       expect(detailApi.interruptTurnCallsByThreadId['thread-123'], isNull);
       expect(pullAfter.onPressed, isNull);
       expect(openOnMacAfter.onPressed, isNotNull);
+      expect(
+        find.text('Git controls are disabled in the rewrite backend.'),
+        findsWidgets,
+      );
     },
   );
 
-  testWidgets('blank branch switch is rejected client-side', (tester) async {
+  testWidgets('rewrite backend keeps blank branch switch disabled', (
+    tester,
+  ) async {
     final detailApi = FakeThreadDetailBridgeApi(
       detailScriptByThreadId: {
         'thread-123': [_thread123Detail()],
       },
       timelineScriptByThreadId: {
         'thread-123': [<ThreadTimelineEntryDto>[]],
-      },
-      gitStatusScriptByThreadId: {
-        'thread-123': [_gitStatus(threadId: 'thread-123')],
       },
     );
 
@@ -2132,19 +1915,19 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
 
     await _openGitBranchSheet(tester);
     await tester.enterText(find.byKey(const Key('git-branch-input')), '   ');
-    await tester.tap(find.byKey(const Key('git-branch-switch-button')));
-    await tester.pumpAndSettle();
+    final switchButton = tester.widget<FilledButton>(
+      find.byKey(const Key('git-branch-switch-button')),
+    );
 
     expect(
-      find.text(
-        'Bad request (client validation): branch name cannot be blank.',
-      ),
-      findsOneWidget,
+      find.text('Git controls are disabled in the rewrite backend.'),
+      findsWidgets,
     );
+    expect(switchButton.onPressed, isNull);
     expect(detailApi.branchSwitchRequestsByThreadId['thread-123'], isNull);
   });
 
-  testWidgets('git mutation buttons stay disabled until git status resolves', (
+  testWidgets('git mutation buttons stay disabled on rewrite backend', (
     tester,
   ) async {
     final detailApi = FakeThreadDetailBridgeApi(
@@ -2153,13 +1936,6 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       },
       timelineScriptByThreadId: {
         'thread-123': [<ThreadTimelineEntryDto>[]],
-      },
-      gitStatusScriptByThreadId: {
-        'thread-123': [
-          const ThreadGitBridgeException(
-            message: 'Couldn’t load git status right now.',
-          ),
-        ],
       },
     );
 
@@ -2182,7 +1958,10 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       find.byKey(const Key('git-push-button')),
     );
 
-    expect(find.text('Couldn’t load git status right now.'), findsOneWidget);
+    expect(
+      find.text('Git controls are disabled in the rewrite backend.'),
+      findsWidgets,
+    );
     expect(switchButton.onPressed, isNull);
     expect(pullButton.onPressed, isNull);
     expect(pushButton.onPressed, isNull);
@@ -2270,30 +2049,6 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
         'thread-123': [<ThreadTimelineEntryDto>[]],
         'thread-456': [<ThreadTimelineEntryDto>[]],
       },
-      gitStatusScriptByThreadId: {
-        'thread-123': [
-          _gitStatus(
-            threadId: 'thread-123',
-            repository: 'codex-mobile-companion',
-            branch: 'master',
-            remote: 'origin',
-          ),
-        ],
-        'thread-456': [
-          _gitStatus(
-            threadId: 'thread-456',
-            repository: 'codex-runtime-tools',
-            branch: 'develop',
-            remote: 'upstream',
-          ),
-          _gitStatus(
-            threadId: 'thread-456',
-            repository: 'codex-runtime-tools',
-            branch: 'develop',
-            remote: 'upstream',
-          ),
-        ],
-      },
     );
 
     await _pumpThreadListApp(
@@ -2318,43 +2073,24 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(find.text('Repository: codex-runtime-tools'), findsOneWidget);
     await _closeModalSheet(tester);
     await _openGitSyncSheet(tester);
-    await tester.tap(find.byKey(const Key('git-pull-button')));
-    await tester.pumpAndSettle();
+    final pullButton = tester.widget<OutlinedButton>(
+      find.byKey(const Key('git-pull-button')),
+    );
 
     expect(detailApi.pullCallsByThreadId['thread-123'], isNull);
-    expect(detailApi.pullCallsByThreadId['thread-456'], 1);
+    expect(detailApi.pullCallsByThreadId['thread-456'], isNull);
+    expect(pullButton.onPressed, isNull);
   });
 
-  testWidgets('failed git mutation still refreshes git state', (tester) async {
+  testWidgets('rewrite backend never attempts failing git mutations', (
+    tester,
+  ) async {
     final detailApi = FakeThreadDetailBridgeApi(
       detailScriptByThreadId: {
         'thread-123': [_thread123Detail()],
       },
       timelineScriptByThreadId: {
         'thread-123': [<ThreadTimelineEntryDto>[]],
-      },
-      gitStatusScriptByThreadId: {
-        'thread-123': [
-          _gitStatus(
-            threadId: 'thread-123',
-            dirty: false,
-            aheadBy: 0,
-            behindBy: 2,
-          ),
-          _gitStatus(
-            threadId: 'thread-123',
-            dirty: false,
-            aheadBy: 0,
-            behindBy: 1,
-          ),
-        ],
-      },
-      pullScriptByThreadId: {
-        'thread-123': [
-          const ThreadGitMutationBridgeException(
-            message: 'Pull failed: remote rejected fetch request.',
-          ),
-        ],
       },
     );
 
@@ -2365,17 +2101,15 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     );
 
     await _openGitSyncSheet(tester);
-    await tester.tap(find.byKey(const Key('git-pull-button')));
-    await tester.pumpAndSettle();
-
-    expect(
-      find.text('Pull failed: remote rejected fetch request.'),
-      findsOneWidget,
+    final pullButton = tester.widget<OutlinedButton>(
+      find.byKey(const Key('git-pull-button')),
     );
-    await _openGitSyncSheet(tester);
-    expect(find.text('Status: Clean • Ahead 0 • Behind 1'), findsOneWidget);
-    await _closeModalSheet(tester);
-    expect(detailApi.gitStatusFetchCountByThreadId['thread-123'], 2);
+    expect(pullButton.onPressed, isNull);
+    expect(detailApi.pullCallsByThreadId['thread-123'], isNull);
+    expect(
+      find.text('Git controls are disabled in the rewrite backend.'),
+      findsWidgets,
+    );
   });
 
   testWidgets(
@@ -2775,47 +2509,41 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(find.text('Investigate reconnect dedup'), findsOneWidget);
   });
 
-  testWidgets('unavailable thread detail shows retryable fallback state', (
-    tester,
-  ) async {
-    final listApi = FakeThreadListBridgeApi(
-      scriptedResults: [_threadSummaries()],
-    );
-    final detailApi = FakeThreadDetailBridgeApi(
-      detailScriptByThreadId: {
-        'thread-123': [_thread123Detail()],
-      },
-      timelineScriptByThreadId: {
-        'thread-123': [
-          const ThreadDetailBridgeException(
-            message: 'Thread was archived remotely.',
-            isUnavailable: true,
-          ),
-          <ThreadTimelineEntryDto>[],
-        ],
-      },
-    );
+  testWidgets(
+    'timeline unavailability preserves loaded detail until retry succeeds',
+    (tester) async {
+      final listApi = FakeThreadListBridgeApi(
+        scriptedResults: [_threadSummaries()],
+      );
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            const ThreadDetailBridgeException(
+              message: 'Thread was archived remotely.',
+              isUnavailable: true,
+            ),
+            <ThreadTimelineEntryDto>[],
+          ],
+        },
+      );
 
-    await _pumpThreadListApp(
-      tester,
-      listApi: listApi,
-      detailApi: detailApi,
-      liveStream: FakeThreadLiveStream(),
-    );
+      await _pumpThreadListApp(
+        tester,
+        listApi: listApi,
+        detailApi: detailApi,
+        liveStream: FakeThreadLiveStream(),
+      );
 
-    await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+      await tester.pumpAndSettle();
 
-    expect(find.text('Unavailable'), findsOneWidget);
-    expect(find.text('Thread was archived remotely.'), findsOneWidget);
-    expect(find.text('Retry'), findsOneWidget);
-
-    await tester.tap(find.text('Retry'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Unavailable'), findsNothing);
-    expect(find.text('Implement shared contracts'), findsOneWidget);
-  });
+      expect(find.text('Unavailable'), findsNothing);
+      expect(find.text('Implement shared contracts'), findsOneWidget);
+    },
+  );
 
   testWidgets('offline mode without a loaded thread shows the bridge error', (
     tester,
@@ -3390,49 +3118,6 @@ OpenOnMacResponseDto _openOnMacResponse({
         message ??
         'Requested Codex.app to open the matching shared thread. Desktop refresh is best effort; mobile remains fully usable.',
     bestEffort: true,
-  );
-}
-
-ThreadGitApprovalRequiredException _gitApprovalRequired({
-  required String approvalId,
-  required String action,
-  required String target,
-  required String reason,
-  required String threadId,
-  required String repository,
-  required String branch,
-  required String remote,
-  required String workspace,
-  required bool dirty,
-  required int aheadBy,
-  required int behindBy,
-}) {
-  return ThreadGitApprovalRequiredException(
-    message: 'Dangerous action was gated pending explicit approval',
-    operation: action,
-    outcome: 'approval_required',
-    approval: ApprovalRecordDto(
-      contractVersion: contractVersion,
-      approvalId: approvalId,
-      threadId: threadId,
-      action: action,
-      target: target,
-      reason: reason,
-      status: ApprovalStatus.pending,
-      requestedAt: '2026-03-18T10:10:00Z',
-      resolvedAt: null,
-      repository: RepositoryContextDto(
-        workspace: workspace,
-        repository: repository,
-        branch: branch,
-        remote: remote,
-      ),
-      gitStatus: GitStatusDto(
-        dirty: dirty,
-        aheadBy: aheadBy,
-        behindBy: behindBy,
-      ),
-    ),
   );
 }
 

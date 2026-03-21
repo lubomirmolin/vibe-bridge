@@ -3258,7 +3258,7 @@ pub struct CodexNotificationStream {
 }
 
 #[derive(Debug, Default)]
-struct CodexNotificationNormalizer {
+pub(crate) struct CodexNotificationNormalizer {
     active_turn_id_by_thread: HashMap<String, String>,
     items_by_event_id: HashMap<String, Value>,
 }
@@ -3289,6 +3289,15 @@ struct CodexThreadRealtimeItemAddedNotification {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CodexItemLifecycleNotification {
+    #[serde(rename = "threadId")]
+    thread_id: String,
+    #[serde(rename = "turnId", default)]
+    turn_id: Option<String>,
+    item: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 struct CodexTurnNotification {
     #[serde(rename = "threadId")]
     thread_id: String,
@@ -3301,6 +3310,17 @@ impl CodexNotificationStream {
             transport: CodexJsonTransport::start(command, args, endpoint)?,
             normalizer: CodexNotificationNormalizer::default(),
         })
+    }
+
+    pub fn resume_thread(&mut self, thread_id: &str) -> Result<(), String> {
+        self.transport
+            .request(
+                "thread/resume",
+                json!({
+                    "threadId": thread_id,
+                }),
+            )
+            .map(|_| ())
     }
 
     pub fn next_event(&mut self) -> Result<Option<BridgeEventEnvelope<Value>>, String> {
@@ -3326,7 +3346,11 @@ impl CodexNotificationStream {
 }
 
 impl CodexNotificationNormalizer {
-    fn normalize(&mut self, method: &str, params: &Value) -> Option<BridgeEventEnvelope<Value>> {
+    pub(crate) fn normalize(
+        &mut self,
+        method: &str,
+        params: &Value,
+    ) -> Option<BridgeEventEnvelope<Value>> {
         match method {
             "turn/started" => {
                 let notification: CodexTurnNotification =
@@ -3374,6 +3398,11 @@ impl CodexNotificationNormalizer {
                     serde_json::from_value(params.clone()).ok()?;
                 self.normalize_item_added(notification)
             }
+            "item/started" | "item/completed" => {
+                let notification: CodexItemLifecycleNotification =
+                    serde_json::from_value(params.clone()).ok()?;
+                self.normalize_item_lifecycle(notification)
+            }
             _ => parse_item_delta_method(method)
                 .and_then(|(item_type, target)| self.normalize_delta(params, item_type, target)),
         }
@@ -3383,22 +3412,40 @@ impl CodexNotificationNormalizer {
         &mut self,
         notification: CodexThreadRealtimeItemAddedNotification,
     ) -> Option<BridgeEventEnvelope<Value>> {
-        let item_id = notification
-            .item
-            .get("id")
-            .and_then(Value::as_str)?
-            .to_string();
-        let event_id = self.event_id_for_item(&notification.thread_id, &item_id);
-        self.items_by_event_id
-            .insert(event_id.clone(), notification.item.clone());
+        self.normalize_item_payload(notification.thread_id, None, notification.item)
+    }
 
-        let (kind, payload) = normalize_realtime_item_payload(&notification.item)?;
+    fn normalize_item_lifecycle(
+        &mut self,
+        notification: CodexItemLifecycleNotification,
+    ) -> Option<BridgeEventEnvelope<Value>> {
+        self.normalize_item_payload(
+            notification.thread_id,
+            notification.turn_id,
+            notification.item,
+        )
+    }
+
+    fn normalize_item_payload(
+        &mut self,
+        thread_id: String,
+        turn_id: Option<String>,
+        item: Value,
+    ) -> Option<BridgeEventEnvelope<Value>> {
+        let item_id = item.get("id").and_then(Value::as_str)?.to_string();
+        let event_id = turn_id
+            .map(|turn_id| format!("{turn_id}-{item_id}"))
+            .unwrap_or_else(|| self.event_id_for_item(&thread_id, &item_id));
+        self.items_by_event_id
+            .insert(event_id.clone(), item.clone());
+
+        let (kind, payload) = normalize_realtime_item_payload(&item)?;
         if !should_publish_live_payload(kind, &payload) {
             return None;
         }
         Some(build_timeline_event_envelope(
             event_id,
-            notification.thread_id,
+            thread_id,
             kind,
             current_timestamp_string(),
             payload,
@@ -4027,8 +4074,32 @@ fn normalize_codex_item_payload(
 ) -> Option<(BridgeEventKind, Value)> {
     let item_type = canonicalize_codex_item_type(item.get("type").and_then(Value::as_str)?);
     match item_type {
-        "userMessage" | "agentMessage" => Some((BridgeEventKind::MessageDelta, item.clone())),
-        "plan" => Some((BridgeEventKind::PlanDelta, item.clone())),
+        "userMessage" => Some((
+            BridgeEventKind::MessageDelta,
+            json!({
+                "id": item.get("id").and_then(Value::as_str).unwrap_or_default(),
+                "type": "userMessage",
+                "role": "user",
+                "text": extract_codex_message_text(item),
+            }),
+        )),
+        "agentMessage" => Some((
+            BridgeEventKind::MessageDelta,
+            json!({
+                "id": item.get("id").and_then(Value::as_str).unwrap_or_default(),
+                "type": "agentMessage",
+                "role": "assistant",
+                "text": extract_codex_message_text(item),
+            }),
+        )),
+        "plan" => Some((
+            BridgeEventKind::PlanDelta,
+            json!({
+                "id": item.get("id").and_then(Value::as_str).unwrap_or_default(),
+                "type": "plan",
+                "text": item.get("text").and_then(Value::as_str).unwrap_or_default(),
+            }),
+        )),
         "commandExecution" => {
             let mut payload = item.clone();
             if let Some(output) = item.get("aggregatedOutput").and_then(Value::as_str)
@@ -4045,6 +4116,25 @@ fn normalize_codex_item_payload(
         "functionCallOutput" | "customToolCallOutput" => normalize_codex_tool_output_item(item),
         _ => None,
     }
+}
+
+fn extract_codex_message_text(item: &Value) -> String {
+    if let Some(text) = item.get("text").and_then(Value::as_str) {
+        return text.to_string();
+    }
+
+    item.get("content")
+        .and_then(Value::as_array)
+        .map(|content| {
+            content
+                .iter()
+                .filter_map(|entry| entry.get("text").and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
 }
 
 fn canonicalize_codex_item_type(item_type: &str) -> &str {

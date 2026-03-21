@@ -119,11 +119,7 @@ class ThreadDetailState {
       gitStatus != null &&
       _isRepositoryContextResolvable(gitStatus!.repository);
 
-  bool get canRunGitMutations =>
-      canRunMutatingActions &&
-      hasGitRepositoryContext &&
-      !isGitStatusLoading &&
-      !isGitMutationInFlight;
+  bool get canRunGitMutations => false;
 
   bool get isTurnActive => thread?.status == ThreadStatus.running;
 
@@ -324,6 +320,33 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         context: 'loading thread detail',
       );
 
+      state = state.copyWith(
+        thread: scopedDetail,
+        isLoading: true,
+        isUnavailable: false,
+        clearErrorMessage: true,
+        clearStreamErrorMessage: true,
+        clearStaleMessage: true,
+        clearTurnControlError: true,
+        isShowingCachedData: false,
+        isConnectivityUnavailable: false,
+        hasMoreBefore: false,
+        clearNextBefore: true,
+        isLoadingEarlierHistory: false,
+        clearGitStatus: true,
+        isGitStatusLoading: false,
+        isGitMutationInFlight: false,
+        clearGitErrorMessage: true,
+        clearGitMutationMessage: true,
+        clearGitControlsUnavailableReason: false,
+        gitControlsUnavailableReason:
+            'Git controls are disabled in the rewrite backend.',
+        isOpenOnMacInFlight: false,
+        clearOpenOnMacMessage: true,
+        clearOpenOnMacErrorMessage: true,
+      );
+      _threadListController.syncThreadDetail(scopedDetail);
+
       final page = await _bridgeApi.fetchThreadTimelinePage(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
         threadId: requestedThreadId,
@@ -367,14 +390,13 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         isGitMutationInFlight: false,
         clearGitErrorMessage: true,
         clearGitMutationMessage: true,
-        clearGitControlsUnavailableReason: true,
+        clearGitControlsUnavailableReason: false,
+        gitControlsUnavailableReason:
+            'Git controls are disabled in the rewrite backend.',
         isOpenOnMacInFlight: false,
         clearOpenOnMacMessage: true,
         clearOpenOnMacErrorMessage: true,
       );
-
-      _threadListController.syncThreadDetail(scopedDetail);
-      await refreshGitStatus(showLoading: true);
       await _startLiveSubscription();
     } on ThreadDetailBridgeException catch (error) {
       if (_isDisposed) {
@@ -595,6 +617,25 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         context: 'running reconnect catch-up detail refresh',
       );
 
+      state = state.copyWith(
+        thread: scopedDetail,
+        clearErrorMessage: true,
+        clearStreamErrorMessage: true,
+        clearStaleMessage: true,
+        clearTurnControlError: true,
+        isShowingCachedData: false,
+        isConnectivityUnavailable: false,
+        clearGitStatus: true,
+        isGitStatusLoading: false,
+        isGitMutationInFlight: false,
+        clearGitErrorMessage: true,
+        clearGitMutationMessage: true,
+        clearGitControlsUnavailableReason: false,
+        gitControlsUnavailableReason:
+            'Git controls are disabled in the rewrite backend.',
+      );
+      _threadListController.syncThreadDetail(scopedDetail);
+
       final page = await _bridgeApi.fetchThreadTimelinePage(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
         threadId: requestedThreadId,
@@ -627,10 +668,16 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         isUnavailable: false,
         isShowingCachedData: false,
         isConnectivityUnavailable: false,
+        clearGitStatus: true,
+        isGitStatusLoading: false,
+        isGitMutationInFlight: false,
+        clearGitErrorMessage: true,
+        clearGitMutationMessage: true,
+        clearGitControlsUnavailableReason: false,
+        gitControlsUnavailableReason:
+            'Git controls are disabled in the rewrite backend.',
       );
 
-      _threadListController.syncThreadDetail(scopedDetail);
-      await refreshGitStatus(showLoading: false);
       await _startLiveSubscription();
     } on ThreadDetailBridgeException catch (error) {
       if (_isDisposed) {
@@ -840,29 +887,44 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
     if (event.kind == BridgeEventKind.threadStatusChanged) {
       _applyLifecycleStatusUpdate(event);
-    } else {
-      final thread = state.thread;
-      if (thread != null) {
-        _updateThreadStatus(
-          status: thread.status,
-          updatedAt: event.occurredAt,
-          lastTurnSummary: thread.lastTurnSummary,
-        );
-        _threadListController.applyThreadStatusUpdate(
-          threadId: event.threadId,
-          status: thread.status,
-          updatedAt: event.occurredAt,
-        );
-      }
     }
 
-    final nextItem = ThreadActivityItem.fromLiveEvent(event);
+    final mergedPayload = _mergeLivePayload(
+      existingIndex >= 0 ? state.items[existingIndex].payload : null,
+      event,
+    );
+    final mergedEvent = BridgeEventEnvelope<Map<String, dynamic>>(
+      contractVersion: event.contractVersion,
+      eventId: event.eventId,
+      threadId: event.threadId,
+      kind: event.kind,
+      occurredAt: event.occurredAt,
+      payload: mergedPayload,
+      annotations: event.annotations,
+    );
+    final nextItem = ThreadActivityItem.fromLiveEvent(mergedEvent);
     final nextItems = List<ThreadActivityItem>.from(state.items);
     if (existingIndex >= 0) {
       nextItems[existingIndex] = nextItem;
     } else {
       nextItems.add(nextItem);
-      _knownEventIds.add(event.eventId);
+    }
+
+    final thread = state.thread;
+    if (thread != null && event.kind != BridgeEventKind.threadStatusChanged) {
+      final nextSummary = nextItem.body.trim().isEmpty
+          ? thread.lastTurnSummary
+          : nextItem.body;
+      _updateThreadStatus(
+        status: thread.status,
+        updatedAt: event.occurredAt,
+        lastTurnSummary: nextSummary,
+      );
+      _threadListController.applyThreadStatusUpdate(
+        threadId: event.threadId,
+        status: thread.status,
+        updatedAt: event.occurredAt,
+      );
     }
 
     state = state.copyWith(items: nextItems, clearStreamErrorMessage: true);
@@ -918,8 +980,16 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     if (input.isEmpty) {
       state = state.copyWith(
         turnControlErrorMessage: state.isTurnActive
-            ? 'Enter steering instructions before sending.'
+            ? 'Steering active turns is disabled in the rewrite backend. Interrupt the turn or wait for it to finish before sending a new prompt.'
             : 'Enter a prompt to start a turn.',
+      );
+      return false;
+    }
+
+    if (state.isTurnActive) {
+      state = state.copyWith(
+        turnControlErrorMessage:
+            'Steering active turns is disabled in the rewrite backend. Interrupt the turn or wait for it to finish before sending a new prompt.',
       );
       return false;
     }
@@ -930,17 +1000,11 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     );
 
     try {
-      final mutationResult = state.isTurnActive
-          ? await _bridgeApi.steerTurn(
-              bridgeApiBaseUrl: _bridgeApiBaseUrl,
-              threadId: state.threadId,
-              instruction: input,
-            )
-          : await _bridgeApi.startTurn(
-              bridgeApiBaseUrl: _bridgeApiBaseUrl,
-              threadId: state.threadId,
-              prompt: input,
-            );
+      final mutationResult = await _bridgeApi.startTurn(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: state.threadId,
+        prompt: input,
+      );
 
       _applyTurnMutationResult(mutationResult);
       state = state.copyWith(
@@ -965,54 +1029,13 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   }
 
   Future<bool> openOnMac() async {
-    final thread = state.thread;
-    if (thread == null) {
-      return false;
-    }
-
-    if (!state.canRunMutatingActions) {
-      state = state.copyWith(
-        openOnMacErrorMessage:
-            'Open-on-Mac is unavailable while the bridge is offline.',
-        clearOpenOnMacMessage: true,
-      );
-      return false;
-    }
-
     state = state.copyWith(
-      isOpenOnMacInFlight: true,
+      isOpenOnMacInFlight: false,
+      openOnMacMessage: null,
+      openOnMacErrorMessage: 'Open-on-Mac is disabled in the rewrite backend.',
       clearOpenOnMacMessage: true,
-      clearOpenOnMacErrorMessage: true,
     );
-
-    try {
-      final result = await _bridgeApi.openOnMac(
-        bridgeApiBaseUrl: _bridgeApiBaseUrl,
-        threadId: state.threadId,
-      );
-
-      state = state.copyWith(
-        isOpenOnMacInFlight: false,
-        openOnMacMessage: result.message,
-        clearOpenOnMacErrorMessage: true,
-      );
-      return true;
-    } on ThreadOpenOnMacBridgeException catch (error) {
-      state = state.copyWith(
-        isOpenOnMacInFlight: false,
-        openOnMacErrorMessage: error.message,
-        clearOpenOnMacMessage: true,
-      );
-      return false;
-    } catch (_) {
-      state = state.copyWith(
-        isOpenOnMacInFlight: false,
-        openOnMacErrorMessage:
-            'Couldn’t open this thread in Codex.app right now.',
-        clearOpenOnMacMessage: true,
-      );
-      return false;
-    }
+    return false;
   }
 
   Future<bool> interruptActiveTurn() async {
@@ -1061,281 +1084,40 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   }
 
   Future<void> refreshGitStatus({bool showLoading = true}) async {
-    if (state.thread == null || state.isConnectivityUnavailable) {
-      state = state.copyWith(
-        clearGitStatus: true,
-        isGitStatusLoading: false,
-        isGitMutationInFlight: false,
-        clearGitErrorMessage: true,
-        clearGitMutationMessage: showLoading,
-        gitControlsUnavailableReason: state.isConnectivityUnavailable
-            ? 'Git controls are unavailable while reconnecting to the private route.'
-            : 'Git status is unavailable until thread context loads.',
-      );
-      return;
-    }
-
-    if (showLoading) {
-      state = state.copyWith(
-        isGitStatusLoading: true,
-        clearGitErrorMessage: true,
-        clearGitControlsUnavailableReason: true,
-      );
-    }
-
-    try {
-      final gitStatus = await _bridgeApi.fetchGitStatus(
-        bridgeApiBaseUrl: _bridgeApiBaseUrl,
-        threadId: state.threadId,
-      );
-
-      _syncThreadWithRepositoryContext(gitStatus.repository);
-
-      state = state.copyWith(
-        gitStatus: gitStatus,
-        isGitStatusLoading: false,
-        clearGitErrorMessage: showLoading,
-        clearGitControlsUnavailableReason: true,
-      );
-
-      if (!_isRepositoryContextResolvable(gitStatus.repository)) {
-        state = state.copyWith(
-          gitControlsUnavailableReason:
-              'Git controls are unavailable because this thread has no repository context.',
-        );
-      }
-    } on ThreadGitBridgeException catch (error) {
-      state = state.copyWith(
-        clearGitStatus: true,
-        isGitStatusLoading: false,
-        gitErrorMessage: error.message,
-        gitControlsUnavailableReason:
-            error.statusCode == 404 || error.code == 'not_found'
-            ? 'Git controls are unavailable because this thread is not in a repository context.'
-            : null,
-      );
-    } catch (_) {
-      state = state.copyWith(
-        clearGitStatus: true,
-        isGitStatusLoading: false,
-        gitErrorMessage: 'Couldn’t load git status right now.',
-      );
-    }
+    state = state.copyWith(
+      clearGitStatus: true,
+      isGitStatusLoading: false,
+      isGitMutationInFlight: false,
+      clearGitErrorMessage: true,
+      clearGitMutationMessage: showLoading,
+      clearGitControlsUnavailableReason: false,
+      gitControlsUnavailableReason:
+          'Git controls are disabled in the rewrite backend.',
+    );
   }
 
   Future<bool> switchBranch(String rawBranch) async {
-    final thread = state.thread;
-    if (thread == null) {
-      return false;
-    }
-
-    if (!state.canRunMutatingActions) {
-      state = state.copyWith(
-        gitErrorMessage:
-            'Git controls are unavailable while the bridge is offline.',
-      );
-      return false;
-    }
-
-    final branch = rawBranch.trim();
-    if (branch.isEmpty) {
-      state = state.copyWith(
-        gitErrorMessage:
-            'Bad request (client validation): branch name cannot be blank.',
-        clearGitMutationMessage: true,
-      );
-      return false;
-    }
-
-    if (!state.hasGitRepositoryContext) {
-      state = state.copyWith(
-        gitErrorMessage:
-            'Git controls are unavailable because this thread has no repository context.',
-        clearGitMutationMessage: true,
-      );
-      return false;
-    }
-
     state = state.copyWith(
-      isGitMutationInFlight: true,
-      clearGitErrorMessage: true,
+      gitErrorMessage: 'Git controls are disabled in the rewrite backend.',
       clearGitMutationMessage: true,
     );
-
-    try {
-      final mutationResult = await _bridgeApi.switchBranch(
-        bridgeApiBaseUrl: _bridgeApiBaseUrl,
-        threadId: state.threadId,
-        branch: branch,
-      );
-
-      _applyGitMutationResult(mutationResult);
-      state = state.copyWith(
-        isGitMutationInFlight: false,
-        gitMutationMessage: mutationResult.message,
-        clearGitErrorMessage: true,
-      );
-      await refreshGitStatus(showLoading: false);
-      return true;
-    } on ThreadGitApprovalRequiredException catch (error) {
-      _applyGitApprovalRequired(error);
-      state = state.copyWith(
-        isGitMutationInFlight: false,
-        clearGitErrorMessage: true,
-      );
-      await refreshGitStatus(showLoading: false);
-      return true;
-    } on ThreadGitMutationBridgeException catch (error) {
-      state = state.copyWith(
-        isGitMutationInFlight: false,
-        gitErrorMessage: error.message,
-        clearGitMutationMessage: true,
-      );
-      await refreshGitStatus(showLoading: false);
-      return false;
-    } catch (_) {
-      state = state.copyWith(
-        isGitMutationInFlight: false,
-        gitErrorMessage: 'Couldn’t switch branch right now.',
-        clearGitMutationMessage: true,
-      );
-      await refreshGitStatus(showLoading: false);
-      return false;
-    }
+    return false;
   }
 
   Future<bool> pullRepository() async {
-    if (!state.canRunMutatingActions) {
-      state = state.copyWith(
-        gitErrorMessage:
-            'Git controls are unavailable while the bridge is offline.',
-      );
-      return false;
-    }
-
-    final repository = state.gitStatus?.repository;
-    if (repository == null || !_isRepositoryContextResolvable(repository)) {
-      state = state.copyWith(
-        gitErrorMessage:
-            'Git controls are unavailable because this thread has no repository context.',
-        clearGitMutationMessage: true,
-      );
-      return false;
-    }
-
     state = state.copyWith(
-      isGitMutationInFlight: true,
-      clearGitErrorMessage: true,
+      gitErrorMessage: 'Git controls are disabled in the rewrite backend.',
       clearGitMutationMessage: true,
     );
-
-    try {
-      final mutationResult = await _bridgeApi.pullRepository(
-        bridgeApiBaseUrl: _bridgeApiBaseUrl,
-        threadId: state.threadId,
-        remote: repository.remote,
-      );
-
-      _applyGitMutationResult(mutationResult);
-      state = state.copyWith(
-        isGitMutationInFlight: false,
-        gitMutationMessage: mutationResult.message,
-        clearGitErrorMessage: true,
-      );
-      await refreshGitStatus(showLoading: false);
-      return true;
-    } on ThreadGitApprovalRequiredException catch (error) {
-      _applyGitApprovalRequired(error);
-      state = state.copyWith(
-        isGitMutationInFlight: false,
-        clearGitErrorMessage: true,
-      );
-      await refreshGitStatus(showLoading: false);
-      return true;
-    } on ThreadGitMutationBridgeException catch (error) {
-      state = state.copyWith(
-        isGitMutationInFlight: false,
-        gitErrorMessage: error.message,
-        clearGitMutationMessage: true,
-      );
-      await refreshGitStatus(showLoading: false);
-      return false;
-    } catch (_) {
-      state = state.copyWith(
-        isGitMutationInFlight: false,
-        gitErrorMessage: 'Couldn’t run pull right now.',
-        clearGitMutationMessage: true,
-      );
-      await refreshGitStatus(showLoading: false);
-      return false;
-    }
+    return false;
   }
 
   Future<bool> pushRepository() async {
-    if (!state.canRunMutatingActions) {
-      state = state.copyWith(
-        gitErrorMessage:
-            'Git controls are unavailable while the bridge is offline.',
-      );
-      return false;
-    }
-
-    final repository = state.gitStatus?.repository;
-    if (repository == null || !_isRepositoryContextResolvable(repository)) {
-      state = state.copyWith(
-        gitErrorMessage:
-            'Git controls are unavailable because this thread has no repository context.',
-        clearGitMutationMessage: true,
-      );
-      return false;
-    }
-
     state = state.copyWith(
-      isGitMutationInFlight: true,
-      clearGitErrorMessage: true,
+      gitErrorMessage: 'Git controls are disabled in the rewrite backend.',
       clearGitMutationMessage: true,
     );
-
-    try {
-      final mutationResult = await _bridgeApi.pushRepository(
-        bridgeApiBaseUrl: _bridgeApiBaseUrl,
-        threadId: state.threadId,
-        remote: repository.remote,
-      );
-
-      _applyGitMutationResult(mutationResult);
-      state = state.copyWith(
-        isGitMutationInFlight: false,
-        gitMutationMessage: mutationResult.message,
-        clearGitErrorMessage: true,
-      );
-      await refreshGitStatus(showLoading: false);
-      return true;
-    } on ThreadGitApprovalRequiredException catch (error) {
-      _applyGitApprovalRequired(error);
-      state = state.copyWith(
-        isGitMutationInFlight: false,
-        clearGitErrorMessage: true,
-      );
-      await refreshGitStatus(showLoading: false);
-      return true;
-    } on ThreadGitMutationBridgeException catch (error) {
-      state = state.copyWith(
-        isGitMutationInFlight: false,
-        gitErrorMessage: error.message,
-        clearGitMutationMessage: true,
-      );
-      await refreshGitStatus(showLoading: false);
-      return false;
-    } catch (_) {
-      state = state.copyWith(
-        isGitMutationInFlight: false,
-        gitErrorMessage: 'Couldn’t run push right now.',
-        clearGitMutationMessage: true,
-      );
-      await refreshGitStatus(showLoading: false);
-      return false;
-    }
+    return false;
   }
 
   void _applyTurnMutationResult(TurnMutationResult mutationResult) {
@@ -1355,76 +1137,6 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       status: mutationResult.threadStatus,
       updatedAt: updatedAt,
     );
-  }
-
-  void _applyGitMutationResult(MutationResultResponseDto mutationResult) {
-    state = state.copyWith(
-      gitStatus: GitStatusResponseDto(
-        contractVersion: mutationResult.contractVersion,
-        threadId: mutationResult.threadId,
-        repository: mutationResult.repository,
-        status: mutationResult.status,
-      ),
-      clearGitControlsUnavailableReason: true,
-    );
-
-    _syncThreadWithRepositoryContext(
-      mutationResult.repository,
-      status: mutationResult.threadStatus,
-      updatedAt: DateTime.now().toUtc().toIso8601String(),
-      lastTurnSummary: mutationResult.message,
-    );
-  }
-
-  void _applyGitApprovalRequired(ThreadGitApprovalRequiredException gate) {
-    final approval = gate.approval;
-    state = state.copyWith(
-      gitStatus: GitStatusResponseDto(
-        contractVersion: approval.contractVersion,
-        threadId: approval.threadId,
-        repository: approval.repository,
-        status: approval.gitStatus,
-      ),
-      gitMutationMessage: _pendingGitApprovalMessage(approval),
-      clearGitErrorMessage: true,
-      clearGitControlsUnavailableReason: true,
-    );
-
-    _syncThreadWithRepositoryContext(approval.repository);
-  }
-
-  void _syncThreadWithRepositoryContext(
-    RepositoryContextDto repositoryContext, {
-    ThreadStatus? status,
-    String? updatedAt,
-    String? lastTurnSummary,
-  }) {
-    final thread = state.thread;
-    if (thread == null) {
-      return;
-    }
-
-    final resolvedStatus = status ?? thread.status;
-    final resolvedUpdatedAt = updatedAt ?? thread.updatedAt;
-    final resolvedLastTurnSummary = lastTurnSummary ?? thread.lastTurnSummary;
-
-    final updatedThread = ThreadDetailDto(
-      contractVersion: thread.contractVersion,
-      threadId: thread.threadId,
-      title: thread.title,
-      status: resolvedStatus,
-      workspace: repositoryContext.workspace,
-      repository: repositoryContext.repository,
-      branch: repositoryContext.branch,
-      createdAt: thread.createdAt,
-      updatedAt: resolvedUpdatedAt,
-      source: thread.source,
-      accessMode: thread.accessMode,
-      lastTurnSummary: resolvedLastTurnSummary,
-    );
-
-    state = state.copyWith(thread: updatedThread);
-    _threadListController.syncThreadDetail(updatedThread);
   }
 
   void _updateThreadStatus({
@@ -1455,6 +1167,65 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     );
   }
 
+  Map<String, dynamic> _mergeLivePayload(
+    Map<String, dynamic>? currentPayload,
+    BridgeEventEnvelope<Map<String, dynamic>> event,
+  ) {
+    final payload = Map<String, dynamic>.from(currentPayload ?? const {});
+    payload.addAll(event.payload);
+
+    switch (event.kind) {
+      case BridgeEventKind.messageDelta:
+        _mergeIncrementalField(payload, 'text');
+        payload['type'] = payload['type'] ?? 'message';
+        break;
+      case BridgeEventKind.planDelta:
+        _mergeIncrementalField(payload, 'text');
+        payload['type'] = payload['type'] ?? 'plan';
+        break;
+      case BridgeEventKind.commandDelta:
+        _mergeIncrementalField(payload, 'output');
+        payload['output'] ??= payload['aggregatedOutput'];
+        payload['aggregatedOutput'] = payload['output'];
+        payload['type'] = payload['type'] ?? 'command';
+        break;
+      case BridgeEventKind.fileChange:
+        _mergeIncrementalField(payload, 'resolved_unified_diff');
+        payload['resolved_unified_diff'] ??= payload['output'];
+        payload['type'] = payload['type'] ?? 'file_change';
+        break;
+      case BridgeEventKind.threadStatusChanged:
+      case BridgeEventKind.approvalRequested:
+      case BridgeEventKind.securityAudit:
+        break;
+    }
+
+    return payload;
+  }
+
+  void _mergeIncrementalField(
+    Map<String, dynamic> payload,
+    String canonicalField,
+  ) {
+    final replace = payload['replace'] == true;
+    final delta = payload['delta'];
+    final nextDelta = delta is String ? delta : '';
+    final existingValue = payload[canonicalField];
+    final existingText = existingValue is String ? existingValue : '';
+
+    if (nextDelta.isEmpty) {
+      if (existingText.isEmpty) {
+        final fallback = payload['text'];
+        if (fallback is String && fallback.isNotEmpty) {
+          payload[canonicalField] = fallback;
+        }
+      }
+      return;
+    }
+
+    payload[canonicalField] = replace ? nextDelta : '$existingText$nextDelta';
+  }
+
   Future<void> _closeLiveSubscription() async {
     await _liveEventSubscription?.cancel();
     _liveEventSubscription = null;
@@ -1478,19 +1249,6 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     _reconnectTimer?.cancel();
     unawaited(_closeLiveSubscription());
     super.dispose();
-  }
-}
-
-String _pendingGitApprovalMessage(ApprovalRecordDto approval) {
-  switch (approval.action) {
-    case 'git_branch_switch':
-      return 'Branch switch to ${approval.target} is pending approval for ${approval.repository.repository} (current branch: ${approval.repository.branch}).';
-    case 'git_pull':
-      return 'Pull from ${approval.target} is pending approval for ${approval.repository.repository} on ${approval.repository.branch}.';
-    case 'git_push':
-      return 'Push to ${approval.target} is pending approval for ${approval.repository.repository} on ${approval.repository.branch}.';
-    default:
-      return 'Action is pending approval: ${approval.action} (${approval.target}).';
   }
 }
 
