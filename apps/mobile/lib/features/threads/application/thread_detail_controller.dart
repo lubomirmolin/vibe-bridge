@@ -6,6 +6,7 @@ import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridg
 import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
 import 'package:codex_mobile_companion/features/threads/domain/thread_activity_item.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final threadDetailControllerProvider = StateNotifierProvider.autoDispose
@@ -250,11 +251,13 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     required ThreadDetailBridgeApi bridgeApi,
     required ThreadLiveStream liveStream,
     required ThreadListController threadListController,
+    void Function(String message)? debugLog,
   }) : _bridgeApiBaseUrl = bridgeApiBaseUrl,
        _initialVisibleTimelineEntries = initialVisibleTimelineEntries,
        _bridgeApi = bridgeApi,
        _liveStream = liveStream,
        _threadListController = threadListController,
+       _debugLog = debugLog ?? _defaultDebugLog,
        super(ThreadDetailState(threadId: threadId)) {
     loadThread();
   }
@@ -264,6 +267,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   final ThreadDetailBridgeApi _bridgeApi;
   final ThreadLiveStream _liveStream;
   final ThreadListController _threadListController;
+  final void Function(String message) _debugLog;
   final Set<String> _knownEventIds = <String>{};
 
   ThreadLiveSubscription? _liveSubscription;
@@ -272,6 +276,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   Timer? _reconnectTimer;
   bool _isReconnectInProgress = false;
   bool _isDisposed = false;
+  DateTime? _pendingPromptSubmittedAt;
 
   Future<void> loadThread() async {
     if (_isDisposed) {
@@ -903,6 +908,12 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       annotations: event.annotations,
     );
     final nextItem = ThreadActivityItem.fromLiveEvent(mergedEvent);
+    _logLiveEvent(
+      event: event,
+      mergedPayload: mergedPayload,
+      nextItem: nextItem,
+    );
+    _logPromptResponseIfNeeded(event: event, nextItem: nextItem);
     final nextItems = List<ThreadActivityItem>.from(state.items);
     if (existingIndex >= 0) {
       nextItems[existingIndex] = nextItem;
@@ -1006,6 +1017,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         prompt: input,
       );
 
+      _pendingPromptSubmittedAt = DateTime.now();
       _applyTurnMutationResult(mutationResult);
       state = state.copyWith(
         isComposerMutationInFlight: false,
@@ -1165,6 +1177,69 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         lastTurnSummary: lastTurnSummary,
       ),
     );
+
+    if (status != ThreadStatus.running) {
+      _pendingPromptSubmittedAt = null;
+    }
+  }
+
+  void _logPromptResponseIfNeeded({
+    required BridgeEventEnvelope<Map<String, dynamic>> event,
+    required ThreadActivityItem nextItem,
+  }) {
+    final submittedAt = _pendingPromptSubmittedAt;
+    if (submittedAt == null) {
+      return;
+    }
+    if (event.kind != BridgeEventKind.messageDelta) {
+      return;
+    }
+    if (nextItem.type != ThreadActivityItemType.assistantOutput) {
+      return;
+    }
+
+    final visibleText = nextItem.body.trim();
+    if (visibleText.isEmpty) {
+      return;
+    }
+
+    final elapsedMs = DateTime.now().difference(submittedAt).inMilliseconds;
+    _debugLog(
+      'thread_detail_response_received '
+      'threadId=${state.threadId} '
+      'eventId=${event.eventId} '
+      'elapsedMs=$elapsedMs '
+      'chars=${visibleText.length}',
+    );
+    _pendingPromptSubmittedAt = null;
+  }
+
+  void _logLiveEvent({
+    required BridgeEventEnvelope<Map<String, dynamic>> event,
+    required Map<String, dynamic> mergedPayload,
+    required ThreadActivityItem nextItem,
+  }) {
+    if (event.kind != BridgeEventKind.messageDelta) {
+      return;
+    }
+
+    final delta = event.payload['delta'];
+    final mergedTextValue = mergedPayload['text'];
+    final deltaLength = delta is String ? delta.length : 0;
+    final mergedTextLength = mergedTextValue is String
+        ? mergedTextValue.length
+        : 0;
+    final renderedBodyLength = nextItem.body.length;
+    _debugLog(
+      'thread_detail_live_event '
+      'threadId=${state.threadId} '
+      'eventId=${event.eventId} '
+      'kind=${event.kind.wireValue} '
+      'deltaChars=$deltaLength '
+      'mergedTextChars=$mergedTextLength '
+      'renderedBodyChars=$renderedBodyLength '
+      'replace=${event.payload['replace'] == true}',
+    );
   }
 
   Map<String, dynamic> _mergeLivePayload(
@@ -1176,20 +1251,24 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
     switch (event.kind) {
       case BridgeEventKind.messageDelta:
+        payload['replace'] = event.payload['replace'] == true;
         _mergeIncrementalField(payload, 'text');
         payload['type'] = payload['type'] ?? 'message';
         break;
       case BridgeEventKind.planDelta:
+        payload['replace'] = event.payload['replace'] == true;
         _mergeIncrementalField(payload, 'text');
         payload['type'] = payload['type'] ?? 'plan';
         break;
       case BridgeEventKind.commandDelta:
+        payload['replace'] = event.payload['replace'] == true;
         _mergeIncrementalField(payload, 'output');
         payload['output'] ??= payload['aggregatedOutput'];
         payload['aggregatedOutput'] = payload['output'];
         payload['type'] = payload['type'] ?? 'command';
         break;
       case BridgeEventKind.fileChange:
+        payload['replace'] = event.payload['replace'] == true;
         _mergeIncrementalField(payload, 'resolved_unified_diff');
         payload['resolved_unified_diff'] ??= payload['output'];
         payload['type'] = payload['type'] ?? 'file_change';
@@ -1241,6 +1320,10 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     } catch (_) {
       // Ignore teardown failures from already-closed sockets/streams.
     }
+  }
+
+  static void _defaultDebugLog(String message) {
+    debugPrint(message);
   }
 
   @override

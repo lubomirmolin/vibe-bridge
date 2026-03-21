@@ -16,6 +16,8 @@ struct BridgeShellAPIClient: ShellBridgeClient {
 
     func fetchHealth() async throws -> BridgeHealthResponseDTO {
         let bootstrap: RewriteBootstrapDTO = try await fetch(path: "/bootstrap", method: "GET")
+        let pairingRoute: BridgePairingRouteHealthDTO = try await fetch(path: "/pairing/route", method: "GET")
+        let trust: BridgeTrustStatusDTO = try await fetch(path: "/pairing/trust", method: "GET")
         return BridgeHealthResponseDTO(
             status: bootstrap.bridge.status == "healthy" ? "ok" : "degraded",
             runtime: BridgeRuntimeSnapshotDTO(
@@ -25,16 +27,16 @@ struct BridgeShellAPIClient: ShellBridgeClient {
                 pid: nil,
                 detail: bootstrap.codex.message ?? "Rewrite bridge is running."
             ),
-            pairingRoute: BridgePairingRouteHealthDTO(
-                reachable: bootstrap.bridge.status == "healthy",
-                advertisedBaseURL: nil,
-                message: bootstrap.bridge.message
-            ),
-            trust: nil,
+            pairingRoute: pairingRoute,
+            trust: trust,
             api: BridgeAPISurfaceDTO(
                 endpoints: [
                     "GET /healthz",
                     "GET /bootstrap",
+                    "GET /pairing/session",
+                    "POST /pairing/finalize",
+                    "POST /pairing/handshake",
+                    "POST /pairing/trust/revoke",
                     "GET /threads",
                     "GET /threads/:thread_id/snapshot",
                     "GET /threads/:thread_id/history",
@@ -56,15 +58,25 @@ struct BridgeShellAPIClient: ShellBridgeClient {
     }
 
     func fetchPairingSession() async throws -> PairingSessionResponseDTO {
-        throw BridgeShellAPIClientError.unsupported(
-            "Pairing QR is not exposed by the rewrite backend yet."
-        )
+        try await fetch(path: "/pairing/session", method: "GET")
     }
 
     func revokeTrust(phoneID: String?) async throws -> PairingRevokeResponseDTO {
-        throw BridgeShellAPIClientError.unsupported(
-            "Trust revocation is not exposed by the rewrite backend yet."
+        var components = URLComponents(
+            url: apiBaseURL.appending(path: "/pairing/trust/revoke"),
+            resolvingAgainstBaseURL: false
         )
+        var queryItems = [URLQueryItem(name: "actor", value: "desktop-shell")]
+        if let phoneID, !phoneID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            queryItems.append(URLQueryItem(name: "phone_id", value: phoneID))
+        }
+        components?.queryItems = queryItems
+
+        guard let url = components?.url else {
+            throw BridgeShellAPIClientError.invalidResponse
+        }
+
+        return try await fetch(url: url, method: "POST")
     }
 
     private func fetch<T: Decodable>(path: String, method: String) async throws -> T {

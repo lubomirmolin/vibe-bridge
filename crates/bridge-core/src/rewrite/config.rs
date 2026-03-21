@@ -1,4 +1,7 @@
+use std::path::PathBuf;
+
 use crate::codex_runtime::CodexRuntimeMode;
+use crate::rewrite::pairing_route::{PairingRouteState, resolve_pairing_route_contract};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RewriteCodexConfig {
@@ -23,6 +26,8 @@ impl Default for RewriteCodexConfig {
 pub struct RewriteConfig {
     pub host: String,
     pub port: u16,
+    pub state_directory: PathBuf,
+    pub pairing_route: PairingRouteState,
     pub codex: RewriteCodexConfig,
 }
 
@@ -36,11 +41,14 @@ impl RewriteConfig {
             .ok()
             .and_then(|value| value.parse::<u16>().ok())
             .unwrap_or(3210);
+        let mut admin_port = 3211_u16;
+        let mut state_directory = PathBuf::from(".");
         let mut codex_mode = CodexRuntimeMode::Auto;
         let mut codex_endpoint = Some("ws://127.0.0.1:4222".to_string());
         let mut codex_command = "codex".to_string();
         let mut codex_args = vec!["app-server".to_string()];
         let mut codex_args_overridden = false;
+        let mut pairing_base_url: Option<String> = None;
 
         let mut iter = args.into_iter();
         while let Some(arg) = iter.next() {
@@ -57,6 +65,24 @@ impl RewriteConfig {
                     port = value
                         .parse::<u16>()
                         .map_err(|_| format!("invalid --port value: {value}"))?;
+                }
+                "--admin-port" => {
+                    let value = iter
+                        .next()
+                        .ok_or_else(|| "--admin-port requires a value".to_string())?;
+                    admin_port = value
+                        .parse::<u16>()
+                        .map_err(|_| format!("invalid --admin-port value: {value}"))?;
+                }
+                "--state-directory" => {
+                    let value = iter
+                        .next()
+                        .ok_or_else(|| "--state-directory requires a value".to_string())?;
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        return Err("invalid --state-directory value: path is empty".to_string());
+                    }
+                    state_directory = PathBuf::from(trimmed);
                 }
                 "--codex-mode" => {
                     let value = iter
@@ -85,7 +111,20 @@ impl RewriteConfig {
                     }
                     codex_args.push(value);
                 }
-                _ => {}
+                "--pairing-base-url" => {
+                    pairing_base_url = Some(
+                        iter.next()
+                            .ok_or_else(|| "--pairing-base-url requires a value".to_string())?
+                            .trim()
+                            .to_string(),
+                    );
+                }
+                "--help" | "-h" => {
+                    return Err(
+                        "usage: bridge-server-next [--host <ip-or-hostname>] [--port <u16>] [--admin-port <u16>] [--state-directory <path>] [--pairing-base-url <https://bridge.ts.net>] [--codex-mode <auto|spawn|attach>] [--codex-endpoint <ws-url>] [--codex-command <binary>] [--codex-arg <arg>]".to_string()
+                    );
+                }
+                _ => return Err(format!("unknown argument: {arg}")),
             }
         }
 
@@ -93,9 +132,20 @@ impl RewriteConfig {
             return Err("--codex-endpoint is required when --codex-mode attach".to_string());
         }
 
+        let pairing_route_contract = resolve_pairing_route_contract(port, pairing_base_url)?;
+        let _ = admin_port;
+
         Ok(Self {
             host,
             port,
+            state_directory,
+            pairing_route: PairingRouteState::new(
+                pairing_route_contract.pairing_base_url,
+                pairing_route_contract.reachable,
+                pairing_route_contract.message,
+                port,
+                pairing_route_contract.requires_runtime_serve_check,
+            ),
             codex: RewriteCodexConfig {
                 mode: codex_mode,
                 endpoint: codex_endpoint,
@@ -108,6 +158,8 @@ impl RewriteConfig {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::RewriteConfig;
 
     #[test]
@@ -128,6 +180,7 @@ mod tests {
 
         assert_eq!(config.host, "0.0.0.0");
         assert_eq!(config.port, 3115);
+        assert_eq!(config.state_directory, PathBuf::from("."));
         assert_eq!(
             config.codex.mode,
             crate::codex_runtime::CodexRuntimeMode::Spawn

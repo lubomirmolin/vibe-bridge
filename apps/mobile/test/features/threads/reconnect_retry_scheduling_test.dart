@@ -143,6 +143,192 @@ void main() {
       );
     },
   );
+
+  test(
+    'thread-detail logs when the first assistant message arrives after submit',
+    () async {
+      final listController = ThreadListController(
+        bridgeApi: ScriptedThreadListBridgeApi(
+          scriptedResults: [
+            _threadSummaries(
+              reconnectThreadStatus: ThreadStatus.idle,
+              reconnectUpdatedAt: '2026-03-18T09:30:00Z',
+            ),
+          ],
+        ),
+        cacheRepository: _newCacheRepository(),
+        liveStream: ScriptedThreadLiveStream(),
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+      );
+      addTearDown(listController.dispose);
+
+      final detailApi = ScriptedThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.idle,
+              workspace: '/workspace/codex-mobile-companion',
+              repository: 'codex-mobile-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:00:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Normalize event payloads',
+            ),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+      );
+      final liveStream = ScriptedThreadLiveStream();
+      final logs = <String>[];
+
+      final detailController = ThreadDetailController(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: 'thread-123',
+        initialVisibleTimelineEntries: 20,
+        bridgeApi: detailApi,
+        liveStream: liveStream,
+        threadListController: listController,
+        debugLog: logs.add,
+      );
+      addTearDown(detailController.dispose);
+
+      await _waitUntil(() => !detailController.state.isLoading);
+
+      final submitted = await detailController.submitComposerInput(
+        'Log when the assistant replies.',
+      );
+      expect(submitted, isTrue);
+
+      liveStream.emit(
+        BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-assistant-1',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:04:00Z',
+          payload: {'delta': 'Here is the first streamed reply chunk.'},
+        ),
+      );
+
+      await _waitUntil(
+        () => logs.any(
+          (entry) => entry.contains('thread_detail_response_received'),
+        ),
+      );
+
+      final responseLogs = logs
+          .where((entry) => entry.contains('thread_detail_response_received'))
+          .toList(growable: false);
+      expect(responseLogs, hasLength(1));
+      expect(responseLogs.single, contains('threadId=thread-123'));
+      expect(responseLogs.single, contains('eventId=evt-assistant-1'));
+      expect(responseLogs.single, contains('elapsedMs='));
+      expect(responseLogs.single, contains('chars=39'));
+    },
+  );
+
+  test(
+    'thread-detail keeps the accumulated assistant message body during live deltas',
+    () async {
+      final listController = ThreadListController(
+        bridgeApi: ScriptedThreadListBridgeApi(
+          scriptedResults: [
+            _threadSummaries(
+              reconnectThreadStatus: ThreadStatus.idle,
+              reconnectUpdatedAt: '2026-03-18T09:30:00Z',
+            ),
+          ],
+        ),
+        cacheRepository: _newCacheRepository(),
+        liveStream: ScriptedThreadLiveStream(),
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+      );
+      addTearDown(listController.dispose);
+
+      final detailApi = ScriptedThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.idle,
+              workspace: '/workspace/codex-mobile-companion',
+              repository: 'codex-mobile-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:00:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Normalize event payloads',
+            ),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+      );
+      final liveStream = ScriptedThreadLiveStream();
+      final logs = <String>[];
+
+      final detailController = ThreadDetailController(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: 'thread-123',
+        initialVisibleTimelineEntries: 20,
+        bridgeApi: detailApi,
+        liveStream: liveStream,
+        threadListController: listController,
+        debugLog: logs.add,
+      );
+      addTearDown(detailController.dispose);
+
+      await _waitUntil(() => !detailController.state.isLoading);
+      await _waitUntil(() => liveStream.totalSubscriptions >= 1);
+
+      liveStream.emit(
+        BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-assistant-1',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:04:00Z',
+          payload: {'delta': 'Hello', 'replace': true},
+        ),
+      );
+      await _waitUntil(() => detailController.state.items.isNotEmpty);
+
+      liveStream.emit(
+        BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-assistant-1',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:04:01Z',
+          payload: {'delta': ' there.'},
+        ),
+      );
+
+      await _waitUntil(
+        () =>
+            detailController.state.items.length == 1 &&
+            detailController.state.items.single.body == 'Hello there.',
+      );
+
+      expect(detailController.state.items, hasLength(1));
+      expect(detailController.state.items.single.body, 'Hello there.');
+      expect(
+        logs.where((entry) => entry.contains('thread_detail_live_event')),
+        hasLength(2),
+      );
+    },
+  );
 }
 
 Future<void> _waitUntil(
@@ -380,7 +566,16 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String threadId,
     required String prompt,
   }) {
-    throw UnimplementedError();
+    return Future<TurnMutationResult>.value(
+      TurnMutationResult(
+        contractVersion: contractVersion,
+        threadId: threadId,
+        operation: 'turn_start',
+        outcome: 'accepted',
+        threadStatus: ThreadStatus.running,
+        message: 'Turn started and streaming is active',
+      ),
+    );
   }
 
   @override
@@ -487,6 +682,17 @@ class ScriptedThreadLiveStream implements ThreadLiveStream {
         >.from(_controllers)) {
       if (!controller.isClosed) {
         controller.addError(StateError('stream disconnected'));
+      }
+    }
+  }
+
+  void emit(BridgeEventEnvelope<Map<String, dynamic>> event) {
+    for (final controller
+        in List<
+          StreamController<BridgeEventEnvelope<Map<String, dynamic>>>
+        >.from(_controllers)) {
+      if (!controller.isClosed) {
+        controller.add(event);
       }
     }
   }

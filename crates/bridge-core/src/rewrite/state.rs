@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -11,9 +12,15 @@ use shared_contracts::{
 use tokio::sync::RwLock;
 use tokio::time::{Duration, sleep};
 
-use crate::rewrite::config::RewriteCodexConfig;
+use crate::pairing::{
+    PairingFinalizeError, PairingFinalizeRequest, PairingFinalizeResponse, PairingHandshakeError,
+    PairingHandshakeRequest, PairingHandshakeResponse, PairingRevokeRequest, PairingRevokeResponse,
+    PairingSessionResponse, PairingSessionService, PairingTrustSnapshot,
+};
+use crate::rewrite::config::{RewriteCodexConfig, RewriteConfig};
 use crate::rewrite::events::EventHub;
 use crate::rewrite::gateway::CodexGateway;
+use crate::rewrite::pairing_route::{PairingRouteHealth, PairingRouteState};
 use crate::rewrite::projection::ProjectionStore;
 
 #[derive(Debug, Clone)]
@@ -28,10 +35,16 @@ struct RewriteAppStateInner {
     active_turn_ids: RwLock<HashMap<String, String>>,
     gateway: CodexGateway,
     event_hub: EventHub,
+    pairing_sessions: Mutex<PairingSessionService>,
+    pairing_route: PairingRouteState,
 }
 
 impl RewriteAppState {
-    pub fn new(config: RewriteCodexConfig) -> Self {
+    pub fn new(
+        config: RewriteCodexConfig,
+        pairing_sessions: PairingSessionService,
+        pairing_route: PairingRouteState,
+    ) -> Self {
         Self {
             inner: Arc::new(RewriteAppStateInner {
                 projections: ProjectionStore::new(),
@@ -42,12 +55,20 @@ impl RewriteAppState {
                 active_turn_ids: RwLock::new(HashMap::new()),
                 gateway: CodexGateway::new(config),
                 event_hub: EventHub::new(512),
+                pairing_sessions: Mutex::new(pairing_sessions),
+                pairing_route,
             }),
         }
     }
 
-    pub async fn from_codex_bootstrap(config: RewriteCodexConfig) -> Self {
-        let state = Self::new(config);
+    pub async fn from_config(config: RewriteConfig) -> Self {
+        let pairing_sessions = PairingSessionService::new(
+            config.host.as_str(),
+            config.port,
+            config.pairing_route.pairing_base_url().to_string(),
+            config.state_directory.clone(),
+        );
+        let state = Self::new(config.codex, pairing_sessions, config.pairing_route);
 
         match state.inner.gateway.bootstrap().await {
             Ok(bootstrap) => {
@@ -73,6 +94,56 @@ impl RewriteAppState {
         }
 
         state
+    }
+
+    pub fn pairing_route_health(&self) -> PairingRouteHealth {
+        self.inner.pairing_route.health()
+    }
+
+    pub fn trust_snapshot(&self) -> PairingTrustSnapshot {
+        self.inner
+            .pairing_sessions
+            .lock()
+            .expect("pairing sessions lock should not be poisoned")
+            .trust_snapshot()
+    }
+
+    pub fn issue_pairing_session(&self) -> PairingSessionResponse {
+        self.inner
+            .pairing_sessions
+            .lock()
+            .expect("pairing sessions lock should not be poisoned")
+            .issue_session()
+    }
+
+    pub fn finalize_trust(
+        &self,
+        request: PairingFinalizeRequest,
+    ) -> Result<PairingFinalizeResponse, PairingFinalizeError> {
+        self.inner
+            .pairing_sessions
+            .lock()
+            .expect("pairing sessions lock should not be poisoned")
+            .finalize_trust(request)
+    }
+
+    pub fn handshake(
+        &self,
+        request: PairingHandshakeRequest,
+    ) -> Result<PairingHandshakeResponse, PairingHandshakeError> {
+        self.inner
+            .pairing_sessions
+            .lock()
+            .expect("pairing sessions lock should not be poisoned")
+            .handshake(request)
+    }
+
+    pub fn revoke_trust(&self, phone_id: Option<String>) -> Result<PairingRevokeResponse, String> {
+        self.inner
+            .pairing_sessions
+            .lock()
+            .expect("pairing sessions lock should not be poisoned")
+            .revoke_trust(PairingRevokeRequest { phone_id })
     }
 
     pub fn projections(&self) -> &ProjectionStore {
@@ -365,16 +436,17 @@ impl RewriteAppState {
 
     pub async fn bootstrap_payload(&self) -> BootstrapDto {
         let codex = self.inner.codex_health.read().await.clone();
+        let trust_snapshot = self.trust_snapshot();
 
         BootstrapDto {
             contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
             bridge: ServiceHealthDto {
                 status: ServiceHealthStatus::Healthy,
-                message: None,
+                message: self.pairing_route_health().message,
             },
             codex,
             trust: TrustStateDto {
-                trusted: false,
+                trusted: trust_snapshot.trusted_phone.is_some(),
                 access_mode: AccessMode::ControlWithApprovals,
             },
             threads: self.projections().list_summaries().await,
