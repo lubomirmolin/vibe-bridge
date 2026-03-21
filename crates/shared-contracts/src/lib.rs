@@ -106,6 +106,34 @@ pub struct ThreadTimelinePageDto {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReasoningEffortOptionDto {
+    pub reasoning_effort: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelOptionDto {
+    pub id: String,
+    pub model: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub is_default: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub supported_reasoning_efforts: Vec<ReasoningEffortOptionDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelCatalogDto {
+    pub contract_version: String,
+    pub models: Vec<ModelOptionDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecurityAuditEventDto {
     pub actor: String,
     pub action: String,

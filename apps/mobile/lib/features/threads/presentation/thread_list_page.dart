@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:codex_mobile_companion/features/approvals/presentation/approvals_queue_page.dart';
 import 'package:codex_mobile_companion/features/threads/application/thread_list_controller.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_detail_page.dart';
+import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
 import 'package:codex_mobile_companion/foundation/theme/liquid_styles.dart';
 import 'package:codex_mobile_companion/shared/widgets/badges.dart';
+import 'package:codex_mobile_companion/shared/widgets/connection_status_banner.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -111,7 +113,7 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
           children: [
             // Sticky Header matching React ThreadListScreen
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               color: AppTheme.background.withValues(alpha: 0.8),
               child: Row(
                 children: [
@@ -151,10 +153,20 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                 ],
               ),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
+              child: ConnectionStatusBanner(
+                state: _threadListConnectionBannerState(
+                  state.liveConnectionState,
+                ),
+                detail: _threadListConnectionBannerDetail(state),
+                compact: true,
+              ),
+            ),
 
             // Search Bar
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
               child: Container(
                 decoration: LiquidStyles.liquidGlass.copyWith(
                   borderRadius: BorderRadius.circular(16),
@@ -201,17 +213,37 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
               ),
             ),
 
-            if (state.hasStaleMessage)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
-                child: _StaleDataBanner(message: state.staleMessage!),
-              ),
-
             Expanded(child: _buildBody(state, controller)),
           ],
         ),
       ),
     );
+  }
+
+  ConnectionBannerState _threadListConnectionBannerState(
+    LiveConnectionState state,
+  ) {
+    switch (state) {
+      case LiveConnectionState.connected:
+        return ConnectionBannerState.connected;
+      case LiveConnectionState.reconnecting:
+        return ConnectionBannerState.reconnecting;
+      case LiveConnectionState.disconnected:
+        return ConnectionBannerState.disconnected;
+    }
+  }
+
+  String _threadListConnectionBannerDetail(ThreadListState state) {
+    switch (state.liveConnectionState) {
+      case LiveConnectionState.connected:
+        return 'Thread socket is live.';
+      case LiveConnectionState.reconnecting:
+        return state.staleMessage ?? 'Live updates dropped. Reconnecting now.';
+      case LiveConnectionState.disconnected:
+        return state.errorMessage ??
+            state.staleMessage ??
+            'Bridge is offline. Thread updates are unavailable.';
+    }
   }
 
   Widget _buildBody(ThreadListState state, ThreadListController controller) {
@@ -335,28 +367,6 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                 unawaited(_openThreadDetail(controller, threadId)),
           );
         },
-      ),
-    );
-  }
-}
-
-class _StaleDataBanner extends StatelessWidget {
-  const _StaleDataBanner({required this.message});
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppTheme.rose.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.rose.withValues(alpha: 0.3)),
-      ),
-      child: Text(
-        message,
-        style: const TextStyle(color: AppTheme.rose, fontSize: 13),
       ),
     );
   }

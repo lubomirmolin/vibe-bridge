@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:codex_mobile_companion/features/approvals/application/approvals_queue_controller.dart';
 import 'package:codex_mobile_companion/features/approvals/presentation/approval_presenter.dart';
@@ -8,15 +10,19 @@ import 'package:codex_mobile_companion/features/settings/application/desktop_int
 import 'package:codex_mobile_companion/features/settings/application/device_settings_controller.dart';
 import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
 import 'package:codex_mobile_companion/features/threads/application/thread_detail_controller.dart';
+import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/domain/parsed_command_output.dart';
 import 'package:codex_mobile_companion/features/threads/domain/thread_activity_item.dart';
 import 'package:codex_mobile_companion/features/threads/domain/thread_timeline_block.dart';
+import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
 import 'package:codex_mobile_companion/shared/widgets/badges.dart';
+import 'package:codex_mobile_companion/shared/widgets/connection_status_banner.dart';
 import 'package:codex_mobile_companion/shared/widgets/magnetic_button.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
@@ -47,16 +53,6 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
 
 class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   static const double _historyPrefetchTriggerOffset = 160;
-  static const List<String> _modelOptions = <String>[
-    'GPT-5',
-    'GPT-5 Mini',
-    'o4-mini',
-  ];
-  static const List<String> _reasoningOptions = <String>[
-    'Low',
-    'Medium',
-    'High',
-  ];
 
   late final TextEditingController _composerController;
   late final FocusNode _composerFocusNode;
@@ -66,13 +62,16 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   late final ValueNotifier<bool> _showNewMessagePill;
   final ImagePicker _imagePicker = ImagePicker();
 
+  List<ModelOptionDto> _availableModelOptions = fallbackModelCatalog.models;
+  List<String> _availableReasoningOptions = const <String>[];
   List<XFile> _attachedImages = const <XFile>[];
-  String _selectedModel = _modelOptions.first;
-  String _selectedReasoning = _reasoningOptions[1];
+  String _selectedModel = fallbackModelCatalog.models.first.id;
+  String _selectedReasoning = 'Medium';
   bool _didInitialScrollToBottom = false;
   bool _isComposerFocused = false;
   bool _canLoadEarlierHistory = false;
   bool _isAutoLoadingEarlierHistory = false;
+  bool _hasUserScrolledTimeline = false;
   Future<void> Function()? _loadEarlierHistory;
 
   double _lastScrollOffset = 0;
@@ -90,6 +89,112 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     _showNewMessagePill = ValueNotifier(false);
     _composerFocusNode.addListener(_handleComposerFocusChange);
     _timelineScrollController.addListener(_onScroll);
+    _setComposerSelectionsFromCatalog(_availableModelOptions);
+    unawaited(_loadComposerModelCatalog());
+  }
+
+  Future<void> _loadComposerModelCatalog() async {
+    final bridgeApi = ref.read(threadDetailBridgeApiProvider);
+    final catalog = await bridgeApi.fetchModelCatalog(
+      bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+    );
+    if (!mounted || catalog.models.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _setComposerSelectionsFromCatalog(catalog.models);
+    });
+  }
+
+  void _setComposerSelectionsFromCatalog(List<ModelOptionDto> modelOptions) {
+    if (modelOptions.isEmpty) {
+      return;
+    }
+
+    _availableModelOptions = List<ModelOptionDto>.unmodifiable(modelOptions);
+    final defaultModelId = modelOptions
+        .firstWhere(
+          (model) => model.isDefault,
+          orElse: () => modelOptions.first,
+        )
+        .id;
+    final hasSelectedModel = modelOptions.any(
+      (model) => model.id == _selectedModel,
+    );
+    if (!hasSelectedModel) {
+      _selectedModel = defaultModelId;
+    }
+
+    _availableReasoningOptions = _reasoningOptionsForModel(_selectedModel);
+    if (_availableReasoningOptions.isEmpty) {
+      _availableReasoningOptions = const <String>['Low', 'Medium', 'High'];
+    }
+
+    if (!_availableReasoningOptions.contains(_selectedReasoning)) {
+      final selectedModel = modelOptions.firstWhere(
+        (model) => model.id == _selectedModel,
+      );
+      final defaultReasoning = selectedModel.defaultReasoningEffort;
+      if (defaultReasoning != null) {
+        _selectedReasoning = _formatReasoningLabel(defaultReasoning);
+      } else {
+        _selectedReasoning = _availableReasoningOptions.first;
+      }
+    }
+  }
+
+  List<String> _reasoningOptionsForModel(String modelId) {
+    final model = _availableModelOptions.firstWhere(
+      (candidate) => candidate.id == modelId,
+      orElse: () => _availableModelOptions.first,
+    );
+
+    final options = model.supportedReasoningEfforts
+        .map((effort) => _formatReasoningLabel(effort.reasoningEffort))
+        .where((label) => label.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    return options;
+  }
+
+  String _formatReasoningLabel(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return '';
+    }
+
+    final normalized = trimmed.replaceAll('_', ' ').toLowerCase();
+    return normalized
+        .split(' ')
+        .where((word) => word.isNotEmpty)
+        .map(
+          (word) => word.length == 1
+              ? word.toUpperCase()
+              : '${word[0].toUpperCase()}${word.substring(1)}',
+        )
+        .join(' ');
+  }
+
+  void _onComposerModelChanged(String modelId) {
+    setState(() {
+      _selectedModel = modelId;
+      _availableReasoningOptions = _reasoningOptionsForModel(modelId);
+      if (_availableReasoningOptions.isEmpty) {
+        _availableReasoningOptions = const <String>['Low', 'Medium', 'High'];
+      }
+
+      if (!_availableReasoningOptions.contains(_selectedReasoning)) {
+        final model = _availableModelOptions.firstWhere(
+          (candidate) => candidate.id == modelId,
+          orElse: () => _availableModelOptions.first,
+        );
+        final defaultReasoning = model.defaultReasoningEffort;
+        _selectedReasoning = defaultReasoning == null
+            ? _availableReasoningOptions.first
+            : _formatReasoningLabel(defaultReasoning);
+      }
+    });
   }
 
   void _handleComposerFocusChange() {
@@ -143,6 +248,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
 
   void _maybeAutoLoadEarlierHistory() {
     if (!_timelineScrollController.hasClients ||
+        !_hasUserScrolledTimeline ||
         !_canLoadEarlierHistory ||
         _isAutoLoadingEarlierHistory) {
       return;
@@ -194,6 +300,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.threadId != widget.threadId) {
       _didInitialScrollToBottom = false;
+    }
+    if (oldWidget.bridgeApiBaseUrl != widget.bridgeApiBaseUrl) {
+      unawaited(_loadComposerModelCatalog());
     }
   }
 
@@ -272,6 +381,14 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         _attachedImages.where((candidate) => candidate.path != image.path),
       );
     });
+  }
+
+  void _markTimelineUserScroll() {
+    if (_hasUserScrolledTimeline) {
+      return;
+    }
+
+    _hasUserScrolledTimeline = true;
   }
 
   Future<void> _showGitBranchSheet(
@@ -466,6 +583,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                     onRefreshApprovals: () {
                       approvalsController.loadApprovals(showLoading: false);
                     },
+                    onTimelineUserScroll: _markTimelineUserScroll,
                     scrollController: _timelineScrollController,
                   ),
                   Positioned(
@@ -588,6 +706,8 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                                     state.isInterruptMutationInFlight,
                                 isComposerFocused: _isComposerFocused,
                                 attachedImages: _attachedImages,
+                                modelOptions: _availableModelOptions,
+                                reasoningOptions: _availableReasoningOptions,
                                 selectedModel: _selectedModel,
                                 selectedReasoning: _selectedReasoning,
                                 accessMode: effectiveAccessMode,
@@ -598,11 +718,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                                     deviceSettingsState.accessModeErrorMessage,
                                 onPickImages: _pickImages,
                                 onRemoveImage: _removeAttachedImage,
-                                onModelChanged: (value) {
-                                  setState(() {
-                                    _selectedModel = value;
-                                  });
-                                },
+                                onModelChanged: _onComposerModelChanged,
                                 onReasoningChanged: (value) {
                                   setState(() {
                                     _selectedReasoning = value;
@@ -626,5 +742,34 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         ),
       ),
     );
+  }
+}
+
+ConnectionBannerState _threadDetailConnectionBannerState(
+  LiveConnectionState state,
+) {
+  switch (state) {
+    case LiveConnectionState.connected:
+      return ConnectionBannerState.connected;
+    case LiveConnectionState.reconnecting:
+      return ConnectionBannerState.reconnecting;
+    case LiveConnectionState.disconnected:
+      return ConnectionBannerState.disconnected;
+  }
+}
+
+String _threadDetailConnectionBannerDetail(ThreadDetailState state) {
+  switch (state.liveConnectionState) {
+    case LiveConnectionState.connected:
+      return 'Thread socket is live.';
+    case LiveConnectionState.reconnecting:
+      return state.streamErrorMessage ??
+          state.staleMessage ??
+          'Live updates dropped. Reconnecting now.';
+    case LiveConnectionState.disconnected:
+      return state.errorMessage ??
+          state.streamErrorMessage ??
+          state.staleMessage ??
+          'Bridge is offline. Thread updates are unavailable.';
   }
 }

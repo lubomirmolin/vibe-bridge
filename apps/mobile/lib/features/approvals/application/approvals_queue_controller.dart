@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
 import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
 import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
@@ -75,12 +76,14 @@ class ApprovalsQueueState {
   const ApprovalsQueueState({
     this.items = const <ApprovalItemState>[],
     this.accessMode,
+    this.liveConnectionState = LiveConnectionState.reconnecting,
     this.errorMessage,
     this.isLoading = true,
   });
 
   final List<ApprovalItemState> items;
   final AccessMode? accessMode;
+  final LiveConnectionState liveConnectionState;
   final String? errorMessage;
   final bool isLoading;
 
@@ -110,6 +113,7 @@ class ApprovalsQueueState {
   ApprovalsQueueState copyWith({
     List<ApprovalItemState>? items,
     AccessMode? accessMode,
+    LiveConnectionState? liveConnectionState,
     bool clearAccessMode = false,
     String? errorMessage,
     bool clearErrorMessage = false,
@@ -118,6 +122,7 @@ class ApprovalsQueueState {
     return ApprovalsQueueState(
       items: items ?? this.items,
       accessMode: clearAccessMode ? null : (accessMode ?? this.accessMode),
+      liveConnectionState: liveConnectionState ?? this.liveConnectionState,
       errorMessage: clearErrorMessage
           ? null
           : (errorMessage ?? this.errorMessage),
@@ -214,6 +219,7 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
       state = state.copyWith(
         items: nextItems,
         accessMode: accessMode,
+        liveConnectionState: LiveConnectionState.connected,
         clearErrorMessage: true,
         isLoading: false,
       );
@@ -221,7 +227,13 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
       if (!_canMutateState) {
         return;
       }
-      state = state.copyWith(errorMessage: error.message, isLoading: false);
+      state = state.copyWith(
+        errorMessage: error.message,
+        isLoading: false,
+        liveConnectionState: error.isConnectivityError
+            ? LiveConnectionState.disconnected
+            : state.liveConnectionState,
+      );
     } catch (_) {
       if (!_canMutateState) {
         return;
@@ -229,6 +241,7 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
       state = state.copyWith(
         errorMessage: 'Couldn’t load approvals right now.',
         isLoading: false,
+        liveConnectionState: LiveConnectionState.disconnected,
       );
     }
   }
@@ -366,6 +379,11 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
         return;
       }
       _liveSubscription = subscription;
+      if (state.errorMessage == null && !state.isLoading) {
+        state = state.copyWith(
+          liveConnectionState: LiveConnectionState.connected,
+        );
+      }
 
       _liveEventSubscription = subscription.events.listen(
         _handleLiveEvent,
@@ -394,6 +412,9 @@ class ApprovalsQueueController extends StateNotifier<ApprovalsQueueState> {
     if (_isDisposed) {
       return;
     }
+    state = state.copyWith(
+      liveConnectionState: LiveConnectionState.reconnecting,
+    );
     _scheduleReconnect();
   }
 

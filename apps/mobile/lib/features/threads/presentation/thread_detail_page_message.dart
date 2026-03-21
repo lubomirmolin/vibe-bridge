@@ -867,3 +867,75 @@ class _CodeLanguageResolver {
     }
   }
 }
+
+class _ChatLoadingMessageCard extends StatefulWidget {
+  const _ChatLoadingMessageCard();
+
+  @override
+  State<_ChatLoadingMessageCard> createState() =>
+      _ChatLoadingMessageCardState();
+}
+
+class _ChatLoadingMessageCardState extends State<_ChatLoadingMessageCard>
+    with SingleTickerProviderStateMixin {
+  late final Timer _timer;
+  final String _chars = r'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$*&%';
+  final math.Random _random = math.Random();
+  String _currentText = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(milliseconds: 60), (_) {
+      _generateRandomText();
+    });
+    _generateRandomText();
+  }
+
+  void _generateRandomText() {
+    final length = 12 + _random.nextInt(10);
+    final buffer = StringBuffer('⠋ ');
+    for (int i = 0; i < length; i++) {
+      buffer.write(_chars[_random.nextInt(_chars.length)]);
+    }
+    setState(() {
+      _currentText = buffer.toString();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceZinc800.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+      ),
+      child: Row(
+        children: [
+          PhosphorIcon(
+            PhosphorIcons.sparkle(),
+            color: AppTheme.textSubtle,
+            size: 16,
+          ),
+          const SizedBox(width: 12),
+          Text(
+            _currentText,
+            style: GoogleFonts.jetBrainsMono(
+              color: AppTheme.textMuted,
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

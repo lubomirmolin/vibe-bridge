@@ -9,7 +9,58 @@ final threadDetailBridgeApiProvider = Provider<ThreadDetailBridgeApi>((ref) {
   return const HttpThreadDetailBridgeApi();
 });
 
+const ModelCatalogDto fallbackModelCatalog = ModelCatalogDto(
+  contractVersion: contractVersion,
+  models: <ModelOptionDto>[
+    ModelOptionDto(
+      id: 'gpt-5',
+      model: 'gpt-5',
+      displayName: 'GPT-5',
+      description: '',
+      isDefault: true,
+      defaultReasoningEffort: 'medium',
+      supportedReasoningEfforts: <ReasoningEffortOptionDto>[
+        ReasoningEffortOptionDto(reasoningEffort: 'low'),
+        ReasoningEffortOptionDto(reasoningEffort: 'medium'),
+        ReasoningEffortOptionDto(reasoningEffort: 'high'),
+      ],
+    ),
+    ModelOptionDto(
+      id: 'gpt-5-mini',
+      model: 'gpt-5-mini',
+      displayName: 'GPT-5 Mini',
+      description: '',
+      isDefault: false,
+      defaultReasoningEffort: 'medium',
+      supportedReasoningEfforts: <ReasoningEffortOptionDto>[
+        ReasoningEffortOptionDto(reasoningEffort: 'low'),
+        ReasoningEffortOptionDto(reasoningEffort: 'medium'),
+        ReasoningEffortOptionDto(reasoningEffort: 'high'),
+      ],
+    ),
+    ModelOptionDto(
+      id: 'o4-mini',
+      model: 'o4-mini',
+      displayName: 'o4-mini',
+      description: '',
+      isDefault: false,
+      defaultReasoningEffort: 'high',
+      supportedReasoningEfforts: <ReasoningEffortOptionDto>[
+        ReasoningEffortOptionDto(reasoningEffort: 'low'),
+        ReasoningEffortOptionDto(reasoningEffort: 'medium'),
+        ReasoningEffortOptionDto(reasoningEffort: 'high'),
+      ],
+    ),
+  ],
+);
+
 abstract class ThreadDetailBridgeApi {
+  Future<ModelCatalogDto> fetchModelCatalog({
+    required String bridgeApiBaseUrl,
+  }) async {
+    return fallbackModelCatalog;
+  }
+
   Future<ThreadDetailDto> fetchThreadDetail({
     required String bridgeApiBaseUrl,
     required String threadId,
@@ -75,6 +126,43 @@ abstract class ThreadDetailBridgeApi {
 
 class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   const HttpThreadDetailBridgeApi();
+
+  @override
+  Future<ModelCatalogDto> fetchModelCatalog({
+    required String bridgeApiBaseUrl,
+  }) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+
+    try {
+      final request = await client.getUrl(_buildModelsUri(bridgeApiBaseUrl));
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      final response = await request.close();
+      final bodyText = await utf8.decodeStream(response);
+      final decoded = _decodeJsonObject(bodyText);
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        try {
+          return ModelCatalogDto.fromJson(decoded);
+        } on FormatException {
+          return fallbackModelCatalog;
+        }
+      }
+
+      return fallbackModelCatalog;
+    } on SocketException {
+      return fallbackModelCatalog;
+    } on HandshakeException {
+      return fallbackModelCatalog;
+    } on HttpException {
+      return fallbackModelCatalog;
+    } on TimeoutException {
+      return fallbackModelCatalog;
+    } on FormatException {
+      return fallbackModelCatalog;
+    } finally {
+      client.close();
+    }
+  }
 
   @override
   Future<GitStatusResponseDto> fetchGitStatus({
@@ -763,6 +851,16 @@ Uri _buildThreadDetailUri(String baseUrl, String threadId) {
       : baseUri.path;
   final fullPath =
       '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}';
+  return baseUri.replace(path: fullPath, queryParameters: null);
+}
+
+Uri _buildModelsUri(String baseUrl) {
+  final baseUri = Uri.parse(baseUrl);
+  final normalizedBasePath = baseUri.path.endsWith('/')
+      ? baseUri.path.substring(0, baseUri.path.length - 1)
+      : baseUri.path;
+  final fullPath =
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/models';
   return baseUri.replace(path: fullPath, queryParameters: null);
 }
 

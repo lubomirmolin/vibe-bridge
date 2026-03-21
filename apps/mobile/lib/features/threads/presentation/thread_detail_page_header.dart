@@ -28,7 +28,13 @@ class _ThreadDetailHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (state.thread == null) {
-      return _UnavailableThreadDetailHeader(onBack: onBackWhenUnavailable);
+      return _UnavailableThreadDetailHeader(
+        onBack: onBackWhenUnavailable,
+        connectionState: state.liveConnectionState,
+        connectionDetail: state.errorMessage == null
+            ? _threadDetailConnectionBannerDetail(state)
+            : null,
+      );
     }
 
     return _LoadedThreadDetailHeader(
@@ -41,6 +47,8 @@ class _ThreadDetailHeader extends StatelessWidget {
       onOpenGitSyncSheet: onOpenGitSyncSheet,
       onOpenOnMac: onOpenOnMac,
       isHeaderCollapsed: isHeaderCollapsed,
+      connectionState: state.liveConnectionState,
+      connectionDetail: _threadDetailConnectionBannerDetail(state),
     );
   }
 }
@@ -56,6 +64,8 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
     required this.onOpenGitSyncSheet,
     required this.onOpenOnMac,
     required this.isHeaderCollapsed,
+    required this.connectionState,
+    required this.connectionDetail,
   });
 
   final ThreadDetailState state;
@@ -67,6 +77,8 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
   final Future<void> Function() onOpenGitSyncSheet;
   final Future<void> Function() onOpenOnMac;
   final ValueListenable<bool> isHeaderCollapsed;
+  final LiveConnectionState connectionState;
+  final String? connectionDetail;
 
   @override
   Widget build(BuildContext context) {
@@ -159,6 +171,14 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
                   ],
                 ],
               ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(36, 12, 0, 0),
+            child: ConnectionStatusBanner(
+              state: _threadDetailConnectionBannerState(connectionState),
+              detail: connectionDetail,
+              compact: true,
             ),
           ),
           ValueListenableBuilder<bool>(
@@ -304,9 +324,15 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
 }
 
 class _UnavailableThreadDetailHeader extends StatelessWidget {
-  const _UnavailableThreadDetailHeader({required this.onBack});
+  const _UnavailableThreadDetailHeader({
+    required this.onBack,
+    required this.connectionState,
+    required this.connectionDetail,
+  });
 
   final VoidCallback onBack;
+  final LiveConnectionState connectionState;
+  final String? connectionDetail;
 
   @override
   Widget build(BuildContext context) {
@@ -316,26 +342,36 @@ class _UnavailableThreadDetailHeader extends StatelessWidget {
         color: AppTheme.background,
         border: Border(bottom: BorderSide(color: Colors.white10)),
       ),
-      child: Row(
+      child: Column(
         children: [
-          IconButton(
-            key: const Key('thread-detail-back-button'),
-            onPressed: onBack,
-            icon: PhosphorIcon(
-              PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
-              size: 20,
-              color: AppTheme.textMuted,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              'Session Details',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w500,
-                letterSpacing: -0.5,
+          Row(
+            children: [
+              IconButton(
+                key: const Key('thread-detail-back-button'),
+                onPressed: onBack,
+                icon: PhosphorIcon(
+                  PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
+                  size: 20,
+                  color: AppTheme.textMuted,
+                ),
               ),
-            ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Session Details',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ConnectionStatusBanner(
+            state: _threadDetailConnectionBannerState(connectionState),
+            detail: connectionDetail,
+            compact: true,
           ),
         ],
       ),

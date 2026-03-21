@@ -274,6 +274,13 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   int detailFetchCount = 0;
 
   @override
+  Future<ModelCatalogDto> fetchModelCatalog({
+    required String bridgeApiBaseUrl,
+  }) async {
+    return fallbackModelCatalog;
+  }
+
+  @override
   Future<ThreadDetailDto> fetchThreadDetail({
     required String bridgeApiBaseUrl,
     required String threadId,

@@ -8,9 +8,10 @@ use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use shared_contracts::{
-    AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ThreadDetailDto,
-    ThreadStatus, ThreadSummaryDto, ThreadTimelineAnnotationsDto, ThreadTimelineEntryDto,
-    ThreadTimelineExplorationKind, ThreadTimelineGroupKind, ThreadTimelinePageDto,
+    AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ModelCatalogDto,
+    ModelOptionDto, ReasoningEffortOptionDto, ThreadDetailDto, ThreadStatus, ThreadSummaryDto,
+    ThreadTimelineAnnotationsDto, ThreadTimelineEntryDto, ThreadTimelineExplorationKind,
+    ThreadTimelineGroupKind, ThreadTimelinePageDto,
 };
 
 use crate::codex_transport::CodexJsonTransport;
@@ -463,6 +464,16 @@ impl ThreadApiService {
             })
     }
 
+    pub fn model_catalog_response(&self) -> ModelCatalogDto {
+        let models = self
+            .load_models_from_upstream()
+            .unwrap_or_else(|_| fallback_model_options());
+        ModelCatalogDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            models,
+        }
+    }
+
     pub fn timeline_page_response(
         &self,
         thread_id: &str,
@@ -503,6 +514,20 @@ impl ThreadApiService {
     pub fn timeline_cursor_exists(&self, thread_id: &str, cursor: &str) -> Option<bool> {
         let events = self.timeline_by_thread_id.get(thread_id)?;
         Some(events.iter().any(|event| event.id == cursor))
+    }
+
+    fn load_models_from_upstream(&self) -> Result<Vec<ModelOptionDto>, String> {
+        if self.sync_config.is_none() {
+            return Ok(fallback_model_options());
+        }
+
+        let mut client = self.codex_rpc_client()?;
+        let models = client.list_models()?;
+        if models.is_empty() {
+            return Ok(fallback_model_options());
+        }
+
+        Ok(models)
     }
 
     pub fn git_status_response(&self, thread_id: &str) -> Option<GitStatusResponse> {
@@ -1712,6 +1737,26 @@ fn load_thread_snapshot_from_codex_archive_for_ids(
     entries.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
     if let Some(requested_ids) = requested_ids {
         entries.retain(|entry| requested_ids.contains(&entry.id));
+
+        let indexed_ids = entries
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect::<HashSet<_>>();
+        let missing_ids = requested_ids
+            .iter()
+            .filter(|id| !indexed_ids.contains(*id))
+            .cloned()
+            .collect::<HashSet<_>>();
+        if !missing_ids.is_empty() {
+            let fallback_paths = discover_session_paths(&sessions_root, &missing_ids)?;
+            for missing_id in missing_ids {
+                let Some(path) = fallback_paths.get(&missing_id) else {
+                    continue;
+                };
+                entries.push(synthetic_session_index_entry_for_path(&missing_id, path));
+            }
+            entries.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        }
     } else {
         entries.truncate(CodexRpcClient::MAX_THREADS_TO_FETCH);
     }
@@ -1735,6 +1780,57 @@ fn load_thread_snapshot_from_codex_archive_for_ids(
     }
 
     Ok((thread_records, timeline_by_thread_id))
+}
+
+fn synthetic_session_index_entry_for_path(session_id: &str, path: &Path) -> SessionIndexEntry {
+    let updated_at = session_meta_timestamp_from_archive(path).unwrap_or_else(|| {
+        archive_path_modified_at(path).unwrap_or_else(|| "1970-01-01T00:00:00.000Z".to_string())
+    });
+    SessionIndexEntry {
+        id: session_id.to_string(),
+        thread_name: "Untitled thread".to_string(),
+        updated_at,
+    }
+}
+
+fn session_meta_timestamp_from_archive(path: &Path) -> Option<String> {
+    let raw = fs::read_to_string(path).ok()?;
+    for line in raw.lines() {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) != Some("session_meta") {
+            continue;
+        }
+
+        if let Some(timestamp) = value
+            .get("payload")
+            .and_then(|payload| payload.get("timestamp"))
+            .and_then(Value::as_str)
+            .filter(|timestamp| !timestamp.trim().is_empty())
+        {
+            return Some(timestamp.to_string());
+        }
+
+        if let Some(timestamp) = value
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .filter(|timestamp| !timestamp.trim().is_empty())
+        {
+            return Some(timestamp.to_string());
+        }
+    }
+    None
+}
+
+fn archive_path_modified_at(path: &Path) -> Option<String> {
+    fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| unix_timestamp_to_iso8601(duration.as_millis() as i64))
 }
 
 fn discover_session_paths(
@@ -2678,8 +2774,35 @@ fn is_hidden_archive_message(message: &str) -> bool {
     trimmed.starts_with("# AGENTS.md instructions for ")
         || trimmed.starts_with("<permissions instructions>")
         || trimmed.starts_with("<app-context>")
+        || trimmed.starts_with("<environment_context>")
         || trimmed.starts_with("<collaboration_mode>")
         || trimmed.starts_with("<turn_aborted>")
+}
+
+fn payload_contains_hidden_message(payload: &Value) -> bool {
+    payload_primary_text(payload)
+        .map(is_hidden_archive_message)
+        .unwrap_or(false)
+}
+
+fn payload_primary_text(payload: &Value) -> Option<&str> {
+    for key in ["text", "delta", "message"] {
+        if let Some(value) = payload.get(key).and_then(Value::as_str) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
+            }
+        }
+    }
+
+    payload
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find_map(|item| item.get("text").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
 }
 
 fn archived_message_fingerprint(event: &UpstreamTimelineEvent) -> Option<String> {
@@ -2761,6 +2884,134 @@ fn normalize_turn_text(raw: Option<&str>, fallback: &str) -> String {
         fallback.to_string()
     } else {
         normalized.to_string()
+    }
+}
+
+fn fallback_model_options() -> Vec<ModelOptionDto> {
+    vec![
+        ModelOptionDto {
+            id: "gpt-5".to_string(),
+            model: "gpt-5".to_string(),
+            display_name: "GPT-5".to_string(),
+            description: String::new(),
+            is_default: true,
+            default_reasoning_effort: Some("medium".to_string()),
+            supported_reasoning_efforts: fallback_reasoning_efforts(),
+        },
+        ModelOptionDto {
+            id: "gpt-5-mini".to_string(),
+            model: "gpt-5-mini".to_string(),
+            display_name: "GPT-5 Mini".to_string(),
+            description: String::new(),
+            is_default: false,
+            default_reasoning_effort: Some("medium".to_string()),
+            supported_reasoning_efforts: fallback_reasoning_efforts(),
+        },
+        ModelOptionDto {
+            id: "o4-mini".to_string(),
+            model: "o4-mini".to_string(),
+            display_name: "o4-mini".to_string(),
+            description: String::new(),
+            is_default: false,
+            default_reasoning_effort: Some("high".to_string()),
+            supported_reasoning_efforts: fallback_reasoning_efforts(),
+        },
+    ]
+}
+
+fn fallback_reasoning_efforts() -> Vec<ReasoningEffortOptionDto> {
+    vec![
+        ReasoningEffortOptionDto {
+            reasoning_effort: "low".to_string(),
+            description: None,
+        },
+        ReasoningEffortOptionDto {
+            reasoning_effort: "medium".to_string(),
+            description: None,
+        },
+        ReasoningEffortOptionDto {
+            reasoning_effort: "high".to_string(),
+            description: None,
+        },
+    ]
+}
+
+fn parse_model_options(result: Value) -> Vec<ModelOptionDto> {
+    let Some(items) = result.get("data").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+
+    items
+        .iter()
+        .filter_map(parse_model_option)
+        .collect::<Vec<_>>()
+}
+
+fn parse_model_option(item: &Value) -> Option<ModelOptionDto> {
+    let model = value_text(item.get("model")).or_else(|| value_text(item.get("id")))?;
+    let id = value_text(item.get("id")).unwrap_or_else(|| model.clone());
+    let display_name = value_text(item.get("displayName"))
+        .or_else(|| value_text(item.get("display_name")))
+        .unwrap_or_else(|| model.clone());
+    let description = value_text(item.get("description")).unwrap_or_default();
+    let default_reasoning_effort = value_text(item.get("defaultReasoningEffort"))
+        .or_else(|| value_text(item.get("default_reasoning_effort")));
+    let supported_reasoning_efforts = parse_reasoning_efforts(
+        item.get("supportedReasoningEfforts")
+            .or_else(|| item.get("supported_reasoning_efforts")),
+    );
+    let is_default = item
+        .get("isDefault")
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| {
+            item.get("is_default")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        });
+
+    Some(ModelOptionDto {
+        id,
+        model,
+        display_name,
+        description,
+        is_default,
+        default_reasoning_effort,
+        supported_reasoning_efforts,
+    })
+}
+
+fn parse_reasoning_efforts(value: Option<&Value>) -> Vec<ReasoningEffortOptionDto> {
+    let Some(items) = value.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+
+    items
+        .iter()
+        .filter_map(|item| {
+            let effort = value_text(item.get("reasoningEffort"))
+                .or_else(|| value_text(item.get("reasoning_effort")))?;
+            let description = value_text(item.get("description"));
+            Some(ReasoningEffortOptionDto {
+                reasoning_effort: effort,
+                description,
+            })
+        })
+        .collect::<Vec<_>>()
+}
+
+fn value_text(value: Option<&Value>) -> Option<String> {
+    let value = value?;
+    match value {
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
     }
 }
 
@@ -2936,6 +3187,18 @@ impl CodexRpcClient {
                 format!("invalid thread/resume response from codex app-server: {error}")
             })?;
         Ok(response.thread)
+    }
+
+    fn list_models(&mut self) -> Result<Vec<ModelOptionDto>, String> {
+        let result = self.request(
+            "model/list",
+            json!({
+                "cursor": Value::Null,
+                "limit": 50,
+                "includeHidden": false,
+            }),
+        )?;
+        Ok(parse_model_options(result))
     }
 
     fn start_turn(&mut self, thread_id: &str, prompt: &str) -> Result<CodexTurn, String> {
@@ -3249,6 +3512,9 @@ fn map_codex_thread_to_timeline_events(thread: &CodexThread) -> Vec<UpstreamTime
             else {
                 continue;
             };
+            if kind == BridgeEventKind::MessageDelta && payload_contains_hidden_message(&payload) {
+                continue;
+            }
             let item_id = item
                 .get("id")
                 .and_then(Value::as_str)
@@ -3718,6 +3984,9 @@ fn normalize_realtime_item_payload(item: &Value) -> Option<(BridgeEventKind, Val
 fn should_publish_live_payload(kind: BridgeEventKind, payload: &Value) -> bool {
     match kind {
         BridgeEventKind::MessageDelta | BridgeEventKind::PlanDelta => {
+            if kind == BridgeEventKind::MessageDelta && payload_contains_hidden_message(payload) {
+                return false;
+            }
             payload
                 .get("text")
                 .and_then(Value::as_str)
@@ -4716,6 +4985,8 @@ mod tests {
                 "\n",
                 r##"{"timestamp":"2026-03-19T09:56:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /Users/test/workspace"}]}}"##,
                 "\n",
+                r#"{"timestamp":"2026-03-19T09:56:01.250Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n<shell>zsh</shell>\n<current_date>2026-03-21</current_date>\n<timezone>Europe/Prague</timezone>\n</environment_context>"}]}}"#,
+                "\n",
                 r#"{"timestamp":"2026-03-19T09:56:01.500Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Fix the duplicated thread messages.\n"}]}}"#,
                 "\n",
                 r#"{"timestamp":"2026-03-19T09:56:02Z","type":"event_msg","payload":{"type":"user_message","message":"Fix the duplicated thread messages.\n"}}"#,
@@ -4852,6 +5123,68 @@ mod tests {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .contains("target-11")
+        );
+
+        let _ = fs::remove_dir_all(codex_home);
+    }
+
+    #[test]
+    fn archive_loader_can_fetch_requested_thread_when_session_index_entry_is_missing() {
+        let codex_home = unique_test_codex_home();
+        let sessions_directory = codex_home.join("sessions/2026/03/21");
+        fs::create_dir_all(&sessions_directory).expect("test sessions directory should exist");
+
+        fs::write(
+            codex_home.join("session_index.jsonl"),
+            r#"{"id":"thread-indexed","thread_name":"Indexed thread","updated_at":"2026-03-21T07:00:00Z"}"#,
+        )
+        .expect("session index should be writable");
+
+        let requested_id = "thread-missing-index";
+        fs::write(
+            sessions_directory.join(format!("rollout-2026-03-21T07-13-12-{requested_id}.jsonl")),
+            concat!(
+                r#"{"timestamp":"2026-03-21T07:13:27.058Z","type":"session_meta","payload":{"id":"thread-missing-index","timestamp":"2026-03-21T07:13:12.714Z","cwd":"/Users/test/workspace","source":"cli"}}"#,
+                "\n",
+                r#"{"timestamp":"2026-03-21T07:13:45.894Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"pwd\"}"}}"#,
+                "\n",
+                r#"{"timestamp":"2026-03-21T07:13:46.936Z","type":"response_item","payload":{"type":"function_call_output","output":"Command: /bin/zsh -lc 'pwd'\nOutput:\n/Users/test/workspace"}}"#,
+                "\n"
+            ),
+        )
+        .expect("session log should be writable");
+
+        let requested_ids = HashSet::from([requested_id.to_string()]);
+        let (records, timeline_by_thread_id) =
+            super::load_thread_snapshot_from_codex_archive_for_ids(
+                &codex_home,
+                Some(&requested_ids),
+            )
+            .expect("requested archive snapshot should load");
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, requested_id);
+        let timeline = timeline_by_thread_id
+            .get(requested_id)
+            .expect("requested thread timeline should be present");
+        assert_eq!(timeline.len(), 2);
+        assert_eq!(timeline[0].event_type, "command_output_delta");
+        assert_eq!(timeline[1].event_type, "command_output_delta");
+        assert_eq!(
+            timeline[0]
+                .data
+                .get("command")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "exec_command"
+        );
+        assert!(
+            timeline[1]
+                .data
+                .get("output")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .contains("/Users/test/workspace")
         );
 
         let _ = fs::remove_dir_all(codex_home);
@@ -6412,6 +6745,36 @@ mod tests {
 
         assert_eq!(timeline.len(), 2);
         assert_eq!(timeline[0].data["type"], "userMessage");
+        assert_eq!(timeline[1].data["type"], "agentMessage");
+    }
+
+    #[test]
+    fn codex_rpc_timeline_hides_internal_environment_context_messages() {
+        let timeline = super::map_codex_thread_to_timeline_events(&CodexThread {
+            id: "thread-123".to_string(),
+            name: Some("Inspect RPC timeline".to_string()),
+            preview: Some("Preview".to_string()),
+            status: CodexThreadStatus {
+                kind: "active".to_string(),
+            },
+            cwd: "/Users/test/workspace".to_string(),
+            git_info: None,
+            created_at: 1,
+            updated_at: 2,
+            source: json!("cli"),
+            turns: vec![CodexTurn {
+                id: "turn-123".to_string(),
+                items: vec![
+                    json!({"id":"user-internal-1","type":"userMessage","text":"<environment_context>\n<shell>zsh</shell>\n</environment_context>"}),
+                    json!({"id":"user-1","type":"userMessage","text":"Ship the fix"}),
+                    json!({"id":"assistant-1","type":"agentMessage","text":"Inspecting the issue."}),
+                ],
+            }],
+        });
+
+        assert_eq!(timeline.len(), 2);
+        assert_eq!(timeline[0].data["type"], "userMessage");
+        assert_eq!(timeline[0].data["text"], "Ship the fix");
         assert_eq!(timeline[1].data["type"], "agentMessage");
     }
 
