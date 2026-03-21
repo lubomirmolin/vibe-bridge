@@ -48,12 +48,13 @@ type ThreadSnapshot = (
     HashMap<String, Vec<UpstreamTimelineEvent>>,
 );
 
-const THREAD_SYNC_REUSE_WINDOW_MILLIS: u128 = 250;
+const THREAD_SYNC_REUSE_WINDOW_MILLIS: u128 = 5_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ThreadSyncReceipt {
     synced_at_millis: u128,
     signature: ThreadSnapshotSignature,
+    session_index_modified_at_millis: Option<u128>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1017,6 +1018,7 @@ impl ThreadApiService {
 
         self.thread_snapshot_signature(thread_id)
             .is_some_and(|signature| signature == receipt.signature)
+            && self.session_index_modified_at_millis() == receipt.session_index_modified_at_millis
     }
 
     fn refresh_thread_sync_receipt(&mut self, thread_id: &str) {
@@ -1030,8 +1032,21 @@ impl ThreadApiService {
             ThreadSyncReceipt {
                 synced_at_millis: current_unix_epoch_millis(),
                 signature,
+                session_index_modified_at_millis: self.session_index_modified_at_millis(),
             },
         );
+    }
+
+    fn session_index_modified_at_millis(&self) -> Option<u128> {
+        let sync_config = self.sync_config.as_ref()?;
+        let session_index_path = sync_config.codex_home.join("session_index.jsonl");
+        fs::metadata(session_index_path)
+            .ok()?
+            .modified()
+            .ok()?
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .map(|duration| duration.as_millis())
     }
 
     fn refresh_all_thread_sync_receipts(&mut self) {
@@ -5442,17 +5457,25 @@ mod tests {
             .sync_thread_from_upstream(thread_id)
             .expect("initial cold sync should load archive snapshot");
 
-        write_archived_thread_fixture(
-            &codex_home,
-            thread_id,
-            "2026-03-19T10:30:00Z",
-            "Updated archive title",
-            "Updated archive summary should not appear in immediate companion request.",
-        );
+        let receipt_before = service
+            .thread_sync_receipts_by_id
+            .get(thread_id)
+            .expect("thread receipt should exist after initial sync")
+            .synced_at_millis;
 
         service
             .sync_thread_from_upstream(thread_id)
             .expect("immediate companion sync should succeed");
+
+        let receipt_after = service
+            .thread_sync_receipts_by_id
+            .get(thread_id)
+            .expect("thread receipt should remain after companion sync")
+            .synced_at_millis;
+        assert_eq!(
+            receipt_after, receipt_before,
+            "immediate detail/timeline companion request should stay on the same warm generation"
+        );
 
         let detail = service
             .detail_response(thread_id)
@@ -5494,17 +5517,24 @@ mod tests {
             .sync_thread_from_upstream(thread_id)
             .expect("initial sync should load first snapshot");
 
-        write_archived_thread_fixture(
-            &codex_home,
-            thread_id,
-            "2026-03-19T10:30:00Z",
-            "Reconnect title",
-            "Reconnect refresh summary.",
-        );
+        let first_receipt_before = service
+            .thread_sync_receipts_by_id
+            .get(thread_id)
+            .expect("receipt should exist after initial sync")
+            .synced_at_millis;
 
         service
             .sync_thread_from_upstream(thread_id)
             .expect("timeline companion request should succeed");
+        let first_receipt_after = service
+            .thread_sync_receipts_by_id
+            .get(thread_id)
+            .expect("receipt should remain after companion sync")
+            .synced_at_millis;
+        assert_eq!(
+            first_receipt_after, first_receipt_before,
+            "unchanged reconnect-style companion request should reuse the warm generation"
+        );
         assert_eq!(
             service
                 .detail_response(thread_id)
@@ -5514,9 +5544,18 @@ mod tests {
             "Initial title"
         );
 
-        std::thread::sleep(std::time::Duration::from_millis(
-            super::THREAD_SYNC_REUSE_WINDOW_MILLIS as u64 + 50,
-        ));
+        if let Some(receipt) = service.thread_sync_receipts_by_id.get_mut(thread_id) {
+            receipt.synced_at_millis = super::current_unix_epoch_millis()
+                .saturating_sub(super::THREAD_SYNC_REUSE_WINDOW_MILLIS + 1);
+        }
+
+        write_archived_thread_fixture(
+            &codex_home,
+            thread_id,
+            "2026-03-19T10:30:00Z",
+            "Reconnect title",
+            "Reconnect refresh summary.",
+        );
 
         service
             .sync_thread_from_upstream(thread_id)
@@ -5530,17 +5569,24 @@ mod tests {
             "Reconnect title"
         );
 
-        write_archived_thread_fixture(
-            &codex_home,
-            thread_id,
-            "2026-03-19T11:00:00Z",
-            "Second-pair title",
-            "Second-pair archive summary should be deferred.",
-        );
+        let second_receipt_before = service
+            .thread_sync_receipts_by_id
+            .get(thread_id)
+            .expect("receipt should exist after reconnect refresh")
+            .synced_at_millis;
 
         service
             .sync_thread_from_upstream(thread_id)
             .expect("reconnect timeline companion request should succeed");
+        let second_receipt_after = service
+            .thread_sync_receipts_by_id
+            .get(thread_id)
+            .expect("receipt should remain after reconnect companion")
+            .synced_at_millis;
+        assert_eq!(
+            second_receipt_after, second_receipt_before,
+            "reconnect-style detail/timeline pair should share a single warm generation"
+        );
         assert_eq!(
             service
                 .detail_response(thread_id)
@@ -5548,6 +5594,152 @@ mod tests {
                 .thread
                 .title,
             "Reconnect title"
+        );
+
+        let _ = fs::remove_dir_all(codex_home);
+    }
+
+    #[test]
+    fn sync_thread_from_upstream_keeps_fast_path_for_same_thread_after_interleaved_read() {
+        let canonical_thread_id = "019d0d0c-07df-7632-81fa-a1636651400a";
+        let interleaved_thread_id = "thread-other";
+        let codex_home = unique_test_codex_home();
+
+        write_archived_thread_fixtures(
+            &codex_home,
+            &[
+                (
+                    canonical_thread_id,
+                    "2026-03-19T10:00:00Z",
+                    "Canonical title",
+                    "Canonical summary.",
+                ),
+                (
+                    interleaved_thread_id,
+                    "2026-03-19T09:00:00Z",
+                    "Interleaved title",
+                    "Interleaved summary.",
+                ),
+            ],
+        );
+
+        let mut service = ThreadApiService::with_seed_data(Vec::new(), HashMap::new());
+        service.sync_config = Some(ThreadSyncConfig {
+            codex_command: "/definitely/missing/codex".to_string(),
+            codex_args: Vec::new(),
+            codex_endpoint: None,
+            codex_home: codex_home.clone(),
+        });
+
+        service
+            .sync_thread_from_upstream(canonical_thread_id)
+            .expect("initial sync should load canonical thread snapshot");
+
+        let canonical_receipt_before = service
+            .thread_sync_receipts_by_id
+            .get(canonical_thread_id)
+            .expect("canonical sync receipt should exist")
+            .synced_at_millis;
+
+        // This delay intentionally exceeds the old 250ms warm window while still
+        // representing an immediate user-level interleaved read sequence.
+        std::thread::sleep(std::time::Duration::from_millis(350));
+
+        service
+            .sync_thread_from_upstream(interleaved_thread_id)
+            .expect("interleaved thread sync should succeed");
+        service
+            .sync_thread_from_upstream(canonical_thread_id)
+            .expect("revisited canonical thread sync should succeed");
+
+        let canonical_receipt_after = service
+            .thread_sync_receipts_by_id
+            .get(canonical_thread_id)
+            .expect("canonical sync receipt should still exist")
+            .synced_at_millis;
+
+        assert_eq!(
+            canonical_receipt_after, canonical_receipt_before,
+            "canonical thread should stay on the warm fast path after interleaving another thread"
+        );
+        assert_eq!(
+            service
+                .detail_response(canonical_thread_id)
+                .expect("canonical detail should remain available")
+                .thread
+                .title,
+            "Canonical title"
+        );
+
+        let _ = fs::remove_dir_all(codex_home);
+    }
+
+    #[test]
+    fn sync_thread_from_upstream_invalidates_fast_path_when_archive_index_changes() {
+        let thread_id = "019d0d0c-07df-7632-81fa-a1636651400a";
+        let codex_home = unique_test_codex_home();
+
+        write_archived_thread_fixture(
+            &codex_home,
+            thread_id,
+            "2026-03-19T10:00:00Z",
+            "Initial title",
+            "Initial summary.",
+        );
+
+        let session_index_path = codex_home.join("session_index.jsonl");
+        let initial_index_modified_at = fs::metadata(&session_index_path)
+            .expect("session index metadata should exist")
+            .modified()
+            .expect("session index modified time should be readable");
+
+        let mut service = ThreadApiService::with_seed_data(Vec::new(), HashMap::new());
+        service.sync_config = Some(ThreadSyncConfig {
+            codex_command: "/definitely/missing/codex".to_string(),
+            codex_args: Vec::new(),
+            codex_endpoint: None,
+            codex_home: codex_home.clone(),
+        });
+
+        service
+            .sync_thread_from_upstream(thread_id)
+            .expect("initial sync should load first snapshot");
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+
+        write_archived_thread_fixture(
+            &codex_home,
+            thread_id,
+            "2026-03-19T10:30:00Z",
+            "Updated title",
+            "Updated summary.",
+        );
+
+        let updated_index_modified_at = fs::metadata(&session_index_path)
+            .expect("session index metadata should still exist")
+            .modified()
+            .expect("updated session index modified time should be readable");
+        assert!(
+            updated_index_modified_at > initial_index_modified_at,
+            "fixture update should advance session index modified time"
+        );
+
+        if let Some(receipt) = service.thread_sync_receipts_by_id.get_mut(thread_id) {
+            receipt.synced_at_millis = super::current_unix_epoch_millis();
+        }
+
+        service
+            .sync_thread_from_upstream(thread_id)
+            .expect("sync after archive update should succeed");
+
+        assert_eq!(
+            service
+                .detail_response(thread_id)
+                .expect("detail should remain present")
+                .thread
+                .title,
+            "Updated title",
+            "archive index updates should invalidate the warm fast path"
         );
 
         let _ = fs::remove_dir_all(codex_home);
@@ -6324,50 +6516,62 @@ mod tests {
         title: &str,
         summary: &str,
     ) {
+        write_archived_thread_fixtures(codex_home, &[(thread_id, updated_at, title, summary)]);
+    }
+
+    fn write_archived_thread_fixtures(codex_home: &Path, fixtures: &[(&str, &str, &str, &str)]) {
         let sessions_directory = codex_home.join("sessions/2026/03/19");
         fs::create_dir_all(&sessions_directory).expect("test sessions directory should exist");
 
-        let index_line = json!({
-            "id": thread_id,
-            "thread_name": title,
-            "updated_at": updated_at,
-        })
-        .to_string();
+        let index_line = fixtures
+            .iter()
+            .map(|(thread_id, updated_at, title, _)| {
+                json!({
+                    "id": thread_id,
+                    "thread_name": title,
+                    "updated_at": updated_at,
+                })
+                .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         fs::write(
             codex_home.join("session_index.jsonl"),
             format!("{index_line}\n"),
         )
         .expect("session index should be writable");
 
-        let session_meta_line = json!({
-            "timestamp": "2026-03-19T09:55:00Z",
-            "type": "session_meta",
-            "payload": {
-                "id": thread_id,
+        for (thread_id, updated_at, _, summary) in fixtures {
+            let session_meta_line = json!({
                 "timestamp": "2026-03-19T09:55:00Z",
-                "cwd": "/Users/test/workspace",
-                "source": "vscode",
-                "git": {
-                    "branch": "master",
-                    "repository_url": "git@github.com:example/codex-mobile-companion.git",
+                "type": "session_meta",
+                "payload": {
+                    "id": thread_id,
+                    "timestamp": "2026-03-19T09:55:00Z",
+                    "cwd": "/Users/test/workspace",
+                    "source": "vscode",
+                    "git": {
+                        "branch": "master",
+                        "repository_url": "git@github.com:example/codex-mobile-companion.git",
+                    }
                 }
-            }
-        })
-        .to_string();
-        let event_line = json!({
-            "timestamp": updated_at,
-            "type": "event_msg",
-            "payload": {
-                "type": "agent_message",
-                "message": summary,
-            }
-        })
-        .to_string();
-        fs::write(
-            sessions_directory.join(format!("rollout-2026-03-19T10-00-00-{thread_id}.jsonl")),
-            format!("{session_meta_line}\n{event_line}\n"),
-        )
-        .expect("session log should be writable");
+            })
+            .to_string();
+            let event_line = json!({
+                "timestamp": updated_at,
+                "type": "event_msg",
+                "payload": {
+                    "type": "agent_message",
+                    "message": summary,
+                }
+            })
+            .to_string();
+            fs::write(
+                sessions_directory.join(format!("rollout-2026-03-19T10-00-00-{thread_id}.jsonl")),
+                format!("{session_meta_line}\n{event_line}\n"),
+            )
+            .expect("session log should be writable");
+        }
     }
 
     fn unique_test_codex_home() -> PathBuf {
