@@ -1,0 +1,12 @@
+{
+  "bridge_id": "bridge-2e89407987c8a4cb",
+  "next_pairing_sequence": 3,
+  "trusted_phone": null,
+  "active_session": null,
+  "consumed_pairing_sessions": [
+    "pairing-session-1"
+  ],
+  "revoked_session_tokens": [
+    "sts-69beb683-65"
+  ]
+}

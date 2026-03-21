@@ -452,14 +452,14 @@ String _extractSummary(BridgeEventKind kind, Map<String, dynamic> payload) {
 }
 
 String? _extractMessageText(Map<String, dynamic> payload) {
-  final delta = _optionalString(payload, 'delta');
-  if (delta != null) {
-    return delta;
-  }
-
   final text = _optionalString(payload, 'text');
   if (text != null) {
     return text;
+  }
+
+  final delta = _optionalString(payload, 'delta');
+  if (delta != null) {
+    return delta;
   }
 
   final content = payload['content'];
