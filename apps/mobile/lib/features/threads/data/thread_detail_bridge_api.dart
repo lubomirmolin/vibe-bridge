@@ -61,6 +61,12 @@ abstract class ThreadDetailBridgeApi {
     return fallbackModelCatalog;
   }
 
+  Future<ThreadSnapshotDto> createThread({
+    required String bridgeApiBaseUrl,
+    required String workspace,
+    String? model,
+  });
+
   Future<ThreadDetailDto> fetchThreadDetail({
     required String bridgeApiBaseUrl,
     required String threadId,
@@ -126,6 +132,75 @@ abstract class ThreadDetailBridgeApi {
 
 class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   const HttpThreadDetailBridgeApi();
+
+  @override
+  Future<ThreadSnapshotDto> createThread({
+    required String bridgeApiBaseUrl,
+    required String workspace,
+    String? model,
+  }) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+
+    try {
+      final request = await client.postUrl(
+        _buildCreateThreadUri(bridgeApiBaseUrl),
+      );
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
+      request.write(
+        jsonEncode(<String, dynamic>{
+          'workspace': workspace,
+          if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
+        }),
+      );
+
+      final response = await request.close();
+      final bodyText = await utf8.decodeStream(response);
+      final decoded = _decodeJsonObject(bodyText);
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        try {
+          return ThreadSnapshotDto.fromJson(decoded);
+        } on FormatException {
+          throw const ThreadCreateBridgeException(
+            message: 'Bridge returned an invalid thread creation response.',
+          );
+        }
+      }
+
+      throw ThreadCreateBridgeException(
+        message:
+            _readOptionalString(decoded, 'message') ??
+            'Couldn’t create a new thread right now.',
+      );
+    } on SocketException {
+      throw const ThreadCreateBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on HandshakeException {
+      throw const ThreadCreateBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on HttpException {
+      throw const ThreadCreateBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on TimeoutException {
+      throw const ThreadCreateBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on FormatException {
+      throw const ThreadCreateBridgeException(
+        message: 'Bridge returned an invalid thread creation response.',
+      );
+    } finally {
+      client.close();
+    }
+  }
 
   @override
   Future<ModelCatalogDto> fetchModelCatalog({
@@ -513,6 +588,19 @@ class ThreadDetailBridgeException implements Exception {
   String toString() => message;
 }
 
+class ThreadCreateBridgeException implements Exception {
+  const ThreadCreateBridgeException({
+    required this.message,
+    this.isConnectivityError = false,
+  });
+
+  final String message;
+  final bool isConnectivityError;
+
+  @override
+  String toString() => message;
+}
+
 class ThreadTurnBridgeException implements Exception {
   const ThreadTurnBridgeException({
     required this.message,
@@ -666,6 +754,16 @@ Uri _buildBootstrapUri(String baseUrl) {
       : baseUri.path;
   final fullPath =
       '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/bootstrap';
+  return baseUri.replace(path: fullPath, queryParameters: null);
+}
+
+Uri _buildCreateThreadUri(String baseUrl) {
+  final baseUri = Uri.parse(baseUrl);
+  final normalizedBasePath = baseUri.path.endsWith('/')
+      ? baseUri.path.substring(0, baseUri.path.length - 1)
+      : baseUri.path;
+  final fullPath =
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads';
   return baseUri.replace(path: fullPath, queryParameters: null);
 }
 

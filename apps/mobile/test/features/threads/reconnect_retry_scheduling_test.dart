@@ -467,6 +467,17 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   }
 
   @override
+  Future<ThreadSnapshotDto> createThread({
+    required String bridgeApiBaseUrl,
+    required String workspace,
+    String? model,
+  }) async {
+    throw const ThreadCreateBridgeException(
+      message: 'Thread creation is not used in reconnect retry tests.',
+    );
+  }
+
+  @override
   Future<ThreadDetailDto> fetchThreadDetail({
     required String bridgeApiBaseUrl,
     required String threadId,

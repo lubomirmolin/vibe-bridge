@@ -313,21 +313,31 @@ class ThreadListController extends StateNotifier<ThreadListState> {
   }
 
   void syncThreadDetail(ThreadDetailDto detail) {
-    _updateThreadSummary(
+    final nextSummary = ThreadSummaryDto(
+      contractVersion: detail.contractVersion,
       threadId: detail.threadId,
-      transform: (thread) {
-        return ThreadSummaryDto(
-          contractVersion: thread.contractVersion,
-          threadId: thread.threadId,
-          title: detail.title,
-          status: detail.status,
-          workspace: detail.workspace,
-          repository: detail.repository,
-          branch: detail.branch,
-          updatedAt: detail.updatedAt,
-        );
-      },
+      title: detail.title,
+      status: detail.status,
+      workspace: detail.workspace,
+      repository: detail.repository,
+      branch: detail.branch,
+      updatedAt: detail.updatedAt,
     );
+
+    final index = state.threads.indexWhere(
+      (thread) => thread.threadId == detail.threadId,
+    );
+    if (index < 0) {
+      final nextThreads = <ThreadSummaryDto>[nextSummary, ...state.threads];
+      state = state.copyWith(threads: nextThreads);
+      unawaited(_cacheRepository.saveThreadList(nextThreads));
+      return;
+    }
+
+    final nextThreads = List<ThreadSummaryDto>.from(state.threads);
+    nextThreads[index] = nextSummary;
+    state = state.copyWith(threads: nextThreads);
+    unawaited(_cacheRepository.saveThreadList(nextThreads));
   }
 
   void applyThreadStatusUpdate({
