@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -10,6 +11,7 @@ use tungstenite::{Message, WebSocket, connect};
 #[derive(Debug)]
 pub struct CodexJsonTransport {
     next_id: i64,
+    pending_messages: VecDeque<Value>,
     connection: CodexConnection,
 }
 
@@ -33,6 +35,7 @@ impl CodexJsonTransport {
             })?;
             let mut transport = Self {
                 next_id: 1,
+                pending_messages: VecDeque::new(),
                 connection: CodexConnection::WebSocket { socket },
             };
             transport.initialize()?;
@@ -71,6 +74,7 @@ impl CodexJsonTransport {
 
         let mut transport = Self {
             next_id: 1,
+            pending_messages: VecDeque::new(),
             connection: CodexConnection::Stdio {
                 child,
                 stdin,
@@ -114,6 +118,7 @@ impl CodexJsonTransport {
                 .next_message(method)?
                 .ok_or_else(|| format!("codex upstream closed while waiting for '{method}'"))?;
             if response.get("id").and_then(Value::as_i64) != Some(id) {
+                self.pending_messages.push_back(response);
                 continue;
             }
 
@@ -122,6 +127,10 @@ impl CodexJsonTransport {
     }
 
     pub fn next_message(&mut self, context: &str) -> Result<Option<Value>, String> {
+        if let Some(message) = self.pending_messages.pop_front() {
+            return Ok(Some(message));
+        }
+
         match &mut self.connection {
             CodexConnection::Stdio { stdout, .. } => loop {
                 let mut line = String::new();

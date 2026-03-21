@@ -15,33 +15,56 @@ struct BridgeShellAPIClient: ShellBridgeClient {
     }
 
     func fetchHealth() async throws -> BridgeHealthResponseDTO {
-        try await fetch(path: "/health", method: "GET")
+        let bootstrap: RewriteBootstrapDTO = try await fetch(path: "/bootstrap", method: "GET")
+        return BridgeHealthResponseDTO(
+            status: bootstrap.bridge.status == "healthy" ? "ok" : "degraded",
+            runtime: BridgeRuntimeSnapshotDTO(
+                mode: "auto",
+                state: bootstrap.codex.status == "healthy" ? "managed" : "degraded",
+                endpoint: nil,
+                pid: nil,
+                detail: bootstrap.codex.message ?? "Rewrite bridge is running."
+            ),
+            pairingRoute: BridgePairingRouteHealthDTO(
+                reachable: bootstrap.bridge.status == "healthy",
+                advertisedBaseURL: nil,
+                message: bootstrap.bridge.message
+            ),
+            trust: nil,
+            api: BridgeAPISurfaceDTO(
+                endpoints: [
+                    "GET /healthz",
+                    "GET /bootstrap",
+                    "GET /threads",
+                    "GET /threads/:thread_id/snapshot",
+                    "GET /threads/:thread_id/history",
+                    "POST /threads/:thread_id/turns",
+                    "POST /threads/:thread_id/interrupt",
+                    "GET /events"
+                ],
+                seededThreadCount: bootstrap.threads.count
+            )
+        )
     }
 
     func fetchThreads() async throws -> ThreadListResponseDTO {
-        try await fetch(path: "/threads", method: "GET")
+        let threads: [ThreadSummaryDTO] = try await fetch(path: "/threads", method: "GET")
+        return ThreadListResponseDTO(
+            contractVersion: threads.first?.contractVersion ?? SharedContract.version,
+            threads: threads
+        )
     }
 
     func fetchPairingSession() async throws -> PairingSessionResponseDTO {
-        try await fetch(path: "/pairing/session", method: "POST")
+        throw BridgeShellAPIClientError.unsupported(
+            "Pairing QR is not exposed by the rewrite backend yet."
+        )
     }
 
     func revokeTrust(phoneID: String?) async throws -> PairingRevokeResponseDTO {
-        var components = URLComponents(
-            url: apiBaseURL.appending(path: "/pairing/trust/revoke"),
-            resolvingAgainstBaseURL: false
+        throw BridgeShellAPIClientError.unsupported(
+            "Trust revocation is not exposed by the rewrite backend yet."
         )
-        var queryItems: [URLQueryItem] = [URLQueryItem(name: "actor", value: "desktop-shell")]
-        if let phoneID, !phoneID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            queryItems.append(URLQueryItem(name: "phone_id", value: phoneID))
-        }
-        components?.queryItems = queryItems
-
-        guard let endpoint = components?.url else {
-            throw BridgeShellAPIClientError.invalidResponse
-        }
-
-        return try await fetch(url: endpoint, method: "POST")
     }
 
     private func fetch<T: Decodable>(path: String, method: String) async throws -> T {
@@ -76,6 +99,7 @@ enum BridgeShellAPIClientError: LocalizedError {
     case invalidResponse
     case unexpectedStatus(Int, String)
     case decodingFailure(Error)
+    case unsupported(String)
 
     var errorDescription: String? {
         switch self {
@@ -85,6 +109,27 @@ enum BridgeShellAPIClientError: LocalizedError {
             return "bridge returned HTTP \(statusCode): \(body)"
         case let .decodingFailure(error):
             return "failed to decode bridge payload: \(error.localizedDescription)"
+        case let .unsupported(message):
+            return message
         }
     }
+}
+
+private struct RewriteBootstrapDTO: Decodable {
+    let contractVersion: String
+    let bridge: RewriteServiceHealthDTO
+    let codex: RewriteServiceHealthDTO
+    let threads: [ThreadSummaryDTO]
+
+    enum CodingKeys: String, CodingKey {
+        case contractVersion = "contract_version"
+        case bridge
+        case codex
+        case threads
+    }
+}
+
+private struct RewriteServiceHealthDTO: Decodable {
+    let status: String
+    let message: String?
 }

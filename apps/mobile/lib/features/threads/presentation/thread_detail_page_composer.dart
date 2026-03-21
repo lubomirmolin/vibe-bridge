@@ -208,7 +208,7 @@ class _PinnedTurnComposer extends StatelessWidget {
                     ),
                     decoration: InputDecoration(
                       hintText: isTurnActive
-                          ? 'Guide the agent...'
+                          ? 'Turn in progress. Interrupt to send a new prompt.'
                           : 'Message Codex...',
                       hintStyle: const TextStyle(color: AppTheme.textSubtle),
                       border: InputBorder.none,
@@ -229,8 +229,7 @@ class _PinnedTurnComposer extends StatelessWidget {
                   builder: (context, _) {
                     final hasInput = composerController.text.trim().isNotEmpty;
                     final showStopAction =
-                        (isTurnActive || isInterruptMutationInFlight) &&
-                        !hasInput;
+                        isTurnActive || isInterruptMutationInFlight;
                     final canRunPrimaryAction = showStopAction
                         ? (controlsEnabled &&
                               isTurnActive &&

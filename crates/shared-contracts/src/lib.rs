@@ -133,6 +133,90 @@ pub struct ModelCatalogDto {
     pub models: Vec<ModelOptionDto>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceHealthStatus {
+    Healthy,
+    Degraded,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServiceHealthDto {
+    pub status: ServiceHealthStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustStateDto {
+    pub trusted: bool,
+    pub access_mode: AccessMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BootstrapDto {
+    pub contract_version: String,
+    pub bridge: ServiceHealthDto,
+    pub codex: ServiceHealthDto,
+    pub trust: TrustStateDto,
+    #[serde(default)]
+    pub threads: Vec<ThreadSummaryDto>,
+    #[serde(default)]
+    pub models: Vec<ModelOptionDto>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalStatus {
+    Pending,
+    Approved,
+    Rejected,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApprovalSummaryDto {
+    pub approval_id: String,
+    pub thread_id: String,
+    pub action: String,
+    pub status: ApprovalStatus,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitStatusDto {
+    pub workspace: String,
+    pub repository: String,
+    pub branch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
+    pub dirty: bool,
+    pub ahead_by: u32,
+    pub behind_by: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadSnapshotDto {
+    pub contract_version: String,
+    pub thread: ThreadDetailDto,
+    #[serde(default)]
+    pub entries: Vec<ThreadTimelineEntryDto>,
+    #[serde(default)]
+    pub approvals: Vec<ApprovalSummaryDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_status: Option<GitStatusDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnMutationAcceptedDto {
+    pub contract_version: String,
+    pub thread_id: String,
+    pub thread_status: ThreadStatus,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecurityAuditEventDto {
     pub actor: String,
@@ -182,9 +266,10 @@ impl<TPayload> BridgeEventEnvelope<TPayload> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, SecurityAuditEventDto,
-        ThreadDetailDto, ThreadStatus, ThreadSummaryDto, ThreadTimelineExplorationKind,
-        ThreadTimelineGroupKind, ThreadTimelinePageDto,
+        BootstrapDto, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION,
+        SecurityAuditEventDto, ServiceHealthDto, ServiceHealthStatus, ThreadDetailDto,
+        ThreadStatus, ThreadSummaryDto, ThreadTimelineExplorationKind, ThreadTimelineGroupKind,
+        ThreadTimelinePageDto, TrustStateDto, TurnMutationAcceptedDto,
     };
 
     #[test]
@@ -260,5 +345,48 @@ mod tests {
 
         assert_eq!(event.target, "git.push");
         assert_eq!(event.outcome, "allowed");
+    }
+
+    #[test]
+    fn bootstrap_contract_serializes_expected_shape() {
+        let bootstrap = BootstrapDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            bridge: ServiceHealthDto {
+                status: ServiceHealthStatus::Healthy,
+                message: None,
+            },
+            codex: ServiceHealthDto {
+                status: ServiceHealthStatus::Degraded,
+                message: Some("notification stream reconnecting".to_string()),
+            },
+            trust: TrustStateDto {
+                trusted: false,
+                access_mode: super::AccessMode::ControlWithApprovals,
+            },
+            threads: vec![],
+            models: vec![],
+        };
+
+        let value = serde_json::to_value(bootstrap).expect("bootstrap should serialize");
+        assert_eq!(value["contract_version"], CONTRACT_VERSION);
+        assert_eq!(value["bridge"]["status"], "healthy");
+        assert_eq!(value["codex"]["status"], "degraded");
+        assert_eq!(value["trust"]["access_mode"], "control_with_approvals");
+    }
+
+    #[test]
+    fn turn_mutation_contract_serializes_expected_shape() {
+        let accepted = TurnMutationAcceptedDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread_id: "thread-123".to_string(),
+            thread_status: ThreadStatus::Running,
+            message: "turn accepted".to_string(),
+        };
+
+        let value = serde_json::to_value(accepted).expect("turn mutation should serialize");
+        assert_eq!(value["contract_version"], CONTRACT_VERSION);
+        assert_eq!(value["thread_id"], "thread-123");
+        assert_eq!(value["thread_status"], "running");
+        assert_eq!(value["message"], "turn accepted");
     }
 }

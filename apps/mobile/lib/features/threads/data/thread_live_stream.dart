@@ -99,7 +99,7 @@ Uri _buildStreamUri(String baseUrl, String? threadId) {
       : baseUri.path;
   final wsScheme = baseUri.scheme == 'https' ? 'wss' : 'ws';
   final fullPath =
-      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/stream';
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/events';
 
   final normalizedThreadId = threadId?.trim();
 
@@ -107,7 +107,7 @@ Uri _buildStreamUri(String baseUrl, String? threadId) {
     scheme: wsScheme,
     path: fullPath,
     queryParameters: normalizedThreadId == null || normalizedThreadId.isEmpty
-        ? null
-        : <String, String>{'thread_id': normalizedThreadId},
+        ? <String, String>{'scope': 'list'}
+        : <String, String>{'scope': 'thread', 'thread_id': normalizedThreadId},
   );
 }

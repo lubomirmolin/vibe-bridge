@@ -131,37 +131,13 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   Future<ModelCatalogDto> fetchModelCatalog({
     required String bridgeApiBaseUrl,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
-    try {
-      final request = await client.getUrl(_buildModelsUri(bridgeApiBaseUrl));
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      final bodyText = await utf8.decodeStream(response);
-      final decoded = _decodeJsonObject(bodyText);
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        try {
-          return ModelCatalogDto.fromJson(decoded);
-        } on FormatException {
-          return fallbackModelCatalog;
-        }
-      }
-
-      return fallbackModelCatalog;
-    } on SocketException {
-      return fallbackModelCatalog;
-    } on HandshakeException {
-      return fallbackModelCatalog;
-    } on HttpException {
-      return fallbackModelCatalog;
-    } on TimeoutException {
-      return fallbackModelCatalog;
-    } on FormatException {
-      return fallbackModelCatalog;
-    } finally {
-      client.close();
-    }
+    final bootstrap = await _getBootstrap(bridgeApiBaseUrl);
+    return bootstrap?.models.isNotEmpty == true
+        ? ModelCatalogDto(
+            contractVersion: bootstrap!.contractVersion,
+            models: bootstrap.models,
+          )
+        : fallbackModelCatalog;
   }
 
   @override
@@ -169,61 +145,32 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
-    try {
-      final request = await client.getUrl(
-        _buildThreadGitStatusUri(bridgeApiBaseUrl, threadId),
-      );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      final bodyText = await utf8.decodeStream(response);
-      final decoded = _decodeJsonObject(bodyText);
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        try {
-          return GitStatusResponseDto.fromJson(decoded);
-        } on FormatException {
-          throw const ThreadGitBridgeException(
-            message: 'Bridge returned an invalid git status response.',
-          );
-        }
-      }
-
-      throw ThreadGitBridgeException(
-        message:
-            _readOptionalString(decoded, 'message') ??
-            'Couldn’t load git status right now.',
-        statusCode: response.statusCode,
-        code: _readOptionalString(decoded, 'code'),
-      );
-    } on SocketException {
+    final snapshot = await _fetchThreadSnapshot(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+    );
+    final gitStatus = snapshot.gitStatus;
+    if (gitStatus == null) {
       throw const ThreadGitBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
+        message: 'Git status is unavailable for this thread snapshot.',
       );
-    } on HandshakeException {
-      throw const ThreadGitBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const ThreadGitBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
-      throw const ThreadGitBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on FormatException {
-      throw const ThreadGitBridgeException(
-        message: 'Bridge returned an invalid git status response.',
-      );
-    } finally {
-      client.close();
     }
+
+    return GitStatusResponseDto(
+      contractVersion: snapshot.contractVersion,
+      threadId: snapshot.thread.threadId,
+      repository: RepositoryContextDto(
+        workspace: gitStatus.workspace,
+        repository: gitStatus.repository,
+        branch: gitStatus.branch,
+        remote: gitStatus.remote ?? 'origin',
+      ),
+      status: GitStatusDto(
+        dirty: gitStatus.dirty,
+        aheadBy: gitStatus.aheadBy,
+        behindBy: gitStatus.behindBy,
+      ),
+    );
   }
 
   @override
@@ -232,12 +179,8 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String threadId,
     required String branch,
   }) {
-    return _postGitMutation(
-      bridgeApiBaseUrl: bridgeApiBaseUrl,
-      threadId: threadId,
-      action: 'branch-switch',
-      queryParamName: 'branch',
-      queryParamValue: branch,
+    throw const ThreadGitMutationBridgeException(
+      message: 'Git mutations are not exposed by the rewrite backend yet.',
     );
   }
 
@@ -247,12 +190,8 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String threadId,
     String? remote,
   }) {
-    return _postGitMutation(
-      bridgeApiBaseUrl: bridgeApiBaseUrl,
-      threadId: threadId,
-      action: 'pull',
-      queryParamName: remote == null ? null : 'remote',
-      queryParamValue: remote,
+    throw const ThreadGitMutationBridgeException(
+      message: 'Git mutations are not exposed by the rewrite backend yet.',
     );
   }
 
@@ -262,12 +201,8 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String threadId,
     String? remote,
   }) {
-    return _postGitMutation(
-      bridgeApiBaseUrl: bridgeApiBaseUrl,
-      threadId: threadId,
-      action: 'push',
-      queryParamName: remote == null ? null : 'remote',
-      queryParamValue: remote,
+    throw const ThreadGitMutationBridgeException(
+      message: 'Git mutations are not exposed by the rewrite backend yet.',
     );
   }
 
@@ -280,9 +215,9 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     return _postTurnMutation(
       bridgeApiBaseUrl: bridgeApiBaseUrl,
       threadId: threadId,
-      action: 'start',
-      queryParamName: 'prompt',
-      queryParamValue: prompt,
+      operation: 'start',
+      routeSegment: 'turns',
+      body: <String, dynamic>{'prompt': prompt},
     );
   }
 
@@ -295,9 +230,9 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     return _postTurnMutation(
       bridgeApiBaseUrl: bridgeApiBaseUrl,
       threadId: threadId,
-      action: 'steer',
-      queryParamName: 'instruction',
-      queryParamValue: instruction,
+      operation: 'steer',
+      routeSegment: 'turns',
+      body: <String, dynamic>{'prompt': instruction, 'mode': 'steer'},
     );
   }
 
@@ -309,7 +244,9 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     return _postTurnMutation(
       bridgeApiBaseUrl: bridgeApiBaseUrl,
       threadId: threadId,
-      action: 'interrupt',
+      operation: 'interrupt',
+      routeSegment: 'interrupt',
+      body: const <String, dynamic>{},
     );
   }
 
@@ -318,61 +255,9 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
-    try {
-      final request = await client.postUrl(
-        _buildThreadOpenOnMacUri(bridgeApiBaseUrl, threadId),
-      );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      final bodyText = await utf8.decodeStream(response);
-      final decoded = _decodeJsonObject(bodyText);
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        try {
-          return OpenOnMacResponseDto.fromJson(decoded);
-        } on FormatException {
-          throw const ThreadOpenOnMacBridgeException(
-            message: 'Bridge returned an invalid open-on-Mac response.',
-          );
-        }
-      }
-
-      throw ThreadOpenOnMacBridgeException(
-        message:
-            _readOptionalString(decoded, 'message') ??
-            'Couldn’t open this thread in Codex.app right now.',
-        statusCode: response.statusCode,
-        code: _readOptionalString(decoded, 'code'),
-      );
-    } on SocketException {
-      throw const ThreadOpenOnMacBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const ThreadOpenOnMacBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const ThreadOpenOnMacBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
-      throw const ThreadOpenOnMacBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on FormatException {
-      throw const ThreadOpenOnMacBridgeException(
-        message: 'Bridge returned an invalid open-on-Mac response.',
-      );
-    } finally {
-      client.close();
-    }
+    throw const ThreadOpenOnMacBridgeException(
+      message: 'Open-on-Mac is not available in the rewrite backend yet.',
+    );
   }
 
   @override
@@ -380,11 +265,22 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
   }) async {
+    final snapshot = await _fetchThreadSnapshot(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+    );
+    return snapshot.thread;
+  }
+
+  Future<ThreadSnapshotDto> _fetchThreadSnapshot({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
 
     try {
       final request = await client.getUrl(
-        _buildThreadDetailUri(bridgeApiBaseUrl, threadId),
+        _buildThreadSnapshotUri(bridgeApiBaseUrl, threadId),
       );
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       final response = await request.close();
@@ -393,10 +289,10 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
-          return _decodeThreadDetailResponse(decoded);
+          return ThreadSnapshotDto.fromJson(decoded);
         } on FormatException {
           throw const ThreadDetailBridgeException(
-            message: 'Bridge returned an invalid thread detail response.',
+            message: 'Bridge returned an invalid thread snapshot response.',
           );
         }
       }
@@ -429,7 +325,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       );
     } on FormatException {
       throw const ThreadDetailBridgeException(
-        message: 'Bridge returned an invalid thread detail response.',
+        message: 'Bridge returned an invalid thread snapshot response.',
       );
     } finally {
       client.close();
@@ -447,7 +343,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
 
     try {
       final request = await client.getUrl(
-        _buildThreadTimelineUri(
+        _buildThreadHistoryUri(
           bridgeApiBaseUrl,
           threadId,
           before: before,
@@ -530,30 +426,34 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   Future<TurnMutationResult> _postTurnMutation({
     required String bridgeApiBaseUrl,
     required String threadId,
-    required String action,
-    String? queryParamName,
-    String? queryParamValue,
+    required String operation,
+    required String routeSegment,
+    required Map<String, dynamic> body,
   }) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
 
     try {
       final request = await client.postUrl(
-        _buildThreadTurnMutationUri(
-          bridgeApiBaseUrl,
-          threadId,
-          action,
-          queryParamName: queryParamName,
-          queryParamValue: queryParamValue,
-        ),
+        _buildThreadTurnMutationUri(bridgeApiBaseUrl, threadId, routeSegment),
       );
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
+      request.write(jsonEncode(body));
       final response = await request.close();
       final bodyText = await utf8.decodeStream(response);
       final decoded = _decodeJsonObject(bodyText);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
-          return TurnMutationResult.fromJson(decoded);
+          final accepted = TurnMutationAcceptedDto.fromJson(decoded);
+          return TurnMutationResult(
+            contractVersion: accepted.contractVersion,
+            threadId: accepted.threadId,
+            operation: operation,
+            outcome: 'accepted',
+            message: accepted.message,
+            threadStatus: accepted.threadStatus,
+          );
         } on FormatException {
           throw ThreadTurnBridgeException(
             message:
@@ -591,99 +491,6 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     } on FormatException {
       throw const ThreadTurnBridgeException(
         message: 'Bridge returned an invalid turn control response.',
-      );
-    } finally {
-      client.close();
-    }
-  }
-
-  Future<MutationResultResponseDto> _postGitMutation({
-    required String bridgeApiBaseUrl,
-    required String threadId,
-    required String action,
-    String? queryParamName,
-    String? queryParamValue,
-  }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
-    try {
-      final request = await client.postUrl(
-        _buildThreadGitMutationUri(
-          bridgeApiBaseUrl,
-          threadId,
-          action,
-          queryParamName: queryParamName,
-          queryParamValue: queryParamValue,
-        ),
-      );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      final bodyText = await utf8.decodeStream(response);
-      final decoded = _decodeJsonObject(bodyText);
-
-      if (response.statusCode == 202 ||
-          _readOptionalString(decoded, 'outcome') == 'approval_required') {
-        try {
-          final gateResponse = ApprovalGateResponseDto.fromJson(decoded);
-          throw ThreadGitApprovalRequiredException(
-            message: gateResponse.message,
-            operation: gateResponse.operation,
-            outcome: gateResponse.outcome,
-            approval: gateResponse.approval,
-          );
-        } on FormatException {
-          throw ThreadGitMutationBridgeException(
-            message:
-                _readOptionalString(decoded, 'message') ??
-                'Bridge returned an invalid approval-gate response.',
-            statusCode: response.statusCode,
-            code: _readOptionalString(decoded, 'code'),
-          );
-        }
-      }
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        try {
-          return MutationResultResponseDto.fromJson(decoded);
-        } on FormatException {
-          throw ThreadGitMutationBridgeException(
-            message:
-                _readOptionalString(decoded, 'message') ??
-                'Git action did not return a valid repository state.',
-          );
-        }
-      }
-
-      throw ThreadGitMutationBridgeException(
-        message:
-            _readOptionalString(decoded, 'message') ??
-            'Couldn’t run the git action right now.',
-        statusCode: response.statusCode,
-        code: _readOptionalString(decoded, 'code'),
-      );
-    } on SocketException {
-      throw const ThreadGitMutationBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const ThreadGitMutationBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const ThreadGitMutationBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
-      throw const ThreadGitMutationBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on FormatException {
-      throw const ThreadGitMutationBridgeException(
-        message: 'Bridge returned an invalid git mutation response.',
       );
     } finally {
       client.close();
@@ -818,7 +625,61 @@ class TurnMutationResult {
   }
 }
 
-Uri _buildThreadTimelineUri(
+Future<BootstrapDto?> _getBootstrap(String bridgeApiBaseUrl) async {
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+
+  try {
+    final request = await client.getUrl(_buildBootstrapUri(bridgeApiBaseUrl));
+    request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+    final response = await request.close();
+    final bodyText = await utf8.decodeStream(response);
+    final decoded = _decodeJsonObject(bodyText);
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      try {
+        return BootstrapDto.fromJson(decoded);
+      } on FormatException {
+        return null;
+      }
+    }
+
+    return null;
+  } on SocketException {
+    return null;
+  } on HandshakeException {
+    return null;
+  } on HttpException {
+    return null;
+  } on TimeoutException {
+    return null;
+  } on FormatException {
+    return null;
+  } finally {
+    client.close();
+  }
+}
+
+Uri _buildBootstrapUri(String baseUrl) {
+  final baseUri = Uri.parse(baseUrl);
+  final normalizedBasePath = baseUri.path.endsWith('/')
+      ? baseUri.path.substring(0, baseUri.path.length - 1)
+      : baseUri.path;
+  final fullPath =
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/bootstrap';
+  return baseUri.replace(path: fullPath, queryParameters: null);
+}
+
+Uri _buildThreadSnapshotUri(String baseUrl, String threadId) {
+  final baseUri = Uri.parse(baseUrl);
+  final normalizedBasePath = baseUri.path.endsWith('/')
+      ? baseUri.path.substring(0, baseUri.path.length - 1)
+      : baseUri.path;
+  final fullPath =
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/snapshot';
+  return baseUri.replace(path: fullPath, queryParameters: null);
+}
+
+Uri _buildThreadHistoryUri(
   String baseUrl,
   String threadId, {
   String? before,
@@ -829,7 +690,7 @@ Uri _buildThreadTimelineUri(
       ? baseUri.path.substring(0, baseUri.path.length - 1)
       : baseUri.path;
   final fullPath =
-      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/timeline';
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/history';
   final queryParameters = <String, String>{};
   final normalizedBefore = before?.trim();
   if (normalizedBefore != null && normalizedBefore.isNotEmpty) {
@@ -844,94 +705,18 @@ Uri _buildThreadTimelineUri(
   );
 }
 
-Uri _buildThreadDetailUri(String baseUrl, String threadId) {
-  final baseUri = Uri.parse(baseUrl);
-  final normalizedBasePath = baseUri.path.endsWith('/')
-      ? baseUri.path.substring(0, baseUri.path.length - 1)
-      : baseUri.path;
-  final fullPath =
-      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}';
-  return baseUri.replace(path: fullPath, queryParameters: null);
-}
-
-Uri _buildModelsUri(String baseUrl) {
-  final baseUri = Uri.parse(baseUrl);
-  final normalizedBasePath = baseUri.path.endsWith('/')
-      ? baseUri.path.substring(0, baseUri.path.length - 1)
-      : baseUri.path;
-  final fullPath =
-      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/models';
-  return baseUri.replace(path: fullPath, queryParameters: null);
-}
-
-Uri _buildThreadGitStatusUri(String baseUrl, String threadId) {
-  final baseUri = Uri.parse(baseUrl);
-  final normalizedBasePath = baseUri.path.endsWith('/')
-      ? baseUri.path.substring(0, baseUri.path.length - 1)
-      : baseUri.path;
-  final fullPath =
-      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/git/status';
-  return baseUri.replace(path: fullPath, queryParameters: null);
-}
-
-Uri _buildThreadOpenOnMacUri(String baseUrl, String threadId) {
-  final baseUri = Uri.parse(baseUrl);
-  final normalizedBasePath = baseUri.path.endsWith('/')
-      ? baseUri.path.substring(0, baseUri.path.length - 1)
-      : baseUri.path;
-  final fullPath =
-      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/open-on-mac';
-  return baseUri.replace(path: fullPath, queryParameters: null);
-}
-
-Uri _buildThreadGitMutationUri(
-  String baseUrl,
-  String threadId,
-  String action, {
-  String? queryParamName,
-  String? queryParamValue,
-}) {
-  final baseUri = Uri.parse(baseUrl);
-  final normalizedBasePath = baseUri.path.endsWith('/')
-      ? baseUri.path.substring(0, baseUri.path.length - 1)
-      : baseUri.path;
-  final fullPath =
-      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/git/${Uri.encodeComponent(action)}';
-
-  final queryParameters = <String, String>{};
-  if (queryParamName != null && queryParamValue != null) {
-    queryParameters[queryParamName] = queryParamValue;
-  }
-
-  return baseUri.replace(
-    path: fullPath,
-    queryParameters: queryParameters.isEmpty ? null : queryParameters,
-  );
-}
-
 Uri _buildThreadTurnMutationUri(
   String baseUrl,
   String threadId,
-  String action, {
-  String? queryParamName,
-  String? queryParamValue,
-}) {
+  String action,
+) {
   final baseUri = Uri.parse(baseUrl);
   final normalizedBasePath = baseUri.path.endsWith('/')
       ? baseUri.path.substring(0, baseUri.path.length - 1)
       : baseUri.path;
   final fullPath =
-      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/turns/${Uri.encodeComponent(action)}';
-
-  final queryParameters = <String, String>{};
-  if (queryParamName != null && queryParamValue != null) {
-    queryParameters[queryParamName] = queryParamValue;
-  }
-
-  return baseUri.replace(
-    path: fullPath,
-    queryParameters: queryParameters.isEmpty ? null : queryParameters,
-  );
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/${Uri.encodeComponent(action)}';
+  return baseUri.replace(path: fullPath, queryParameters: null);
 }
 
 Map<String, dynamic> _decodeJsonObject(String bodyText) {
@@ -954,13 +739,4 @@ String? _readOptionalString(Map<String, dynamic> json, String key) {
   }
 
   return value.trim();
-}
-
-ThreadDetailDto _decodeThreadDetailResponse(Map<String, dynamic> decoded) {
-  final thread = decoded['thread'];
-  if (thread is Map<String, dynamic>) {
-    return ThreadDetailDto.fromJson(thread);
-  }
-
-  return ThreadDetailDto.fromJson(decoded);
 }
