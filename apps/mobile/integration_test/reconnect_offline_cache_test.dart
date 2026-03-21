@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:codex_mobile_companion/features/approvals/application/approvals_queue_controller.dart';
 import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
@@ -14,11 +15,145 @@ import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.
 import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:integration_test/integration_test.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
+
+const _liveTargetThreadId = '019d0d0c-07df-7632-81fa-a1636651400a';
+const _defaultLiveBridgeApiBaseUrl = 'http://10.0.2.2:3110';
 
 void main() {
+  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets(
+    'live target thread keeps access-mode controls and list/detail metadata coherent after refresh',
+    (tester) async {
+      await _requireAndroidEmulator();
+
+      final bridgeApiBaseUrl = _resolveLiveBridgeApiBaseUrl();
+      const threadId = _liveTargetThreadId;
+      const threadApi = HttpThreadDetailBridgeApi();
+      const approvalApi = HttpApprovalBridgeApi();
+
+      final initialDetail = await threadApi.fetchThreadDetail(
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: threadId,
+      );
+      final initialTimelinePage = await threadApi.fetchThreadTimelinePage(
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: threadId,
+        limit: 80,
+      );
+      final initialPolicyAccessMode = await approvalApi.fetchAccessMode(
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+      );
+
+      expect(initialDetail.threadId, threadId);
+      expect(initialTimelinePage.thread.threadId, threadId);
+      expect(initialTimelinePage.thread.title, initialDetail.title);
+      expect(initialTimelinePage.thread.status, initialDetail.status);
+      expect(
+        initialTimelinePage.thread.lastTurnSummary,
+        initialDetail.lastTurnSummary,
+      );
+      expect(initialTimelinePage.thread.accessMode, initialDetail.accessMode);
+      expect(initialPolicyAccessMode, initialDetail.accessMode);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            threadCacheRepositoryProvider.overrideWithValue(
+              _newCacheRepository(),
+            ),
+          ],
+          child: MaterialApp(
+            home: ThreadListPage(bridgeApiBaseUrl: bridgeApiBaseUrl),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final threadCardFinder = find.byKey(Key('thread-summary-card-$threadId'));
+      await _scrollUntilVisible(tester, threadCardFinder);
+      expect(threadCardFinder, findsOneWidget);
+      _expectThreadCardMatchesDetail(
+        cardFinder: threadCardFinder,
+        detail: initialDetail,
+      );
+
+      await tester.tap(threadCardFinder);
+      await tester.pumpAndSettle();
+      await _pumpUntilFound(
+        tester,
+        find.byKey(const Key('thread-detail-title')),
+      );
+      _expectThreadDetailHeaderMatches(initialDetail);
+      await _expectComposerAccessModeSelection(
+        tester,
+        expectedAccessMode: initialPolicyAccessMode,
+      );
+
+      await tester.tap(find.byKey(const Key('thread-detail-back-button')));
+      await tester.pumpAndSettle();
+
+      await _scrollUntilVisible(tester, threadCardFinder);
+      _expectThreadCardMatchesDetail(
+        cardFinder: threadCardFinder,
+        detail: initialDetail,
+      );
+
+      await tester.drag(find.byType(Scrollable).first, const Offset(0, 420));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+
+      final refreshedDetail = await threadApi.fetchThreadDetail(
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: threadId,
+      );
+      final refreshedTimelinePage = await threadApi.fetchThreadTimelinePage(
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: threadId,
+        limit: 80,
+      );
+      final refreshedPolicyAccessMode = await approvalApi.fetchAccessMode(
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+      );
+
+      expect(refreshedTimelinePage.thread.threadId, threadId);
+      expect(refreshedTimelinePage.thread.title, refreshedDetail.title);
+      expect(refreshedTimelinePage.thread.status, refreshedDetail.status);
+      expect(
+        refreshedTimelinePage.thread.lastTurnSummary,
+        refreshedDetail.lastTurnSummary,
+      );
+      expect(
+        refreshedTimelinePage.thread.accessMode,
+        refreshedDetail.accessMode,
+      );
+      expect(refreshedPolicyAccessMode, refreshedDetail.accessMode);
+
+      await _scrollUntilVisible(tester, threadCardFinder);
+      _expectThreadCardMatchesDetail(
+        cardFinder: threadCardFinder,
+        detail: refreshedDetail,
+      );
+
+      await tester.tap(threadCardFinder);
+      await tester.pumpAndSettle();
+      _expectThreadDetailHeaderMatches(refreshedDetail);
+      await _expectComposerAccessModeSelection(
+        tester,
+        expectedAccessMode: refreshedPolicyAccessMode,
+      );
+    },
+    skip: !Platform.isAndroid,
+    timeout: const Timeout(Duration(minutes: 4)),
+  );
+
   testWidgets('first-run pairing lands directly in a live usable thread list', (
     tester,
   ) async {
@@ -835,6 +970,124 @@ void main() {
       expect(approvalApi.fetchApprovalsCallCount, greaterThanOrEqualTo(2));
     },
   );
+}
+
+String _resolveLiveBridgeApiBaseUrl() {
+  const configured = String.fromEnvironment('LIVE_BRIDGE_BASE_URL');
+  if (configured.isNotEmpty) {
+    return configured;
+  }
+
+  return _defaultLiveBridgeApiBaseUrl;
+}
+
+Future<void> _requireAndroidEmulator() async {
+  if (!Platform.isAndroid) {
+    fail(
+      'This live thread parity integration test only supports Android emulators. '
+      'Run it with `flutter test integration_test/reconnect_offline_cache_test.dart -d <android-emulator-id>`.',
+    );
+  }
+
+  final androidInfo = await DeviceInfoPlugin().androidInfo;
+  if (androidInfo.isPhysicalDevice) {
+    fail(
+      'This live thread parity integration test only supports Android emulators. '
+      'Physical Android devices cannot reach the default emulator bridge host '
+      '`$_defaultLiveBridgeApiBaseUrl`.',
+    );
+  }
+}
+
+void _expectThreadCardMatchesDetail({
+  required Finder cardFinder,
+  required ThreadDetailDto detail,
+}) {
+  expect(
+    find.descendant(of: cardFinder, matching: find.text(detail.title)),
+    findsOneWidget,
+  );
+  expect(
+    find.descendant(
+      of: cardFinder,
+      matching: find.text(_threadListStatusLabel(detail.status)),
+    ),
+    findsOneWidget,
+  );
+  expect(
+    find.descendant(of: cardFinder, matching: find.text(detail.repository)),
+    findsOneWidget,
+  );
+}
+
+void _expectThreadDetailHeaderMatches(ThreadDetailDto detail) {
+  expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
+  expect(find.text(detail.title), findsOneWidget);
+  expect(find.text(detail.repository), findsOneWidget);
+  expect(find.text(_threadDetailStatusLabel(detail.status)), findsOneWidget);
+}
+
+Future<void> _expectComposerAccessModeSelection(
+  WidgetTester tester, {
+  required AccessMode expectedAccessMode,
+}) async {
+  final modelButtonFinder = find.byKey(const Key('turn-composer-model-button'));
+  await _scrollUntilVisible(tester, modelButtonFinder);
+  await tester.tap(modelButtonFinder);
+  await tester.pumpAndSettle();
+
+  final accessModeOptionFinder = find.byKey(
+    Key('turn-composer-access-mode-option-$expectedAccessMode'),
+  );
+  await _scrollUntilVisible(tester, accessModeOptionFinder);
+  expect(accessModeOptionFinder, findsOneWidget);
+
+  final selectedOptionIconCount = find
+      .descendant(
+        of: accessModeOptionFinder,
+        matching: find.byType(PhosphorIcon),
+      )
+      .evaluate()
+      .length;
+  expect(
+    selectedOptionIconCount,
+    greaterThanOrEqualTo(2),
+    reason:
+        'Selected access mode option should render both mode icon and selected-state check icon.',
+  );
+
+  await tester.tap(find.byKey(const Key('turn-composer-model-sheet-close')));
+  await tester.pumpAndSettle();
+}
+
+String _threadListStatusLabel(ThreadStatus status) {
+  switch (status) {
+    case ThreadStatus.running:
+      return 'ACTIVE';
+    case ThreadStatus.failed:
+      return 'FAILED';
+    case ThreadStatus.interrupted:
+      return 'INTERRUPTED';
+    case ThreadStatus.completed:
+      return 'COMPLETED';
+    case ThreadStatus.idle:
+      return 'IDLE';
+  }
+}
+
+String _threadDetailStatusLabel(ThreadStatus status) {
+  switch (status) {
+    case ThreadStatus.running:
+      return 'Running';
+    case ThreadStatus.failed:
+      return 'Failed';
+    case ThreadStatus.interrupted:
+      return 'Interrupted';
+    case ThreadStatus.completed:
+      return 'Completed';
+    case ThreadStatus.idle:
+      return 'Idle';
+  }
 }
 
 String _validPairingPayloadJson({
