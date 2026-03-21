@@ -7,8 +7,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
 use shared_contracts::{
-    ApprovalSummaryDto, BootstrapDto, ModelCatalogDto, ThreadSnapshotDto, ThreadSummaryDto,
-    ThreadTimelinePageDto, TurnMutationAcceptedDto,
+    AccessMode, ApprovalSummaryDto, BootstrapDto, ModelCatalogDto, SecurityAuditEventDto,
+    ThreadSnapshotDto, ThreadSummaryDto, ThreadTimelinePageDto, TurnMutationAcceptedDto,
 };
 
 use crate::pairing::{
@@ -33,12 +33,17 @@ pub fn router(state: RewriteAppState) -> Router {
         .route("/pairing/trust/revoke", post(pairing_revoke))
         .route("/pairing/trust", get(pairing_trust))
         .route("/pairing/route", get(pairing_route))
+        .route(
+            "/policy/access-mode",
+            get(get_access_mode).post(set_access_mode),
+        )
         .route("/threads", get(list_threads).post(create_thread))
         .route("/threads/:thread_id/snapshot", get(thread_snapshot))
         .route("/threads/:thread_id/history", get(thread_history))
         .route("/threads/:thread_id/turns", post(start_turn))
         .route("/threads/:thread_id/interrupt", post(interrupt_turn))
         .route("/approvals", get(list_approvals))
+        .route("/security/events", get(list_security_events))
         .route("/events", get(events))
         .with_state(state)
 }
@@ -92,8 +97,90 @@ async fn thread_snapshot(
     }
 }
 
-async fn list_approvals(State(state): State<RewriteAppState>) -> Json<Vec<ApprovalSummaryDto>> {
-    Json(state.projections().list_approvals().await)
+async fn get_access_mode(State(state): State<RewriteAppState>) -> Json<AccessModeResponse> {
+    Json(AccessModeResponse {
+        contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+        access_mode: state.access_mode().await,
+    })
+}
+
+async fn set_access_mode(
+    State(state): State<RewriteAppState>,
+    Query(query): Query<AccessModeMutationQuery>,
+) -> Result<Json<AccessModeResponse>, (StatusCode, Json<ErrorEnvelope>)> {
+    let Some(access_mode) = parse_access_mode(&query.mode) else {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "policy_access_mode_invalid",
+            "invalid_access_mode",
+            "Unknown access mode.",
+        ));
+    };
+    let actor = query
+        .actor
+        .clone()
+        .unwrap_or_else(|| "mobile-device".to_string());
+
+    let auth_request = PairingHandshakeRequest {
+        phone_id: query.phone_id.clone(),
+        bridge_id: query.bridge_id.clone(),
+        session_token: query.session_token.clone(),
+    };
+
+    if let Err(error) = state.authorize_trusted_session(auth_request) {
+        state
+            .record_security_audit(
+                "warn",
+                "policy",
+                "policy",
+                SecurityAuditEventDto {
+                    actor,
+                    action: "set_access_mode".to_string(),
+                    target: "policy.access_mode".to_string(),
+                    outcome: "denied".to_string(),
+                    reason: error.code().to_string(),
+                },
+            )
+            .await;
+        return Err(pairing_handshake_error_response(error));
+    }
+
+    state.set_access_mode(access_mode).await;
+    state
+        .record_security_audit(
+            "info",
+            "policy",
+            "policy",
+            SecurityAuditEventDto {
+                actor,
+                action: "set_access_mode".to_string(),
+                target: "policy.access_mode".to_string(),
+                outcome: "allowed".to_string(),
+                reason: format!("mode={}", query.mode),
+            },
+        )
+        .await;
+
+    Ok(Json(AccessModeResponse {
+        contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+        access_mode,
+    }))
+}
+
+async fn list_approvals(State(state): State<RewriteAppState>) -> Json<ApprovalListResponse> {
+    Json(ApprovalListResponse {
+        contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+        approvals: state.projections().list_approvals().await,
+    })
+}
+
+async fn list_security_events(
+    State(state): State<RewriteAppState>,
+) -> Json<SecurityEventsResponse> {
+    Json(SecurityEventsResponse {
+        contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+        events: state.security_events_snapshot().await,
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,6 +202,15 @@ struct PairingHandshakeQuery {
 #[derive(Debug, Deserialize)]
 struct PairingRevokeQuery {
     phone_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AccessModeMutationQuery {
+    mode: String,
+    phone_id: String,
+    bridge_id: String,
+    session_token: String,
+    actor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -281,6 +377,33 @@ struct ErrorEnvelope {
     message: String,
 }
 
+#[derive(Debug, Serialize)]
+struct AccessModeResponse {
+    contract_version: String,
+    access_mode: AccessMode,
+}
+
+#[derive(Debug, Serialize)]
+struct ApprovalListResponse {
+    contract_version: String,
+    approvals: Vec<ApprovalSummaryDto>,
+}
+
+#[derive(Debug, Serialize)]
+struct SecurityEventsResponse {
+    contract_version: String,
+    events: Vec<crate::rewrite::state::SecurityEventRecordDto>,
+}
+
+fn parse_access_mode(raw: &str) -> Option<AccessMode> {
+    match raw {
+        "read_only" => Some(AccessMode::ReadOnly),
+        "control_with_approvals" => Some(AccessMode::ControlWithApprovals),
+        "full_control" => Some(AccessMode::FullControl),
+        _ => None,
+    }
+}
+
 fn error_response(
     status: StatusCode,
     error: impl Into<String>,
@@ -440,6 +563,86 @@ mod tests {
             .expect("request should succeed");
 
         assert_eq!(response.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn access_mode_routes_support_read_and_trusted_write() {
+        let state = test_state();
+        let issued = state.issue_pairing_session();
+        let finalize = state
+            .finalize_trust(PairingFinalizeRequest {
+                session_id: issued.pairing_session.session_id.clone(),
+                pairing_token: issued.pairing_session.pairing_token.clone(),
+                phone_id: "phone-1".to_string(),
+                phone_name: "iPhone".to_string(),
+                bridge_id: issued.bridge_identity.bridge_id.clone(),
+            })
+            .expect("finalize should succeed");
+        let app = router(state);
+
+        let read_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/policy/access-mode")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("read request should succeed");
+
+        assert_eq!(read_response.status(), 200);
+        let read_body = axum::body::to_bytes(read_response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let read_json: Value = serde_json::from_slice(&read_body).expect("body should decode");
+        assert_eq!(read_json["access_mode"], "control_with_approvals");
+
+        let write_uri = format!(
+            "/policy/access-mode?mode=full_control&phone_id=phone-1&bridge_id={}&session_token={}&actor=mobile-settings",
+            issued.bridge_identity.bridge_id, finalize.session_token
+        );
+        let write_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(write_uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("write request should succeed");
+
+        assert_eq!(write_response.status(), 200);
+        let write_body = axum::body::to_bytes(write_response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let write_json: Value = serde_json::from_slice(&write_body).expect("body should decode");
+        assert_eq!(write_json["access_mode"], "full_control");
+
+        let security_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/security/events")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("security request should succeed");
+
+        assert_eq!(security_response.status(), 200);
+        let security_body = axum::body::to_bytes(security_response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let security_json: Value =
+            serde_json::from_slice(&security_body).expect("body should decode");
+        let events = security_json["events"]
+            .as_array()
+            .expect("events should be an array");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["category"], "policy");
+        assert_eq!(events[0]["event"]["payload"]["reason"], "mode=full_control");
     }
 
     fn test_state() -> RewriteAppState {

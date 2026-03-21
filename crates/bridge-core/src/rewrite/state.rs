@@ -6,8 +6,9 @@ use chrono::Utc;
 use serde_json::{Value, json};
 use shared_contracts::{
     AccessMode, BootstrapDto, BridgeEventEnvelope, BridgeEventKind, ModelCatalogDto,
-    ModelOptionDto, ServiceHealthDto, ServiceHealthStatus, ThreadSnapshotDto, ThreadStatus,
-    ThreadSummaryDto, ThreadTimelinePageDto, TrustStateDto, TurnMutationAcceptedDto,
+    ModelOptionDto, SecurityAuditEventDto, ServiceHealthDto, ServiceHealthStatus,
+    ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto, ThreadTimelinePageDto, TrustStateDto,
+    TurnMutationAcceptedDto,
 };
 use tokio::sync::RwLock;
 use tokio::time::{Duration, sleep};
@@ -34,10 +35,19 @@ struct RewriteAppStateInner {
     codex_health: RwLock<ServiceHealthDto>,
     available_models: RwLock<Vec<ModelOptionDto>>,
     active_turn_ids: RwLock<HashMap<String, String>>,
+    access_mode: RwLock<AccessMode>,
+    security_events: RwLock<Vec<SecurityEventRecordDto>>,
     gateway: CodexGateway,
     event_hub: EventHub,
     pairing_sessions: Mutex<PairingSessionService>,
     pairing_route: PairingRouteState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SecurityEventRecordDto {
+    pub severity: String,
+    pub category: String,
+    pub event: BridgeEventEnvelope<Value>,
 }
 
 impl RewriteAppState {
@@ -55,6 +65,8 @@ impl RewriteAppState {
                 }),
                 available_models: RwLock::new(Vec::new()),
                 active_turn_ids: RwLock::new(HashMap::new()),
+                access_mode: RwLock::new(AccessMode::ControlWithApprovals),
+                security_events: RwLock::new(Vec::new()),
                 gateway: CodexGateway::new(config),
                 event_hub: EventHub::new(512),
                 pairing_sessions: Mutex::new(pairing_sessions),
@@ -141,6 +153,13 @@ impl RewriteAppState {
             .handshake(request)
     }
 
+    pub fn authorize_trusted_session(
+        &self,
+        request: PairingHandshakeRequest,
+    ) -> Result<(), PairingHandshakeError> {
+        self.handshake(request).map(|_| ())
+    }
+
     pub fn revoke_trust(&self, phone_id: Option<String>) -> Result<PairingRevokeResponse, String> {
         self.inner
             .pairing_sessions
@@ -157,12 +176,55 @@ impl RewriteAppState {
         &self.inner.event_hub
     }
 
+    pub async fn access_mode(&self) -> AccessMode {
+        *self.inner.access_mode.read().await
+    }
+
+    pub async fn set_access_mode(&self, access_mode: AccessMode) {
+        *self.inner.access_mode.write().await = access_mode;
+        self.projections().set_access_mode(access_mode).await;
+    }
+
+    pub async fn security_events_snapshot(&self) -> Vec<SecurityEventRecordDto> {
+        self.inner.security_events.read().await.clone()
+    }
+
+    pub async fn record_security_audit(
+        &self,
+        severity: impl Into<String>,
+        category: impl Into<String>,
+        target: impl Into<String>,
+        audit_event: SecurityAuditEventDto,
+    ) {
+        let occurred_at = Utc::now().to_rfc3339();
+        let event = BridgeEventEnvelope {
+            contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+            event_id: format!(
+                "security-{}",
+                self.inner.security_events.read().await.len() + 1
+            ),
+            thread_id: target.into(),
+            kind: BridgeEventKind::SecurityAudit,
+            occurred_at,
+            payload: serde_json::to_value(audit_event)
+                .expect("security audit payload should serialize"),
+            annotations: None,
+        };
+        let record = SecurityEventRecordDto {
+            severity: severity.into(),
+            category: category.into(),
+            event,
+        };
+        self.inner.security_events.write().await.push(record);
+    }
+
     pub async fn ensure_snapshot(&self, thread_id: &str) -> Result<ThreadSnapshotDto, String> {
         if let Some(snapshot) = self.projections().snapshot(thread_id).await {
             return Ok(snapshot);
         }
 
-        let snapshot = self.inner.gateway.fetch_thread_snapshot(thread_id).await?;
+        let mut snapshot = self.inner.gateway.fetch_thread_snapshot(thread_id).await?;
+        snapshot.thread.access_mode = self.access_mode().await;
         self.projections().put_snapshot(snapshot.clone()).await;
         Ok(snapshot)
     }
@@ -172,7 +234,8 @@ impl RewriteAppState {
         workspace: &str,
         model: Option<&str>,
     ) -> Result<ThreadSnapshotDto, String> {
-        let snapshot = self.inner.gateway.create_thread(workspace, model).await?;
+        let mut snapshot = self.inner.gateway.create_thread(workspace, model).await?;
+        snapshot.thread.access_mode = self.access_mode().await;
         let mut summaries = self.projections().list_summaries().await;
         let next_summary = thread_summary_from_snapshot(&snapshot);
         if let Some(index) = summaries
@@ -199,10 +262,13 @@ impl RewriteAppState {
             self.ensure_snapshot(thread_id).await?;
         }
 
-        self.projections()
+        let mut page = self
+            .projections()
             .timeline_page(thread_id, before, limit)
             .await
-            .ok_or_else(|| format!("thread {thread_id} not found"))
+            .ok_or_else(|| format!("thread {thread_id} not found"))?;
+        page.thread.access_mode = self.access_mode().await;
+        Ok(page)
     }
 
     async fn set_codex_health(&self, health: ServiceHealthDto) {
@@ -446,6 +512,7 @@ impl RewriteAppState {
         let codex = self.inner.codex_health.read().await.clone();
         let models = self.inner.available_models.read().await.clone();
         let trust_snapshot = self.trust_snapshot();
+        let access_mode = self.access_mode().await;
 
         BootstrapDto {
             contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
@@ -456,7 +523,7 @@ impl RewriteAppState {
             codex,
             trust: TrustStateDto {
                 trusted: trust_snapshot.trusted_phone.is_some(),
-                access_mode: AccessMode::ControlWithApprovals,
+                access_mode,
             },
             threads: self.projections().list_summaries().await,
             models,

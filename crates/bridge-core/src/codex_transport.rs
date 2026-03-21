@@ -117,7 +117,11 @@ impl CodexJsonTransport {
             let response = self
                 .next_message(method)?
                 .ok_or_else(|| format!("codex upstream closed while waiting for '{method}'"))?;
-            if response.get("id").and_then(Value::as_i64) != Some(id) {
+            let Some(response_id) = response.get("id").and_then(Value::as_i64) else {
+                continue;
+            };
+
+            if response_id != id {
                 self.pending_messages.push_back(response);
                 continue;
             }

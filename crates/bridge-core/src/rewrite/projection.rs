@@ -3,8 +3,9 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use shared_contracts::{
-    ApprovalSummaryDto, BridgeEventEnvelope, BridgeEventKind, ThreadSnapshotDto, ThreadStatus,
-    ThreadSummaryDto, ThreadTimelineEntryDto, ThreadTimelinePageDto,
+    AccessMode, ApprovalStatus, ApprovalSummaryDto, BridgeEventEnvelope, BridgeEventKind,
+    ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto, ThreadTimelineEntryDto,
+    ThreadTimelinePageDto,
 };
 use tokio::sync::RwLock;
 
@@ -42,6 +43,11 @@ impl ProjectionStore {
 
     pub async fn put_snapshot(&self, snapshot: ThreadSnapshotDto) {
         let mut state = self.inner.write().await;
+        for approval in &snapshot.approvals {
+            state
+                .approvals
+                .insert(approval.approval_id.clone(), approval.clone());
+        }
         state
             .snapshots
             .insert(snapshot.thread.thread_id.clone(), snapshot);
@@ -91,6 +97,9 @@ impl ProjectionStore {
 
     pub async fn apply_live_event(&self, event: &BridgeEventEnvelope<Value>) {
         let mut state = self.inner.write().await;
+        let approval_update = (event.kind == BridgeEventKind::ApprovalRequested)
+            .then(|| approval_summary_from_payload(&event.payload, &event.thread_id))
+            .flatten();
         if let Some(summary) = state.summaries.get_mut(&event.thread_id) {
             summary.updated_at = event.occurred_at.clone();
             if event.kind == BridgeEventKind::ThreadStatusChanged
@@ -146,6 +155,24 @@ impl ProjectionStore {
             } else {
                 snapshot.entries.push(next_entry);
             }
+
+            if let Some(approval) = approval_update.as_ref() {
+                if let Some(index) = snapshot
+                    .approvals
+                    .iter()
+                    .position(|existing| existing.approval_id == approval.approval_id)
+                {
+                    snapshot.approvals[index] = approval.clone();
+                } else {
+                    snapshot.approvals.push(approval.clone());
+                }
+            }
+        }
+
+        if let Some(approval) = approval_update {
+            state
+                .approvals
+                .insert(approval.approval_id.clone(), approval);
         }
     }
 
@@ -177,6 +204,13 @@ impl ProjectionStore {
             snapshot.thread.updated_at = occurred_at.to_string();
         }
     }
+
+    pub async fn set_access_mode(&self, access_mode: AccessMode) {
+        let mut state = self.inner.write().await;
+        for snapshot in state.snapshots.values_mut() {
+            snapshot.thread.access_mode = access_mode;
+        }
+    }
 }
 
 fn parse_thread_status(raw: &str) -> ThreadStatus {
@@ -186,6 +220,43 @@ fn parse_thread_status(raw: &str) -> ThreadStatus {
         "interrupted" => ThreadStatus::Interrupted,
         "failed" => ThreadStatus::Failed,
         _ => ThreadStatus::Idle,
+    }
+}
+
+fn approval_summary_from_payload(payload: &Value, thread_id: &str) -> Option<ApprovalSummaryDto> {
+    let approval_id = payload.get("approval_id")?.as_str()?.to_string();
+    let action = payload.get("action")?.as_str()?.to_string();
+    let status = payload
+        .get("status")
+        .and_then(Value::as_str)
+        .map(parse_approval_status)
+        .unwrap_or(ApprovalStatus::Pending);
+    let reason = payload
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let target = payload
+        .get("target")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .filter(|value| !value.trim().is_empty());
+
+    Some(ApprovalSummaryDto {
+        approval_id,
+        thread_id: thread_id.to_string(),
+        action,
+        status,
+        reason,
+        target,
+    })
+}
+
+fn parse_approval_status(raw: &str) -> ApprovalStatus {
+    match raw {
+        "approved" => ApprovalStatus::Approved,
+        "rejected" => ApprovalStatus::Rejected,
+        _ => ApprovalStatus::Pending,
     }
 }
 

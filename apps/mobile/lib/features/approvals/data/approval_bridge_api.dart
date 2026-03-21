@@ -35,26 +35,42 @@ class HttpApprovalBridgeApi implements ApprovalBridgeApi {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
 
     try {
-      final request = await client.getUrl(
-        _buildAccessModeUri(bridgeApiBaseUrl),
+      final policyResult = await _fetchJsonResponse(
+        client: client,
+        uri: _buildAccessModeUri(bridgeApiBaseUrl),
       );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      final decoded = _decodeJsonObject(await utf8.decodeStream(response));
 
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final accessMode = decoded['access_mode'];
-        if (accessMode is! String) {
-          throw const FormatException(
-            'Missing or invalid "access_mode" in policy response.',
-          );
+      if (policyResult.statusCode >= 200 && policyResult.statusCode < 300) {
+        final accessMode = policyResult.object['access_mode'];
+        if (accessMode is String) {
+          return accessModeFromWire(accessMode);
         }
-        return accessModeFromWire(accessMode);
+      } else if (policyResult.statusCode != HttpStatus.notFound) {
+        throw ApprovalBridgeException(
+          message:
+              _readOptionalString(policyResult.object, 'message') ??
+              'Couldn’t read access mode right now.',
+        );
+      }
+
+      final bootstrapResult = await _fetchJsonResponse(
+        client: client,
+        uri: _buildBootstrapUri(bridgeApiBaseUrl),
+      );
+      if (bootstrapResult.statusCode >= 200 &&
+          bootstrapResult.statusCode < 300) {
+        final trust = bootstrapResult.object['trust'];
+        if (trust is Map<String, dynamic>) {
+          final accessMode = trust['access_mode'];
+          if (accessMode is String) {
+            return accessModeFromWire(accessMode);
+          }
+        }
       }
 
       throw ApprovalBridgeException(
         message:
-            _readOptionalString(decoded, 'message') ??
+            _readOptionalString(bootstrapResult.object, 'message') ??
             'Couldn’t read access mode right now.',
       );
     } on SocketException {
@@ -96,10 +112,14 @@ class HttpApprovalBridgeApi implements ApprovalBridgeApi {
       final request = await client.getUrl(_buildApprovalsUri(bridgeApiBaseUrl));
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       final response = await request.close();
-      final decoded = _decodeJsonObject(await utf8.decodeStream(response));
+      final decoded = _decodeJson(await utf8.decodeStream(response));
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        final approvalsJson = decoded['approvals'];
+        final approvalsJson = switch (decoded) {
+          Map<String, dynamic>() => decoded['approvals'],
+          List<dynamic>() => decoded,
+          _ => null,
+        };
         if (approvalsJson is! List) {
           throw const FormatException(
             'Missing or invalid "approvals" list in approvals response.',
@@ -113,14 +133,19 @@ class HttpApprovalBridgeApi implements ApprovalBridgeApi {
                   'Approval entry must be a JSON object.',
                 );
               }
-              return ApprovalRecordDto.fromJson(entry);
+              return _parseApprovalRecord(entry);
             })
             .toList(growable: false);
       }
 
       throw ApprovalBridgeException(
         message:
-            _readOptionalString(decoded, 'message') ??
+            _readOptionalString(
+              decoded is Map<String, dynamic>
+                  ? decoded
+                  : const <String, dynamic>{},
+              'message',
+            ) ??
             'Couldn’t load approvals right now.',
       );
     } on SocketException {
@@ -232,6 +257,13 @@ class HttpApprovalBridgeApi implements ApprovalBridgeApi {
   }
 }
 
+class _JsonObjectResponse {
+  const _JsonObjectResponse({required this.statusCode, required this.object});
+
+  final int statusCode;
+  final Map<String, dynamic> object;
+}
+
 class ApprovalBridgeException implements Exception {
   const ApprovalBridgeException({
     required this.message,
@@ -303,17 +335,77 @@ Uri _buildAccessModeUri(String baseUrl) {
   return baseUri.replace(path: fullPath, queryParameters: null);
 }
 
+Uri _buildBootstrapUri(String baseUrl) {
+  final baseUri = Uri.parse(baseUrl);
+  final normalizedBasePath = baseUri.path.endsWith('/')
+      ? baseUri.path.substring(0, baseUri.path.length - 1)
+      : baseUri.path;
+  final fullPath =
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/bootstrap';
+  return baseUri.replace(path: fullPath, queryParameters: null);
+}
+
+dynamic _decodeJson(String bodyText) {
+  if (bodyText.trim().isEmpty) {
+    return <String, dynamic>{};
+  }
+
+  return jsonDecode(bodyText);
+}
+
 Map<String, dynamic> _decodeJsonObject(String bodyText) {
   if (bodyText.trim().isEmpty) {
     return <String, dynamic>{};
   }
 
-  final decoded = jsonDecode(bodyText);
+  final decoded = _decodeJson(bodyText);
   if (decoded is! Map<String, dynamic>) {
     throw const FormatException('Expected JSON object response.');
   }
 
   return decoded;
+}
+
+Future<_JsonObjectResponse> _fetchJsonResponse({
+  required HttpClient client,
+  required Uri uri,
+}) async {
+  final request = await client.getUrl(uri);
+  request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+  final response = await request.close();
+  return _JsonObjectResponse(
+    statusCode: response.statusCode,
+    object: _decodeJsonObject(await utf8.decodeStream(response)),
+  );
+}
+
+ApprovalRecordDto _parseApprovalRecord(Map<String, dynamic> json) {
+  final hasLegacyShape =
+      json['repository'] is Map<String, dynamic> &&
+      json['git_status'] is Map<String, dynamic> &&
+      json['requested_at'] is String;
+  if (hasLegacyShape) {
+    return ApprovalRecordDto.fromJson(json);
+  }
+
+  return ApprovalRecordDto(
+    contractVersion: (json['contract_version'] as String?) ?? contractVersion,
+    approvalId: json['approval_id'] as String,
+    threadId: json['thread_id'] as String,
+    action: json['action'] as String,
+    target: (json['target'] as String?) ?? '',
+    reason: (json['reason'] as String?) ?? 'approval_requested',
+    status: approvalStatusFromWire((json['status'] as String?) ?? 'pending'),
+    requestedAt: (json['requested_at'] as String?) ?? '',
+    resolvedAt: json['resolved_at'] as String?,
+    repository: const RepositoryContextDto(
+      workspace: 'Unknown workspace',
+      repository: 'Unknown repository',
+      branch: 'unknown',
+      remote: 'unknown',
+    ),
+    gitStatus: const GitStatusDto(dirty: false, aheadBy: 0, behindBy: 0),
+  );
 }
 
 String? _readOptionalString(Map<String, dynamic> json, String key) {
