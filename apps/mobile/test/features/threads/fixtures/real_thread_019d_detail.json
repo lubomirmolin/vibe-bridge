@@ -1,0 +1,17 @@
+{
+  "contract_version": "2026-03-20",
+  "thread": {
+    "contract_version": "2026-03-20",
+    "thread_id": "019d0d0c-07df-7632-81fa-a1636651400a",
+    "title": "Investigate thread detail sync",
+    "status": "completed",
+    "workspace": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion",
+    "repository": "codex-mobile-companion",
+    "branch": "master",
+    "created_at": "2026-03-20T20:59:45.000Z",
+    "updated_at": "2026-03-20T21:40:09.107Z",
+    "source": "vscode",
+    "access_mode": "control_with_approvals",
+    "last_turn_summary": "All of the old local app/server processes are down.\n\nI killed the running `CodexMobileCompanion` app, its `bridge-server`, the attached Xco..."
+  }
+}

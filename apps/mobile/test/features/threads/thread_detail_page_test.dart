@@ -1,13 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
 import 'package:codex_mobile_companion/features/settings/application/desktop_integration_controller.dart';
 import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
 import 'package:codex_mobile_companion/features/settings/data/settings_bridge_api.dart';
+import 'package:codex_mobile_companion/features/threads/application/thread_detail_controller.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
+import 'package:codex_mobile_companion/features/threads/domain/thread_activity_item.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_detail_page.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
@@ -70,6 +74,122 @@ void main() {
       );
       await _scrollUntilVisible(tester, find.text('Plan update'));
       expect(find.text('Plan update'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'real-thread header follows bridge detail metadata on initial load',
+    (tester) async {
+      final fixture = _loadRealThreadFixture();
+      final staleTimelineThread = ThreadDetailDto(
+        contractVersion: fixture.detail.contractVersion,
+        threadId: fixture.detail.threadId,
+        title: 'Delegate subagents to fix tests',
+        status: ThreadStatus.running,
+        workspace: '/Users/lubomirmolin/PhpstormProjects/wrong-workspace',
+        repository: 'wrong-workspace',
+        branch: 'feature/wrong-thread',
+        createdAt: fixture.detail.createdAt,
+        updatedAt: fixture.detail.updatedAt,
+        source: 'cli',
+        accessMode: fixture.detail.accessMode,
+        lastTurnSummary:
+            'can you help me debug why the threads detail is very spotty?',
+      );
+
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          fixture.detail.threadId: [fixture.detail],
+        },
+        timelineScriptByThreadId: {
+          fixture.detail.threadId: [fixture.timelineEntries],
+        },
+        timelineThreadByThreadId: {
+          fixture.detail.threadId: staleTimelineThread,
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: fixture.detail.threadId,
+        initialVisibleTimelineEntries: 80,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text(fixture.detail.title), findsOneWidget);
+      expect(find.text(fixture.detail.repository), findsOneWidget);
+      expect(find.text('Completed'), findsOneWidget);
+      expect(find.text('Delegate subagents to fix tests'), findsNothing);
+      expect(find.text('wrong-workspace'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'real-thread initial 80-entry slice keeps latest context and meaningful command/file activity visible',
+    (tester) async {
+      final fixture = _loadRealThreadFixture();
+
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          fixture.detail.threadId: [fixture.detail],
+        },
+        timelineScriptByThreadId: {
+          fixture.detail.threadId: [fixture.timelineEntries],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: fixture.detail.threadId,
+        initialVisibleTimelineEntries: 80,
+      );
+      await tester.pumpAndSettle();
+
+      final latestMessage = find.textContaining(
+        'All of the old local app/server processes are down.',
+      );
+      final latestCommand = find.textContaining('kill -9 16121 16103');
+
+      final args = ThreadDetailControllerArgs(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: fixture.detail.threadId,
+        initialVisibleTimelineEntries: 80,
+      );
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ThreadDetailPage)),
+      );
+      final controllerState = container.read(
+        threadDetailControllerProvider(args),
+      );
+
+      await _scrollUntilVisible(tester, latestCommand);
+      await _scrollUntilVisible(tester, latestMessage);
+
+      expect(latestMessage, findsOneWidget);
+      expect(latestCommand, findsOneWidget);
+      expect(
+        controllerState.visibleItems.any(
+          (item) =>
+              item.type == ThreadActivityItemType.fileChange &&
+              item.body.contains('*** Begin Patch'),
+        ),
+        isTrue,
+      );
+      expect(
+        controllerState.visibleItems.any(
+          (item) =>
+              item.type == ThreadActivityItemType.terminalOutput &&
+              item.body.contains('kill -9 16121 16103'),
+        ),
+        isTrue,
+      );
+
+      final commandY = tester.getTopLeft(latestCommand).dy;
+      final messageY = tester.getTopLeft(latestMessage).dy;
+      expect(commandY, lessThan(messageY));
+      expect(detailApi.timelineFetchCount, 1);
     },
   );
 
@@ -2705,6 +2825,39 @@ ThreadCacheRepository _newCacheRepository({
 }
 
 const _bridgeApiBaseUrl = 'https://bridge.ts.net';
+const _realThreadFixtureDetailPath =
+    'test/features/threads/fixtures/real_thread_019d_detail.json';
+const _realThreadFixtureTimelinePath =
+    'test/features/threads/fixtures/real_thread_019d_timeline_limit_80.json';
+
+_RealThreadFixture _loadRealThreadFixture() {
+  final detailRaw = File(_realThreadFixtureDetailPath).readAsStringSync();
+  final timelineRaw = File(_realThreadFixtureTimelinePath).readAsStringSync();
+
+  final detailEnvelope = jsonDecode(detailRaw) as Map<String, dynamic>;
+  final timelineJson = jsonDecode(timelineRaw) as Map<String, dynamic>;
+
+  final detailJson = detailEnvelope['thread'];
+  if (detailJson is! Map<String, dynamic>) {
+    throw const FormatException(
+      'Real thread detail fixture is missing thread.',
+    );
+  }
+
+  return _RealThreadFixture(
+    detail: ThreadDetailDto.fromJson(detailJson),
+    timelinePage: ThreadTimelinePageDto.fromJson(timelineJson),
+  );
+}
+
+class _RealThreadFixture {
+  const _RealThreadFixture({required this.detail, required this.timelinePage});
+
+  final ThreadDetailDto detail;
+  final ThreadTimelinePageDto timelinePage;
+
+  List<ThreadTimelineEntryDto> get timelineEntries => timelinePage.entries;
+}
 
 List<ThreadSummaryDto> _threadSummaries() {
   return const [
@@ -2976,6 +3129,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   FakeThreadDetailBridgeApi({
     required Map<String, List<Object>> detailScriptByThreadId,
     required Map<String, List<Object>> timelineScriptByThreadId,
+    Map<String, ThreadDetailDto>? timelineThreadByThreadId,
     Map<String, List<Object>>? startTurnScriptByThreadId,
     Map<String, List<Object>>? steerTurnScriptByThreadId,
     Map<String, List<Object>>? interruptTurnScriptByThreadId,
@@ -2987,6 +3141,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     this.onGitApprovalRequired,
   }) : _detailScriptByThreadId = detailScriptByThreadId,
        _timelineScriptByThreadId = timelineScriptByThreadId,
+       _timelineThreadByThreadId = timelineThreadByThreadId ?? {},
        _startTurnScriptByThreadId = startTurnScriptByThreadId ?? {},
        _steerTurnScriptByThreadId = steerTurnScriptByThreadId ?? {},
        _interruptTurnScriptByThreadId = interruptTurnScriptByThreadId ?? {},
@@ -2998,6 +3153,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
 
   final Map<String, List<Object>> _detailScriptByThreadId;
   final Map<String, List<Object>> _timelineScriptByThreadId;
+  final Map<String, ThreadDetailDto> _timelineThreadByThreadId;
   final Map<String, List<Object>> _startTurnScriptByThreadId;
   final Map<String, List<Object>> _steerTurnScriptByThreadId;
   final Map<String, List<Object>> _interruptTurnScriptByThreadId;
@@ -3062,7 +3218,8 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     String? before,
     int limit = 50,
   }) async {
-    final thread = _peekThreadDetail(threadId);
+    final thread =
+        _timelineThreadByThreadId[threadId] ?? _peekThreadDetail(threadId);
     if (thread == null) {
       final detailError = _peekThreadDetailError(threadId);
       if (detailError != null) {
