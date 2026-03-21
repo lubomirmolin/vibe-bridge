@@ -500,6 +500,57 @@ void main() {
 
     expect(find.text('Implement shared contracts'), findsOneWidget);
   });
+
+  testWidgets(
+    'new thread workspace picker excludes groups without workspace paths',
+    (tester) async {
+      final cacheRepository = _newCacheRepository();
+      final bridgeApi = FakeThreadListBridgeApi(
+        scriptedResults: [_threadsWithMissingWorkspace()],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+            approvalBridgeApiProvider.overrideWithValue(
+              EmptyApprovalBridgeApi(),
+            ),
+            threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+            threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
+          ],
+          child: const MaterialApp(
+            home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('thread-list-create-button')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(
+          const Key('thread-list-workspace-option-repository:workspace-less'),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.byKey(
+          const Key(
+            'thread-list-workspace-option-/workspace/codex-mobile-companion',
+          ),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const Key('thread-list-workspace-option-/workspace/portable-client'),
+        ),
+        findsOneWidget,
+      );
+    },
+  );
 }
 
 ThreadCacheRepository _newCacheRepository() {
@@ -571,6 +622,41 @@ List<ThreadSummaryDto> _groupedThreads() {
       repository: 'codex-mobile-companion',
       branch: 'develop',
       updatedAt: '2026-03-17T17:30:00Z',
+    ),
+    ThreadSummaryDto(
+      contractVersion: contractVersion,
+      threadId: 'thread-789',
+      title: 'Add remote config to setup flow',
+      status: ThreadStatus.idle,
+      workspace: '/workspace/portable-client',
+      repository: 'portable-client',
+      branch: 'main',
+      updatedAt: '2026-03-17T16:30:00Z',
+    ),
+  ];
+}
+
+List<ThreadSummaryDto> _threadsWithMissingWorkspace() {
+  return const [
+    ThreadSummaryDto(
+      contractVersion: contractVersion,
+      threadId: 'thread-001',
+      title: 'Workspace metadata not available',
+      status: ThreadStatus.idle,
+      workspace: '',
+      repository: 'workspace-less',
+      branch: 'main',
+      updatedAt: '2026-03-17T18:30:00Z',
+    ),
+    ThreadSummaryDto(
+      contractVersion: contractVersion,
+      threadId: 'thread-123',
+      title: 'Implement shared contracts',
+      status: ThreadStatus.running,
+      workspace: '/workspace/codex-mobile-companion',
+      repository: 'codex-mobile-companion',
+      branch: 'master',
+      updatedAt: '2026-03-17T18:00:00Z',
     ),
     ThreadSummaryDto(
       contractVersion: contractVersion,

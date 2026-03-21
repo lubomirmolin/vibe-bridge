@@ -92,7 +92,9 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
 
   List<ThreadWorkspaceGroup> _availableWorkspaceGroups(ThreadListState state) {
     if (state.visibleGroups.isNotEmpty) {
-      return state.visibleGroups;
+      return state.visibleGroups
+          .where((group) => group.workspacePath.trim().isNotEmpty)
+          .toList(growable: false);
     }
 
     final groups = <String, List<ThreadSummaryDto>>{};
