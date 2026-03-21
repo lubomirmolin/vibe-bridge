@@ -416,6 +416,155 @@ void main() {
   );
 
   testWidgets(
+    'thread switch reconnect catch-up ignores stale previous-thread payloads',
+    (tester) async {
+      final staleCatchUpPage = Completer<ThreadTimelinePageDto>();
+      final thread123Detail = _threadDetail(
+        threadId: 'thread-123',
+        title: 'Implement shared contracts',
+        status: ThreadStatus.running,
+      );
+      final thread456Detail = _threadDetail(
+        threadId: 'thread-456',
+        title: 'Investigate reconnect dedup',
+        status: ThreadStatus.idle,
+      );
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [thread123Detail],
+          'thread-456': [thread456Detail],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            [
+              _timelineEvent(
+                id: 'evt-thread123-base',
+                summary: 'Thread 123 base event',
+                payload: {'delta': 'Thread 123 base event'},
+                occurredAt: '2026-03-18T10:00:00Z',
+              ),
+            ],
+          ],
+          'thread-456': [
+            [
+              _timelineEvent(
+                id: 'evt-thread456-base',
+                summary: 'Thread 456 base event',
+                payload: {'delta': 'Thread 456 base event'},
+                occurredAt: '2026-03-18T10:01:00Z',
+              ),
+            ],
+          ],
+        },
+        timelinePageScriptByThreadId: {
+          'thread-123': [
+            ThreadTimelinePageDto(
+              contractVersion: contractVersion,
+              thread: thread123Detail,
+              entries: [
+                _timelineEvent(
+                  id: 'evt-thread123-base',
+                  summary: 'Thread 123 base event',
+                  payload: {'delta': 'Thread 123 base event'},
+                  occurredAt: '2026-03-18T10:00:00Z',
+                ),
+              ],
+              nextBefore: null,
+              hasMoreBefore: false,
+            ),
+          ],
+          'thread-456': [
+            ThreadTimelinePageDto(
+              contractVersion: contractVersion,
+              thread: thread456Detail,
+              entries: [
+                _timelineEvent(
+                  id: 'evt-thread456-base',
+                  summary: 'Thread 456 base event',
+                  payload: {'delta': 'Thread 456 base event'},
+                  occurredAt: '2026-03-18T10:01:00Z',
+                ),
+              ],
+              nextBefore: null,
+              hasMoreBefore: false,
+            ),
+            staleCatchUpPage.future,
+          ],
+        },
+      );
+      final liveStream = FakeThreadLiveStream();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            threadCacheRepositoryProvider.overrideWithValue(
+              _newCacheRepository(),
+            ),
+            threadListBridgeApiProvider.overrideWithValue(
+              FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]),
+            ),
+            threadDetailBridgeApiProvider.overrideWithValue(detailApi),
+            threadLiveStreamProvider.overrideWithValue(liveStream),
+          ],
+          child: const MaterialApp(
+            home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+      await tester.pumpAndSettle();
+      expect(find.text('Implement shared contracts'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('thread-detail-back-button')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('thread-summary-card-thread-456')));
+      await tester.pumpAndSettle();
+      expect(find.text('Investigate reconnect dedup'), findsOneWidget);
+
+      liveStream.emitError('thread-456');
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 3));
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-thread123-late-live',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:05:00Z',
+          payload: {'delta': 'Late update from previous thread'},
+        ),
+      );
+
+      staleCatchUpPage.complete(
+        ThreadTimelinePageDto(
+          contractVersion: contractVersion,
+          thread: thread123Detail,
+          entries: [
+            _timelineEvent(
+              id: 'evt-thread123-stale-catchup',
+              summary: 'Stale catch-up from previous thread',
+              payload: {'delta': 'Stale catch-up from previous thread'},
+              occurredAt: '2026-03-18T10:05:30Z',
+            ),
+          ],
+          nextBefore: null,
+          hasMoreBefore: false,
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Investigate reconnect dedup'), findsOneWidget);
+      expect(find.text('Stale catch-up from previous thread'), findsNothing);
+      expect(find.text('Late update from previous thread'), findsNothing);
+    },
+  );
+
+  testWidgets(
     'reconnect restores trusted session, selected thread, approvals, and repo context without duplication',
     (tester) async {
       final secureStore = InMemorySecureStore();
@@ -997,11 +1146,14 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   FakeThreadDetailBridgeApi({
     required Map<String, List<Object>> detailScriptByThreadId,
     required Map<String, List<Object>> timelineScriptByThreadId,
+    Map<String, List<Object>> timelinePageScriptByThreadId = const {},
   }) : _detailScriptByThreadId = detailScriptByThreadId,
-       _timelineScriptByThreadId = timelineScriptByThreadId;
+       _timelineScriptByThreadId = timelineScriptByThreadId,
+       _timelinePageScriptByThreadId = timelinePageScriptByThreadId;
 
   final Map<String, List<Object>> _detailScriptByThreadId;
   final Map<String, List<Object>> _timelineScriptByThreadId;
+  final Map<String, List<Object>> _timelinePageScriptByThreadId;
 
   @override
   Future<ThreadDetailDto> fetchThreadDetail({
@@ -1009,6 +1161,9 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String threadId,
   }) async {
     final scriptedResult = _nextResult(_detailScriptByThreadId, threadId);
+    if (scriptedResult is Future<ThreadDetailDto>) {
+      return await scriptedResult;
+    }
     if (scriptedResult is ThreadDetailDto) {
       return scriptedResult;
     }
@@ -1026,6 +1181,25 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     String? before,
     int limit = 50,
   }) async {
+    final scriptedPage = _nextOptionalResult(
+      _timelinePageScriptByThreadId,
+      threadId,
+    );
+    if (scriptedPage is Future<ThreadTimelinePageDto>) {
+      return await scriptedPage;
+    }
+    if (scriptedPage is ThreadTimelinePageDto) {
+      return scriptedPage;
+    }
+    if (scriptedPage is ThreadDetailBridgeException) {
+      throw scriptedPage;
+    }
+    if (scriptedPage != null) {
+      throw StateError(
+        'Unsupported timeline-page scripted result: $scriptedPage',
+      );
+    }
+
     final detail = await fetchThreadDetail(
       bridgeApiBaseUrl: bridgeApiBaseUrl,
       threadId: threadId,
@@ -1051,6 +1225,9 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String threadId,
   }) async {
     final scriptedResult = _nextResult(_timelineScriptByThreadId, threadId);
+    if (scriptedResult is Future<List<ThreadTimelineEntryDto>>) {
+      return await scriptedResult;
+    }
     if (scriptedResult is List<ThreadTimelineEntryDto>) {
       return scriptedResult;
     }
@@ -1233,6 +1410,23 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     final script = scriptByThreadId[threadId];
     if (script == null || script.isEmpty) {
       throw StateError('Missing scripted result for thread "$threadId".');
+    }
+
+    final result = script.first;
+    if (script.length > 1) {
+      script.removeAt(0);
+    }
+
+    return result;
+  }
+
+  Object? _nextOptionalResult(
+    Map<String, List<Object>> scriptByThreadId,
+    String threadId,
+  ) {
+    final script = scriptByThreadId[threadId];
+    if (script == null || script.isEmpty) {
+      return null;
     }
 
     final result = script.first;
