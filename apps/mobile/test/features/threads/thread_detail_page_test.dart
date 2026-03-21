@@ -194,6 +194,86 @@ void main() {
   );
 
   testWidgets(
+    'real-thread older-history pagination prepends older activity and keeps event ids unique',
+    (tester) async {
+      final latestPageFixture = _loadRealThreadFixture();
+      final olderPageFixture = _loadRealThreadOlderTimelineFixture();
+      final duplicatedOlderEntries = <ThreadTimelineEntryDto>[
+        olderPageFixture.entries.first,
+        olderPageFixture.entries[1],
+        olderPageFixture.entries[1],
+        ...olderPageFixture.entries.skip(2),
+      ];
+
+      final combinedTimeline = <ThreadTimelineEntryDto>[
+        ...duplicatedOlderEntries,
+        ...latestPageFixture.timelineEntries,
+      ];
+
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          latestPageFixture.detail.threadId: [latestPageFixture.detail],
+        },
+        timelineScriptByThreadId: {
+          latestPageFixture.detail.threadId: [combinedTimeline],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: latestPageFixture.detail.threadId,
+        initialVisibleTimelineEntries: 80,
+      );
+      await tester.pumpAndSettle();
+
+      final args = ThreadDetailControllerArgs(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: latestPageFixture.detail.threadId,
+        initialVisibleTimelineEntries: 80,
+      );
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ThreadDetailPage)),
+      );
+      final controller = container.read(
+        threadDetailControllerProvider(args).notifier,
+      );
+
+      var controllerState = container.read(
+        threadDetailControllerProvider(args),
+      );
+      final initialIds = controllerState.items
+          .map((item) => item.eventId)
+          .toList(growable: false);
+      expect(initialIds.length, 80);
+      expect(initialIds.toSet().length, 80);
+
+      await controller.loadEarlierHistory();
+      await tester.pumpAndSettle();
+
+      controllerState = container.read(threadDetailControllerProvider(args));
+      expect(controllerState.items.length, greaterThan(initialIds.length));
+
+      await controller.loadEarlierHistory();
+      await tester.pumpAndSettle();
+
+      controllerState = container.read(threadDetailControllerProvider(args));
+      final pagedIds = controllerState.items
+          .map((item) => item.eventId)
+          .toList(growable: false);
+
+      expect(pagedIds.length, greaterThan(initialIds.length));
+      expect(pagedIds.toSet().length, pagedIds.length);
+      expect(controllerState.hasMoreBefore, isFalse);
+      expect(pagedIds.first, equals(olderPageFixture.entries.first.eventId));
+      expect(
+        pagedIds.last,
+        equals(latestPageFixture.timelineEntries.last.eventId),
+      );
+    },
+  );
+
+  testWidgets(
     'real-thread apply_patch activity renders as file-change UI without raw patch scaffolding as the primary view',
     (tester) async {
       final fixture = _loadRealThreadFixture();
@@ -2980,6 +3060,8 @@ const _realThreadFixtureDetailPath =
     'test/features/threads/fixtures/real_thread_019d_detail.json';
 const _realThreadFixtureTimelinePath =
     'test/features/threads/fixtures/real_thread_019d_timeline_limit_80.json';
+const _realThreadFixtureOlderTimelinePath =
+    'test/features/threads/fixtures/real_thread_019d_timeline_before_558_limit_80.json';
 
 _RealThreadFixture _loadRealThreadFixture() {
   final detailRaw = File(_realThreadFixtureDetailPath).readAsStringSync();
@@ -2999,6 +3081,14 @@ _RealThreadFixture _loadRealThreadFixture() {
     detail: ThreadDetailDto.fromJson(detailJson),
     timelinePage: ThreadTimelinePageDto.fromJson(timelineJson),
   );
+}
+
+ThreadTimelinePageDto _loadRealThreadOlderTimelineFixture() {
+  final timelineRaw = File(
+    _realThreadFixtureOlderTimelinePath,
+  ).readAsStringSync();
+  final timelineJson = jsonDecode(timelineRaw) as Map<String, dynamic>;
+  return ThreadTimelinePageDto.fromJson(timelineJson);
 }
 
 class _RealThreadFixture {

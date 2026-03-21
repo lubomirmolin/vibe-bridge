@@ -217,9 +217,10 @@ class ThreadListController extends StateNotifier<ThreadListState> {
     );
 
     try {
-      final threads = await _bridgeApi.fetchThreads(
+      final fetchedThreads = await _bridgeApi.fetchThreads(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
       );
+      final threads = _mergeFetchedThreadsPreservingNewerState(fetchedThreads);
       await _cacheRepository.saveThreadList(threads);
       if (!_canMutateState) {
         return;
@@ -431,6 +432,49 @@ class ThreadListController extends StateNotifier<ThreadListState> {
     return state.threads.any((thread) => thread.threadId == threadId);
   }
 
+  List<ThreadSummaryDto> _mergeFetchedThreadsPreservingNewerState(
+    List<ThreadSummaryDto> fetchedThreads,
+  ) {
+    if (state.threads.isEmpty || fetchedThreads.isEmpty) {
+      return fetchedThreads;
+    }
+
+    final currentByThreadId = <String, ThreadSummaryDto>{
+      for (final thread in state.threads) thread.threadId: thread,
+    };
+
+    return fetchedThreads
+        .map((fetchedThread) {
+          final currentThread = currentByThreadId[fetchedThread.threadId];
+          if (currentThread == null) {
+            return fetchedThread;
+          }
+
+          if (_isCurrentThreadSummaryNewerOrEqual(
+            current: currentThread,
+            incoming: fetchedThread,
+          )) {
+            return currentThread;
+          }
+
+          return fetchedThread;
+        })
+        .toList(growable: false);
+  }
+
+  bool _isCurrentThreadSummaryNewerOrEqual({
+    required ThreadSummaryDto current,
+    required ThreadSummaryDto incoming,
+  }) {
+    final currentUpdatedAt = DateTime.tryParse(current.updatedAt);
+    final incomingUpdatedAt = DateTime.tryParse(incoming.updatedAt);
+    if (currentUpdatedAt == null || incomingUpdatedAt == null) {
+      return false;
+    }
+
+    return !currentUpdatedAt.isBefore(incomingUpdatedAt);
+  }
+
   void _handleLiveStreamDisconnected() {
     if (_isDisposed) {
       return;
@@ -476,9 +520,10 @@ class ThreadListController extends StateNotifier<ThreadListState> {
 
   Future<bool> _catchUpThreadListAfterReconnect() async {
     try {
-      final threads = await _bridgeApi.fetchThreads(
+      final fetchedThreads = await _bridgeApi.fetchThreads(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
       );
+      final threads = _mergeFetchedThreadsPreservingNewerState(fetchedThreads);
       await _cacheRepository.saveThreadList(threads);
       if (!_canMutateState) {
         return false;
