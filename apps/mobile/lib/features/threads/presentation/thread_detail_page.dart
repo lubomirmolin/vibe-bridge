@@ -17,6 +17,7 @@ import 'package:codex_mobile_companion/features/threads/domain/thread_timeline_b
 import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
+import 'package:codex_mobile_companion/foundation/theme/liquid_styles.dart';
 import 'package:codex_mobile_companion/shared/widgets/badges.dart';
 import 'package:codex_mobile_companion/shared/widgets/connection_status_banner.dart';
 import 'package:codex_mobile_companion/shared/widgets/magnetic_button.dart';
@@ -29,8 +30,11 @@ import 'package:image_picker/image_picker.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:syntax_highlight/syntax_highlight.dart';
 
+import '../application/thread_list_controller.dart';
+
 part 'thread_detail_page_body.dart';
 part 'thread_detail_page_composer.dart';
+part 'thread_detail_page_draft.dart';
 part 'thread_detail_page_header.dart';
 part 'thread_detail_page_message.dart';
 part 'thread_detail_page_timeline.dart';
@@ -41,10 +45,26 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
     required this.bridgeApiBaseUrl,
     required this.threadId,
     this.initialVisibleTimelineEntries = 80,
-  });
+    this.initialComposerInput,
+  }) : draftWorkspacePath = null,
+       draftWorkspaceLabel = null;
 
+  const ThreadDetailPage.draft({
+    super.key,
+    required this.bridgeApiBaseUrl,
+    required String this.draftWorkspacePath,
+    required String this.draftWorkspaceLabel,
+    this.initialVisibleTimelineEntries = 80,
+  }) : threadId = null,
+       initialComposerInput = null;
+
+  final String? threadId;
+  final String? draftWorkspacePath;
+  final String? draftWorkspaceLabel;
+  final String? initialComposerInput;
+
+  bool get isDraft => threadId == null;
   final String bridgeApiBaseUrl;
-  final String threadId;
   final int initialVisibleTimelineEntries;
 
   @override
@@ -72,7 +92,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   bool _canLoadEarlierHistory = false;
   bool _isAutoLoadingEarlierHistory = false;
   bool _hasUserScrolledTimeline = false;
+  bool _didSubmitInitialComposerInput = false;
+  bool _isDraftThreadCreationInFlight = false;
   Future<void> Function()? _loadEarlierHistory;
+  String? _draftThreadErrorMessage;
 
   double _lastScrollOffset = 0;
   double _scrollOffsetOnDirectionChange = 0;
@@ -300,9 +323,13 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.threadId != widget.threadId) {
       _didInitialScrollToBottom = false;
+      _didSubmitInitialComposerInput = false;
     }
     if (oldWidget.bridgeApiBaseUrl != widget.bridgeApiBaseUrl) {
       unawaited(_loadComposerModelCatalog());
+    }
+    if (oldWidget.initialComposerInput != widget.initialComposerInput) {
+      _didSubmitInitialComposerInput = false;
     }
   }
 
@@ -427,11 +454,200 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     );
   }
 
+  Future<bool> _submitDraftComposerInput(String rawInput) async {
+    final workspacePath = widget.draftWorkspacePath?.trim() ?? '';
+    if (workspacePath.isEmpty) {
+      setState(() {
+        _draftThreadErrorMessage = 'No workspace is available for this draft.';
+      });
+      return false;
+    }
+
+    final input = rawInput.trim();
+    if (input.isEmpty) {
+      setState(() {
+        _draftThreadErrorMessage = 'Enter a prompt to start a turn.';
+      });
+      return false;
+    }
+
+    setState(() {
+      _isDraftThreadCreationInFlight = true;
+      _draftThreadErrorMessage = null;
+    });
+
+    try {
+      final bridgeApi = ref.read(threadDetailBridgeApiProvider);
+      final snapshot = await bridgeApi.createThread(
+        bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+        workspace: workspacePath,
+        model: _selectedModel,
+      );
+      final thread = snapshot.thread;
+      final listController = ref.read(
+        threadListControllerProvider(widget.bridgeApiBaseUrl).notifier,
+      );
+      listController.syncThreadDetail(thread);
+      await listController.selectThread(thread.threadId);
+      if (!mounted) {
+        return true;
+      }
+
+      unawaited(
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute<void>(
+            builder: (context) => ThreadDetailPage(
+              bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+              threadId: thread.threadId,
+              initialComposerInput: input,
+            ),
+          ),
+        ),
+      );
+      return true;
+    } on ThreadCreateBridgeException catch (error) {
+      if (!mounted) {
+        return false;
+      }
+      setState(() {
+        _isDraftThreadCreationInFlight = false;
+        _draftThreadErrorMessage = error.message;
+      });
+      return false;
+    } catch (_) {
+      if (!mounted) {
+        return false;
+      }
+      setState(() {
+        _isDraftThreadCreationInFlight = false;
+        _draftThreadErrorMessage =
+            'Couldn’t create the thread right now. Please try again.';
+      });
+      return false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final runtimeAccessMode = ref.watch(
+      runtimeAccessModeProvider(widget.bridgeApiBaseUrl),
+    );
+    final pairingState = ref.watch(pairingControllerProvider);
+    final deviceSettingsState = ref.watch(
+      deviceSettingsControllerProvider(widget.bridgeApiBaseUrl),
+    );
+    final deviceSettingsController = ref.read(
+      deviceSettingsControllerProvider(widget.bridgeApiBaseUrl).notifier,
+    );
+
+    Future<void> changeAccessMode(AccessMode mode) async {
+      final trustedBridge = pairingState.trustedBridge;
+      if (trustedBridge == null) {
+        return;
+      }
+
+      await deviceSettingsController.setAccessMode(
+        accessMode: mode,
+        trustedBridge: trustedBridge,
+      );
+    }
+
+    if (widget.isDraft) {
+      final effectiveAccessMode =
+          runtimeAccessMode ?? AccessMode.controlWithApprovals;
+      final isReadOnlyMode = effectiveAccessMode == AccessMode.readOnly;
+      final controlsEnabled = !isReadOnlyMode;
+
+      return Scaffold(
+        backgroundColor: AppTheme.background,
+        body: SafeArea(
+          child: Column(
+            children: [
+              Expanded(
+                child: Stack(
+                  children: [
+                    _ThreadDraftBody(
+                      workspacePath: widget.draftWorkspacePath!,
+                      workspaceLabel: widget.draftWorkspaceLabel!,
+                      isReadOnlyMode: isReadOnlyMode,
+                      draftErrorMessage: _draftThreadErrorMessage,
+                    ),
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: _DraftThreadDetailHeader(
+                        workspacePath: widget.draftWorkspacePath!,
+                        workspaceLabel: widget.draftWorkspaceLabel!,
+                        onBack: () => Navigator.of(context).pop(),
+                      ),
+                    ),
+                    Positioned(
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              AppTheme.background.withValues(alpha: 0.0),
+                              AppTheme.background,
+                              AppTheme.background,
+                            ],
+                            stops: const [0.0, 0.45, 1.0],
+                          ),
+                        ),
+                        child: SafeArea(
+                          top: false,
+                          child: _PinnedTurnComposer(
+                            composerController: _composerController,
+                            composerFocusNode: _composerFocusNode,
+                            isTurnActive: false,
+                            controlsEnabled: controlsEnabled,
+                            isComposerMutationInFlight:
+                                _isDraftThreadCreationInFlight,
+                            isInterruptMutationInFlight: false,
+                            isComposerFocused: _isComposerFocused,
+                            attachedImages: _attachedImages,
+                            modelOptions: _availableModelOptions,
+                            reasoningOptions: _availableReasoningOptions,
+                            selectedModel: _selectedModel,
+                            selectedReasoning: _selectedReasoning,
+                            accessMode: effectiveAccessMode,
+                            trustedBridge: pairingState.trustedBridge,
+                            isAccessModeUpdating:
+                                deviceSettingsState.isAccessModeUpdating,
+                            accessModeErrorMessage:
+                                deviceSettingsState.accessModeErrorMessage,
+                            onPickImages: _pickImages,
+                            onRemoveImage: _removeAttachedImage,
+                            onModelChanged: _onComposerModelChanged,
+                            onReasoningChanged: (value) {
+                              setState(() {
+                                _selectedReasoning = value;
+                              });
+                            },
+                            onAccessModeChanged: changeAccessMode,
+                            onSubmitComposer: _submitDraftComposerInput,
+                            onInterruptActiveTurn: () async => false,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final args = ThreadDetailControllerArgs(
       bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
-      threadId: widget.threadId,
+      threadId: widget.threadId!,
       initialVisibleTimelineEntries: widget.initialVisibleTimelineEntries,
     );
     final state = ref.watch(threadDetailControllerProvider(args));
@@ -439,22 +655,12 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     final approvalsState = ref.watch(
       approvalsQueueControllerProvider(widget.bridgeApiBaseUrl),
     );
-    final runtimeAccessMode = ref.watch(
-      runtimeAccessModeProvider(widget.bridgeApiBaseUrl),
-    );
     final desktopIntegrationState = ref.watch(
       desktopIntegrationControllerProvider,
-    );
-    final pairingState = ref.watch(pairingControllerProvider);
-    final deviceSettingsState = ref.watch(
-      deviceSettingsControllerProvider(widget.bridgeApiBaseUrl),
     );
 
     final approvalsController = ref.read(
       approvalsQueueControllerProvider(widget.bridgeApiBaseUrl).notifier,
-    );
-    final deviceSettingsController = ref.read(
-      deviceSettingsControllerProvider(widget.bridgeApiBaseUrl).notifier,
     );
 
     ref.listen(
@@ -488,7 +694,24 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       },
     );
 
-    final threadApprovals = approvalsState.forThread(widget.threadId);
+    if (!_didSubmitInitialComposerInput &&
+        !state.isLoading &&
+        state.hasThread &&
+        !state.isTurnActive &&
+        !state.isComposerMutationInFlight) {
+      final initialComposerInput = widget.initialComposerInput?.trim();
+      if (initialComposerInput != null && initialComposerInput.isNotEmpty) {
+        _didSubmitInitialComposerInput = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) {
+            return;
+          }
+          unawaited(controller.submitComposerInput(initialComposerInput));
+        });
+      }
+    }
+
+    final threadApprovals = approvalsState.forThread(widget.threadId!);
     final effectiveAccessMode =
         runtimeAccessMode ??
         state.thread?.accessMode ??
@@ -539,18 +762,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
           await approvalsController.loadApprovals(showLoading: false);
           return accepted;
         },
-      );
-    }
-
-    Future<void> changeAccessMode(AccessMode mode) async {
-      final trustedBridge = pairingState.trustedBridge;
-      if (trustedBridge == null) {
-        return;
-      }
-
-      await deviceSettingsController.setAccessMode(
-        accessMode: mode,
-        trustedBridge: trustedBridge,
       );
     }
 

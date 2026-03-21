@@ -126,6 +126,90 @@ void main() {
   );
 
   testWidgets(
+    'thread list header plus opens draft detail and submits first prompt through a created thread',
+    (tester) async {
+      final createdThread = ThreadDetailDto(
+        contractVersion: contractVersion,
+        threadId: 'thread-new',
+        title: 'Fresh session',
+        status: ThreadStatus.idle,
+        workspace: '/workspace/codex-mobile-companion',
+        repository: 'codex-mobile-companion',
+        branch: 'main',
+        createdAt: '2026-03-18T12:00:00Z',
+        updatedAt: '2026-03-18T12:00:00Z',
+        source: 'cli',
+        accessMode: AccessMode.controlWithApprovals,
+        lastTurnSummary: '',
+      );
+      final listApi = FakeThreadListBridgeApi(
+        scriptedResults: [_threadSummaries()],
+      );
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-new': [createdThread],
+        },
+        timelineScriptByThreadId: {
+          'thread-new': [<ThreadTimelineEntryDto>[]],
+        },
+        createThreadScript: [
+          ThreadSnapshotDto(
+            contractVersion: contractVersion,
+            thread: createdThread,
+            entries: const <ThreadTimelineEntryDto>[],
+            approvals: const <ApprovalSummaryDto>[],
+          ),
+        ],
+      );
+
+      await _pumpThreadListApp(
+        tester,
+        listApi: listApi,
+        detailApi: detailApi,
+        liveStream: FakeThreadLiveStream(),
+      );
+
+      await tester.tap(find.byKey(const Key('thread-list-create-button')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(
+          const Key(
+            'thread-list-workspace-option-/workspace/codex-mobile-companion',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('thread-draft-title')), findsOneWidget);
+      expect(
+        find.byKey(const Key('thread-draft-workspace-path')),
+        findsOneWidget,
+      );
+
+      await tester.enterText(
+        find.byKey(const Key('turn-composer-input')),
+        'Plan the release',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('turn-composer-submit')));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(detailApi.createThreadCallCount, 1);
+      expect(
+        detailApi.createdThreadWorkspaces,
+        contains('/workspace/codex-mobile-companion'),
+      );
+      expect(
+        detailApi.startTurnPromptsByThreadId['thread-new'],
+        equals(<String>['Plan the release']),
+      );
+      expect(find.text('Fresh session'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'real-thread initial 80-entry slice keeps latest context and meaningful command/file activity visible',
     (tester) async {
       final fixture = _loadRealThreadFixture();
@@ -3126,6 +3210,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required Map<String, List<Object>> detailScriptByThreadId,
     required Map<String, List<Object>> timelineScriptByThreadId,
     Map<String, ThreadDetailDto>? timelineThreadByThreadId,
+    List<Object>? createThreadScript,
     Map<String, List<Object>>? startTurnScriptByThreadId,
     Map<String, List<Object>>? steerTurnScriptByThreadId,
     Map<String, List<Object>>? interruptTurnScriptByThreadId,
@@ -3138,6 +3223,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   }) : _detailScriptByThreadId = detailScriptByThreadId,
        _timelineScriptByThreadId = timelineScriptByThreadId,
        _timelineThreadByThreadId = timelineThreadByThreadId ?? {},
+       _createThreadScript = createThreadScript ?? <Object>[],
        _startTurnScriptByThreadId = startTurnScriptByThreadId ?? {},
        _steerTurnScriptByThreadId = steerTurnScriptByThreadId ?? {},
        _interruptTurnScriptByThreadId = interruptTurnScriptByThreadId ?? {},
@@ -3150,6 +3236,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   final Map<String, List<Object>> _detailScriptByThreadId;
   final Map<String, List<Object>> _timelineScriptByThreadId;
   final Map<String, ThreadDetailDto> _timelineThreadByThreadId;
+  final List<Object> _createThreadScript;
   final Map<String, List<Object>> _startTurnScriptByThreadId;
   final Map<String, List<Object>> _steerTurnScriptByThreadId;
   final Map<String, List<Object>> _interruptTurnScriptByThreadId;
@@ -3161,6 +3248,9 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   final void Function(ApprovalRecordDto approval)? onGitApprovalRequired;
   int detailFetchCount = 0;
   int timelineFetchCount = 0;
+  int createThreadCallCount = 0;
+  final List<String> createdThreadWorkspaces = <String>[];
+  final List<String?> createdThreadModels = <String?>[];
   final Map<String, List<String>> startTurnPromptsByThreadId =
       <String, List<String>>{};
   final Map<String, List<String>> steerTurnInstructionsByThreadId =
@@ -3178,6 +3268,55 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
   }) async {
     return fallbackModelCatalog;
+  }
+
+  @override
+  Future<ThreadSnapshotDto> createThread({
+    required String bridgeApiBaseUrl,
+    required String workspace,
+    String? model,
+  }) async {
+    createThreadCallCount += 1;
+    createdThreadWorkspaces.add(workspace);
+    createdThreadModels.add(model);
+
+    if (_createThreadScript.isEmpty) {
+      return ThreadSnapshotDto(
+        contractVersion: contractVersion,
+        thread: const ThreadDetailDto(
+          contractVersion: contractVersion,
+          threadId: 'thread-created',
+          title: 'New Thread',
+          status: ThreadStatus.idle,
+          workspace: '/workspace/codex-mobile-companion',
+          repository: 'codex-mobile-companion',
+          branch: 'main',
+          createdAt: '2026-03-18T12:00:00Z',
+          updatedAt: '2026-03-18T12:00:00Z',
+          source: 'cli',
+          accessMode: AccessMode.controlWithApprovals,
+          lastTurnSummary: '',
+        ),
+        entries: const <ThreadTimelineEntryDto>[],
+        approvals: const <ApprovalSummaryDto>[],
+      );
+    }
+
+    final scriptedResult = _createThreadScript.first;
+    if (_createThreadScript.length > 1) {
+      _createThreadScript.removeAt(0);
+    }
+
+    if (scriptedResult is ThreadSnapshotDto) {
+      return scriptedResult;
+    }
+    if (scriptedResult is ThreadCreateBridgeException) {
+      throw scriptedResult;
+    }
+
+    throw StateError(
+      'Unsupported create-thread scripted result: $scriptedResult',
+    );
   }
 
   @override
