@@ -59,7 +59,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(const Key('thread-summary-card-thread-456')),
-          matching: find.text('/workspace/codex-runtime-tools'),
+          matching: find.text('develop'),
         ),
         findsOneWidget,
       );
@@ -338,7 +338,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(Key('thread-summary-card-${realDetail.threadId}')),
-          matching: find.text(realDetail.repository),
+          matching: find.text(realDetail.branch),
         ),
         findsOneWidget,
       );
@@ -357,12 +357,12 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(Key('thread-summary-card-${realDetail.threadId}')),
-          matching: find.text(realDetail.repository),
+          matching: find.text(realDetail.branch),
         ),
         findsOneWidget,
       );
       expect(find.text('Stale cached title'), findsNothing);
-      expect(find.text('old-workspace'), findsNothing);
+      expect(find.text('feature/stale-row'), findsNothing);
     },
   );
 

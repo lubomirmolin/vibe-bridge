@@ -232,6 +232,7 @@
 /* Begin PBXShellScriptBuildPhase section */
 		EA5E6C6AA809AF75021540E1 /* Embed bridge-server */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);

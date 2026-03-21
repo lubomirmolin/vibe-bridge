@@ -6,7 +6,6 @@ import 'package:codex_mobile_companion/features/threads/presentation/thread_deta
 import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
-import 'package:codex_mobile_companion/foundation/theme/liquid_styles.dart';
 import 'package:codex_mobile_companion/shared/widgets/badges.dart';
 import 'package:codex_mobile_companion/shared/widgets/connection_status_banner.dart';
 import 'package:flutter/material.dart';
@@ -215,10 +214,12 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Threads',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      'ACTIVE THREADS',
+                      style: const TextStyle(
+                        fontSize: 16,
                         fontWeight: FontWeight.w500,
-                        letterSpacing: -0.5,
+                        letterSpacing: 1.0,
+                        color: AppTheme.textMain,
                       ),
                     ),
                   ),
@@ -249,8 +250,12 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
               child: Container(
-                decoration: LiquidStyles.liquidGlass.copyWith(
-                  borderRadius: BorderRadius.circular(16),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceZinc800.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.05),
+                  ),
                 ),
                 child: TextField(
                   key: const Key('thread-search-input'),
@@ -261,7 +266,7 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                     fontSize: 14,
                   ),
                   decoration: InputDecoration(
-                    hintText: 'Search sessions...',
+                    hintText: 'Search threads...',
                     hintStyle: const TextStyle(color: AppTheme.textSubtle),
                     prefixIcon: Padding(
                       padding: const EdgeInsets.all(12.0),
@@ -475,40 +480,35 @@ class _ThreadWorkspaceSection extends StatelessWidget {
         InkWell(
           key: Key('thread-folder-toggle-${group.groupId}'),
           onTap: onToggleCollapsed,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(8),
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Row(
               children: [
                 PhosphorIcon(
-                  PhosphorIcons.folderSimple(),
+                  PhosphorIcons.folder(PhosphorIconsStyle.fill),
                   size: 18,
-                  color: AppTheme.textMuted,
+                  color: AppTheme.emerald,
                 ),
                 const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    group.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppTheme.textMuted,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: -0.3,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
                 Text(
-                  '${group.threads.length}',
+                  group.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.jetBrainsMono(
-                    color: AppTheme.textSubtle,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
+                    color: AppTheme.textMuted,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Container(
+                    height: 1,
+                    color: Colors.white.withValues(alpha: 0.05),
+                  ),
+                ),
+                const SizedBox(width: 16),
                 PhosphorIcon(
                   isCollapsed
                       ? PhosphorIcons.caretRight(PhosphorIconsStyle.bold)
@@ -539,7 +539,7 @@ class _ThreadWorkspaceSection extends StatelessWidget {
                             onOpenDetail(group.threads[index].threadId),
                       ),
                       if (index < group.threads.length - 1)
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 4),
                     ],
                   ],
                 ),
@@ -583,14 +583,12 @@ class _ThreadSummaryCard extends StatelessWidget {
         break;
     }
 
-    return GestureDetector(
+    return InkWell(
       key: Key('thread-summary-card-${thread.threadId}'),
       onTap: onOpenDetail,
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: LiquidStyles.liquidGlass.copyWith(
-          borderRadius: BorderRadius.circular(24),
-        ),
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -604,8 +602,7 @@ class _ThreadSummaryCard extends StatelessWidget {
                     style: const TextStyle(
                       color: AppTheme.textMain,
                       fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                      letterSpacing: -0.5,
+                      fontWeight: FontWeight.w400,
                     ),
                   ),
                 ),
@@ -613,50 +610,55 @@ class _ThreadSummaryCard extends StatelessWidget {
                 StatusBadge(text: statusText, variant: variant),
               ],
             ),
-            const SizedBox(height: 16),
-
-            // Sub details using Phosphor icons
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _DetailRow(
-                  icon: PhosphorIcons.folderSimple(),
-                  text: thread.repository,
-                ),
-                const SizedBox(height: 8),
-                _DetailRow(
-                  icon: PhosphorIcons.gitBranch(),
-                  text: thread.branch,
-                ),
-                const SizedBox(height: 8),
-                _DetailRow(
-                  icon: PhosphorIcons.terminalWindow(),
-                  text: thread.workspace,
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 20),
-            Container(height: 1, color: Colors.white.withValues(alpha: 0.05)),
-            const SizedBox(height: 16),
-
+            const SizedBox(height: 12),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
+                Expanded(
+                  child: Row(
+                    children: [
+                      PhosphorIcon(
+                        PhosphorIcons.gitBranch(),
+                        size: 14,
+                        color: AppTheme.textSubtle,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          thread.branch,
+                          style: GoogleFonts.jetBrainsMono(
+                            color: AppTheme.textSubtle,
+                            fontSize: 11,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      PhosphorIcon(
+                        PhosphorIcons.clock(),
+                        size: 14,
+                        color: AppTheme.textSubtle,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _formatDate(DateTime.parse(thread.updatedAt)),
+                        style: GoogleFonts.jetBrainsMono(
+                          color: AppTheme.textSubtle,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
                 Text(
                   thread.threadId.length > 8
                       ? thread.threadId.substring(0, 8)
                       : thread.threadId,
                   style: GoogleFonts.jetBrainsMono(
                     color: AppTheme.textSubtle,
-                    fontSize: 10,
-                  ),
-                ),
-                Text(
-                  _formatDate(DateTime.parse(thread.updatedAt)),
-                  style: GoogleFonts.jetBrainsMono(
-                    color: AppTheme.textSubtle,
-                    fontSize: 10,
+                    fontSize: 11,
                   ),
                 ),
               ],
@@ -675,35 +677,6 @@ class _ThreadSummaryCard extends StatelessWidget {
     return '${diff.inDays}d ago';
   }
 }
-
-class _DetailRow extends StatelessWidget {
-  final IconData icon;
-  final String text;
-
-  const _DetailRow({required this.icon, required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        PhosphorIcon(icon, size: 14, color: AppTheme.textSubtle),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            text,
-            style: GoogleFonts.jetBrainsMono(
-              color: AppTheme.textSubtle,
-              fontSize: 12,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 class _NewThreadWorkspaceSheet extends StatelessWidget {
   const _NewThreadWorkspaceSheet({required this.groups});
 
