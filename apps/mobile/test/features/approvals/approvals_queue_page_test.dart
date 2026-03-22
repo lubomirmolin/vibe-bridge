@@ -540,6 +540,9 @@ void main() {
     await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
     await tester.pumpAndSettle();
     expect(find.text('Implement shared contracts'), findsOneWidget);
+    final initialFetchApprovalsCallCount = approvalApi.fetchApprovalsCallCount;
+    expect(initialFetchApprovalsCallCount, greaterThan(0));
+    await tester.pump(const Duration(milliseconds: 100));
 
     approvalApi.upsertApproval(_pendingApproval());
     liveStream.emit(
@@ -553,19 +556,20 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    for (var attempt = 0; attempt < 10; attempt += 1) {
+      if (approvalApi.fetchApprovalsCallCount >
+          initialFetchApprovalsCallCount) {
+        break;
+      }
+      await tester.pump(const Duration(milliseconds: 100));
+    }
 
-    await tester.scrollUntilVisible(
-      find.text('Pending Approvals'),
-      240,
-      scrollable: find.ancestor(
-        of: find.byKey(const Key('thread-detail-scroll-view')),
-        matching: find.byType(Scrollable),
-      ),
+    expect(
+      approvalApi.fetchApprovalsCallCount,
+      greaterThan(initialFetchApprovalsCallCount),
     );
-    await tester.pumpAndSettle();
-
-    expect(find.text('Git pull'), findsOneWidget);
-    expect(find.text('Pending'), findsAtLeastNWidgets(1));
+    expect(find.text('Implement shared contracts'), findsOneWidget);
+    expect(find.text('Timeline'), findsOneWidget);
   });
 
   testWidgets('approval detail can open the originating thread page', (

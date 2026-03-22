@@ -127,7 +127,7 @@ class _PinnedTurnComposer extends StatelessWidget {
                     ),
                   );
                 },
-                child: isComposerFocused
+                child: isComposerFocused || isSpeechRecording
                     ? const SizedBox(
                         key: ValueKey('composer-leading-actions-hidden'),
                       )
@@ -209,37 +209,46 @@ class _PinnedTurnComposer extends StatelessWidget {
                       ),
                     ],
                   ),
-                  child: TextField(
-                    key: const Key('turn-composer-input'),
-                    controller: composerController,
-                    focusNode: composerFocusNode,
-                    enabled: composerEnabled,
-                    minLines: 1,
-                    maxLines: 4,
-                    keyboardType: TextInputType.multiline,
-                    textInputAction: TextInputAction.newline,
-                    onTapOutside: (_) => composerFocusNode.unfocus(),
-                    style: const TextStyle(
-                      color: AppTheme.textMain,
-                      fontSize: 15,
-                    ),
-                    decoration: InputDecoration(
-                      prefixIcon: isSpeechRecording ? _RecordingPill(durationSeconds: speechDurationSeconds) : null,
-                      prefixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
-                      hintText: isSpeechRecording
-                          ? ''
-                          : isSpeechTranscribing
-                          ? 'Transcribing voice message…'
-                          : isTurnActive
-                          ? 'Turn in progress. Interrupt to send a new prompt.'
-                          : 'Message Codex...',
-                      hintStyle: const TextStyle(color: AppTheme.textSubtle),
-                      border: InputBorder.none,
-                      contentPadding: isSpeechRecording ? const EdgeInsets.fromLTRB(14, 16, 18, 16) : const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 16,
-                      ),
-                    ),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    child: isSpeechRecording
+                        ? _RecordingStatusInline(
+                            key: const ValueKey('recording-inline-status'),
+                            durationSeconds: speechDurationSeconds,
+                            amplitudeStream: speechAmplitudeStream,
+                          )
+                        : TextField(
+                            key: const Key('turn-composer-input'),
+                            controller: composerController,
+                            focusNode: composerFocusNode,
+                            enabled: composerEnabled,
+                            minLines: 1,
+                            maxLines: 4,
+                            keyboardType: TextInputType.multiline,
+                            textInputAction: TextInputAction.newline,
+                            onTapOutside: (_) => composerFocusNode.unfocus(),
+                            style: const TextStyle(
+                              color: AppTheme.textMain,
+                              fontSize: 15,
+                            ),
+                            decoration: InputDecoration(
+                              hintText: isSpeechTranscribing
+                                  ? 'Transcribing voice message…'
+                                  : isTurnActive
+                                  ? 'Turn in progress. Interrupt to send a new prompt.'
+                                  : 'Message Codex...',
+                              hintStyle: const TextStyle(
+                                color: AppTheme.textSubtle,
+                              ),
+                              border: InputBorder.none,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 18,
+                                vertical: 16,
+                              ),
+                            ),
+                          ),
                   ),
                 ),
               ),
@@ -258,61 +267,54 @@ class _PinnedTurnComposer extends StatelessWidget {
                     ),
                   );
                 },
-                child: (!isComposerFocused && !isSpeechRecording && !isSpeechTranscribing)
-                    ? const SizedBox(
-                        key: ValueKey('composer-speech-hidden'),
-                      )
+                child:
+                    (!isComposerFocused &&
+                        !isSpeechRecording &&
+                        !isSpeechTranscribing)
+                    ? const SizedBox(key: ValueKey('composer-speech-hidden'))
                     : Padding(
                         key: const ValueKey('composer-speech-visible'),
                         padding: const EdgeInsets.only(left: 10),
-                        child: Stack(
-                          alignment: Alignment.center,
-                          clipBehavior: Clip.none,
-                          children: [
-                            if (isSpeechRecording)
-                              _ParakeetVisualizer(
-                                amplitudeStream: speechAmplitudeStream,
-                              ),
-                            SizedBox(
-                              width: 56,
-                              height: 56,
-                              child: MagneticButton(
-                                key: const Key('turn-composer-speech-toggle'),
-                                isCircle: true,
-                                variant: MagneticButtonVariant.secondary,
-                                onClick:
-                                    (controlsEnabled &&
-                                        !isTurnActive &&
-                                        !isComposerMutationInFlight &&
-                                        !isInterruptMutationInFlight &&
-                                        !isSpeechTranscribing)
-                                    ? () async {
-                                        await onToggleSpeechInput();
-                                      }
-                                    : () {},
-                                child: AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 180),
-                                  child: isSpeechTranscribing
-                                      ? const SizedBox.square(
-                                          key: ValueKey('speech-loading'),
-                                          dimension: 20,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: AppTheme.textMain,
-                                          ),
-                                        )
-                                      : PhosphorIcon(
-                                          key: ValueKey<bool>(isSpeechRecording),
-                                          isSpeechRecording
-                                              ? PhosphorIcons.stop()
-                                              : PhosphorIcons.microphone(),
-                                          size: 24,
-                                          color: isSpeechRecording ? AppTheme.emerald : null,
-                                        ),
-                                ),
-                              ),
+                        child: SizedBox(
+                          width: 56,
+                          height: 56,
+                          child: MagneticButton(
+                            key: const Key('turn-composer-speech-toggle'),
+                            isCircle: true,
+                            variant: MagneticButtonVariant.secondary,
+                            onClick:
+                                (controlsEnabled &&
+                                    !isTurnActive &&
+                                    !isComposerMutationInFlight &&
+                                    !isInterruptMutationInFlight &&
+                                    !isSpeechTranscribing)
+                                ? () async {
+                                    await onToggleSpeechInput();
+                                  }
+                                : () {},
+                            child: AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 180),
+                              child: isSpeechTranscribing
+                                  ? const SizedBox.square(
+                                      key: ValueKey('speech-loading'),
+                                      dimension: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: AppTheme.textMain,
+                                      ),
+                                    )
+                                  : PhosphorIcon(
+                                      key: ValueKey<bool>(isSpeechRecording),
+                                      isSpeechRecording
+                                          ? PhosphorIcons.x()
+                                          : PhosphorIcons.microphone(),
+                                      size: 24,
+                                      color: isSpeechRecording
+                                          ? AppTheme.emerald
+                                          : null,
+                                    ),
                             ),
-                          ],
+                          ),
                         ),
                       ),
               ),
@@ -857,162 +859,131 @@ String _accessModeChipLabel(AccessMode value) {
   }
 }
 
-class _RecordingPill extends StatelessWidget {
-  const _RecordingPill({required this.durationSeconds});
+class _RecordingStatusInline extends StatelessWidget {
+  const _RecordingStatusInline({
+    super.key,
+    required this.durationSeconds,
+    required this.amplitudeStream,
+  });
 
   final int durationSeconds;
-
-  String _formatDuration(int seconds) {
-    final minutes = seconds ~/ 60;
-    final remainingSeconds = seconds % 60;
-    return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
-  }
+  final Stream<Amplitude>? amplitudeStream;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: AppTheme.emerald.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(99),
-          border: Border.all(color: AppTheme.emerald.withValues(alpha: 0.3)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: AppTheme.emerald,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: AppTheme.emerald.withValues(alpha: 0.6),
-                    blurRadius: 6,
-                    spreadRadius: 2,
-                  ),
-                ],
-              ),
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+      child: Row(
+        children: [
+          Text(
+            _formatRecordingDuration(durationSeconds),
+            style: const TextStyle(
+              color: AppTheme.textMain,
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
             ),
-            const SizedBox(width: 8),
-            Text(
-              _formatDuration(durationSeconds),
-              style: const TextStyle(
-                color: AppTheme.emerald,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
-          ],
-        ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: _RecordingWaveform(amplitudeStream: amplitudeStream)),
+        ],
       ),
     );
   }
 }
 
-class _ParakeetVisualizer extends StatefulWidget {
-  const _ParakeetVisualizer({this.amplitudeStream});
+String _formatRecordingDuration(int seconds) {
+  final minutes = seconds ~/ 60;
+  final remainingSeconds = seconds % 60;
+  return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
+}
+
+class _RecordingWaveform extends StatefulWidget {
+  const _RecordingWaveform({required this.amplitudeStream});
 
   final Stream<Amplitude>? amplitudeStream;
 
   @override
-  State<_ParakeetVisualizer> createState() => _ParakeetVisualizerState();
+  State<_RecordingWaveform> createState() => _RecordingWaveformState();
 }
 
-class _ParakeetVisualizerState extends State<_ParakeetVisualizer> with SingleTickerProviderStateMixin {
-  late AnimationController _animController;
-  final List<double> _amplitudes = List.filled(32, 0.0);
+class _RecordingWaveformState extends State<_RecordingWaveform> {
+  static const int _barCount = 30;
+
+  final List<double> _bars = List<double>.filled(_barCount, 0.18);
+  StreamSubscription<Amplitude>? _amplitudeSubscription;
+  int _tick = 0;
 
   @override
   void initState() {
     super.initState();
-    _animController = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
-    widget.amplitudeStream?.listen((amp) {
+    _subscribeToAmplitude();
+  }
+
+  @override
+  void didUpdateWidget(covariant _RecordingWaveform oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.amplitudeStream != widget.amplitudeStream) {
+      _amplitudeSubscription?.cancel();
+      _subscribeToAmplitude();
+    }
+  }
+
+  void _subscribeToAmplitude() {
+    _amplitudeSubscription = widget.amplitudeStream?.listen((amp) {
       if (!mounted) return;
       setState(() {
-        for (int i = _amplitudes.length - 1; i > 0; i--) {
-          _amplitudes[i] = _amplitudes[i - 1];
+        for (int i = _bars.length - 1; i > 0; i--) {
+          _bars[i] = _bars[i - 1];
         }
-        final normalized = (amp.current + 60).clamp(0.0, 60.0) / 60.0;
-        _amplitudes[0] = normalized;
+        final normalized = (amp.current + 45).clamp(0.0, 45.0) / 45.0;
+        final pulse = 0.14 + ((math.sin(_tick * 0.65) + 1) * 0.04);
+        _bars[0] = (0.16 + (normalized * 0.84)).clamp(pulse, 1.0);
+        _tick += 1;
       });
     });
   }
 
   @override
   void dispose() {
-    _animController.dispose();
+    _amplitudeSubscription?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 110,
-      height: 110,
-      child: AnimatedBuilder(
-        animation: _animController,
-        builder: (context, _) => CustomPaint(
-          painter: _ParakeetVisualizerPainter(
-            animationValue: _animController.value,
-            amplitudes: _amplitudes,
-          ),
-        ),
+      height: 30,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: List<Widget>.generate(_bars.length, (index) {
+          final value = _bars[_bars.length - index - 1];
+          final barHeight = 5 + (value * 21);
+          final colorAlpha = 0.5 + (value * 0.5);
+
+          return Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 1.25),
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: TweenAnimationBuilder<double>(
+                  tween: Tween<double>(begin: 5, end: barHeight),
+                  duration: const Duration(milliseconds: 120),
+                  curve: Curves.easeOutCubic,
+                  builder: (context, height, child) {
+                    return DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: colorAlpha),
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                      child: SizedBox(width: 3, height: height),
+                    );
+                  },
+                ),
+              ),
+            ),
+          );
+        }),
       ),
     );
   }
-}
-
-class _ParakeetVisualizerPainter extends CustomPainter {
-  _ParakeetVisualizerPainter({required this.animationValue, required this.amplitudes});
-
-  final double animationValue;
-  final List<double> amplitudes;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = size.center(Offset.zero);
-    final radius = size.width / 2.5;
-
-    final paint = Paint()
-      ..color = AppTheme.emerald
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3.0
-      ..strokeCap = StrokeCap.round;
-
-    final glowPaint = Paint()
-      ..color = AppTheme.emerald.withValues(alpha: 0.3)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 6.0
-      ..strokeCap = StrokeCap.round
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4.0);
-
-    final numBars = amplitudes.length;
-    for (int i = 0; i < numBars; i++) {
-      final angle = (i * 2 * math.pi / numBars) + (animationValue * 2 * math.pi * 0.2);
-      
-      final indexAmplitude = amplitudes[i];
-      final baselinePulse = (math.sin(animationValue * math.pi * 4 + i) + 1) / 2 * 0.2;
-      final barHeight = 4 + ((indexAmplitude + baselinePulse) * 16);
-
-      final dx1 = center.dx + math.cos(angle) * radius;
-      final dy1 = center.dy + math.sin(angle) * radius;
-
-      final dx2 = center.dx + math.cos(angle) * (radius + barHeight);
-      final dy2 = center.dy + math.sin(angle) * (radius + barHeight);
-
-      final p1 = Offset(dx1, dy1);
-      final p2 = Offset(dx2, dy2);
-
-      canvas.drawLine(p1, p2, glowPaint);
-      canvas.drawLine(p1, p2, paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _ParakeetVisualizerPainter oldDelegate) => true;
 }

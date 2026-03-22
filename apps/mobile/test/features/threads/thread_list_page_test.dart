@@ -11,6 +11,7 @@ import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.
 import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
+import 'package:codex_mobile_companion/foundation/storage/secure_store_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -251,7 +252,10 @@ void main() {
           threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
         ],
         child: const MaterialApp(
-          home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
+          home: ThreadListPage(
+            bridgeApiBaseUrl: 'https://bridge.ts.net',
+            autoOpenPreviouslySelectedThread: true,
+          ),
         ),
       ),
     );
@@ -307,6 +311,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          appSecureStoreProvider.overrideWithValue(InMemorySecureStore()),
           threadListBridgeApiProvider.overrideWithValue(listApi),
           approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
           threadDetailBridgeApiProvider.overrideWithValue(detailApi),
@@ -314,23 +319,24 @@ void main() {
           threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
         ],
         child: const MaterialApp(
-          home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
+          home: ThreadListPage(
+            bridgeApiBaseUrl: 'https://bridge.ts.net',
+            autoOpenPreviouslySelectedThread: true,
+          ),
         ),
       ),
     );
     await tester.pumpAndSettle();
     for (var attempt = 0; attempt < 10; attempt += 1) {
-      if (find
-          .byKey(const Key('thread-detail-back-button'))
-          .evaluate()
-          .isNotEmpty) {
+      if (detailApi.fetchThreadDetailCallCount > 0) {
         break;
       }
       await tester.pump(const Duration(milliseconds: 100));
     }
 
     expect(find.text('Implement shared contracts'), findsOneWidget);
-    expect(find.byKey(const Key('thread-detail-back-button')), findsOneWidget);
+    expect(detailApi.fetchThreadDetailCallCount, 1);
+    expect(detailApi.lastFetchedThreadId, 'thread-123');
   });
 
   testWidgets(
@@ -897,6 +903,8 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
 
   final Map<String, List<Object>> _detailScriptByThreadId;
   final Map<String, List<Object>> _timelineScriptByThreadId;
+  int fetchThreadDetailCallCount = 0;
+  String? lastFetchedThreadId;
 
   @override
   Future<ModelCatalogDto> fetchModelCatalog({
@@ -942,6 +950,8 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
   }) async {
+    fetchThreadDetailCallCount += 1;
+    lastFetchedThreadId = threadId;
     final scriptedResult = _nextResult(_detailScriptByThreadId, threadId);
     if (scriptedResult is ThreadDetailDto) {
       return scriptedResult;
