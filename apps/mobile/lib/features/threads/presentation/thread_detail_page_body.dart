@@ -185,26 +185,12 @@ class _ThreadDetailBody extends StatelessWidget {
             else
               ...timelineBlocks
                   .map(
-                    (block) => block.item != null
-                        ? _ThreadActivityCard(
-                            item: block.item!,
-                            exploration: block.exploration,
-                            isTimelineCardExpanded: isTimelineCardExpanded,
-                            onTimelineCardExpansionChanged:
-                                onTimelineCardExpansionChanged,
-                          )
-                        : _ExploredFilesCard(
-                            exploration: block.exploration!,
-                            isExpanded: isTimelineCardExpanded(
-                              _explorationExpansionId(block.exploration!),
-                              defaultValue: true,
-                            ),
-                            onExpansionChanged: (isExpanded) =>
-                                onTimelineCardExpansionChanged(
-                                  _explorationExpansionId(block.exploration!),
-                                  isExpanded,
-                                ),
-                          ),
+                    (block) => _ThreadTimelineBlockView(
+                      block: block,
+                      isTimelineCardExpanded: isTimelineCardExpanded,
+                      onTimelineCardExpansionChanged:
+                          onTimelineCardExpansionChanged,
+                    ),
                   )
                   .expand((widget) => [widget, const SizedBox(height: 12)]),
             if (state.isTurnActive) ...const [
@@ -213,6 +199,52 @@ class _ThreadDetailBody extends StatelessWidget {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ThreadTimelineBlockView extends StatelessWidget {
+  const _ThreadTimelineBlockView({
+    required this.block,
+    required this.isTimelineCardExpanded,
+    required this.onTimelineCardExpansionChanged,
+  });
+
+  final ThreadTimelineBlock block;
+  final bool Function(String id, {required bool defaultValue})
+  isTimelineCardExpanded;
+  final void Function(String id, bool isExpanded)
+  onTimelineCardExpansionChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    if (block.workSummary != null) {
+      return _WorkSummaryCard(
+        summary: block.workSummary!,
+        isTimelineCardExpanded: isTimelineCardExpanded,
+        onTimelineCardExpansionChanged: onTimelineCardExpansionChanged,
+      );
+    }
+
+    if (block.item != null) {
+      return _ThreadActivityCard(
+        item: block.item!,
+        exploration: block.exploration,
+        isTimelineCardExpanded: isTimelineCardExpanded,
+        onTimelineCardExpansionChanged: onTimelineCardExpansionChanged,
+      );
+    }
+
+    return _ExploredFilesCard(
+      exploration: block.exploration!,
+      isExpanded: isTimelineCardExpanded(
+        _explorationExpansionId(block.exploration!),
+        defaultValue: true,
+      ),
+      onExpansionChanged: (isExpanded) => onTimelineCardExpansionChanged(
+        _explorationExpansionId(block.exploration!),
+        isExpanded,
       ),
     );
   }

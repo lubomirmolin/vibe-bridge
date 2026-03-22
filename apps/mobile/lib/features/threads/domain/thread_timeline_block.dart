@@ -1,7 +1,7 @@
 import 'package:codex_mobile_companion/features/threads/domain/thread_activity_item.dart';
 
 class ThreadTimelineBlock {
-  const ThreadTimelineBlock._({this.item, this.exploration});
+  const ThreadTimelineBlock._({this.item, this.exploration, this.workSummary});
 
   factory ThreadTimelineBlock.activity(
     ThreadActivityItem item, {
@@ -16,8 +16,27 @@ class ThreadTimelineBlock {
     return ThreadTimelineBlock._(exploration: exploration);
   }
 
+  factory ThreadTimelineBlock.workSummary(ThreadTimelineWorkSummary summary) {
+    return ThreadTimelineBlock._(workSummary: summary);
+  }
+
   final ThreadActivityItem? item;
   final ThreadTimelineExplorationSummary? exploration;
+  final ThreadTimelineWorkSummary? workSummary;
+}
+
+class ThreadTimelineWorkSummary {
+  const ThreadTimelineWorkSummary({
+    required this.blocks,
+    required this.sourceEventIds,
+    required this.actionCount,
+    this.totalWallTimeSeconds,
+  });
+
+  final List<ThreadTimelineBlock> blocks;
+  final List<String> sourceEventIds;
+  final int actionCount;
+  final double? totalWallTimeSeconds;
 }
 
 class ThreadTimelineExplorationSummary {
@@ -26,12 +45,14 @@ class ThreadTimelineExplorationSummary {
     required this.searchCount,
     required this.searchLabels,
     required this.sourceEventIds,
+    this.totalWallTimeSeconds,
   });
 
   final List<String> files;
   final int searchCount;
   final Map<String, int> searchLabels;
   final List<String> sourceEventIds;
+  final double? totalWallTimeSeconds;
 
   String get label {
     final parts = <String>[];
@@ -54,6 +75,12 @@ class ThreadTimelineExplorationSummary {
 }
 
 List<ThreadTimelineBlock> buildThreadTimelineBlocks(
+  List<ThreadActivityItem> items,
+) {
+  return _bundleWorkBlocks(_buildBaseTimelineBlocks(items));
+}
+
+List<ThreadTimelineBlock> _buildBaseTimelineBlocks(
   List<ThreadActivityItem> items,
 ) {
   final blocks = <ThreadTimelineBlock>[];
@@ -115,6 +142,8 @@ class _ExplorationSummaryBuilder {
   final Map<String, int> _searchLabels = <String, int>{};
   final List<String> _sourceEventIds = <String>[];
   int _searchCount = 0;
+  double _totalWallTimeSeconds = 0;
+  bool _hasWallTime = false;
 
   bool get hasContent => _files.isNotEmpty || _searchCount > 0;
 
@@ -125,6 +154,11 @@ class _ExplorationSummaryBuilder {
     }
 
     _sourceEventIds.add(item.eventId);
+    final wallTimeSeconds = item.parsedCommandOutput?.wallTimeSeconds;
+    if (wallTimeSeconds != null && wallTimeSeconds > 0) {
+      _totalWallTimeSeconds += wallTimeSeconds;
+      _hasWallTime = true;
+    }
 
     switch (presentation.entryKind) {
       case ThreadActivityPresentationEntryKind.search:
@@ -151,6 +185,7 @@ class _ExplorationSummaryBuilder {
       searchCount: _searchCount,
       searchLabels: Map<String, int>.unmodifiable(_searchLabels),
       sourceEventIds: List<String>.unmodifiable(_sourceEventIds),
+      totalWallTimeSeconds: _hasWallTime ? _totalWallTimeSeconds : null,
     );
   }
 }
@@ -158,4 +193,86 @@ class _ExplorationSummaryBuilder {
 bool _isExplorationItem(ThreadActivityItem item) {
   return item.presentation?.groupKind ==
       ThreadActivityPresentationGroupKind.exploration;
+}
+
+List<ThreadTimelineBlock> _bundleWorkBlocks(List<ThreadTimelineBlock> blocks) {
+  if (blocks.isEmpty) {
+    return const <ThreadTimelineBlock>[];
+  }
+
+  final bundled = <ThreadTimelineBlock>[];
+  var index = 0;
+
+  while (index < blocks.length) {
+    if (!_isWorkLikeBlock(blocks[index])) {
+      bundled.add(blocks[index]);
+      index += 1;
+      continue;
+    }
+
+    var scanIndex = index;
+    while (scanIndex < blocks.length && _isWorkLikeBlock(blocks[scanIndex])) {
+      scanIndex += 1;
+    }
+
+    final workBlocks = blocks.sublist(index, scanIndex);
+    final sourceEventIds = <String>[];
+    var actionCount = 0;
+    var totalWallTimeSeconds = 0.0;
+    var hasWallTime = false;
+
+    for (final block in workBlocks) {
+      final item = block.item;
+      final exploration = block.exploration;
+      if (item != null) {
+        sourceEventIds.add(item.eventId);
+        actionCount += 1;
+        final wallTimeSeconds = item.parsedCommandOutput?.wallTimeSeconds;
+        if (wallTimeSeconds != null && wallTimeSeconds > 0) {
+          totalWallTimeSeconds += wallTimeSeconds;
+          hasWallTime = true;
+        }
+      }
+
+      if (exploration != null) {
+        sourceEventIds.addAll(exploration.sourceEventIds);
+        actionCount += exploration.sourceEventIds.length;
+        final wallTimeSeconds = exploration.totalWallTimeSeconds;
+        if (wallTimeSeconds != null && wallTimeSeconds > 0) {
+          totalWallTimeSeconds += wallTimeSeconds;
+          hasWallTime = true;
+        }
+      }
+    }
+
+    if (workBlocks.length == 1 && actionCount <= 1) {
+      bundled.add(workBlocks.first);
+      index = scanIndex;
+      continue;
+    }
+
+    bundled.add(
+      ThreadTimelineBlock.workSummary(
+        ThreadTimelineWorkSummary(
+          blocks: List<ThreadTimelineBlock>.unmodifiable(workBlocks),
+          sourceEventIds: List<String>.unmodifiable(sourceEventIds),
+          actionCount: actionCount,
+          totalWallTimeSeconds: hasWallTime ? totalWallTimeSeconds : null,
+        ),
+      ),
+    );
+    index = scanIndex;
+  }
+
+  return List<ThreadTimelineBlock>.unmodifiable(bundled);
+}
+
+bool _isWorkLikeBlock(ThreadTimelineBlock block) {
+  final item = block.item;
+  if (item == null) {
+    return block.exploration != null;
+  }
+
+  return item.type == ThreadActivityItemType.terminalOutput ||
+      item.type == ThreadActivityItemType.fileChange;
 }

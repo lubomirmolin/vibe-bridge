@@ -26,17 +26,27 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
   static const int _defaultVisibleThreadsPerGroup = 3;
 
   late final TextEditingController _searchController;
+  late final ProviderSubscription<ThreadListState> _threadListSubscription;
   final Set<String> _collapsedGroupIds = <String>{};
   final Set<String> _expandedThreadGroupIds = <String>{};
+  bool _didRestoreInitialSelectedThread = false;
 
   @override
   void initState() {
     super.initState();
     _searchController = TextEditingController();
+    _threadListSubscription = ref.listenManual<ThreadListState>(
+      threadListControllerProvider(widget.bridgeApiBaseUrl),
+      (previous, next) {
+        _maybeRestoreInitiallySelectedThread(next);
+      },
+      fireImmediately: true,
+    );
   }
 
   @override
   void dispose() {
+    _threadListSubscription.close();
     _searchController.dispose();
     super.dispose();
   }
@@ -56,6 +66,34 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
         ),
       ),
     );
+  }
+
+  void _maybeRestoreInitiallySelectedThread(ThreadListState state) {
+    if (_didRestoreInitialSelectedThread || !mounted) {
+      return;
+    }
+
+    final selectedThreadId = state.selectedThreadId?.trim();
+    if (selectedThreadId == null || selectedThreadId.isEmpty) {
+      return;
+    }
+    if (state.isLoading && !state.hasAnyThread) {
+      return;
+    }
+    if (!state.threads.any((thread) => thread.threadId == selectedThreadId)) {
+      return;
+    }
+
+    _didRestoreInitialSelectedThread = true;
+    final controller = ref.read(
+      threadListControllerProvider(widget.bridgeApiBaseUrl).notifier,
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      unawaited(_openThreadDetail(controller, selectedThreadId));
+    });
   }
 
   Future<void> _openDraftThread(ThreadWorkspaceGroup group) async {

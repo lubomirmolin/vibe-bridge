@@ -278,7 +278,10 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   StreamSubscription<BridgeEventEnvelope<Map<String, dynamic>>>?
   _liveEventSubscription;
   Timer? _reconnectTimer;
+  Timer? _detailRefreshTimer;
   bool _isReconnectInProgress = false;
+  bool _isDetailRefreshInFlight = false;
+  bool _shouldRefreshDetailAfterCurrentRequest = false;
   bool _isDisposed = false;
   DateTime? _pendingPromptSubmittedAt;
 
@@ -937,6 +940,117 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     }
 
     state = state.copyWith(items: nextItems, clearStreamErrorMessage: true);
+    _scheduleThreadDetailRefresh(
+      delay: event.kind == BridgeEventKind.threadStatusChanged
+          ? const Duration(milliseconds: 200)
+          : const Duration(milliseconds: 700),
+    );
+  }
+
+  void _scheduleThreadDetailRefresh({required Duration delay}) {
+    if (_isDisposed || state.thread == null) {
+      return;
+    }
+
+    _detailRefreshTimer?.cancel();
+    _detailRefreshTimer = Timer(delay, () {
+      unawaited(_refreshThreadDetailFromBridge());
+    });
+  }
+
+  Future<void> _refreshThreadDetailFromBridge() async {
+    if (_isDisposed) {
+      return;
+    }
+    if (_isDetailRefreshInFlight) {
+      _shouldRefreshDetailAfterCurrentRequest = true;
+      return;
+    }
+
+    final requestedThreadId = state.threadId;
+    _isDetailRefreshInFlight = true;
+
+    try {
+      final detail = await _bridgeApi.fetchThreadDetail(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: requestedThreadId,
+      );
+      if (!_isRequestCurrent(requestedThreadId)) {
+        return;
+      }
+
+      final scopedDetail = _ensureScopedThreadDetail(
+        detail: detail,
+        expectedThreadId: requestedThreadId,
+        context: 'refreshing live thread detail',
+      );
+
+      if (!_shouldApplyRefreshedThreadDetail(
+        current: state.thread,
+        refreshed: scopedDetail,
+      )) {
+        return;
+      }
+
+      state = state.copyWith(thread: scopedDetail);
+      _threadListController.syncThreadDetail(scopedDetail);
+    } on ThreadDetailBridgeException {
+      // Keep the current live state when a background metadata refresh fails.
+    } catch (_) {
+      // Ignore best-effort metadata refresh failures.
+    } finally {
+      _isDetailRefreshInFlight = false;
+      if (_shouldRefreshDetailAfterCurrentRequest && !_isDisposed) {
+        _shouldRefreshDetailAfterCurrentRequest = false;
+        unawaited(_refreshThreadDetailFromBridge());
+      }
+    }
+  }
+
+  bool _shouldApplyRefreshedThreadDetail({
+    required ThreadDetailDto? current,
+    required ThreadDetailDto refreshed,
+  }) {
+    if (current == null) {
+      return true;
+    }
+    if (_threadDetailEquals(current, refreshed)) {
+      return false;
+    }
+
+    final currentUpdatedAt = DateTime.tryParse(current.updatedAt);
+    final refreshedUpdatedAt = DateTime.tryParse(refreshed.updatedAt);
+    if (currentUpdatedAt != null &&
+        refreshedUpdatedAt != null &&
+        refreshedUpdatedAt.isBefore(currentUpdatedAt)) {
+      return _isPlaceholderThreadTitle(current.title) &&
+          !_isPlaceholderThreadTitle(refreshed.title);
+    }
+
+    return true;
+  }
+
+  bool _threadDetailEquals(ThreadDetailDto left, ThreadDetailDto right) {
+    return left.contractVersion == right.contractVersion &&
+        left.threadId == right.threadId &&
+        left.title == right.title &&
+        left.status == right.status &&
+        left.workspace == right.workspace &&
+        left.repository == right.repository &&
+        left.branch == right.branch &&
+        left.createdAt == right.createdAt &&
+        left.updatedAt == right.updatedAt &&
+        left.source == right.source &&
+        left.accessMode == right.accessMode &&
+        left.lastTurnSummary == right.lastTurnSummary;
+  }
+
+  bool _isPlaceholderThreadTitle(String title) {
+    final normalized = title.trim().toLowerCase();
+    return normalized.isEmpty ||
+        normalized == 'untitled thread' ||
+        normalized == 'new thread' ||
+        normalized == 'fresh session';
   }
 
   void _applyLifecycleStatusUpdate(
@@ -1559,6 +1673,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   void dispose() {
     _isDisposed = true;
     _reconnectTimer?.cancel();
+    _detailRefreshTimer?.cancel();
     unawaited(_closeLiveSubscription());
     super.dispose();
   }
