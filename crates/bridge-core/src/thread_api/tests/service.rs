@@ -1,4 +1,7 @@
 use super::*;
+use shared_contracts::ThreadGitDiffMode;
+
+use crate::thread_api::ThreadGitDiffQuery;
 
 #[test]
 fn list_and_detail_responses_normalize_upstream_thread_shapes() {
@@ -861,4 +864,182 @@ fn apply_live_event_replaces_existing_timeline_entry_with_same_event_id() {
         .expect("detail response should exist");
     assert_eq!(detail.thread.updated_at, "102");
     assert_eq!(detail.thread.last_turn_summary, "Hello");
+}
+
+#[test]
+fn git_diff_response_uses_latest_thread_change_diff_payload() {
+    let service = ThreadApiService::with_seed_data(
+        vec![UpstreamThreadRecord {
+            id: "thread-diff".to_string(),
+            headline: "Inspect diff".to_string(),
+            lifecycle_state: "active".to_string(),
+            workspace_path: "/workspace/codex-mobile-companion".to_string(),
+            repository_name: "codex-mobile-companion".to_string(),
+            branch_name: "main".to_string(),
+            remote_name: "origin".to_string(),
+            git_dirty: true,
+            git_ahead_by: 0,
+            git_behind_by: 0,
+            created_at: "2026-03-17T10:00:00Z".to_string(),
+            updated_at: "2026-03-17T10:05:00Z".to_string(),
+            source: "cli".to_string(),
+            approval_mode: "full_control".to_string(),
+            last_turn_summary: "diff".to_string(),
+        }],
+        HashMap::from([(
+            "thread-diff".to_string(),
+            vec![UpstreamTimelineEvent {
+                id: "evt-diff".to_string(),
+                event_type: "file_change_delta".to_string(),
+                happened_at: "2026-03-17T10:06:00Z".to_string(),
+                summary_text: "Updated lib/main.dart".to_string(),
+                data: json!({
+                    "resolved_unified_diff": "diff --git a/lib/main.dart b/lib/main.dart\n--- a/lib/main.dart\n+++ b/lib/main.dart\n@@ -1 +1 @@\n-old\n+new"
+                }),
+            }],
+        )]),
+    );
+
+    let diff = service
+        .git_diff_response(
+            "thread-diff",
+            &ThreadGitDiffQuery {
+                mode: ThreadGitDiffMode::LatestThreadChange,
+                path: None,
+            },
+        )
+        .expect("git diff response should exist");
+
+    assert_eq!(diff.mode, ThreadGitDiffMode::LatestThreadChange);
+    assert_eq!(diff.files.len(), 1);
+    assert_eq!(diff.files[0].path, "lib/main.dart");
+    assert_eq!(diff.files[0].additions, 1);
+    assert_eq!(diff.files[0].deletions, 1);
+}
+
+#[test]
+fn git_diff_response_reads_workspace_diff_from_real_git_repo() {
+    use std::fs;
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let temp_dir = std::env::temp_dir().join(format!(
+        "thread-diff-workspace-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be valid")
+            .as_millis()
+    ));
+    fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .current_dir(&temp_dir)
+            .args(args)
+            .output()
+            .expect("git should run");
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    git(&["init"]);
+    git(&["config", "user.name", "Codex Test"]);
+    git(&["config", "user.email", "codex@example.com"]);
+    fs::write(temp_dir.join("tracked.txt"), "before\n").expect("seed file should write");
+    git(&["add", "tracked.txt"]);
+    git(&["commit", "-m", "initial"]);
+
+    fs::write(temp_dir.join("tracked.txt"), "after\n").expect("tracked file should write");
+    fs::write(temp_dir.join("new.txt"), "fresh\n").expect("untracked file should write");
+
+    let service = ThreadApiService::with_seed_data(
+        vec![UpstreamThreadRecord {
+            id: "thread-workspace".to_string(),
+            headline: "Workspace diff".to_string(),
+            lifecycle_state: "active".to_string(),
+            workspace_path: temp_dir.to_string_lossy().to_string(),
+            repository_name: "repo".to_string(),
+            branch_name: "main".to_string(),
+            remote_name: "origin".to_string(),
+            git_dirty: true,
+            git_ahead_by: 0,
+            git_behind_by: 0,
+            created_at: "2026-03-17T10:00:00Z".to_string(),
+            updated_at: "2026-03-17T10:05:00Z".to_string(),
+            source: "cli".to_string(),
+            approval_mode: "full_control".to_string(),
+            last_turn_summary: "workspace".to_string(),
+        }],
+        HashMap::new(),
+    );
+
+    let diff = service
+        .git_diff_response(
+            "thread-workspace",
+            &ThreadGitDiffQuery {
+                mode: ThreadGitDiffMode::Workspace,
+                path: None,
+            },
+        )
+        .expect("workspace diff should exist");
+
+    assert_eq!(diff.mode, ThreadGitDiffMode::Workspace);
+    assert!(diff.unified_diff.contains("tracked.txt"));
+    assert!(diff.unified_diff.contains("new.txt"));
+    assert_eq!(diff.files.len(), 2);
+
+    fs::remove_dir_all(&temp_dir).expect("temp dir should be removable");
+}
+
+#[test]
+fn git_diff_response_returns_none_for_non_repo_workspace() {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let temp_dir = std::env::temp_dir().join(format!(
+        "thread-diff-non-repo-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be valid")
+            .as_millis()
+    ));
+    fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+
+    let service = ThreadApiService::with_seed_data(
+        vec![UpstreamThreadRecord {
+            id: "thread-non-repo".to_string(),
+            headline: "Non repo".to_string(),
+            lifecycle_state: "active".to_string(),
+            workspace_path: temp_dir.to_string_lossy().to_string(),
+            repository_name: "repo".to_string(),
+            branch_name: "main".to_string(),
+            remote_name: "origin".to_string(),
+            git_dirty: false,
+            git_ahead_by: 0,
+            git_behind_by: 0,
+            created_at: "2026-03-17T10:00:00Z".to_string(),
+            updated_at: "2026-03-17T10:05:00Z".to_string(),
+            source: "cli".to_string(),
+            approval_mode: "full_control".to_string(),
+            last_turn_summary: "workspace".to_string(),
+        }],
+        HashMap::new(),
+    );
+
+    let diff = service.git_diff_response(
+        "thread-non-repo",
+        &ThreadGitDiffQuery {
+            mode: ThreadGitDiffMode::Workspace,
+            path: None,
+        },
+    );
+
+    assert!(diff.is_none());
+    fs::remove_dir_all(&temp_dir).expect("temp dir should be removable");
 }

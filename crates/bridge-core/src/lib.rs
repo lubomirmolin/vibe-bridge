@@ -14,6 +14,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use shared_contracts::{
     AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, SecurityAuditEventDto,
+    ThreadGitDiffMode,
 };
 use tungstenite::{Message, accept};
 
@@ -32,7 +33,7 @@ use secure_storage::InMemorySecureStore;
 use stream_router::StreamRouter;
 use thread_api::{
     GitStatusResponse, MutationDispatch, MutationResultResponse, RepositoryContextDto,
-    ThreadApiService,
+    ThreadApiService, ThreadGitDiffQuery,
 };
 
 pub mod codex_runtime;
@@ -1256,6 +1257,7 @@ fn route_request(request_line: &str, app: &BridgeApplication) -> String {
                         "GET /threads/:id/timeline?before=<event_id>&limit=<n>",
                         "POST /threads/:id/open-on-mac",
                         "GET /threads/:id/git/status",
+                        "GET /threads/:id/git/diff?mode=<workspace|latest_thread_change>&path=<repo_path>",
                         "POST /threads/:id/turns/start",
                         "POST /threads/:id/turns/steer",
                         "POST /threads/:id/turns/interrupt",
@@ -1723,6 +1725,43 @@ fn route_thread_request(
                 .expect("thread API mutex should not be poisoned");
             let status = thread_api.git_status_response(thread_id)?;
             Some(json_response("200 OK", &status))
+        }
+        ("GET", [_, "git", "diff"]) => {
+            let Some(raw_mode) = query.get("mode").map(String::as_str) else {
+                return Some(bad_request_response("missing_required_query_param: mode"));
+            };
+            let mode = match raw_mode.trim() {
+                "workspace" => ThreadGitDiffMode::Workspace,
+                "latest_thread_change" => ThreadGitDiffMode::LatestThreadChange,
+                _ => return Some(bad_request_response("invalid_git_diff_mode")),
+            };
+            let path = query
+                .get("path")
+                .map(String::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string);
+
+            let mut thread_api = app
+                .thread_api
+                .lock()
+                .expect("thread API mutex should not be poisoned");
+            log_thread_sync_error(thread_api.sync_thread_from_upstream(thread_id));
+            match thread_api.git_diff_response(thread_id, &ThreadGitDiffQuery { mode, path }) {
+                Some(diff) => Some(json_response("200 OK", &diff)),
+                None => {
+                    if thread_api.detail_response(thread_id).is_none() {
+                        None
+                    } else {
+                        Some(json_error_response(
+                            "422 Unprocessable Entity",
+                            "git_diff_unavailable",
+                            "git_diff_unavailable",
+                            "Git diff is unavailable for this thread workspace.",
+                        ))
+                    }
+                }
+            }
         }
         ("POST", [_, "turns", "start"]) => {
             let actor = query
@@ -3119,6 +3158,30 @@ mod tests {
         let git_status = route_request("GET /threads/thread-456/git/status HTTP/1.1", &app);
         assert!(git_status.starts_with("HTTP/1.1 200 OK"));
         assert!(git_status.contains("\"remote\":\"upstream\""));
+    }
+
+    #[test]
+    fn git_diff_route_returns_latest_thread_change_payload() {
+        let app = test_application();
+
+        let response = route_request(
+            "GET /threads/thread-123/git/diff?mode=latest_thread_change HTTP/1.1",
+            &app,
+        );
+
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        assert!(response.contains("\"mode\":\"latest_thread_change\""));
+        assert!(response.contains("\"files\":"));
+    }
+
+    #[test]
+    fn git_diff_route_rejects_invalid_mode() {
+        let app = test_application();
+
+        let response = route_request("GET /threads/thread-123/git/diff?mode=nope HTTP/1.1", &app);
+
+        assert!(response.starts_with("HTTP/1.1 400 Bad Request"));
+        assert!(response.contains("\"message\":\"invalid_git_diff_mode\""));
     }
 
     #[test]

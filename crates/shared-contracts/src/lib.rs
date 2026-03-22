@@ -240,6 +240,55 @@ pub struct GitStatusDto {
     pub behind_by: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadGitDiffMode {
+    Workspace,
+    LatestThreadChange,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GitDiffChangeTypeDto {
+    Added,
+    Modified,
+    Deleted,
+    Renamed,
+    Copied,
+    TypeChanged,
+    Unmerged,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitDiffFileSummaryDto {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_path: Option<String>,
+    pub change_type: GitDiffChangeTypeDto,
+    pub additions: u32,
+    pub deletions: u32,
+    #[serde(default)]
+    pub is_binary: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadGitDiffDto {
+    pub contract_version: String,
+    pub thread: ThreadDetailDto,
+    pub repository: GitStatusDto,
+    pub mode: ThreadGitDiffMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+    #[serde(default)]
+    pub files: Vec<GitDiffFileSummaryDto>,
+    #[serde(default)]
+    pub unified_diff: String,
+    pub fetched_at: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThreadSnapshotDto {
     pub contract_version: String,

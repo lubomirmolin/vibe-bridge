@@ -1,9 +1,12 @@
 use std::collections::HashMap;
+use std::path::Path;
+use std::process::Command;
 
 use serde_json::{Value, json};
 use shared_contracts::{
-    BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ModelCatalogDto, ModelOptionDto,
-    ThreadTimelinePageDto,
+    BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, GitDiffChangeTypeDto,
+    GitDiffFileSummaryDto, GitStatusDto as SharedGitStatusDto, ModelCatalogDto, ModelOptionDto,
+    ThreadGitDiffDto, ThreadGitDiffMode, ThreadTimelinePageDto,
 };
 
 use super::archive::{
@@ -23,7 +26,8 @@ use super::timeline::{
 };
 use super::{
     GitStatusResponse, MutationDispatch, MutationResultResponse, ThreadApiService,
-    ThreadDetailResponse, ThreadListResponse, UpstreamThreadRecord, UpstreamTimelineEvent,
+    ThreadDetailResponse, ThreadGitDiffQuery, ThreadListResponse, UpstreamThreadRecord,
+    UpstreamTimelineEvent,
 };
 
 impl ThreadApiService {
@@ -437,6 +441,52 @@ impl ThreadApiService {
                 repository: map_repository_context(thread),
                 status: map_git_status(thread),
             })
+    }
+
+    pub fn git_diff_response(
+        &self,
+        thread_id: &str,
+        query: &ThreadGitDiffQuery,
+    ) -> Option<ThreadGitDiffDto> {
+        let thread = self
+            .thread_records
+            .iter()
+            .find(|thread| thread.id == thread_id)?;
+        let (unified_diff, revision) = match query.mode {
+            ThreadGitDiffMode::Workspace => {
+                resolve_workspace_diff(thread, query.path.as_deref()).ok()?
+            }
+            ThreadGitDiffMode::LatestThreadChange => (
+                resolve_latest_thread_change_diff(
+                    self.timeline_by_thread_id
+                        .get(thread_id)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]),
+                    query.path.as_deref(),
+                ),
+                None,
+            ),
+        };
+        let files = parse_git_diff_file_summaries(&unified_diff);
+
+        Some(ThreadGitDiffDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: map_thread_detail(thread),
+            repository: SharedGitStatusDto {
+                workspace: thread.workspace_path.clone(),
+                repository: thread.repository_name.clone(),
+                branch: thread.branch_name.clone(),
+                remote: (!thread.remote_name.trim().is_empty()).then(|| thread.remote_name.clone()),
+                dirty: thread.git_dirty,
+                ahead_by: thread.git_ahead_by,
+                behind_by: thread.git_behind_by,
+            },
+            mode: query.mode,
+            revision,
+            files,
+            unified_diff,
+            fetched_at: current_timestamp_string(),
+        })
     }
 
     pub fn start_turn(
@@ -962,4 +1012,332 @@ impl ThreadApiService {
         let second = sequence % 60;
         format!("2026-03-17T22:{minute:02}:{second:02}Z")
     }
+}
+
+fn resolve_latest_thread_change_diff(
+    timeline: &[UpstreamTimelineEvent],
+    path: Option<&str>,
+) -> String {
+    let normalized_path = path.map(str::trim).filter(|path| !path.is_empty());
+    for event in timeline.iter().rev() {
+        let Some(diff) = event
+            .data
+            .get("resolved_unified_diff")
+            .and_then(Value::as_str)
+            .or_else(|| event.data.get("output").and_then(Value::as_str))
+        else {
+            continue;
+        };
+        if !diff.contains("diff --git ") {
+            continue;
+        }
+        if let Some(path) = normalized_path {
+            let summaries = parse_git_diff_file_summaries(diff);
+            if summaries.iter().all(|file| file.path != path) {
+                continue;
+            }
+        }
+        return diff.to_string();
+    }
+    String::new()
+}
+
+fn resolve_workspace_diff(
+    thread: &UpstreamThreadRecord,
+    path: Option<&str>,
+) -> Result<(String, Option<String>), String> {
+    let workspace = thread.workspace_path.trim();
+    if workspace.is_empty() {
+        return Err("thread workspace is unavailable".to_string());
+    }
+    if !Path::new(workspace).exists() {
+        return Err(format!("thread workspace does not exist: {workspace}"));
+    }
+
+    let revision = git_output(workspace, &["rev-parse", "HEAD"])
+        .ok()
+        .map(|value| value.trim().to_string());
+    let mut unified_diff = git_output(
+        workspace,
+        &[
+            "-c",
+            "core.quotepath=false",
+            "diff",
+            "HEAD",
+            "--find-renames",
+            "--find-copies",
+            "--binary",
+            "--",
+        ],
+    )
+    .or_else(|_| {
+        git_output(
+            workspace,
+            &[
+                "-c",
+                "core.quotepath=false",
+                "diff",
+                "--cached",
+                "--find-renames",
+                "--find-copies",
+                "--binary",
+                "--",
+            ],
+        )
+    })?;
+
+    if let Some(path) = path.map(str::trim).filter(|path| !path.is_empty()) {
+        unified_diff = git_output(
+            workspace,
+            &[
+                "-c",
+                "core.quotepath=false",
+                "diff",
+                "HEAD",
+                "--find-renames",
+                "--find-copies",
+                "--binary",
+                "--",
+                path,
+            ],
+        )
+        .or_else(|_| {
+            git_output(
+                workspace,
+                &[
+                    "-c",
+                    "core.quotepath=false",
+                    "diff",
+                    "--cached",
+                    "--find-renames",
+                    "--find-copies",
+                    "--binary",
+                    "--",
+                    path,
+                ],
+            )
+        })?;
+    }
+
+    let mut untracked_files =
+        git_output(workspace, &["ls-files", "--others", "--exclude-standard"])?
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .filter(|line| {
+                path.map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .is_none_or(|selected| *line == selected)
+            })
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+    untracked_files.sort();
+    for untracked in untracked_files {
+        if Path::new(workspace).join(&untracked).is_dir() {
+            continue;
+        }
+        let diff = git_no_index_diff(workspace, "/dev/null", &untracked)?;
+        if !unified_diff.is_empty() && !diff.is_empty() {
+            unified_diff.push('\n');
+        }
+        unified_diff.push_str(diff.trim_end());
+    }
+
+    Ok((unified_diff.trim().to_string(), revision))
+}
+
+fn git_output(workspace: &str, args: &[&str]) -> Result<String, String> {
+    let output = Command::new("git")
+        .current_dir(workspace)
+        .args(args)
+        .output()
+        .map_err(|error| format!("failed to execute git: {error}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+fn git_no_index_diff(workspace: &str, left: &str, right: &str) -> Result<String, String> {
+    let output = Command::new("git")
+        .current_dir(workspace)
+        .args([
+            "-c",
+            "core.quotepath=false",
+            "diff",
+            "--no-index",
+            "--binary",
+            "--find-renames",
+            "--find-copies",
+            left,
+            right,
+        ])
+        .output()
+        .map_err(|error| format!("failed to execute git diff --no-index: {error}"))?;
+
+    if output.status.success() || output.status.code() == Some(1) {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+fn parse_git_diff_file_summaries(diff: &str) -> Vec<GitDiffFileSummaryDto> {
+    let mut files = Vec::new();
+    let mut current: Option<ParsedGitDiffSummary> = None;
+
+    for line in diff.lines() {
+        if let Some(rest) = line.strip_prefix("diff --git ") {
+            if let Some(file) = current.take() {
+                files.push(file.finish());
+            }
+            current = Some(ParsedGitDiffSummary::from_diff_git(rest));
+            continue;
+        }
+
+        let Some(file) = current.as_mut() else {
+            continue;
+        };
+
+        if let Some(path) = line.strip_prefix("--- ") {
+            file.apply_old_marker(path.trim());
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("+++ ") {
+            file.apply_new_marker(path.trim());
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("rename from ") {
+            file.old_path = Some(path.trim().to_string());
+            file.change_type = GitDiffChangeTypeDto::Renamed;
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("rename to ") {
+            file.new_path = Some(path.trim().to_string());
+            file.path = path.trim().to_string();
+            file.change_type = GitDiffChangeTypeDto::Renamed;
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("copy from ") {
+            file.old_path = Some(path.trim().to_string());
+            file.change_type = GitDiffChangeTypeDto::Copied;
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("copy to ") {
+            file.new_path = Some(path.trim().to_string());
+            file.path = path.trim().to_string();
+            file.change_type = GitDiffChangeTypeDto::Copied;
+            continue;
+        }
+        if line.starts_with("new file mode ") {
+            file.change_type = GitDiffChangeTypeDto::Added;
+            continue;
+        }
+        if line.starts_with("deleted file mode ") {
+            file.change_type = GitDiffChangeTypeDto::Deleted;
+            continue;
+        }
+        if line.starts_with("old mode ") || line.starts_with("new mode ") {
+            if file.change_type == GitDiffChangeTypeDto::Modified {
+                file.change_type = GitDiffChangeTypeDto::TypeChanged;
+            }
+            continue;
+        }
+        if line.starts_with("Binary files ") || line.starts_with("GIT binary patch") {
+            file.is_binary = true;
+            continue;
+        }
+        if line.starts_with("@@ ") || line == "@@" {
+            continue;
+        }
+        if line.starts_with('+') && !line.starts_with("+++") {
+            file.additions += 1;
+            continue;
+        }
+        if line.starts_with('-') && !line.starts_with("---") {
+            file.deletions += 1;
+        }
+    }
+
+    if let Some(file) = current.take() {
+        files.push(file.finish());
+    }
+
+    files
+}
+
+#[derive(Debug)]
+struct ParsedGitDiffSummary {
+    path: String,
+    old_path: Option<String>,
+    new_path: Option<String>,
+    change_type: GitDiffChangeTypeDto,
+    additions: u32,
+    deletions: u32,
+    is_binary: bool,
+}
+
+impl ParsedGitDiffSummary {
+    fn from_diff_git(rest: &str) -> Self {
+        let mut parts = rest.split_whitespace();
+        let old_path = parts.next().map(normalize_diff_path);
+        let new_path = parts.next().map(normalize_diff_path);
+        let path = new_path
+            .clone()
+            .or_else(|| old_path.clone())
+            .unwrap_or_default();
+
+        Self {
+            path,
+            old_path,
+            new_path,
+            change_type: GitDiffChangeTypeDto::Modified,
+            additions: 0,
+            deletions: 0,
+            is_binary: false,
+        }
+    }
+
+    fn apply_old_marker(&mut self, path: &str) {
+        if path == "/dev/null" {
+            self.change_type = GitDiffChangeTypeDto::Added;
+            self.old_path = None;
+            return;
+        }
+        let normalized = normalize_diff_path(path);
+        self.old_path = Some(normalized);
+    }
+
+    fn apply_new_marker(&mut self, path: &str) {
+        if path == "/dev/null" {
+            self.change_type = GitDiffChangeTypeDto::Deleted;
+            self.new_path = None;
+            return;
+        }
+        let normalized = normalize_diff_path(path);
+        self.path = normalized.clone();
+        self.new_path = Some(normalized);
+    }
+
+    fn finish(self) -> GitDiffFileSummaryDto {
+        GitDiffFileSummaryDto {
+            path: self.path,
+            old_path: self.old_path,
+            new_path: self.new_path,
+            change_type: self.change_type,
+            additions: self.additions,
+            deletions: self.deletions,
+            is_binary: self.is_binary,
+        }
+    }
+}
+
+fn normalize_diff_path(path: &str) -> String {
+    path.trim()
+        .trim_matches('"')
+        .strip_prefix("a/")
+        .or_else(|| path.trim().trim_matches('"').strip_prefix("b/"))
+        .unwrap_or(path.trim().trim_matches('"'))
+        .to_string()
 }

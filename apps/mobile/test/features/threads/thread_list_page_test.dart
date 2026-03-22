@@ -500,7 +500,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
-    expect(find.text('Implement shared contracts'), findsOneWidget);
+    expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
     expect(detailApi.fetchThreadDetailCallCount, 1);
     expect(detailApi.lastFetchedThreadId, 'thread-123');
   });

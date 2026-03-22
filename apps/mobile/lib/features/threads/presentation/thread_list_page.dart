@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:codex_mobile_companion/features/approvals/presentation/approvals_queue_page.dart';
 import 'package:codex_mobile_companion/features/threads/application/thread_list_controller.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_detail_page.dart';
+import 'package:codex_mobile_companion/features/threads/presentation/thread_git_diff_page.dart';
 import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/layout/adaptive_layout.dart';
@@ -40,6 +41,7 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
   final Set<String> _expandedThreadGroupIds = <String>{};
   bool _didRestoreInitialSelectedThread = false;
   bool _isWideThreadListHidden = false;
+  bool _isWideDiffPaneVisible = false;
   _WideThreadWorkspaceSelection? _wideSelection;
 
   @override
@@ -81,6 +83,7 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
     if (forceWideSelection || _isWideLayoutForContext()) {
       setState(() {
         _wideSelection = _WideThreadWorkspaceSelection.thread(threadId);
+        _isWideDiffPaneVisible = false;
       });
       return;
     }
@@ -130,6 +133,7 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
     if (_isWideLayoutForContext()) {
       setState(() {
         _wideSelection = _WideThreadWorkspaceSelection.draft(group);
+        _isWideDiffPaneVisible = false;
       });
       return;
     }
@@ -344,35 +348,53 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                                   right: BorderSide(color: Colors.white10),
                                 ),
                               ),
-                              child: _ThreadListSurface(
-                                bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
-                                state: state,
-                                controller: controller,
-                                searchController: _searchController,
-                                visibleThreadsPerGroup:
-                                    _defaultVisibleThreadsPerGroup,
-                                isGroupCollapsed: (groupId) =>
-                                    _isGroupCollapsed(state, groupId),
-                                isGroupThreadListExpanded: (groupId) =>
-                                    _isGroupThreadListExpanded(state, groupId),
-                                onToggleGroupCollapsed: _toggleGroupCollapsed,
-                                onToggleGroupThreadExpansion:
-                                    _toggleGroupThreadExpansion,
-                                onOpenThread: (threadId) => _openThreadDetail(
-                                  controller,
-                                  threadId,
-                                  forceWideSelection: true,
-                                ),
-                                onCreateThread: state.isLoading
-                                    ? null
-                                    : () => _startNewThread(state),
-                                onCollapseList: () {
-                                  setState(() {
-                                    _isWideThreadListHidden = true;
-                                  });
-                                },
-                                selectedThreadId: selectedThreadId,
-                              ),
+                              child:
+                                  _isWideDiffPaneVisible &&
+                                      selectedThreadId != null &&
+                                      selectedThreadId.isNotEmpty
+                                  ? ThreadGitDiffPane(
+                                      bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+                                      threadId: selectedThreadId,
+                                      onClose: () {
+                                        setState(() {
+                                          _isWideDiffPaneVisible = false;
+                                        });
+                                      },
+                                    )
+                                  : _ThreadListSurface(
+                                      bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+                                      state: state,
+                                      controller: controller,
+                                      searchController: _searchController,
+                                      visibleThreadsPerGroup:
+                                          _defaultVisibleThreadsPerGroup,
+                                      isGroupCollapsed: (groupId) =>
+                                          _isGroupCollapsed(state, groupId),
+                                      isGroupThreadListExpanded: (groupId) =>
+                                          _isGroupThreadListExpanded(
+                                            state,
+                                            groupId,
+                                          ),
+                                      onToggleGroupCollapsed:
+                                          _toggleGroupCollapsed,
+                                      onToggleGroupThreadExpansion:
+                                          _toggleGroupThreadExpansion,
+                                      onOpenThread: (threadId) =>
+                                          _openThreadDetail(
+                                            controller,
+                                            threadId,
+                                            forceWideSelection: true,
+                                          ),
+                                      onCreateThread: state.isLoading
+                                          ? null
+                                          : () => _startNewThread(state),
+                                      onCollapseList: () {
+                                        setState(() {
+                                          _isWideThreadListHidden = true;
+                                        });
+                                      },
+                                      selectedThreadId: selectedThreadId,
+                                    ),
                             ),
                           ),
                         if (!_isWideThreadListHidden)
@@ -385,6 +407,12 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                             bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
                             selection: _wideSelection,
                             selectedThreadId: selectedThreadId,
+                            onOpenDiff: () {
+                              setState(() {
+                                _isWideDiffPaneVisible = true;
+                                _isWideThreadListHidden = false;
+                              });
+                            },
                             onDraftCreated: (transition) {
                               setState(() {
                                 _wideSelection =
@@ -757,12 +785,14 @@ class _WideThreadDetailPane extends StatelessWidget {
     required this.bridgeApiBaseUrl,
     required this.selection,
     required this.selectedThreadId,
+    required this.onOpenDiff,
     required this.onDraftCreated,
   });
 
   final String bridgeApiBaseUrl;
   final _WideThreadWorkspaceSelection? selection;
   final String? selectedThreadId;
+  final VoidCallback onOpenDiff;
   final ValueChanged<ThreadDraftCreatedTransition> onDraftCreated;
 
   @override
@@ -795,6 +825,7 @@ class _WideThreadDetailPane extends StatelessWidget {
             selection?.initialSelectedReasoningEffort,
         showBackButton: false,
         embedInScaffold: false,
+        onOpenDiff: onOpenDiff,
       );
     }
 

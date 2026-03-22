@@ -15,6 +15,7 @@ import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridg
 import 'package:codex_mobile_companion/features/threads/domain/parsed_command_output.dart';
 import 'package:codex_mobile_companion/features/threads/domain/thread_activity_item.dart';
 import 'package:codex_mobile_companion/features/threads/domain/thread_timeline_block.dart';
+import 'package:codex_mobile_companion/features/threads/presentation/thread_git_diff_page.dart';
 import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
@@ -72,6 +73,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
     this.embedInScaffold = true,
     this.onBack,
     this.onDraftThreadCreated,
+    this.onOpenDiff,
   }) : draftWorkspacePath = null,
        draftWorkspaceLabel = null;
 
@@ -86,6 +88,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
     this.embedInScaffold = true,
     this.onBack,
     this.onDraftThreadCreated,
+    this.onOpenDiff,
   }) : threadId = null,
        initialComposerInput = null,
        initialAttachedImages = const <XFile>[],
@@ -104,6 +107,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
   final bool embedInScaffold;
   final VoidCallback? onBack;
   final ValueChanged<ThreadDraftCreatedTransition>? onDraftThreadCreated;
+  final VoidCallback? onOpenDiff;
 
   bool get isDraft => threadId == null;
   final String bridgeApiBaseUrl;
@@ -227,6 +231,28 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         );
       });
     }
+  }
+
+  Future<void> _openDiffView() async {
+    if (widget.isDraft) {
+      return;
+    }
+    if (widget.onOpenDiff != null) {
+      widget.onOpenDiff!.call();
+      return;
+    }
+    final threadId = widget.threadId;
+    if (threadId == null || !mounted) {
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ThreadGitDiffPage(
+          bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+          threadId: threadId,
+        ),
+      ),
+    );
   }
 
   void _setComposerSelectionsFromCatalog(List<ModelOptionDto> modelOptions) {
@@ -1317,6 +1343,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                     onOpenGitSyncSheet: openGitSyncSheet,
                     onStartCommitAction: startCommitAction,
                     onOpenOnMac: controller.openOnMac,
+                    onOpenDiff: _openDiffView,
                     isHeaderCollapsed: _isHeaderCollapsed,
                     showBackButton: widget.showBackButton,
                   ),

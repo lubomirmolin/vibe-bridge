@@ -25,6 +25,19 @@ enum BridgeEventKind {
   securityAudit,
 }
 
+enum ThreadGitDiffMode { workspace, latestThreadChange }
+
+enum GitDiffChangeType {
+  added,
+  modified,
+  deleted,
+  renamed,
+  copied,
+  typeChanged,
+  unmerged,
+  unknown,
+}
+
 enum ThreadTimelineGroupKind { exploration }
 
 enum ThreadTimelineExplorationKind { read, search }
@@ -151,6 +164,56 @@ SpeechModelState speechModelStateFromWire(String wireValue) {
       'Unknown SpeechModelState wire value "$wireValue".',
     ),
   );
+}
+
+ThreadGitDiffMode threadGitDiffModeFromWire(String wireValue) {
+  return ThreadGitDiffMode.values.firstWhere(
+    (mode) => mode.wireValue == wireValue,
+    orElse: () => throw FormatException(
+      'Unknown ThreadGitDiffMode wire value "$wireValue".',
+    ),
+  );
+}
+
+GitDiffChangeType gitDiffChangeTypeFromWire(String wireValue) {
+  return GitDiffChangeType.values.firstWhere(
+    (changeType) => changeType.wireValue == wireValue,
+    orElse: () => GitDiffChangeType.unknown,
+  );
+}
+
+extension ThreadGitDiffModeWire on ThreadGitDiffMode {
+  String get wireValue {
+    switch (this) {
+      case ThreadGitDiffMode.workspace:
+        return 'workspace';
+      case ThreadGitDiffMode.latestThreadChange:
+        return 'latest_thread_change';
+    }
+  }
+}
+
+extension GitDiffChangeTypeWire on GitDiffChangeType {
+  String get wireValue {
+    switch (this) {
+      case GitDiffChangeType.added:
+        return 'added';
+      case GitDiffChangeType.modified:
+        return 'modified';
+      case GitDiffChangeType.deleted:
+        return 'deleted';
+      case GitDiffChangeType.renamed:
+        return 'renamed';
+      case GitDiffChangeType.copied:
+        return 'copied';
+      case GitDiffChangeType.typeChanged:
+        return 'type_changed';
+      case GitDiffChangeType.unmerged:
+        return 'unmerged';
+      case GitDiffChangeType.unknown:
+        return 'unknown';
+    }
+  }
 }
 
 class ReasoningEffortOptionDto {
@@ -818,6 +881,113 @@ class GitStatusResponseDto {
       'repository': repository.toJson(),
       'status': status.toJson(),
     };
+  }
+}
+
+class GitDiffFileSummaryDto {
+  const GitDiffFileSummaryDto({
+    required this.path,
+    this.oldPath,
+    this.newPath,
+    required this.changeType,
+    required this.additions,
+    required this.deletions,
+    required this.isBinary,
+  });
+
+  final String path;
+  final String? oldPath;
+  final String? newPath;
+  final GitDiffChangeType changeType;
+  final int additions;
+  final int deletions;
+  final bool isBinary;
+
+  factory GitDiffFileSummaryDto.fromJson(Map<String, dynamic> json) {
+    return GitDiffFileSummaryDto(
+      path: json['path'] as String,
+      oldPath: json['old_path'] as String?,
+      newPath: json['new_path'] as String?,
+      changeType: gitDiffChangeTypeFromWire(json['change_type'] as String),
+      additions: (json['additions'] as num).toInt(),
+      deletions: (json['deletions'] as num).toInt(),
+      isBinary: json['is_binary'] as bool? ?? false,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'path': path,
+      'old_path': oldPath,
+      'new_path': newPath,
+      'change_type': changeType.wireValue,
+      'additions': additions,
+      'deletions': deletions,
+      'is_binary': isBinary,
+    };
+  }
+}
+
+class ThreadGitDiffDto {
+  const ThreadGitDiffDto({
+    required this.contractVersion,
+    required this.thread,
+    required this.repository,
+    required this.mode,
+    required this.files,
+    required this.unifiedDiff,
+    required this.fetchedAt,
+    this.revision,
+  });
+
+  final String contractVersion;
+  final ThreadDetailDto thread;
+  final ThreadGitStatusDto repository;
+  final ThreadGitDiffMode mode;
+  final String? revision;
+  final List<GitDiffFileSummaryDto> files;
+  final String unifiedDiff;
+  final String fetchedAt;
+
+  factory ThreadGitDiffDto.fromJson(Map<String, dynamic> json) {
+    final threadJson = json['thread'];
+    if (threadJson is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "thread" object in git diff response.',
+      );
+    }
+    final repositoryJson = json['repository'];
+    if (repositoryJson is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "repository" object in git diff response.',
+      );
+    }
+    final filesJson = json['files'];
+    if (filesJson is! List<dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "files" array in git diff response.',
+      );
+    }
+
+    return ThreadGitDiffDto(
+      contractVersion: json['contract_version'] as String,
+      thread: ThreadDetailDto.fromJson(threadJson),
+      repository: ThreadGitStatusDto.fromJson(repositoryJson),
+      mode: threadGitDiffModeFromWire(json['mode'] as String),
+      revision: json['revision'] as String?,
+      files: filesJson
+          .map((entry) {
+            if (entry is! Map<String, dynamic>) {
+              throw const FormatException(
+                'Git diff file summary must be a JSON object.',
+              );
+            }
+            return GitDiffFileSummaryDto.fromJson(entry);
+          })
+          .toList(growable: false),
+      unifiedDiff: (json['unified_diff'] as String?) ?? '',
+      fetchedAt: json['fetched_at'] as String,
+    );
   }
 }
 
