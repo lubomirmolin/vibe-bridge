@@ -116,10 +116,10 @@ actor SpeechHelperService {
 
     init(
         fileManager: FileManager = .default,
-        modelRoot: URL = Self.resolveModelRoot()
+        modelRoot: URL? = nil
     ) {
         self.fileManager = fileManager
-        self.modelRoot = modelRoot
+        self.modelRoot = modelRoot ?? Self.resolveModelRoot()
     }
 
     func status() -> HelperStatusPayload {

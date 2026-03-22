@@ -118,7 +118,7 @@ async fn transcribe_speech(
     let mut file_name: Option<String> = None;
     let mut audio_bytes: Option<Vec<u8>> = None;
 
-    while let Some(field) = multipart.next_field().await.map_err(|error| {
+    if let Some(field) = multipart.next_field().await.map_err(|error| {
         error_response(
             StatusCode::BAD_REQUEST,
             "speech_transcription_failed",
@@ -141,7 +141,6 @@ async fn transcribe_speech(
                 })?
                 .to_vec(),
         );
-        break;
     }
 
     let audio_bytes = audio_bytes.ok_or_else(|| {
@@ -1070,7 +1069,9 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
+    use std::sync::Arc;
 
+    use async_trait::async_trait;
     use axum::body::Body;
     use axum::http::Request;
     use axum::http::StatusCode;
@@ -1082,8 +1083,12 @@ mod tests {
     use crate::pairing::PairingFinalizeRequest;
     use crate::server::config::{BridgeCodexConfig, BridgeConfig};
     use crate::server::pairing_route::PairingRouteState;
+    use crate::server::speech::{SpeechBackend, SpeechError, SpeechService};
     use crate::server::state::BridgeAppState;
-    use shared_contracts::{AccessMode, ThreadSnapshotDto, ThreadSummaryDto};
+    use shared_contracts::{
+        AccessMode, SpeechModelStateDto, SpeechModelStatusDto, SpeechTranscriptionResultDto,
+        ThreadSnapshotDto, ThreadSummaryDto,
+    };
 
     #[tokio::test]
     async fn bootstrap_route_returns_bridge_contract() {
@@ -1115,6 +1120,153 @@ mod tests {
             .expect("request should succeed");
 
         assert_eq!(response.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn speech_model_route_returns_status_payload() {
+        let app = router(test_state_with_speech_service(
+            SpeechService::new_for_tests(
+                Arc::new(StubSpeechBackend {
+                    status: SpeechModelStatusDto {
+                        contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+                        provider: "fluid_audio".to_string(),
+                        model_id: "parakeet-tdt-0.6b-v3-coreml".to_string(),
+                        state: SpeechModelStateDto::Ready,
+                        download_progress: None,
+                        last_error: None,
+                        installed_bytes: Some(123),
+                    },
+                    transcription: None,
+                }),
+                std::env::temp_dir().join("bridge-speech-test-tmp"),
+                SpeechModelStatusDto {
+                    contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+                    provider: "fluid_audio".to_string(),
+                    model_id: "parakeet-tdt-0.6b-v3-coreml".to_string(),
+                    state: SpeechModelStateDto::Ready,
+                    download_progress: None,
+                    last_error: None,
+                    installed_bytes: Some(123),
+                },
+            ),
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/speech/models/parakeet")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert_eq!(decoded["state"], "ready");
+        assert_eq!(decoded["installed_bytes"], 123);
+    }
+
+    #[tokio::test]
+    async fn speech_transcription_route_rejects_non_wav_upload() {
+        let app = router(test_state());
+        let boundary = "speech-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"voice.txt\"\r\nContent-Type: text/plain\r\n\r\nnot wav\r\n--{boundary}--\r\n"
+        );
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/speech/transcriptions")
+                    .header(
+                        "content-type",
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert_eq!(decoded["code"], "speech_invalid_audio");
+    }
+
+    #[tokio::test]
+    async fn speech_transcription_route_returns_transcript_for_wav_upload() {
+        let app = router(test_state_with_speech_service(
+            SpeechService::new_for_tests(
+                Arc::new(StubSpeechBackend {
+                    status: SpeechModelStatusDto {
+                        contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+                        provider: "fluid_audio".to_string(),
+                        model_id: "parakeet-tdt-0.6b-v3-coreml".to_string(),
+                        state: SpeechModelStateDto::Ready,
+                        download_progress: None,
+                        last_error: None,
+                        installed_bytes: Some(456),
+                    },
+                    transcription: Some(SpeechTranscriptionResultDto {
+                        contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+                        provider: "fluid_audio".to_string(),
+                        model_id: "parakeet-tdt-0.6b-v3-coreml".to_string(),
+                        text: "transcribed text".to_string(),
+                        duration_ms: 987,
+                    }),
+                }),
+                std::env::temp_dir().join("bridge-speech-test-tmp-success"),
+                SpeechModelStatusDto {
+                    contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+                    provider: "fluid_audio".to_string(),
+                    model_id: "parakeet-tdt-0.6b-v3-coreml".to_string(),
+                    state: SpeechModelStateDto::Ready,
+                    download_progress: None,
+                    last_error: None,
+                    installed_bytes: Some(456),
+                },
+            ),
+        ));
+        let boundary = "speech-boundary";
+        let mut wav_body = Vec::new();
+        wav_body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"voice-message.wav\"\r\nContent-Type: audio/wav\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        wav_body.extend_from_slice(&fake_wav_bytes());
+        wav_body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/speech/transcriptions")
+                    .header(
+                        "content-type",
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(wav_body))
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert_eq!(decoded["text"], "transcribed text");
+        assert_eq!(decoded["duration_ms"], 987);
     }
 
     #[test]
@@ -1598,6 +1750,22 @@ mod tests {
     }
 
     fn test_state() -> BridgeAppState {
+        test_state_with_speech_service(SpeechService::new_for_tests(
+            Arc::new(crate::server::speech::UnsupportedSpeechBackend),
+            unique_temp_dir("bridge-speech-tmp"),
+            SpeechModelStatusDto {
+                contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+                provider: "fluid_audio".to_string(),
+                model_id: "parakeet-tdt-0.6b-v3-coreml".to_string(),
+                state: SpeechModelStateDto::Unsupported,
+                download_progress: None,
+                last_error: Some("tests use the unsupported speech backend".to_string()),
+                installed_bytes: None,
+            },
+        ))
+    }
+
+    fn test_state_with_speech_service(speech: SpeechService) -> BridgeAppState {
         let temp_state_directory = std::env::temp_dir().join(format!(
             "bridge-pairing-test-{}",
             std::time::SystemTime::now()
@@ -1630,19 +1798,7 @@ mod tests {
                 config.state_directory.clone(),
             ),
             config.pairing_route,
-            crate::server::speech::SpeechService::new_for_tests(
-                std::sync::Arc::new(crate::server::speech::UnsupportedSpeechBackend),
-                config.state_directory.join("speech").join("tmp"),
-                shared_contracts::SpeechModelStatusDto {
-                    contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
-                    provider: "fluid_audio".to_string(),
-                    model_id: "parakeet-tdt-0.6b-v3-coreml".to_string(),
-                    state: shared_contracts::SpeechModelStateDto::Unsupported,
-                    download_progress: None,
-                    last_error: Some("tests use the unsupported speech backend".to_string()),
-                    installed_bytes: None,
-                },
-            ),
+            speech,
         )
     }
 
@@ -1710,6 +1866,48 @@ mod tests {
             .header("content-type", "application/json")
             .body(Body::from(body.to_string()))
             .unwrap()
+    }
+
+    fn fake_wav_bytes() -> Vec<u8> {
+        vec![
+            0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6D,
+            0x74, 0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x80, 0x3E, 0x00, 0x00,
+            0x00, 0x7D, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0x64, 0x61, 0x74, 0x61, 0x04, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]
+    }
+
+    #[derive(Debug)]
+    struct StubSpeechBackend {
+        status: SpeechModelStatusDto,
+        transcription: Option<SpeechTranscriptionResultDto>,
+    }
+
+    #[async_trait]
+    impl SpeechBackend for StubSpeechBackend {
+        async fn status(&self) -> Result<SpeechModelStatusDto, SpeechError> {
+            Ok(self.status.clone())
+        }
+
+        async fn ensure_model(
+            &self,
+            _progress_callback: Option<crate::server::speech::ProgressCallback>,
+        ) -> Result<SpeechModelStatusDto, SpeechError> {
+            Ok(self.status.clone())
+        }
+
+        async fn remove_model(&self) -> Result<SpeechModelStatusDto, SpeechError> {
+            Ok(self.status.clone())
+        }
+
+        async fn transcribe_file(
+            &self,
+            _audio_file: &Path,
+        ) -> Result<SpeechTranscriptionResultDto, SpeechError> {
+            self.transcription.clone().ok_or_else(|| {
+                SpeechError::transcription_failed("missing test transcription result")
+            })
+        }
     }
 
     struct GitRepoSandbox {

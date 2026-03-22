@@ -84,7 +84,10 @@ void main() {
           threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
         ],
         child: const MaterialApp(
-          home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
+          home: ThreadListPage(
+            bridgeApiBaseUrl: 'https://bridge.ts.net',
+            autoOpenPreviouslySelectedThread: true,
+          ),
         ),
       ),
     );
@@ -310,6 +313,12 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    for (var attempt = 0; attempt < 10; attempt += 1) {
+      if (find.byKey(const Key('thread-detail-back-button')).evaluate().isNotEmpty) {
+        break;
+      }
+      await tester.pump(const Duration(milliseconds: 100));
+    }
 
     expect(find.text('Implement shared contracts'), findsOneWidget);
     expect(find.byKey(const Key('thread-detail-back-button')), findsOneWidget);
