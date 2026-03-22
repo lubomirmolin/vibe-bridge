@@ -539,6 +539,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
     await tester.pumpAndSettle();
+    expect(find.text('Implement shared contracts'), findsOneWidget);
 
     approvalApi.upsertApproval(_pendingApproval());
     liveStream.emit(
@@ -556,7 +557,10 @@ void main() {
     await tester.scrollUntilVisible(
       find.text('Pending Approvals'),
       240,
-      scrollable: find.byType(Scrollable).first,
+      scrollable: find.ancestor(
+        of: find.byKey(const Key('thread-detail-scroll-view')),
+        matching: find.byType(Scrollable),
+      ),
     );
     await tester.pumpAndSettle();
 

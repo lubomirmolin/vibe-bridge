@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
 import 'package:codex_mobile_companion/features/settings/data/settings_bridge_api.dart';
+import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
+import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_detail_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
@@ -21,7 +23,36 @@ void main() {
       });
 
       final bridgeApiBaseUrl = _resolveBridgeApiBaseUrl();
-      final threadId = _resolveThreadId();
+      final listApi = const HttpThreadListBridgeApi();
+      final detailApi = const HttpThreadDetailBridgeApi();
+      final threads = await listApi
+          .fetchThreads(bridgeApiBaseUrl: bridgeApiBaseUrl)
+          .timeout(
+            const Duration(seconds: 10),
+            onTimeout: () => throw TestFailure(
+              'Timed out loading /threads from $bridgeApiBaseUrl.',
+            ),
+          );
+      final workspace = threads
+          .map((thread) => thread.workspace.trim())
+          .firstWhere((candidate) => candidate.isNotEmpty, orElse: () => '');
+      if (workspace.isEmpty) {
+        fail('Live bridge did not expose any thread workspace to open.');
+      }
+      final createdSnapshot = await detailApi
+          .createThread(
+            bridgeApiBaseUrl: bridgeApiBaseUrl,
+            workspace: workspace,
+          )
+          .timeout(
+            const Duration(seconds: 15),
+            onTimeout: () => throw TestFailure(
+              'Timed out waiting for POST /threads to return from '
+              '$bridgeApiBaseUrl for workspace $workspace.',
+            ),
+          );
+      final threadId = createdSnapshot.thread.threadId.trim();
+      expect(threadId, isNotEmpty);
       final token = 'UI_STREAM_TOKEN_${DateTime.now().millisecondsSinceEpoch}';
       final prompt = 'Reply with exactly $token';
 
@@ -71,8 +102,7 @@ void main() {
       await tester.pump();
 
       final loadingFinder = find.byWidgetPredicate((widget) {
-        return widget is Text &&
-            (widget.data?.startsWith('⠋ ') ?? false);
+        return widget is Text && (widget.data?.startsWith('⠋ ') ?? false);
       });
       await _pumpUntilFound(
         tester,
@@ -134,15 +164,6 @@ String _resolveBridgeApiBaseUrl() {
   }
 
   return 'http://127.0.0.1:3216';
-}
-
-String _resolveThreadId() {
-  const configured = String.fromEnvironment('LIVE_THREAD_UI_THREAD_ID');
-  if (configured.isNotEmpty) {
-    return configured;
-  }
-
-  return '019d1060-2b7d-7d70-a308-09b43f637ea8';
 }
 
 class _FakeApprovalBridgeApi implements ApprovalBridgeApi {

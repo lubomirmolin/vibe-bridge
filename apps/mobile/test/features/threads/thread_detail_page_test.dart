@@ -1885,6 +1885,111 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     },
   );
 
+  testWidgets('worked-for bundle stays expanded when a live work item extends it', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-background-main',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Background terminal finished',
+              payload: {
+                'output':
+                    'Command: dart format apps/mobile/test/features/threads/thread_detail_page_test.dart\n'
+                    'Wall time: 49.2 seconds\n'
+                    'Output:\n'
+                    'Background terminal finished with dart format apps/mobile/test/features/threads/thread_detail_page_test.dart',
+              },
+              occurredAt: '2026-03-18T10:02:00Z',
+            ),
+            _timelineEvent(
+              id: 'evt-read-1',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Background terminal finished',
+              payload: {'output': 'Background terminal finished'},
+              occurredAt: '2026-03-18T10:02:01Z',
+              annotations: _explorationAnnotations(
+                explorationKind: ThreadTimelineExplorationKind.read,
+                entryLabel: 'Read thread_activity_item.dart',
+              ),
+            ),
+            _timelineEvent(
+              id: 'evt-read-2',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Background terminal finished',
+              payload: {'output': 'Background terminal finished'},
+              occurredAt: '2026-03-18T10:02:02Z',
+              annotations: _explorationAnnotations(
+                explorationKind: ThreadTimelineExplorationKind.read,
+                entryLabel: 'Read parsed_command_output.dart',
+              ),
+            ),
+            _timelineEvent(
+              id: 'evt-search-1',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Background terminal finished',
+              payload: {'output': 'Background terminal finished'},
+              occurredAt: '2026-03-18T10:02:03Z',
+              annotations: _explorationAnnotations(
+                explorationKind: ThreadTimelineExplorationKind.search,
+                entryLabel: 'Search',
+              ),
+            ),
+          ],
+        ],
+      },
+    );
+    final liveStream = FakeThreadLiveStream();
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+      liveStream: liveStream,
+    );
+    await tester.pumpAndSettle();
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('thread-work-summary-title')),
+    );
+    expect(find.text('Worked for 49s'), findsOneWidget);
+    expect(find.text('4 actions'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('thread-work-summary-title')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Explored 2 files, 1 search'), findsOneWidget);
+
+    liveStream.emit(
+      BridgeEventEnvelope<Map<String, dynamic>>(
+        contractVersion: contractVersion,
+        eventId: 'evt-background-followup',
+        threadId: 'thread-123',
+        kind: BridgeEventKind.commandDelta,
+        occurredAt: '2026-03-18T10:02:04Z',
+        payload: {
+          'output':
+              'Command: rg -n "Worked for" apps/mobile/lib/features/threads/presentation/thread_detail_page_timeline.dart\n'
+              'Wall time: 3.8 seconds\n'
+              'Output:\n'
+              'Background terminal finished with rg -n "Worked for" apps/mobile/lib/features/threads/presentation/thread_detail_page_timeline.dart',
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Worked for 53s'), findsOneWidget);
+    expect(find.text('5 actions'), findsOneWidget);
+    expect(find.text('Explored 2 files, 1 search'), findsOneWidget);
+  });
+
   testWidgets('older history keeps loading until a new grouped block appears', (
     tester,
   ) async {
@@ -3273,6 +3378,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       listApi: listApi,
       detailApi: detailApi,
       liveStream: FakeThreadLiveStream(),
+      autoOpenPreviouslySelectedThread: true,
       cacheRepository: cacheRepository,
     );
 
@@ -3475,6 +3581,7 @@ Future<void> _pumpThreadListApp(
   required ThreadListBridgeApi listApi,
   required ThreadDetailBridgeApi detailApi,
   required ThreadLiveStream liveStream,
+  bool autoOpenPreviouslySelectedThread = false,
   ApprovalBridgeApi? approvalApi,
   ThreadCacheRepository? cacheRepository,
   SettingsBridgeApi? settingsApi,
@@ -3496,8 +3603,11 @@ Future<void> _pumpThreadListApp(
           cacheRepository ?? _newCacheRepository(),
         ),
       ],
-      child: const MaterialApp(
-        home: ThreadListPage(bridgeApiBaseUrl: _bridgeApiBaseUrl),
+      child: MaterialApp(
+        home: ThreadListPage(
+          bridgeApiBaseUrl: _bridgeApiBaseUrl,
+          autoOpenPreviouslySelectedThread: autoOpenPreviouslySelectedThread,
+        ),
       ),
     ),
   );

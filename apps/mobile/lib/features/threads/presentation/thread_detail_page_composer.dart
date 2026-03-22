@@ -10,6 +10,8 @@ class _PinnedTurnComposer extends StatelessWidget {
     required this.isInterruptMutationInFlight,
     required this.isSpeechRecording,
     required this.isSpeechTranscribing,
+    required this.speechDurationSeconds,
+    this.speechAmplitudeStream,
     required this.speechMessage,
     required this.speechMessageIsError,
     required this.isComposerFocused,
@@ -39,6 +41,8 @@ class _PinnedTurnComposer extends StatelessWidget {
   final bool isInterruptMutationInFlight;
   final bool isSpeechRecording;
   final bool isSpeechTranscribing;
+  final int speechDurationSeconds;
+  final Stream<Amplitude>? speechAmplitudeStream;
   final String? speechMessage;
   final bool speechMessageIsError;
   final bool isComposerFocused;
@@ -220,8 +224,10 @@ class _PinnedTurnComposer extends StatelessWidget {
                       fontSize: 15,
                     ),
                     decoration: InputDecoration(
+                      prefixIcon: isSpeechRecording ? _RecordingPill(durationSeconds: speechDurationSeconds) : null,
+                      prefixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
                       hintText: isSpeechRecording
-                          ? 'Recording voice message…'
+                          ? ''
                           : isSpeechTranscribing
                           ? 'Transcribing voice message…'
                           : isTurnActive
@@ -229,7 +235,7 @@ class _PinnedTurnComposer extends StatelessWidget {
                           : 'Message Codex...',
                       hintStyle: const TextStyle(color: AppTheme.textSubtle),
                       border: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(
+                      contentPadding: isSpeechRecording ? const EdgeInsets.fromLTRB(14, 16, 18, 16) : const EdgeInsets.symmetric(
                         horizontal: 18,
                         vertical: 16,
                       ),
@@ -237,44 +243,78 @@ class _PinnedTurnComposer extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
-              SizedBox(
-                width: 56,
-                height: 56,
-                child: MagneticButton(
-                  key: const Key('turn-composer-speech-toggle'),
-                  isCircle: true,
-                  variant: MagneticButtonVariant.secondary,
-                  onClick:
-                      (controlsEnabled &&
-                          !isTurnActive &&
-                          !isComposerMutationInFlight &&
-                          !isInterruptMutationInFlight &&
-                          !isSpeechTranscribing)
-                      ? () async {
-                          await onToggleSpeechInput();
-                        }
-                      : () {},
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    child: isSpeechTranscribing
-                        ? const SizedBox.square(
-                            key: ValueKey('speech-loading'),
-                            dimension: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: AppTheme.textMain,
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 220),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                transitionBuilder: (child, animation) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: SizeTransition(
+                      axis: Axis.horizontal,
+                      axisAlignment: -1,
+                      sizeFactor: animation,
+                      child: child,
+                    ),
+                  );
+                },
+                child: (!isComposerFocused && !isSpeechRecording && !isSpeechTranscribing)
+                    ? const SizedBox(
+                        key: ValueKey('composer-speech-hidden'),
+                      )
+                    : Padding(
+                        key: const ValueKey('composer-speech-visible'),
+                        padding: const EdgeInsets.only(left: 10),
+                        child: Stack(
+                          alignment: Alignment.center,
+                          clipBehavior: Clip.none,
+                          children: [
+                            if (isSpeechRecording)
+                              _ParakeetVisualizer(
+                                amplitudeStream: speechAmplitudeStream,
+                              ),
+                            SizedBox(
+                              width: 56,
+                              height: 56,
+                              child: MagneticButton(
+                                key: const Key('turn-composer-speech-toggle'),
+                                isCircle: true,
+                                variant: MagneticButtonVariant.secondary,
+                                onClick:
+                                    (controlsEnabled &&
+                                        !isTurnActive &&
+                                        !isComposerMutationInFlight &&
+                                        !isInterruptMutationInFlight &&
+                                        !isSpeechTranscribing)
+                                    ? () async {
+                                        await onToggleSpeechInput();
+                                      }
+                                    : () {},
+                                child: AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 180),
+                                  child: isSpeechTranscribing
+                                      ? const SizedBox.square(
+                                          key: ValueKey('speech-loading'),
+                                          dimension: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: AppTheme.textMain,
+                                          ),
+                                        )
+                                      : PhosphorIcon(
+                                          key: ValueKey<bool>(isSpeechRecording),
+                                          isSpeechRecording
+                                              ? PhosphorIcons.stop()
+                                              : PhosphorIcons.microphone(),
+                                          size: 24,
+                                          color: isSpeechRecording ? AppTheme.emerald : null,
+                                        ),
+                                ),
+                              ),
                             ),
-                          )
-                        : PhosphorIcon(
-                            key: ValueKey<bool>(isSpeechRecording),
-                            isSpeechRecording
-                                ? PhosphorIcons.stop()
-                                : PhosphorIcons.microphone(),
-                            size: 24,
-                          ),
-                  ),
-                ),
+                          ],
+                        ),
+                      ),
               ),
               const SizedBox(width: 10),
               SizedBox(
@@ -815,4 +855,164 @@ String _accessModeChipLabel(AccessMode value) {
     case AccessMode.fullControl:
       return 'Full access';
   }
+}
+
+class _RecordingPill extends StatelessWidget {
+  const _RecordingPill({required this.durationSeconds});
+
+  final int durationSeconds;
+
+  String _formatDuration(int seconds) {
+    final minutes = seconds ~/ 60;
+    final remainingSeconds = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppTheme.emerald.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(99),
+          border: Border.all(color: AppTheme.emerald.withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: AppTheme.emerald,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: AppTheme.emerald.withValues(alpha: 0.6),
+                    blurRadius: 6,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              _formatDuration(durationSeconds),
+              style: const TextStyle(
+                color: AppTheme.emerald,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ParakeetVisualizer extends StatefulWidget {
+  const _ParakeetVisualizer({this.amplitudeStream});
+
+  final Stream<Amplitude>? amplitudeStream;
+
+  @override
+  State<_ParakeetVisualizer> createState() => _ParakeetVisualizerState();
+}
+
+class _ParakeetVisualizerState extends State<_ParakeetVisualizer> with SingleTickerProviderStateMixin {
+  late AnimationController _animController;
+  final List<double> _amplitudes = List.filled(32, 0.0);
+
+  @override
+  void initState() {
+    super.initState();
+    _animController = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
+    widget.amplitudeStream?.listen((amp) {
+      if (!mounted) return;
+      setState(() {
+        for (int i = _amplitudes.length - 1; i > 0; i--) {
+          _amplitudes[i] = _amplitudes[i - 1];
+        }
+        final normalized = (amp.current + 60).clamp(0.0, 60.0) / 60.0;
+        _amplitudes[0] = normalized;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _animController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 110,
+      height: 110,
+      child: AnimatedBuilder(
+        animation: _animController,
+        builder: (context, _) => CustomPaint(
+          painter: _ParakeetVisualizerPainter(
+            animationValue: _animController.value,
+            amplitudes: _amplitudes,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ParakeetVisualizerPainter extends CustomPainter {
+  _ParakeetVisualizerPainter({required this.animationValue, required this.amplitudes});
+
+  final double animationValue;
+  final List<double> amplitudes;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final radius = size.width / 2.5;
+
+    final paint = Paint()
+      ..color = AppTheme.emerald
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.0
+      ..strokeCap = StrokeCap.round;
+
+    final glowPaint = Paint()
+      ..color = AppTheme.emerald.withValues(alpha: 0.3)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 6.0
+      ..strokeCap = StrokeCap.round
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4.0);
+
+    final numBars = amplitudes.length;
+    for (int i = 0; i < numBars; i++) {
+      final angle = (i * 2 * math.pi / numBars) + (animationValue * 2 * math.pi * 0.2);
+      
+      final indexAmplitude = amplitudes[i];
+      final baselinePulse = (math.sin(animationValue * math.pi * 4 + i) + 1) / 2 * 0.2;
+      final barHeight = 4 + ((indexAmplitude + baselinePulse) * 16);
+
+      final dx1 = center.dx + math.cos(angle) * radius;
+      final dy1 = center.dy + math.sin(angle) * radius;
+
+      final dx2 = center.dx + math.cos(angle) * (radius + barHeight);
+      final dy2 = center.dy + math.sin(angle) * (radius + barHeight);
+
+      final p1 = Offset(dx1, dy1);
+      final p2 = Offset(dx2, dy2);
+
+      canvas.drawLine(p1, p2, glowPaint);
+      canvas.drawLine(p1, p2, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ParakeetVisualizerPainter oldDelegate) => true;
 }

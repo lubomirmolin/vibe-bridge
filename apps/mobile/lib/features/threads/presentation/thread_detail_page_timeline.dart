@@ -22,7 +22,7 @@ String _explorationExpansionId(
 }
 
 String _workSummaryExpansionId(ThreadTimelineWorkSummary summary) =>
-    'work-summary:${summary.sourceEventIds.join('|')}';
+    'work-summary:${summary.anchorEventId}';
 
 class _ThreadActivityCard extends StatelessWidget {
   const _ThreadActivityCard({
