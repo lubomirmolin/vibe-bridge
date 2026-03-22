@@ -142,6 +142,29 @@ abstract class ThreadDetailBridgeApi {
     required String threadId,
     String? remote,
   });
+
+  Future<SpeechModelStatusDto> fetchSpeechStatus({
+    required String bridgeApiBaseUrl,
+  }) async {
+    return const SpeechModelStatusDto(
+      contractVersion: contractVersion,
+      provider: 'fluid_audio',
+      modelId: 'parakeet-tdt-0.6b-v3-coreml',
+      state: SpeechModelState.unsupported,
+      lastError: 'Speech transcription is unavailable in this build.',
+    );
+  }
+
+  Future<SpeechTranscriptionResultDto> transcribeAudio({
+    required String bridgeApiBaseUrl,
+    required List<int> audioBytes,
+    String fileName = 'voice-message.wav',
+  }) async {
+    throw const ThreadSpeechBridgeException(
+      message: 'Speech transcription is unavailable in this build.',
+      code: 'speech_unsupported',
+    );
+  }
 }
 
 class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
@@ -782,6 +805,143 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       client.close();
     }
   }
+
+  @override
+  Future<SpeechModelStatusDto> fetchSpeechStatus({
+    required String bridgeApiBaseUrl,
+  }) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+
+    try {
+      final request = await client.getUrl(
+        _buildSpeechModelUri(bridgeApiBaseUrl),
+      );
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      final response = await request.close();
+      final decoded = _decodeJsonObject(await utf8.decodeStream(response));
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        try {
+          return SpeechModelStatusDto.fromJson(decoded);
+        } on FormatException {
+          throw const ThreadSpeechBridgeException(
+            message: 'Bridge returned an invalid speech status response.',
+          );
+        }
+      }
+
+      throw ThreadSpeechBridgeException(
+        message:
+            _readOptionalString(decoded, 'message') ??
+            'Couldn’t load speech status right now.',
+        statusCode: response.statusCode,
+        code: _readOptionalString(decoded, 'code'),
+      );
+    } on SocketException {
+      throw const ThreadSpeechBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on HandshakeException {
+      throw const ThreadSpeechBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on HttpException {
+      throw const ThreadSpeechBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on TimeoutException {
+      throw const ThreadSpeechBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on FormatException {
+      throw const ThreadSpeechBridgeException(
+        message: 'Bridge returned an invalid speech status response.',
+      );
+    } finally {
+      client.close();
+    }
+  }
+
+  @override
+  Future<SpeechTranscriptionResultDto> transcribeAudio({
+    required String bridgeApiBaseUrl,
+    required List<int> audioBytes,
+    String fileName = 'voice-message.wav',
+  }) async {
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 20);
+    final boundary =
+        'codex-mobile-companion-${DateTime.now().microsecondsSinceEpoch}';
+
+    try {
+      final request = await client.postUrl(
+        _buildSpeechTranscriptionUri(bridgeApiBaseUrl),
+      );
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      request.headers.set(
+        HttpHeaders.contentTypeHeader,
+        'multipart/form-data; boundary=$boundary',
+      );
+      request.write('--$boundary\r\n');
+      request.write(
+        'Content-Disposition: form-data; name="audio"; filename="$fileName"\r\n',
+      );
+      request.write('Content-Type: audio/wav\r\n\r\n');
+      request.add(audioBytes);
+      request.write('\r\n--$boundary--\r\n');
+
+      final response = await request.close();
+      final decoded = _decodeJsonObject(await utf8.decodeStream(response));
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        try {
+          return SpeechTranscriptionResultDto.fromJson(decoded);
+        } on FormatException {
+          throw const ThreadSpeechBridgeException(
+            message: 'Bridge returned an invalid transcription response.',
+          );
+        }
+      }
+
+      throw ThreadSpeechBridgeException(
+        message:
+            _readOptionalString(decoded, 'message') ??
+            'Couldn’t transcribe that recording right now.',
+        statusCode: response.statusCode,
+        code: _readOptionalString(decoded, 'code'),
+      );
+    } on SocketException {
+      throw const ThreadSpeechBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on HandshakeException {
+      throw const ThreadSpeechBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on HttpException {
+      throw const ThreadSpeechBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on TimeoutException {
+      throw const ThreadSpeechBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on FormatException {
+      throw const ThreadSpeechBridgeException(
+        message: 'Bridge returned an invalid transcription response.',
+      );
+    } finally {
+      client.close();
+    }
+  }
 }
 
 class ThreadDetailBridgeException implements Exception {
@@ -875,6 +1035,23 @@ class ThreadGitApprovalRequiredException
 
 class ThreadOpenOnMacBridgeException implements Exception {
   const ThreadOpenOnMacBridgeException({
+    required this.message,
+    this.statusCode,
+    this.code,
+    this.isConnectivityError = false,
+  });
+
+  final String message;
+  final int? statusCode;
+  final String? code;
+  final bool isConnectivityError;
+
+  @override
+  String toString() => message;
+}
+
+class ThreadSpeechBridgeException implements Exception {
+  const ThreadSpeechBridgeException({
     required this.message,
     this.statusCode,
     this.code,
@@ -1009,6 +1186,26 @@ Uri _buildModelsUri(String baseUrl) {
       : baseUri.path;
   final fullPath =
       '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/models';
+  return baseUri.replace(path: fullPath, queryParameters: null);
+}
+
+Uri _buildSpeechModelUri(String baseUrl) {
+  final baseUri = Uri.parse(baseUrl);
+  final normalizedBasePath = baseUri.path.endsWith('/')
+      ? baseUri.path.substring(0, baseUri.path.length - 1)
+      : baseUri.path;
+  final fullPath =
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/speech/models/parakeet';
+  return baseUri.replace(path: fullPath, queryParameters: null);
+}
+
+Uri _buildSpeechTranscriptionUri(String baseUrl) {
+  final baseUri = Uri.parse(baseUrl);
+  final normalizedBasePath = baseUri.path.endsWith('/')
+      ? baseUri.path.substring(0, baseUri.path.length - 1)
+      : baseUri.path;
+  final fullPath =
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/speech/transcriptions';
   return baseUri.replace(path: fullPath, queryParameters: null);
 }
 

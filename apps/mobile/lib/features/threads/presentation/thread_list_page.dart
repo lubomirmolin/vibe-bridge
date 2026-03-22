@@ -14,9 +14,17 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 class ThreadListPage extends ConsumerStatefulWidget {
-  const ThreadListPage({super.key, required this.bridgeApiBaseUrl});
+  const ThreadListPage({
+    super.key,
+    required this.bridgeApiBaseUrl,
+    this.autoOpenPreviouslySelectedThread = false,
+  });
 
   final String bridgeApiBaseUrl;
+  // When true, the first load of this page will auto-open the previously
+  // selected thread if it still exists. Default is false to avoid jumping
+  // the user into an active session unexpectedly.
+  final bool autoOpenPreviouslySelectedThread;
 
   @override
   ConsumerState<ThreadListPage> createState() => _ThreadListPageState();
@@ -69,9 +77,8 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
   }
 
   void _maybeRestoreInitiallySelectedThread(ThreadListState state) {
-    if (_didRestoreInitialSelectedThread || !mounted) {
-      return;
-    }
+    if (_didRestoreInitialSelectedThread || !mounted) return;
+    if (!widget.autoOpenPreviouslySelectedThread) return;
 
     final selectedThreadId = state.selectedThreadId?.trim();
     if (selectedThreadId == null || selectedThreadId.isEmpty) {

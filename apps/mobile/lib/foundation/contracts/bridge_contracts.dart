@@ -1,10 +1,19 @@
-const String contractVersion = '2026-03-20';
+const String contractVersion = '2026-03-22';
 
 enum ThreadStatus { idle, running, completed, interrupted, failed }
 
 enum AccessMode { readOnly, controlWithApprovals, fullControl }
 
 enum ApprovalStatus { pending, approved, rejected }
+
+enum SpeechModelState {
+  unsupported,
+  notInstalled,
+  installing,
+  ready,
+  busy,
+  failed,
+}
 
 enum BridgeEventKind {
   messageDelta,
@@ -112,6 +121,34 @@ ApprovalStatus approvalStatusFromWire(String wireValue) {
     (status) => status.name == wireValue,
     orElse: () => throw FormatException(
       'Unknown ApprovalStatus wire value "$wireValue".',
+    ),
+  );
+}
+
+extension SpeechModelStateWire on SpeechModelState {
+  String get wireValue {
+    switch (this) {
+      case SpeechModelState.unsupported:
+        return 'unsupported';
+      case SpeechModelState.notInstalled:
+        return 'not_installed';
+      case SpeechModelState.installing:
+        return 'installing';
+      case SpeechModelState.ready:
+        return 'ready';
+      case SpeechModelState.busy:
+        return 'busy';
+      case SpeechModelState.failed:
+        return 'failed';
+    }
+  }
+}
+
+SpeechModelState speechModelStateFromWire(String wireValue) {
+  return SpeechModelState.values.firstWhere(
+    (state) => state.wireValue == wireValue,
+    orElse: () => throw FormatException(
+      'Unknown SpeechModelState wire value "$wireValue".',
     ),
   );
 }
@@ -236,6 +273,100 @@ class ModelCatalogDto {
       'contract_version': contractVersion,
       'models': models.map((model) => model.toJson()).toList(growable: false),
     };
+  }
+}
+
+class SpeechModelStatusDto {
+  const SpeechModelStatusDto({
+    required this.contractVersion,
+    required this.provider,
+    required this.modelId,
+    required this.state,
+    this.downloadProgress,
+    this.lastError,
+    this.installedBytes,
+  });
+
+  final String contractVersion;
+  final String provider;
+  final String modelId;
+  final SpeechModelState state;
+  final int? downloadProgress;
+  final String? lastError;
+  final int? installedBytes;
+
+  factory SpeechModelStatusDto.fromJson(Map<String, dynamic> json) {
+    final stateWire = json['state'];
+    if (stateWire is! String) {
+      throw const FormatException('Missing or invalid "state" value.');
+    }
+
+    return SpeechModelStatusDto(
+      contractVersion: json['contract_version'] as String,
+      provider: json['provider'] as String,
+      modelId: json['model_id'] as String,
+      state: speechModelStateFromWire(stateWire),
+      downloadProgress: (json['download_progress'] as num?)?.toInt(),
+      lastError: json['last_error'] as String?,
+      installedBytes: (json['installed_bytes'] as num?)?.toInt(),
+    );
+  }
+}
+
+class SpeechModelMutationAcceptedDto {
+  const SpeechModelMutationAcceptedDto({
+    required this.contractVersion,
+    required this.provider,
+    required this.modelId,
+    required this.state,
+    required this.message,
+  });
+
+  final String contractVersion;
+  final String provider;
+  final String modelId;
+  final SpeechModelState state;
+  final String message;
+
+  factory SpeechModelMutationAcceptedDto.fromJson(Map<String, dynamic> json) {
+    final stateWire = json['state'];
+    if (stateWire is! String) {
+      throw const FormatException('Missing or invalid "state" value.');
+    }
+
+    return SpeechModelMutationAcceptedDto(
+      contractVersion: json['contract_version'] as String,
+      provider: json['provider'] as String,
+      modelId: json['model_id'] as String,
+      state: speechModelStateFromWire(stateWire),
+      message: json['message'] as String,
+    );
+  }
+}
+
+class SpeechTranscriptionResultDto {
+  const SpeechTranscriptionResultDto({
+    required this.contractVersion,
+    required this.provider,
+    required this.modelId,
+    required this.text,
+    required this.durationMs,
+  });
+
+  final String contractVersion;
+  final String provider;
+  final String modelId;
+  final String text;
+  final int durationMs;
+
+  factory SpeechTranscriptionResultDto.fromJson(Map<String, dynamic> json) {
+    return SpeechTranscriptionResultDto(
+      contractVersion: json['contract_version'] as String,
+      provider: json['provider'] as String,
+      modelId: json['model_id'] as String,
+      text: json['text'] as String,
+      durationMs: (json['duration_ms'] as num).toInt(),
+    );
   }
 }
 

@@ -1,6 +1,10 @@
 name: CodexMobileCompanion
 options:
   createIntermediateGroups: true
+packages:
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio
+    branch: main
 settings:
   base:
     SWIFT_VERSION: 5.9
@@ -11,12 +15,19 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: Sources
+    dependencies:
+      - target: CodexSpeechHelper
     postBuildScripts:
       - name: Embed bridge-server
         path: scripts/embed-bridge-server.sh
         basedOnDependencyAnalysis: false
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/bin/bridge-server
+      - name: Embed speech helper
+        path: scripts/embed-speech-helper.sh
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/bin/CodexSpeechHelper
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.codex.mobile.companion.shell
@@ -26,6 +37,21 @@ targets:
         INFOPLIST_KEY_LSUIElement: YES
         INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Codex Mobile Companion"
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+
+  CodexSpeechHelper:
+    type: tool
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: SpeechHelper/Sources
+    dependencies:
+      - package: FluidAudio
+        product: FluidAudio
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.codex.mobile.companion.shell.speechhelper
+        PRODUCT_NAME: CodexSpeechHelper
+        CODE_SIGNING_ALLOWED: NO
 
   CodexMobileCompanionTests:
     type: bundle.unit-test

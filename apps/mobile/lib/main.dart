@@ -17,7 +17,8 @@ class CodexMobileApp extends StatelessWidget {
       navigatorKey: appNavigatorKey,
       title: 'Codex Mobile Companion',
       theme: AppTheme.darkTheme,
-      home: const PairingFlowPage(autoOpenThreadsOnPairing: true),
+      // Do not auto-open Active Threads on launch; user will choose explicitly.
+      home: const PairingFlowPage(autoOpenThreadsOnPairing: false),
     );
   }
 }

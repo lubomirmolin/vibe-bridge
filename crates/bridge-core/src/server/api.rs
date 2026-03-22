@@ -1,4 +1,4 @@
-use axum::extract::{Json as ExtractJson, Path, Query, State, WebSocketUpgrade};
+use axum::extract::{Json as ExtractJson, Multipart, Path, Query, State, WebSocketUpgrade};
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::{get, post};
@@ -7,8 +7,9 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
 use shared_contracts::{
-    AccessMode, BootstrapDto, ModelCatalogDto, SecurityAuditEventDto, ThreadSnapshotDto,
-    ThreadSummaryDto, ThreadTimelinePageDto, TurnMutationAcceptedDto,
+    AccessMode, BootstrapDto, ModelCatalogDto, SecurityAuditEventDto,
+    SpeechModelMutationAcceptedDto, SpeechModelStatusDto, SpeechTranscriptionResultDto,
+    ThreadSnapshotDto, ThreadSummaryDto, ThreadTimelinePageDto, TurnMutationAcceptedDto,
 };
 
 use crate::pairing::{
@@ -26,6 +27,13 @@ pub fn router(state: BridgeAppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/bootstrap", get(bootstrap))
         .route("/models", get(model_catalog))
+        .route(
+            "/speech/models/parakeet",
+            get(get_speech_model)
+                .put(ensure_speech_model)
+                .delete(remove_speech_model),
+        )
+        .route("/speech/transcriptions", post(transcribe_speech))
         .route(
             "/pairing/session",
             get(pairing_session).post(pairing_session),
@@ -77,6 +85,79 @@ async fn bootstrap(State(state): State<BridgeAppState>) -> Json<BootstrapDto> {
 
 async fn model_catalog(State(state): State<BridgeAppState>) -> Json<ModelCatalogDto> {
     Json(state.model_catalog_payload().await)
+}
+
+async fn get_speech_model(State(state): State<BridgeAppState>) -> Json<SpeechModelStatusDto> {
+    Json(state.speech_status().await)
+}
+
+async fn ensure_speech_model(
+    State(state): State<BridgeAppState>,
+) -> Result<Json<SpeechModelMutationAcceptedDto>, (StatusCode, Json<ErrorEnvelope>)> {
+    state
+        .ensure_speech_model()
+        .await
+        .map(Json)
+        .map_err(speech_error_response)
+}
+
+async fn remove_speech_model(
+    State(state): State<BridgeAppState>,
+) -> Result<Json<SpeechModelMutationAcceptedDto>, (StatusCode, Json<ErrorEnvelope>)> {
+    state
+        .remove_speech_model()
+        .await
+        .map(Json)
+        .map_err(speech_error_response)
+}
+
+async fn transcribe_speech(
+    State(state): State<BridgeAppState>,
+    mut multipart: Multipart,
+) -> Result<Json<SpeechTranscriptionResultDto>, (StatusCode, Json<ErrorEnvelope>)> {
+    let mut file_name: Option<String> = None;
+    let mut audio_bytes: Option<Vec<u8>> = None;
+
+    while let Some(field) = multipart.next_field().await.map_err(|error| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "speech_transcription_failed",
+            "speech_invalid_audio",
+            format!("Invalid multipart upload: {error}"),
+        )
+    })? {
+        file_name = field.file_name().map(ToString::to_string);
+        audio_bytes = Some(
+            field
+                .bytes()
+                .await
+                .map_err(|error| {
+                    error_response(
+                        StatusCode::BAD_REQUEST,
+                        "speech_transcription_failed",
+                        "speech_invalid_audio",
+                        format!("Failed to read uploaded audio: {error}"),
+                    )
+                })?
+                .to_vec(),
+        );
+        break;
+    }
+
+    let audio_bytes = audio_bytes.ok_or_else(|| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "speech_transcription_failed",
+            "speech_invalid_audio",
+            "Expected one uploaded WAV file.",
+        )
+    })?;
+
+    state
+        .transcribe_audio_bytes(file_name.as_deref(), &audio_bytes)
+        .await
+        .map(Json)
+        .map_err(speech_error_response)
 }
 
 async fn pairing_session(
@@ -964,6 +1045,17 @@ fn pairing_handshake_error_response(
     )
 }
 
+fn speech_error_response(
+    error: crate::server::speech::SpeechError,
+) -> (StatusCode, Json<ErrorEnvelope>) {
+    error_response(
+        error.status_code(),
+        error.error(),
+        error.code(),
+        error.message(),
+    )
+}
+
 fn normalize_optional_query(value: String) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -1518,6 +1610,7 @@ mod tests {
             host: "127.0.0.1".to_string(),
             port: 3110,
             state_directory: temp_state_directory,
+            speech_helper_binary: None,
             pairing_route: PairingRouteState::new(
                 "https://bridge.ts.net".to_string(),
                 true,
@@ -1534,9 +1627,22 @@ mod tests {
                 config.host.as_str(),
                 config.port,
                 config.pairing_route.pairing_base_url().to_string(),
-                config.state_directory,
+                config.state_directory.clone(),
             ),
             config.pairing_route,
+            crate::server::speech::SpeechService::new_for_tests(
+                std::sync::Arc::new(crate::server::speech::UnsupportedSpeechBackend),
+                config.state_directory.join("speech").join("tmp"),
+                shared_contracts::SpeechModelStatusDto {
+                    contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+                    provider: "fluid_audio".to_string(),
+                    model_id: "parakeet-tdt-0.6b-v3-coreml".to_string(),
+                    state: shared_contracts::SpeechModelStateDto::Unsupported,
+                    download_progress: None,
+                    last_error: Some("tests use the unsupported speech backend".to_string()),
+                    installed_bytes: None,
+                },
+            ),
         )
     }
 

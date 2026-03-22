@@ -27,6 +27,7 @@ pub struct BridgeConfig {
     pub host: String,
     pub port: u16,
     pub state_directory: PathBuf,
+    pub speech_helper_binary: Option<PathBuf>,
     pub pairing_route: PairingRouteState,
     pub codex: BridgeCodexConfig,
 }
@@ -139,6 +140,9 @@ impl BridgeConfig {
             host,
             port,
             state_directory,
+            speech_helper_binary: std::env::var("CODEX_MOBILE_COMPANION_SPEECH_HELPER_BINARY")
+                .ok()
+                .map(PathBuf::from),
             pairing_route: PairingRouteState::new(
                 pairing_route_contract.pairing_base_url,
                 pairing_route_contract.reachable,

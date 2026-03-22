@@ -29,6 +29,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
+import 'package:record/record.dart';
 import 'package:syntax_highlight/syntax_highlight.dart';
 
 import '../application/thread_list_controller.dart';
@@ -91,12 +92,25 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   late final ValueNotifier<bool> _isHeaderCollapsed;
   late final ValueNotifier<bool> _showNewMessagePill;
   final ImagePicker _imagePicker = ImagePicker();
+  final AudioRecorder _audioRecorder = AudioRecorder();
 
   List<ModelOptionDto> _availableModelOptions = fallbackModelCatalog.models;
   List<String> _availableReasoningOptions = const <String>[];
   List<XFile> _attachedImages = const <XFile>[];
   String _selectedModel = fallbackModelCatalog.models.first.id;
   String _selectedReasoning = 'Medium';
+  SpeechModelStatusDto _speechModelStatus = const SpeechModelStatusDto(
+    contractVersion: contractVersion,
+    provider: 'fluid_audio',
+    modelId: 'parakeet-tdt-0.6b-v3-coreml',
+    state: SpeechModelState.unsupported,
+    lastError: 'Speech transcription is unavailable in this build.',
+  );
+  String? _speechMessage;
+  bool _speechMessageIsError = false;
+  bool _isSpeechRecording = false;
+  bool _isSpeechTranscribing = false;
+  String? _speechRecordingPath;
   bool _didInitialScrollToBottom = false;
   bool _isComposerFocused = false;
   bool _canLoadEarlierHistory = false;
@@ -136,6 +150,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     _setComposerSelectionsFromCatalog(_availableModelOptions);
     _attachedImages = List<XFile>.unmodifiable(widget.initialAttachedImages);
     unawaited(_loadComposerModelCatalog());
+    unawaited(_loadSpeechStatus());
   }
 
   Future<void> _loadComposerModelCatalog() async {
@@ -150,6 +165,34 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     setState(() {
       _setComposerSelectionsFromCatalog(catalog.models);
     });
+  }
+
+  Future<void> _loadSpeechStatus() async {
+    final bridgeApi = ref.read(threadDetailBridgeApiProvider);
+    try {
+      final status = await bridgeApi.fetchSpeechStatus(
+        bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _speechModelStatus = status;
+      });
+    } on ThreadSpeechBridgeException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _speechModelStatus = SpeechModelStatusDto(
+          contractVersion: contractVersion,
+          provider: 'fluid_audio',
+          modelId: 'parakeet-tdt-0.6b-v3-coreml',
+          state: SpeechModelState.failed,
+          lastError: error.message,
+        );
+      });
+    }
   }
 
   void _setComposerSelectionsFromCatalog(List<ModelOptionDto> modelOptions) {
@@ -369,6 +412,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     }
     if (oldWidget.bridgeApiBaseUrl != widget.bridgeApiBaseUrl) {
       unawaited(_loadComposerModelCatalog());
+      unawaited(_loadSpeechStatus());
     }
     if (oldWidget.initialComposerInput != widget.initialComposerInput) {
       _didSubmitInitialComposerInput = false;
@@ -386,6 +430,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
 
   @override
   void dispose() {
+    if (_isSpeechRecording) {
+      unawaited(_audioRecorder.stop());
+    }
+    _audioRecorder.dispose();
     _composerController.dispose();
     _composerFocusNode
       ..removeListener(_handleComposerFocusChange)
@@ -465,6 +513,206 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         ...images,
       ]);
     });
+  }
+
+  Future<void> _toggleSpeechInput() async {
+    if (_isSpeechTranscribing) {
+      return;
+    }
+
+    if (_isSpeechRecording) {
+      await _stopSpeechRecordingAndTranscribe();
+      return;
+    }
+
+    await _loadSpeechStatus();
+    switch (_speechModelStatus.state) {
+      case SpeechModelState.ready:
+        break;
+      case SpeechModelState.unsupported:
+        _setSpeechMessage(
+          _speechModelStatus.lastError ??
+              'Speech transcription isn’t available on this Mac yet.',
+          isError: true,
+        );
+        return;
+      case SpeechModelState.notInstalled:
+        _setSpeechMessage(
+          'Parakeet is not installed on the Mac yet. Download it from the desktop shell first.',
+          isError: true,
+        );
+        return;
+      case SpeechModelState.installing:
+        _setSpeechMessage(
+          'Parakeet is still downloading on the Mac. Wait for the install to finish.',
+          isError: true,
+        );
+        return;
+      case SpeechModelState.busy:
+        _setSpeechMessage(
+          'Another speech task is already running on the Mac.',
+          isError: true,
+        );
+        return;
+      case SpeechModelState.failed:
+        _setSpeechMessage(
+          _speechModelStatus.lastError ??
+              'Speech transcription is unavailable right now.',
+          isError: true,
+        );
+        return;
+    }
+
+    final hasPermission = await _audioRecorder.hasPermission();
+    if (!hasPermission) {
+      _setSpeechMessage(
+        'Microphone permission is required to record a voice message.',
+        isError: true,
+      );
+      return;
+    }
+
+    final recordingDirectory = await Directory.systemTemp.createTemp(
+      'codex-mobile-companion-speech-',
+    );
+    final recordingPath = '${recordingDirectory.path}/voice-message.wav';
+
+    try {
+      await _audioRecorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.wav,
+          sampleRate: 16000,
+          numChannels: 1,
+        ),
+        path: recordingPath,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isSpeechRecording = true;
+        _speechRecordingPath = recordingPath;
+        _speechMessage = 'Recording voice message… tap the mic again to stop.';
+        _speechMessageIsError = false;
+      });
+    } catch (_) {
+      _setSpeechMessage(
+        'Couldn’t start recording right now. Please try again.',
+        isError: true,
+      );
+    }
+  }
+
+  Future<void> _stopSpeechRecordingAndTranscribe() async {
+    final previousRecordingPath = _speechRecordingPath;
+    setState(() {
+      _isSpeechRecording = false;
+      _isSpeechTranscribing = true;
+      _speechMessage = 'Transcribing voice message…';
+      _speechMessageIsError = false;
+    });
+
+    try {
+      final resolvedPath = await _audioRecorder.stop() ?? previousRecordingPath;
+      if (resolvedPath == null || resolvedPath.trim().isEmpty) {
+        throw const ThreadSpeechBridgeException(
+          message: 'No audio was captured for transcription.',
+          code: 'speech_invalid_audio',
+        );
+      }
+
+      final audioBytes = await File(resolvedPath).readAsBytes();
+      final bridgeApi = ref.read(threadDetailBridgeApiProvider);
+      final result = await bridgeApi.transcribeAudio(
+        bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+        audioBytes: audioBytes,
+      );
+      if (!mounted) {
+        return;
+      }
+      _insertSpeechTranscript(result.text);
+      _setSpeechMessage(
+        'Transcript inserted into the composer.',
+        isError: false,
+      );
+      await _loadSpeechStatus();
+    } on ThreadSpeechBridgeException catch (error) {
+      _setSpeechMessage(_speechErrorMessageFor(error), isError: true);
+    } on FileSystemException {
+      _setSpeechMessage(
+        'Couldn’t read the recording for transcription.',
+        isError: true,
+      );
+    } finally {
+      await _cleanupSpeechRecording(
+        previousRecordingPath ?? _speechRecordingPath,
+      );
+      if (mounted) {
+        setState(() {
+          _isSpeechTranscribing = false;
+          _speechRecordingPath = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _cleanupSpeechRecording(String? recordingPath) async {
+    if (recordingPath == null || recordingPath.trim().isEmpty) {
+      return;
+    }
+
+    final directory = File(recordingPath).parent;
+    if (await directory.exists()) {
+      await directory.delete(recursive: true);
+    }
+  }
+
+  void _insertSpeechTranscript(String transcript) {
+    final trimmedTranscript = transcript.trim();
+    if (trimmedTranscript.isEmpty) {
+      return;
+    }
+
+    final currentText = _composerController.text;
+    final nextText = currentText.trim().isEmpty
+        ? trimmedTranscript
+        : '$currentText ${trimmedTranscript.trimLeft()}';
+    _composerController.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: nextText.length),
+    );
+  }
+
+  void _setSpeechMessage(String message, {required bool isError}) {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _speechMessage = message;
+      _speechMessageIsError = isError;
+    });
+  }
+
+  String _speechErrorMessageFor(ThreadSpeechBridgeException error) {
+    if (error.isConnectivityError) {
+      return 'Cannot reach the Mac bridge. Check your private route.';
+    }
+
+    switch (error.code) {
+      case 'speech_unsupported':
+        return 'Speech transcription isn’t available on this Mac yet.';
+      case 'speech_not_installed':
+        return 'Parakeet is not installed on the Mac yet.';
+      case 'speech_busy':
+        return 'Another speech task is already running on the Mac.';
+      case 'speech_helper_unavailable':
+        return 'The Mac speech helper is unavailable right now.';
+      case 'speech_invalid_audio':
+        return 'That recording could not be processed as WAV audio.';
+      default:
+        return error.message;
+    }
   }
 
   void _removeAttachedImage(XFile image) {
@@ -784,6 +1032,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                             isComposerMutationInFlight:
                                 _isDraftThreadCreationInFlight,
                             isInterruptMutationInFlight: false,
+                            isSpeechRecording: _isSpeechRecording,
+                            isSpeechTranscribing: _isSpeechTranscribing,
+                            speechMessage: _speechMessage,
+                            speechMessageIsError: _speechMessageIsError,
                             isComposerFocused: _isComposerFocused,
                             attachedImages: _attachedImages,
                             modelOptions: _availableModelOptions,
@@ -797,6 +1049,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                             accessModeErrorMessage:
                                 deviceSettingsState.accessModeErrorMessage,
                             onPickImages: _pickImages,
+                            onToggleSpeechInput: _toggleSpeechInput,
                             onRemoveImage: _removeAttachedImage,
                             onModelChanged: _onComposerModelChanged,
                             onReasoningChanged: (value) {
@@ -1103,6 +1356,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                                     state.isComposerMutationInFlight,
                                 isInterruptMutationInFlight:
                                     state.isInterruptMutationInFlight,
+                                isSpeechRecording: _isSpeechRecording,
+                                isSpeechTranscribing: _isSpeechTranscribing,
+                                speechMessage: _speechMessage,
+                                speechMessageIsError: _speechMessageIsError,
                                 isComposerFocused: _isComposerFocused,
                                 attachedImages: _attachedImages,
                                 modelOptions: _availableModelOptions,
@@ -1116,6 +1373,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                                 accessModeErrorMessage:
                                     deviceSettingsState.accessModeErrorMessage,
                                 onPickImages: _pickImages,
+                                onToggleSpeechInput: _toggleSpeechInput,
                                 onRemoveImage: _removeAttachedImage,
                                 onModelChanged: _onComposerModelChanged,
                                 onReasoningChanged: (value) {

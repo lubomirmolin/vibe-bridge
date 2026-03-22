@@ -52,6 +52,7 @@ struct PairingEntryView: View {
             ScrollView {
                 VStack(spacing: 24) {
                     statusCard
+                    speechCard
                     qrSection
 
                     if let errorMessage = viewModel.errorMessage {
@@ -235,6 +236,78 @@ struct PairingEntryView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color.red.opacity(0.3), lineWidth: 1)
+        )
+    }
+
+    private var speechCard: some View {
+        VStack(spacing: 0) {
+            statusRow(
+                icon: "waveform.badge.mic",
+                iconColor: .secondary,
+                label: "Speech",
+                value: viewModel.speechModelStateLabel
+            )
+            Divider().padding(.leading, 44)
+            HStack(spacing: 12) {
+                Image(systemName: "internaldrive")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Parakeet v3")
+                        .font(.body)
+                    Text(viewModel.speechModelDetail)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer()
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+
+            if let progress = viewModel.speechDownloadProgress,
+               viewModel.speechModelStateLabel == "Installing" {
+                Divider().padding(.leading, 44)
+                HStack(spacing: 12) {
+                    ProgressView(value: Double(progress), total: 100)
+                        .progressViewStyle(.linear)
+                    Text("\(progress)%")
+                        .font(.footnote.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 12)
+                .padding(.horizontal, 16)
+            }
+
+            Divider().padding(.leading, 44)
+            HStack {
+                Button {
+                    Task { await viewModel.ensureSpeechModelOnDesktop() }
+                } label: {
+                    Text(viewModel.isInstallingSpeechModel ? "Downloading…" : "Download Parakeet")
+                }
+                .disabled(!viewModel.canInstallSpeechModel)
+
+                Button(role: .destructive) {
+                    Task { await viewModel.removeSpeechModelFromDesktop() }
+                } label: {
+                    Text(viewModel.isRemovingSpeechModel ? "Removing…" : "Remove Parakeet")
+                }
+                .disabled(!viewModel.canRemoveSpeechModel)
+
+                Spacer()
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+        }
+        .background(Color(NSColor.controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
         )
     }
 

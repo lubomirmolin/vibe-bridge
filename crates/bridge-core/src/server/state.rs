@@ -29,6 +29,7 @@ use crate::server::events::EventHub;
 use crate::server::gateway::CodexGateway;
 use crate::server::pairing_route::{PairingRouteHealth, PairingRouteState};
 use crate::server::projection::ProjectionStore;
+use crate::server::speech::{SpeechError, SpeechService};
 use crate::thread_api::{GitStatusResponse, MutationResultResponse, RepositoryContextDto};
 
 #[derive(Debug, Clone)]
@@ -50,6 +51,7 @@ struct BridgeAppStateInner {
     pairing_sessions: Mutex<PairingSessionService>,
     pairing_route: PairingRouteState,
     git_controls: Mutex<GitControlState>,
+    speech: SpeechService,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -146,6 +148,7 @@ impl BridgeAppState {
         config: BridgeCodexConfig,
         pairing_sessions: PairingSessionService,
         pairing_route: PairingRouteState,
+        speech: SpeechService,
     ) -> Self {
         Self {
             inner: Arc::new(BridgeAppStateInner {
@@ -164,6 +167,7 @@ impl BridgeAppState {
                 pairing_sessions: Mutex::new(pairing_sessions),
                 pairing_route,
                 git_controls: Mutex::new(GitControlState::default()),
+                speech,
             }),
         }
     }
@@ -175,7 +179,8 @@ impl BridgeAppState {
             config.pairing_route.pairing_base_url().to_string(),
             config.state_directory.clone(),
         );
-        let state = Self::new(config.codex, pairing_sessions, config.pairing_route);
+        let speech = SpeechService::from_config(&config).await;
+        let state = Self::new(config.codex, pairing_sessions, config.pairing_route, speech);
 
         match state.inner.gateway.bootstrap().await {
             Ok(bootstrap) => {
@@ -1025,6 +1030,33 @@ impl BridgeAppState {
             contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
             models: self.inner.available_models.read().await.clone(),
         }
+    }
+
+    pub async fn speech_status(&self) -> shared_contracts::SpeechModelStatusDto {
+        self.inner.speech.status().await
+    }
+
+    pub async fn ensure_speech_model(
+        &self,
+    ) -> Result<shared_contracts::SpeechModelMutationAcceptedDto, SpeechError> {
+        self.inner.speech.ensure_model().await
+    }
+
+    pub async fn remove_speech_model(
+        &self,
+    ) -> Result<shared_contracts::SpeechModelMutationAcceptedDto, SpeechError> {
+        self.inner.speech.remove_model().await
+    }
+
+    pub async fn transcribe_audio_bytes(
+        &self,
+        file_name: Option<&str>,
+        audio_bytes: &[u8],
+    ) -> Result<shared_contracts::SpeechTranscriptionResultDto, SpeechError> {
+        self.inner
+            .speech
+            .transcribe_bytes(file_name, audio_bytes)
+            .await
     }
 }
 

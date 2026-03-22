@@ -1476,6 +1476,27 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   }
 
   @override
+  Future<SpeechModelStatusDto> fetchSpeechStatus({
+    required String bridgeApiBaseUrl,
+  }) async {
+    return const SpeechModelStatusDto(
+      contractVersion: contractVersion,
+      provider: 'fluid_audio',
+      modelId: 'parakeet-tdt-0.6b-v3-coreml',
+      state: SpeechModelState.unsupported,
+    );
+  }
+
+  @override
+  Future<SpeechTranscriptionResultDto> transcribeAudio({
+    required String bridgeApiBaseUrl,
+    required List<int> audioBytes,
+    String fileName = 'voice-message.wav',
+  }) async {
+    throw const ThreadSpeechBridgeException(message: 'Speech is unused here.');
+  }
+
+  @override
   Future<ThreadSnapshotDto> createThread({
     required String bridgeApiBaseUrl,
     required String workspace,

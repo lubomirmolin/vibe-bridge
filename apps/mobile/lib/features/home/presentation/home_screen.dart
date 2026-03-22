@@ -90,6 +90,7 @@ class HomeScreen extends ConsumerWidget {
                           MaterialPageRoute(
                             builder: (_) => ThreadListPage(
                               bridgeApiBaseUrl: bridgeApiBaseUrl,
+                              autoOpenPreviouslySelectedThread: false,
                             ),
                           ),
                         );

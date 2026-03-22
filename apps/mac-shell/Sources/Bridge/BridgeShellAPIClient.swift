@@ -3,6 +3,9 @@ import Foundation
 protocol ShellBridgeClient {
     func fetchHealth() async throws -> BridgeHealthResponseDTO
     func fetchThreads() async throws -> ThreadListResponseDTO
+    func fetchSpeechModelStatus() async throws -> SpeechModelStatusDTO
+    func ensureSpeechModel() async throws -> SpeechModelMutationAcceptedDTO
+    func removeSpeechModel() async throws -> SpeechModelMutationAcceptedDTO
     func fetchPairingSession() async throws -> PairingSessionResponseDTO
     func revokeTrust(phoneID: String?) async throws -> PairingRevokeResponseDTO
 }
@@ -33,6 +36,10 @@ struct BridgeShellAPIClient: ShellBridgeClient {
                 endpoints: [
                     "GET /healthz",
                     "GET /bootstrap",
+                    "GET /speech/models/parakeet",
+                    "PUT /speech/models/parakeet",
+                    "DELETE /speech/models/parakeet",
+                    "POST /speech/transcriptions",
                     "GET /pairing/session",
                     "POST /pairing/finalize",
                     "POST /pairing/handshake",
@@ -55,6 +62,18 @@ struct BridgeShellAPIClient: ShellBridgeClient {
             contractVersion: threads.first?.contractVersion ?? SharedContract.version,
             threads: threads
         )
+    }
+
+    func fetchSpeechModelStatus() async throws -> SpeechModelStatusDTO {
+        try await fetch(path: "/speech/models/parakeet", method: "GET")
+    }
+
+    func ensureSpeechModel() async throws -> SpeechModelMutationAcceptedDTO {
+        try await fetch(path: "/speech/models/parakeet", method: "PUT")
+    }
+
+    func removeSpeechModel() async throws -> SpeechModelMutationAcceptedDTO {
+        try await fetch(path: "/speech/models/parakeet", method: "DELETE")
     }
 
     func fetchPairingSession() async throws -> PairingSessionResponseDTO {
