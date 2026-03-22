@@ -8,6 +8,10 @@ class _PinnedTurnComposer extends StatelessWidget {
     required this.controlsEnabled,
     required this.isComposerMutationInFlight,
     required this.isInterruptMutationInFlight,
+    required this.isSpeechRecording,
+    required this.isSpeechTranscribing,
+    required this.speechMessage,
+    required this.speechMessageIsError,
     required this.isComposerFocused,
     required this.attachedImages,
     required this.modelOptions,
@@ -19,6 +23,7 @@ class _PinnedTurnComposer extends StatelessWidget {
     required this.isAccessModeUpdating,
     required this.accessModeErrorMessage,
     required this.onPickImages,
+    required this.onToggleSpeechInput,
     required this.onRemoveImage,
     required this.onModelChanged,
     required this.onReasoningChanged,
@@ -32,6 +37,10 @@ class _PinnedTurnComposer extends StatelessWidget {
   final bool controlsEnabled;
   final bool isComposerMutationInFlight;
   final bool isInterruptMutationInFlight;
+  final bool isSpeechRecording;
+  final bool isSpeechTranscribing;
+  final String? speechMessage;
+  final bool speechMessageIsError;
   final bool isComposerFocused;
   final List<XFile> attachedImages;
   final List<ModelOptionDto> modelOptions;
@@ -43,6 +52,7 @@ class _PinnedTurnComposer extends StatelessWidget {
   final bool isAccessModeUpdating;
   final String? accessModeErrorMessage;
   final Future<void> Function() onPickImages;
+  final Future<void> Function() onToggleSpeechInput;
   final ValueChanged<XFile> onRemoveImage;
   final ValueChanged<String> onModelChanged;
   final ValueChanged<String> onReasoningChanged;
@@ -52,11 +62,16 @@ class _PinnedTurnComposer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final canEditPinnedControls =
-        !isComposerMutationInFlight && !isInterruptMutationInFlight;
+        !isComposerMutationInFlight &&
+        !isInterruptMutationInFlight &&
+        !isSpeechRecording &&
+        !isSpeechTranscribing;
     final composerEnabled =
         controlsEnabled &&
         !isComposerMutationInFlight &&
-        !isInterruptMutationInFlight;
+        !isInterruptMutationInFlight &&
+        !isSpeechRecording &&
+        !isSpeechTranscribing;
 
     if (!composerEnabled && composerFocusNode.hasFocus) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -205,7 +220,11 @@ class _PinnedTurnComposer extends StatelessWidget {
                       fontSize: 15,
                     ),
                     decoration: InputDecoration(
-                      hintText: isTurnActive
+                      hintText: isSpeechRecording
+                          ? 'Recording voice message…'
+                          : isSpeechTranscribing
+                          ? 'Transcribing voice message…'
+                          : isTurnActive
                           ? 'Turn in progress. Interrupt to send a new prompt.'
                           : 'Message Codex...',
                       hintStyle: const TextStyle(color: AppTheme.textSubtle),
@@ -215,6 +234,45 @@ class _PinnedTurnComposer extends StatelessWidget {
                         vertical: 16,
                       ),
                     ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 56,
+                height: 56,
+                child: MagneticButton(
+                  key: const Key('turn-composer-speech-toggle'),
+                  isCircle: true,
+                  variant: MagneticButtonVariant.secondary,
+                  onClick:
+                      (controlsEnabled &&
+                          !isTurnActive &&
+                          !isComposerMutationInFlight &&
+                          !isInterruptMutationInFlight &&
+                          !isSpeechTranscribing)
+                      ? () async {
+                          await onToggleSpeechInput();
+                        }
+                      : () {},
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    child: isSpeechTranscribing
+                        ? const SizedBox.square(
+                            key: ValueKey('speech-loading'),
+                            dimension: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppTheme.textMain,
+                            ),
+                          )
+                        : PhosphorIcon(
+                            key: ValueKey<bool>(isSpeechRecording),
+                            isSpeechRecording
+                                ? PhosphorIcons.stop()
+                                : PhosphorIcons.microphone(),
+                            size: 24,
+                          ),
                   ),
                 ),
               ),
@@ -233,7 +291,9 @@ class _PinnedTurnComposer extends StatelessWidget {
                         controlsEnabled &&
                         !isTurnActive &&
                         !isComposerMutationInFlight &&
-                        !isInterruptMutationInFlight;
+                        !isInterruptMutationInFlight &&
+                        !isSpeechRecording &&
+                        !isSpeechTranscribing;
 
                     return MagneticButton(
                       key: const Key('turn-composer-submit'),
@@ -295,6 +355,22 @@ class _PinnedTurnComposer extends StatelessWidget {
                 accessModeErrorMessage!,
                 key: const Key('turn-composer-access-mode-error'),
                 style: const TextStyle(color: AppTheme.rose, fontSize: 12),
+              ),
+            ),
+          ],
+          if (speechMessage != null) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                speechMessage!,
+                key: const Key('turn-composer-speech-message'),
+                style: TextStyle(
+                  color: speechMessageIsError
+                      ? AppTheme.rose
+                      : AppTheme.textSubtle,
+                  fontSize: 12,
+                ),
               ),
             ),
           ],

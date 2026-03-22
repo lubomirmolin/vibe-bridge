@@ -7,16 +7,19 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		02122DFA1C45C668746616DC /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 0C6538D66D9BD0A5C269BB1B /* FluidAudio */; };
 		076DAD3555DF80C951B9329F /* PersistenceBoundary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 253C6D9A6CE243C2E4429D55 /* PersistenceBoundary.swift */; };
 		1342931C8BE082D128529EA4 /* CodexMobileCompanionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 728B378B81F809C4F14EC72D /* CodexMobileCompanionTests.swift */; };
+		1424F94EF741CE35017BF45A /* BridgeShellAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 443BA9831BAAF12691D150FF /* BridgeShellAPIClient.swift */; };
 		21BFE2AD6196F327135F493B /* BridgeContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F2D601B571120586CB68C0 /* BridgeContracts.swift */; };
+		45569345E3961410C2BCC108 /* DesktopRuntimeSupervisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5648474174ABB9345A052D70 /* DesktopRuntimeSupervisor.swift */; };
 		47EF301FD4DB23F23CE7051A /* SecureStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE2411DE1FFF6CE64E10B9C0 /* SecureStore.swift */; };
-		A1B2C3D40100000000000001 /* CodexMobileCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1B2C3D40100000000000001 /* CodexMobileCompanionApp.swift */; };
-		A1B2C3D40100000000000002 /* PairingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1B2C3D40100000000000002 /* PairingViews.swift */; };
-		A1B2C3D40100000000000003 /* PairingEntryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1B2C3D40100000000000003 /* PairingEntryViewModel.swift */; };
-		A1B2C3D40100000000000004 /* BridgeShellAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1B2C3D40100000000000004 /* BridgeShellAPIClient.swift */; };
-		A1B2C3D40100000000000005 /* DesktopRuntimeSupervisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1B2C3D40100000000000005 /* DesktopRuntimeSupervisor.swift */; };
+		82562FC75DF9A3EC759F42CB /* PairingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD6A06141FE8DC9786018F28 /* PairingViews.swift */; };
+		8342BD14E062007C2A9EC2D2 /* CodexMobileCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9EBC4B14B8E5EFE0024E1CC /* CodexMobileCompanionApp.swift */; };
 		B17D93EC9AC73B9003D48DD9 /* StructuredLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED9789893934082730104731 /* StructuredLogger.swift */; };
+		DBD044B04323228856E52A52 /* PairingEntryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B7AB0DAD1B68544E6B87F2C /* PairingEntryViewModel.swift */; };
+		EEC5C2A4147A1F515A43BA67 /* CodexSpeechHelper in Resources */ = {isa = PBXBuildFile; fileRef = 854D870C62DD6114E50C410F /* CodexSpeechHelper */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		FE59023B93DFB6D963345AA1 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A14A77D3D780937BBFC852A /* main.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -27,22 +30,42 @@
 			remoteGlobalIDString = 079AC2675E7DEB7D214D9879;
 			remoteInfo = CodexMobileCompanion;
 		};
+		C6901CCD2143249B1BCF0570 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CEC0584BFFE63B0B728A238A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 78B413B5C3BE8D256695AFAE;
+			remoteInfo = CodexSpeechHelper;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		253C6D9A6CE243C2E4429D55 /* PersistenceBoundary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceBoundary.swift; sourceTree = "<group>"; };
+		443BA9831BAAF12691D150FF /* BridgeShellAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeShellAPIClient.swift; sourceTree = "<group>"; };
+		5648474174ABB9345A052D70 /* DesktopRuntimeSupervisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopRuntimeSupervisor.swift; sourceTree = "<group>"; };
 		728B378B81F809C4F14EC72D /* CodexMobileCompanionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexMobileCompanionTests.swift; sourceTree = "<group>"; };
+		854D870C62DD6114E50C410F /* CodexSpeechHelper */ = {isa = PBXFileReference; includeInIndex = 0; path = CodexSpeechHelper; sourceTree = BUILT_PRODUCTS_DIR; };
+		8B7AB0DAD1B68544E6B87F2C /* PairingEntryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingEntryViewModel.swift; sourceTree = "<group>"; };
+		9A14A77D3D780937BBFC852A /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		A90B6FE0AC3C66F2B1FA806D /* CodexMobileCompanionTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CodexMobileCompanionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		B1B2C3D40100000000000001 /* CodexMobileCompanionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexMobileCompanionApp.swift; sourceTree = "<group>"; };
-		B1B2C3D40100000000000002 /* PairingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViews.swift; sourceTree = "<group>"; };
-		B1B2C3D40100000000000003 /* PairingEntryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingEntryViewModel.swift; sourceTree = "<group>"; };
-		B1B2C3D40100000000000004 /* BridgeShellAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeShellAPIClient.swift; sourceTree = "<group>"; };
-		B1B2C3D40100000000000005 /* DesktopRuntimeSupervisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopRuntimeSupervisor.swift; sourceTree = "<group>"; };
 		B2F2D601B571120586CB68C0 /* BridgeContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeContracts.swift; sourceTree = "<group>"; };
+		BD6A06141FE8DC9786018F28 /* PairingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViews.swift; sourceTree = "<group>"; };
 		C0824473A42415E32ECD7C7B /* CodexMobileCompanion.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CodexMobileCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E9EBC4B14B8E5EFE0024E1CC /* CodexMobileCompanionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexMobileCompanionApp.swift; sourceTree = "<group>"; };
 		ED9789893934082730104731 /* StructuredLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StructuredLogger.swift; sourceTree = "<group>"; };
 		FE2411DE1FFF6CE64E10B9C0 /* SecureStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		2A8C1F6333E30028248F3D14 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				02122DFA1C45C668746616DC /* FluidAudio in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		06A1A52B8E050A92076962B5 /* Foundation */ = {
@@ -53,46 +76,6 @@
 				6FC3EB7AE2D7FB93BAD402FB /* Storage */,
 			);
 			path = Foundation;
-			sourceTree = "<group>";
-		};
-		C1B2C3D40100000000000001 /* App */ = {
-			isa = PBXGroup;
-			children = (
-				B1B2C3D40100000000000001 /* CodexMobileCompanionApp.swift */,
-			);
-			path = App;
-			sourceTree = "<group>";
-		};
-		C1B2C3D40100000000000002 /* UI */ = {
-			isa = PBXGroup;
-			children = (
-				B1B2C3D40100000000000002 /* PairingViews.swift */,
-			);
-			path = UI;
-			sourceTree = "<group>";
-		};
-		C1B2C3D40100000000000003 /* ViewModel */ = {
-			isa = PBXGroup;
-			children = (
-				B1B2C3D40100000000000003 /* PairingEntryViewModel.swift */,
-			);
-			path = ViewModel;
-			sourceTree = "<group>";
-		};
-		C1B2C3D40100000000000004 /* Bridge */ = {
-			isa = PBXGroup;
-			children = (
-				B1B2C3D40100000000000004 /* BridgeShellAPIClient.swift */,
-			);
-			path = Bridge;
-			sourceTree = "<group>";
-		};
-		C1B2C3D40100000000000005 /* Runtime */ = {
-			isa = PBXGroup;
-			children = (
-				B1B2C3D40100000000000005 /* DesktopRuntimeSupervisor.swift */,
-			);
-			path = Runtime;
 			sourceTree = "<group>";
 		};
 		127F99BDB4362D4644ECFD26 /* Logging */ = {
@@ -109,6 +92,14 @@
 				B2F2D601B571120586CB68C0 /* BridgeContracts.swift */,
 			);
 			path = Contracts;
+			sourceTree = "<group>";
+		};
+		52D62A791B2D9766825BCC05 /* Runtime */ = {
+			isa = PBXGroup;
+			children = (
+				5648474174ABB9345A052D70 /* DesktopRuntimeSupervisor.swift */,
+			);
+			path = Runtime;
 			sourceTree = "<group>";
 		};
 		6FC3EB7AE2D7FB93BAD402FB /* Storage */ = {
@@ -128,15 +119,39 @@
 			path = Tests;
 			sourceTree = "<group>";
 		};
+		9015C89FFF9B3FEBFAA1C1BF /* SpeechHelper */ = {
+			isa = PBXGroup;
+			children = (
+				DF8377FF38A290C24ACD369F /* Sources */,
+			);
+			path = SpeechHelper;
+			sourceTree = "<group>";
+		};
+		9B722AF224358BC5D5F96AB6 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				E9EBC4B14B8E5EFE0024E1CC /* CodexMobileCompanionApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		9D6EFF46C7CE710AA086A460 /* Bridge */ = {
+			isa = PBXGroup;
+			children = (
+				443BA9831BAAF12691D150FF /* BridgeShellAPIClient.swift */,
+			);
+			path = Bridge;
+			sourceTree = "<group>";
+		};
 		C14B55A87DD3B26FBFC28A49 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
-				C1B2C3D40100000000000001 /* App */,
-				C1B2C3D40100000000000002 /* UI */,
-				C1B2C3D40100000000000003 /* ViewModel */,
-				C1B2C3D40100000000000004 /* Bridge */,
-				C1B2C3D40100000000000005 /* Runtime */,
+				9B722AF224358BC5D5F96AB6 /* App */,
+				9D6EFF46C7CE710AA086A460 /* Bridge */,
 				06A1A52B8E050A92076962B5 /* Foundation */,
+				52D62A791B2D9766825BCC05 /* Runtime */,
+				E8FF04E4278DAC1EB7D0F9FE /* UI */,
+				FD0B943119D4A239E3429C5E /* ViewModel */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -145,6 +160,7 @@
 			isa = PBXGroup;
 			children = (
 				C14B55A87DD3B26FBFC28A49 /* Sources */,
+				9015C89FFF9B3FEBFAA1C1BF /* SpeechHelper */,
 				7E4952BCF99AA6B331B860F8 /* Tests */,
 				CA75C503CAA44216C328BD09 /* Products */,
 			);
@@ -155,8 +171,33 @@
 			children = (
 				C0824473A42415E32ECD7C7B /* CodexMobileCompanion.app */,
 				A90B6FE0AC3C66F2B1FA806D /* CodexMobileCompanionTests.xctest */,
+				854D870C62DD6114E50C410F /* CodexSpeechHelper */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		DF8377FF38A290C24ACD369F /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				9A14A77D3D780937BBFC852A /* main.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		E8FF04E4278DAC1EB7D0F9FE /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				BD6A06141FE8DC9786018F28 /* PairingViews.swift */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+		FD0B943119D4A239E3429C5E /* ViewModel */ = {
+			isa = PBXGroup;
+			children = (
+				8B7AB0DAD1B68544E6B87F2C /* PairingEntryViewModel.swift */,
+			);
+			path = ViewModel;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -167,11 +208,14 @@
 			buildConfigurationList = 92571B5646D9058230F5D08E /* Build configuration list for PBXNativeTarget "CodexMobileCompanion" */;
 			buildPhases = (
 				EAB64C6CFF24E00745553FC6 /* Sources */,
+				BAF117C650614B3B5EF1327F /* Resources */,
 				EA5E6C6AA809AF75021540E1 /* Embed bridge-server */,
+				D27BAA2DCBBDAED2C98B3C20 /* Embed speech helper */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				559F9B08C05E13AFA92C6CAF /* PBXTargetDependency */,
 			);
 			name = CodexMobileCompanion;
 			packageProductDependencies = (
@@ -179,6 +223,25 @@
 			productName = CodexMobileCompanion;
 			productReference = C0824473A42415E32ECD7C7B /* CodexMobileCompanion.app */;
 			productType = "com.apple.product-type.application";
+		};
+		78B413B5C3BE8D256695AFAE /* CodexSpeechHelper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8B8BD91907190456DC5EFCF3 /* Build configuration list for PBXNativeTarget "CodexSpeechHelper" */;
+			buildPhases = (
+				40B46DE3716025E34A550A61 /* Sources */,
+				2A8C1F6333E30028248F3D14 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CodexSpeechHelper;
+			packageProductDependencies = (
+				0C6538D66D9BD0A5C269BB1B /* FluidAudio */,
+			);
+			productName = CodexSpeechHelper;
+			productReference = 854D870C62DD6114E50C410F /* CodexSpeechHelper */;
+			productType = "com.apple.product-type.tool";
 		};
 		EBA7841788F91263BFFBD902 /* CodexMobileCompanionTests */ = {
 			isa = PBXNativeTarget;
@@ -219,17 +282,52 @@
 			);
 			mainGroup = C2E36064575B3EEC2D644157;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				8D75F3A2E729A21967FAEFC9 /* XCRemoteSwiftPackageReference "FluidAudio" */,
+			);
 			preferredProjectObjectVersion = 54;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				079AC2675E7DEB7D214D9879 /* CodexMobileCompanion */,
 				EBA7841788F91263BFFBD902 /* CodexMobileCompanionTests */,
+				78B413B5C3BE8D256695AFAE /* CodexSpeechHelper */,
 			);
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		BAF117C650614B3B5EF1327F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EEC5C2A4147A1F515A43BA67 /* CodexSpeechHelper in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXShellScriptBuildPhase section */
+		D27BAA2DCBBDAED2C98B3C20 /* Embed speech helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed speech helper";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/bin/CodexSpeechHelper",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "#!/bin/sh\n\nset -eu\n\nPRODUCT_BINARY_DIR=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/bin\"\nPRODUCT_BINARY_PATH=\"${PRODUCT_BINARY_DIR}/CodexSpeechHelper\"\nHELPER_BINARY_PATH=\"${BUILT_PRODUCTS_DIR}/CodexSpeechHelper\"\n\nif [ ! -x \"${HELPER_BINARY_PATH}\" ]; then\n  echo \"error: bundled speech helper was not built at ${HELPER_BINARY_PATH}\" >&2\n  exit 1\nfi\n\necho \"Embedding CodexSpeechHelper into app bundle\"\nmkdir -p \"${PRODUCT_BINARY_DIR}\"\ncp \"${HELPER_BINARY_PATH}\" \"${PRODUCT_BINARY_PATH}\"\nchmod 755 \"${PRODUCT_BINARY_PATH}\"\n\necho \"Embedded speech helper at ${PRODUCT_BINARY_PATH}\"\n";
+		};
 		EA5E6C6AA809AF75021540E1 /* Embed bridge-server */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -261,16 +359,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		40B46DE3716025E34A550A61 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FE59023B93DFB6D963345AA1 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		EAB64C6CFF24E00745553FC6 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A1B2C3D40100000000000004 /* BridgeShellAPIClient.swift in Sources */,
-				A1B2C3D40100000000000001 /* CodexMobileCompanionApp.swift in Sources */,
-				A1B2C3D40100000000000005 /* DesktopRuntimeSupervisor.swift in Sources */,
 				21BFE2AD6196F327135F493B /* BridgeContracts.swift in Sources */,
-				A1B2C3D40100000000000003 /* PairingEntryViewModel.swift in Sources */,
-				A1B2C3D40100000000000002 /* PairingViews.swift in Sources */,
+				1424F94EF741CE35017BF45A /* BridgeShellAPIClient.swift in Sources */,
+				8342BD14E062007C2A9EC2D2 /* CodexMobileCompanionApp.swift in Sources */,
+				45569345E3961410C2BCC108 /* DesktopRuntimeSupervisor.swift in Sources */,
+				DBD044B04323228856E52A52 /* PairingEntryViewModel.swift in Sources */,
+				82562FC75DF9A3EC759F42CB /* PairingViews.swift in Sources */,
 				076DAD3555DF80C951B9329F /* PersistenceBoundary.swift in Sources */,
 				47EF301FD4DB23F23CE7051A /* SecureStore.swift in Sources */,
 				B17D93EC9AC73B9003D48DD9 /* StructuredLogger.swift in Sources */,
@@ -280,6 +386,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		559F9B08C05E13AFA92C6CAF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 78B413B5C3BE8D256695AFAE /* CodexSpeechHelper */;
+			targetProxy = C6901CCD2143249B1BCF0570 /* PBXContainerItemProxy */;
+		};
 		F294FF8D106C0921A03EB425 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 079AC2675E7DEB7D214D9879 /* CodexMobileCompanion */;
@@ -382,6 +493,22 @@
 			};
 			name = Release;
 		};
+		738F38DB904C35497B6947A5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.codex.mobile.companion.shell.speechhelper;
+				PRODUCT_NAME = CodexSpeechHelper;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
 		7ED30BA6274390C2BBA17477 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -483,6 +610,22 @@
 			};
 			name = Release;
 		};
+		C35F80A4F8BA114870A5E317 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.codex.mobile.companion.shell.speechhelper;
+				PRODUCT_NAME = CodexSpeechHelper;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -491,6 +634,15 @@
 			buildConfigurations = (
 				8FA726AB9BBBE3E3F405761D /* Debug */,
 				22734F081811F665B1D32415 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		8B8BD91907190456DC5EFCF3 /* Build configuration list for PBXNativeTarget "CodexSpeechHelper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				738F38DB904C35497B6947A5 /* Debug */,
+				C35F80A4F8BA114870A5E317 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
@@ -514,6 +666,25 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		8D75F3A2E729A21967FAEFC9 /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/FluidInference/FluidAudio";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		0C6538D66D9BD0A5C269BB1B /* FluidAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8D75F3A2E729A21967FAEFC9 /* XCRemoteSwiftPackageReference "FluidAudio" */;
+			productName = FluidAudio;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = CEC0584BFFE63B0B728A238A /* Project object */;
 }

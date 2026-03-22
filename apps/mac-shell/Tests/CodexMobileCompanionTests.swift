@@ -9,7 +9,7 @@ final class CodexMobileCompanionTests: XCTestCase {
     func testThreadSummaryDecodesSharedFixtureShape() throws {
         let json = """
         {
-          "contract_version": "2026-03-17",
+          "contract_version": "2026-03-22",
           "thread_id": "thread-123",
           "title": "Implement shared contracts",
           "status": "running",
@@ -57,7 +57,7 @@ final class CodexMobileCompanionTests: XCTestCase {
     func testPairingSessionResponseDecodesBridgeIdentityAndSession() throws {
         let json = """
         {
-          "contract_version": "2026-03-17",
+          "contract_version": "2026-03-22",
           "bridge_identity": {
             "bridge_id": "bridge-74dbf8ad31e2af1b",
             "display_name": "Codex Mobile Companion",
@@ -69,7 +69,7 @@ final class CodexMobileCompanionTests: XCTestCase {
             "issued_at_epoch_seconds": 1,
             "expires_at_epoch_seconds": 301
           },
-          "qr_payload": "{\\"v\\":\\"2026-03-17\\",\\"b\\":\\"bridge-74dbf8ad31e2af1b\\",\\"u\\":\\"http://127.0.0.1:3110\\",\\"s\\":\\"pairing-session-1\\",\\"t\\":\\"ptk-aabbccdd\\"}"
+          "qr_payload": "{\\"v\\":\\"2026-03-22\\",\\"b\\":\\"bridge-74dbf8ad31e2af1b\\",\\"u\\":\\"http://127.0.0.1:3110\\",\\"s\\":\\"pairing-session-1\\",\\"t\\":\\"ptk-aabbccdd\\"}"
         }
         """
 
@@ -212,6 +212,57 @@ final class CodexMobileCompanionTests: XCTestCase {
         )
 
         XCTAssertEqual(resolver.resolveCodexBinaryURL()?.path, codexBinary.path)
+    }
+
+    func testBridgeBinaryPathResolverPrefersBundledSpeechHelper() {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let resourcesDirectory = tempDirectory.appendingPathComponent("Resources", isDirectory: true)
+        let bundledBinary = resourcesDirectory
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("CodexSpeechHelper")
+
+        try? FileManager.default.createDirectory(
+            at: bundledBinary.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? Data("speech".utf8).write(to: bundledBinary)
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: bundledBinary.path
+        )
+
+        let resolver = BridgeBinaryPathResolver(
+            environment: [:],
+            currentDirectoryURL: tempDirectory,
+            bundleResourceURL: resourcesDirectory
+        )
+
+        XCTAssertEqual(resolver.resolveSpeechHelperBinaryURL()?.path, bundledBinary.path)
+    }
+
+    func testSpeechModelStatusDecodesSharedContractShape() throws {
+        let json = """
+        {
+          "contract_version": "2026-03-22",
+          "provider": "fluid_audio",
+          "model_id": "parakeet-tdt-0.6b-v3-coreml",
+          "state": "installing",
+          "download_progress": 42,
+          "last_error": null,
+          "installed_bytes": 1024
+        }
+        """
+
+        let decoded = try JSONDecoder().decode(
+            SpeechModelStatusDTO.self,
+            from: Data(json.utf8)
+        )
+
+        XCTAssertEqual(decoded.contractVersion, SharedContract.version)
+        XCTAssertEqual(decoded.state, .installing)
+        XCTAssertEqual(decoded.downloadProgress, 42)
+        XCTAssertEqual(decoded.installedBytes, 1024)
     }
 
     func testBridgePortProcessRequiresCurrentShellOwnershipForManagedBridge() {
@@ -570,12 +621,30 @@ private struct StubShellBridgeClient: ShellBridgeClient {
         healthResults: [Result<BridgeHealthResponseDTO, Error>],
         threadResults: [Result<ThreadListResponseDTO, Error>],
         pairingResults: [Result<PairingSessionResponseDTO, Error>],
+        speechResults: [Result<SpeechModelStatusDTO, Error>] = [
+            .success(
+                SpeechModelStatusDTO(
+                    contractVersion: SharedContract.version,
+                    provider: "fluid_audio",
+                    modelID: "parakeet-tdt-0.6b-v3-coreml",
+                    state: .notInstalled,
+                    downloadProgress: nil,
+                    lastError: nil,
+                    installedBytes: nil
+                )
+            )
+        ],
+        speechEnsureResults: [Result<SpeechModelMutationAcceptedDTO, Error>] = [],
+        speechRemoveResults: [Result<SpeechModelMutationAcceptedDTO, Error>] = [],
         revokeResults: [Result<PairingRevokeResponseDTO, Error>] = []
     ) {
         self.store = StubShellBridgeResponseStore(
             healthResults: healthResults,
             threadResults: threadResults,
             pairingResults: pairingResults,
+            speechResults: speechResults,
+            speechEnsureResults: speechEnsureResults,
+            speechRemoveResults: speechRemoveResults,
             revokeResults: revokeResults
         )
     }
@@ -590,6 +659,18 @@ private struct StubShellBridgeClient: ShellBridgeClient {
 
     func fetchPairingSession() async throws -> PairingSessionResponseDTO {
         try await store.nextPairing()
+    }
+
+    func fetchSpeechModelStatus() async throws -> SpeechModelStatusDTO {
+        try await store.nextSpeechStatus()
+    }
+
+    func ensureSpeechModel() async throws -> SpeechModelMutationAcceptedDTO {
+        try await store.nextSpeechEnsure()
+    }
+
+    func removeSpeechModel() async throws -> SpeechModelMutationAcceptedDTO {
+        try await store.nextSpeechRemove()
     }
 
     func revokeTrust(phoneID: String?) async throws -> PairingRevokeResponseDTO {
@@ -673,6 +754,9 @@ private actor StubShellBridgeResponseStore {
     private var healthResults: [Result<BridgeHealthResponseDTO, Error>]
     private var threadResults: [Result<ThreadListResponseDTO, Error>]
     private var pairingResults: [Result<PairingSessionResponseDTO, Error>]
+    private var speechResults: [Result<SpeechModelStatusDTO, Error>]
+    private var speechEnsureResults: [Result<SpeechModelMutationAcceptedDTO, Error>]
+    private var speechRemoveResults: [Result<SpeechModelMutationAcceptedDTO, Error>]
     private var revokeResults: [Result<PairingRevokeResponseDTO, Error>]
     private var recordedRevokedPhoneIDs: [String?] = []
 
@@ -680,11 +764,17 @@ private actor StubShellBridgeResponseStore {
         healthResults: [Result<BridgeHealthResponseDTO, Error>],
         threadResults: [Result<ThreadListResponseDTO, Error>],
         pairingResults: [Result<PairingSessionResponseDTO, Error>],
+        speechResults: [Result<SpeechModelStatusDTO, Error>],
+        speechEnsureResults: [Result<SpeechModelMutationAcceptedDTO, Error>],
+        speechRemoveResults: [Result<SpeechModelMutationAcceptedDTO, Error>],
         revokeResults: [Result<PairingRevokeResponseDTO, Error>]
     ) {
         self.healthResults = healthResults
         self.threadResults = threadResults
         self.pairingResults = pairingResults
+        self.speechResults = speechResults
+        self.speechEnsureResults = speechEnsureResults
+        self.speechRemoveResults = speechRemoveResults
         self.revokeResults = revokeResults
     }
 
@@ -709,6 +799,27 @@ private actor StubShellBridgeResponseStore {
         return try pairingResults.removeFirst().get()
     }
 
+    func nextSpeechStatus() throws -> SpeechModelStatusDTO {
+        guard !speechResults.isEmpty else {
+            throw StubError.missingSpeechStatusResult
+        }
+        return try speechResults.removeFirst().get()
+    }
+
+    func nextSpeechEnsure() throws -> SpeechModelMutationAcceptedDTO {
+        guard !speechEnsureResults.isEmpty else {
+            throw StubError.missingSpeechEnsureResult
+        }
+        return try speechEnsureResults.removeFirst().get()
+    }
+
+    func nextSpeechRemove() throws -> SpeechModelMutationAcceptedDTO {
+        guard !speechRemoveResults.isEmpty else {
+            throw StubError.missingSpeechRemoveResult
+        }
+        return try speechRemoveResults.removeFirst().get()
+    }
+
     func nextRevoke(phoneID: String?) throws -> PairingRevokeResponseDTO {
         recordedRevokedPhoneIDs.append(phoneID)
         guard !revokeResults.isEmpty else {
@@ -727,6 +838,9 @@ private enum StubError: LocalizedError {
     case missingHealthResult
     case missingThreadResult
     case missingPairingResult
+    case missingSpeechStatusResult
+    case missingSpeechEnsureResult
+    case missingSpeechRemoveResult
     case missingRevokeResult
     case missingRuntimePrepareResult
     case missingRuntimeRestartResult
@@ -741,6 +855,12 @@ private enum StubError: LocalizedError {
             return "missing stub thread result"
         case .missingPairingResult:
             return "missing stub pairing result"
+        case .missingSpeechStatusResult:
+            return "missing stub speech status result"
+        case .missingSpeechEnsureResult:
+            return "missing stub speech install result"
+        case .missingSpeechRemoveResult:
+            return "missing stub speech remove result"
         case .missingRevokeResult:
             return "missing stub revoke result"
         case .missingRuntimePrepareResult:

@@ -1,7 +1,7 @@
 import Foundation
 
 enum SharedContract {
-    static let version = "2026-03-17"
+    static let version = "2026-03-22"
 }
 
 enum ThreadStatus: String, Codable {
@@ -26,6 +26,15 @@ enum BridgeEventKind: String, Codable {
     case approvalRequested = "approval_requested"
     case threadStatusChanged = "thread_status_changed"
     case securityAudit = "security_audit"
+}
+
+enum SpeechModelStateDTO: String, Codable {
+    case unsupported
+    case notInstalled = "not_installed"
+    case installing
+    case ready
+    case busy
+    case failed
 }
 
 struct ThreadSummaryDTO: Codable, Equatable {
@@ -213,5 +222,41 @@ struct BridgeAPISurfaceDTO: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case endpoints
         case seededThreadCount = "seeded_thread_count"
+    }
+}
+
+struct SpeechModelStatusDTO: Codable, Equatable {
+    let contractVersion: String
+    let provider: String
+    let modelID: String
+    let state: SpeechModelStateDTO
+    let downloadProgress: UInt8?
+    let lastError: String?
+    let installedBytes: UInt64?
+
+    enum CodingKeys: String, CodingKey {
+        case contractVersion = "contract_version"
+        case provider
+        case modelID = "model_id"
+        case state
+        case downloadProgress = "download_progress"
+        case lastError = "last_error"
+        case installedBytes = "installed_bytes"
+    }
+}
+
+struct SpeechModelMutationAcceptedDTO: Codable, Equatable {
+    let contractVersion: String
+    let provider: String
+    let modelID: String
+    let state: SpeechModelStateDTO
+    let message: String
+
+    enum CodingKeys: String, CodingKey {
+        case contractVersion = "contract_version"
+        case provider
+        case modelID = "model_id"
+        case state
+        case message
     }
 }

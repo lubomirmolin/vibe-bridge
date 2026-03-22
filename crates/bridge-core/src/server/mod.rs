@@ -5,6 +5,7 @@ mod events;
 mod gateway;
 mod pairing_route;
 mod projection;
+mod speech;
 mod state;
 
 use axum::serve;

@@ -895,8 +895,10 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
               if (bridge == null) return;
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (context) =>
-                      ThreadListPage(bridgeApiBaseUrl: bridge.bridgeApiBaseUrl),
+                  builder: (context) => ThreadListPage(
+                    bridgeApiBaseUrl: bridge.bridgeApiBaseUrl,
+                    autoOpenPreviouslySelectedThread: false,
+                  ),
                 ),
               );
             },

@@ -47,5 +47,7 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Camera access is required to scan desktop pairing QR codes.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Microphone access is required to record voice messages for local transcription.</string>
 </dict>
 </plist>

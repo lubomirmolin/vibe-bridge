@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const CONTRACT_VERSION: &str = "2026-03-20";
+pub const CONTRACT_VERSION: &str = "2026-03-22";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -131,6 +131,49 @@ pub struct ModelOptionDto {
 pub struct ModelCatalogDto {
     pub contract_version: String,
     pub models: Vec<ModelOptionDto>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpeechModelStateDto {
+    Unsupported,
+    NotInstalled,
+    Installing,
+    Ready,
+    Busy,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpeechModelStatusDto {
+    pub contract_version: String,
+    pub provider: String,
+    pub model_id: String,
+    pub state: SpeechModelStateDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download_progress: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpeechModelMutationAcceptedDto {
+    pub contract_version: String,
+    pub provider: String,
+    pub model_id: String,
+    pub state: SpeechModelStateDto,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpeechTranscriptionResultDto {
+    pub contract_version: String,
+    pub provider: String,
+    pub model_id: String,
+    pub text: String,
+    pub duration_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

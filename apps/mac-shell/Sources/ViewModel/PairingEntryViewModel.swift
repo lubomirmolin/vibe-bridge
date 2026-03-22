@@ -112,6 +112,12 @@ final class PairingEntryViewModel: ObservableObject {
     @Published private(set) var activeSessionLabel = "No active session"
     @Published private(set) var runningThreadCount = 0
     @Published private(set) var runtimeDetail = "Waiting for bridge supervision…"
+    @Published private(set) var speechModelState: SpeechModelStateDTO = .unsupported
+    @Published private(set) var speechModelStateLabel = "Unavailable"
+    @Published private(set) var speechModelDetail = "Speech helper not detected."
+    @Published private(set) var speechDownloadProgress: UInt8?
+    @Published private(set) var isInstallingSpeechModel = false
+    @Published private(set) var isRemovingSpeechModel = false
 
     @Published private(set) var isLoadingPairing = false
     @Published private(set) var isRefreshingRuntime = false
@@ -140,6 +146,18 @@ final class PairingEntryViewModel: ObservableObject {
 
     var canRevokeTrust: Bool {
         shellState == .pairedIdle || shellState == .pairedActive
+    }
+
+    var canInstallSpeechModel: Bool {
+        !isInstallingSpeechModel && !isRemovingSpeechModel &&
+            speechModelState != .ready &&
+            speechModelState != .unsupported &&
+            shellState != .degraded
+    }
+
+    var canRemoveSpeechModel: Bool {
+        !isInstallingSpeechModel && !isRemovingSpeechModel &&
+            speechModelState == .ready
     }
 
     init(
@@ -230,6 +248,7 @@ final class PairingEntryViewModel: ObservableObject {
                 let runningCount = threadsResponse.threads.filter { $0.status == .running }.count
                 runningThreadCount = runningCount
                 applyHealthyState(trustStatus: trustStatus, runningThreadCount: runningCount)
+                try? await refreshSpeechStatus()
 
                 if shellState == .unpaired {
                     await refreshPairingSessionIfNeeded()
@@ -301,6 +320,10 @@ final class PairingEntryViewModel: ObservableObject {
         activeSessionLabel = "Waiting for bridge"
         trustedPhoneID = nil
         runtimeDetail = detail
+        speechModelStateLabel = "Starting"
+        speechModelState = .busy
+        speechModelDetail = "Waiting for bridge supervision…"
+        speechDownloadProgress = nil
         pairingSession = nil
         qrImage = nil
         errorMessage = nil
@@ -314,9 +337,85 @@ final class PairingEntryViewModel: ObservableObject {
         activeSessionLabel = "Unavailable"
         trustedPhoneID = nil
         runtimeDetail = message
+        speechModelStateLabel = "Unavailable"
+        speechModelState = .unsupported
+        speechModelDetail = "Speech status is unavailable while the bridge is degraded."
+        speechDownloadProgress = nil
         pairingSession = nil
         qrImage = nil
         errorMessage = message
+    }
+
+    func refreshSpeechStatus() async throws {
+        let status = try await bridgeClient.fetchSpeechModelStatus()
+        applySpeechStatus(status)
+    }
+
+    func ensureSpeechModelOnDesktop() async {
+        guard !isInstallingSpeechModel else {
+            return
+        }
+
+        isInstallingSpeechModel = true
+        defer { isInstallingSpeechModel = false }
+
+        do {
+            _ = try await bridgeClient.ensureSpeechModel()
+            try? await refreshSpeechStatus()
+        } catch {
+            speechModelState = .failed
+            speechModelStateLabel = "Failed"
+            speechModelDetail = error.localizedDescription
+        }
+    }
+
+    func removeSpeechModelFromDesktop() async {
+        guard !isRemovingSpeechModel else {
+            return
+        }
+
+        isRemovingSpeechModel = true
+        defer { isRemovingSpeechModel = false }
+
+        do {
+            _ = try await bridgeClient.removeSpeechModel()
+            try? await refreshSpeechStatus()
+        } catch {
+            speechModelState = .failed
+            speechModelStateLabel = "Failed"
+            speechModelDetail = error.localizedDescription
+        }
+    }
+
+    private func applySpeechStatus(_ status: SpeechModelStatusDTO) {
+        speechModelState = status.state
+        speechDownloadProgress = status.downloadProgress
+        switch status.state {
+        case .unsupported:
+            speechModelStateLabel = "Unsupported"
+        case .notInstalled:
+            speechModelStateLabel = "Not Installed"
+        case .installing:
+            speechModelStateLabel = "Installing"
+        case .ready:
+            speechModelStateLabel = "Ready"
+        case .busy:
+            speechModelStateLabel = "Busy"
+        case .failed:
+            speechModelStateLabel = "Failed"
+        }
+
+        if let lastError = status.lastError, !lastError.isEmpty {
+            speechModelDetail = lastError
+        } else if let progress = status.downloadProgress, status.state == .installing {
+            speechModelDetail = "Downloading Parakeet… \(progress)%"
+        } else if let installedBytes = status.installedBytes, status.state == .ready {
+            speechModelDetail = ByteCountFormatter.string(fromByteCount: Int64(installedBytes), countStyle: .file)
+        } else if status.state == .notInstalled {
+            speechModelDetail = "Parakeet can be downloaded on demand from Hugging Face."
+        } else {
+            speechModelDetail = "Speech runtime is managed by the local bridge."
+        }
     }
 
     func revokeTrustedPhoneFromDesktop() async {

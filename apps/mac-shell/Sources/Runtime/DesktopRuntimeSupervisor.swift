@@ -168,7 +168,7 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
         let process = Process()
         process.executableURL = bridgeBinaryURL
         process.arguments = bridgeArguments()
-        process.environment = processEnvironment
+        process.environment = bridgeProcessEnvironment()
         process.currentDirectoryURL = stateDirectoryURL
 
         do {
@@ -231,6 +231,14 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
         }
 
         return arguments
+    }
+
+    private func bridgeProcessEnvironment() -> [String: String] {
+        var environment = processEnvironment
+        if let speechHelperURL = pathResolver.resolveSpeechHelperBinaryURL() {
+            environment["CODEX_MOBILE_COMPANION_SPEECH_HELPER_BINARY"] = speechHelperURL.path
+        }
+        return environment
     }
 
     static func defaultStateDirectoryURL() -> URL {
@@ -358,6 +366,10 @@ struct BridgeBinaryPathResolver {
         resolveExecutableURL(candidates: codexBinaryCandidates())
     }
 
+    func resolveSpeechHelperBinaryURL() -> URL? {
+        resolveExecutableURL(candidates: speechHelperBinaryCandidates())
+    }
+
     private func bridgeBinaryCandidates() -> [URL] {
         var candidates: [URL] = []
 
@@ -404,6 +416,32 @@ struct BridgeBinaryPathResolver {
         candidates.append(URL(fileURLWithPath: "/opt/homebrew/bin/codex"))
         candidates.append(URL(fileURLWithPath: "/usr/local/bin/codex"))
 
+        return deduplicated(candidates)
+    }
+
+    private func speechHelperBinaryCandidates() -> [URL] {
+        var candidates: [URL] = []
+
+        if let explicitPath = environment["CODEX_MOBILE_COMPANION_SPEECH_HELPER_BINARY"],
+           !explicitPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            candidates.append(URL(fileURLWithPath: explicitPath))
+        }
+
+        if let bundleResourceURL {
+            candidates.append(bundleResourceURL.appending(path: "CodexSpeechHelper"))
+            candidates.append(bundleResourceURL.appending(path: "bin").appending(path: "CodexSpeechHelper"))
+        }
+
+        let searchRoots = [currentDirectoryURL, bundleResourceURL].compactMap { $0 }
+        for root in searchRoots {
+            if let workspaceRoot = workspaceRoot(startingAt: root) {
+                candidates.append(workspaceRoot.appending(path: "apps").appending(path: "mac-shell").appending(path: ".build").appending(path: "debug").appending(path: "CodexSpeechHelper"))
+                candidates.append(workspaceRoot.appending(path: "build").appending(path: "Debug").appending(path: "CodexSpeechHelper"))
+            }
+        }
+
+        candidates.append(contentsOf: pathExecutableCandidates(named: "CodexSpeechHelper"))
         return deduplicated(candidates)
     }
 
