@@ -1,16 +1,19 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:codex_mobile_companion/features/approvals/presentation/approvals_queue_page.dart';
 import 'package:codex_mobile_companion/features/threads/application/thread_list_controller.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_detail_page.dart';
 import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:codex_mobile_companion/foundation/layout/adaptive_layout.dart';
 import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
 import 'package:codex_mobile_companion/shared/widgets/badges.dart';
 import 'package:codex_mobile_companion/shared/widgets/connection_status_banner.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 class ThreadListPage extends ConsumerStatefulWidget {
@@ -21,9 +24,6 @@ class ThreadListPage extends ConsumerStatefulWidget {
   });
 
   final String bridgeApiBaseUrl;
-  // When true, the first load of this page will auto-open the previously
-  // selected thread if it still exists. Default is false to avoid jumping
-  // the user into an active session unexpectedly.
   final bool autoOpenPreviouslySelectedThread;
 
   @override
@@ -35,9 +35,12 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
 
   late final TextEditingController _searchController;
   late final ProviderSubscription<ThreadListState> _threadListSubscription;
+  final GlobalKey<ScaffoldState> _wideScaffoldKey = GlobalKey<ScaffoldState>();
   final Set<String> _collapsedGroupIds = <String>{};
   final Set<String> _expandedThreadGroupIds = <String>{};
   bool _didRestoreInitialSelectedThread = false;
+  bool _isWideThreadListHidden = false;
+  _WideThreadWorkspaceSelection? _wideSelection;
 
   @override
   void initState() {
@@ -59,12 +62,28 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
     super.dispose();
   }
 
+  bool _isWideLayoutForContext() {
+    final mediaQuery = MediaQuery.maybeOf(context);
+    if (mediaQuery == null) {
+      return false;
+    }
+    return AdaptiveLayoutInfo.fromMediaQuery(mediaQuery).isWideLayout;
+  }
+
   Future<void> _openThreadDetail(
     ThreadListController controller,
-    String threadId,
-  ) async {
+    String threadId, {
+    bool forceWideSelection = false,
+  }) async {
     await controller.selectThread(threadId);
     if (!mounted) return;
+
+    if (forceWideSelection || _isWideLayoutForContext()) {
+      setState(() {
+        _wideSelection = _WideThreadWorkspaceSelection.thread(threadId);
+      });
+      return;
+    }
 
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -92,6 +111,10 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
     }
 
     _didRestoreInitialSelectedThread = true;
+    if (_isWideLayoutForContext()) {
+      return;
+    }
+
     final controller = ref.read(
       threadListControllerProvider(widget.bridgeApiBaseUrl).notifier,
     );
@@ -104,9 +127,16 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
   }
 
   Future<void> _openDraftThread(ThreadWorkspaceGroup group) async {
+    if (_isWideLayoutForContext()) {
+      setState(() {
+        _wideSelection = _WideThreadWorkspaceSelection.draft(group);
+      });
+      return;
+    }
+
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => ThreadDetailPage.draft(
+        builder: (_) => ThreadDetailPage.draft(
           bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
           draftWorkspacePath: group.workspacePath,
           draftWorkspaceLabel: group.label,
@@ -217,163 +247,382 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
     final controller = ref.read(
       threadListControllerProvider(widget.bridgeApiBaseUrl).notifier,
     );
+    final layout = AdaptiveLayoutInfo.fromMediaQuery(MediaQuery.of(context));
 
+    if (!layout.isWideLayout) {
+      return Scaffold(
+        backgroundColor: AppTheme.background,
+        body: SafeArea(
+          child: _ThreadListSurface(
+            bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+            state: state,
+            controller: controller,
+            searchController: _searchController,
+            visibleThreadsPerGroup: _defaultVisibleThreadsPerGroup,
+            isGroupCollapsed: (groupId) => _isGroupCollapsed(state, groupId),
+            isGroupThreadListExpanded: (groupId) =>
+                _isGroupThreadListExpanded(state, groupId),
+            onToggleGroupCollapsed: _toggleGroupCollapsed,
+            onToggleGroupThreadExpansion: _toggleGroupThreadExpansion,
+            onOpenThread: (threadId) => _openThreadDetail(controller, threadId),
+            onCreateThread: state.isLoading
+                ? null
+                : () => _startNewThread(state),
+            onBack: () => Navigator.of(context).pop(),
+          ),
+        ),
+      );
+    }
+
+    final selectedThreadId =
+        _wideSelection?.threadId ?? state.selectedThreadId?.trim();
     return Scaffold(
+      key: _wideScaffoldKey,
       backgroundColor: AppTheme.background,
+      drawerEdgeDragWidth: 24,
+      drawer: Drawer(
+        backgroundColor: AppTheme.background,
+        width: math.min(MediaQuery.of(context).size.width * 0.68, 420),
+        child: SafeArea(
+          child: _ThreadListSurface(
+            bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+            state: state,
+            controller: controller,
+            searchController: _searchController,
+            visibleThreadsPerGroup: _defaultVisibleThreadsPerGroup,
+            isGroupCollapsed: (groupId) => _isGroupCollapsed(state, groupId),
+            isGroupThreadListExpanded: (groupId) =>
+                _isGroupThreadListExpanded(state, groupId),
+            onToggleGroupCollapsed: _toggleGroupCollapsed,
+            onToggleGroupThreadExpansion: _toggleGroupThreadExpansion,
+            onOpenThread: (threadId) async {
+              Navigator.of(context).pop();
+              await _openThreadDetail(
+                controller,
+                threadId,
+                forceWideSelection: true,
+              );
+            },
+            onCreateThread: state.isLoading
+                ? null
+                : () async {
+                    Navigator.of(context).pop();
+                    await _startNewThread(state);
+                  },
+          ),
+        ),
+      ),
       body: SafeArea(
-        child: Column(
-          children: [
-            // Sticky Header matching React ThreadListScreen
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              color: AppTheme.background.withValues(alpha: 0.8),
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: PhosphorIcon(
-                      PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
-                      size: 20,
-                      color: AppTheme.textMuted,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final useFullWidth = layout.hasSeparatingFold;
+            final bodyWidth = useFullWidth
+                ? constraints.maxWidth
+                : layout.constrainedContentWidth(constraints.maxWidth);
+            final persistentPaneWidth = layout.hasSeparatingFold
+                ? layout.verticalFoldBounds!.left
+                : math.min(math.max(bodyWidth * 0.34, 340), 430).toDouble();
+            final paneGap = layout.hasSeparatingFold
+                ? layout.verticalFoldBounds!.width
+                : 1.0;
+
+            return Align(
+              alignment: Alignment.topCenter,
+              child: SizedBox(
+                width: bodyWidth,
+                child: Stack(
+                  children: [
+                    Row(
+                      children: [
+                        if (!_isWideThreadListHidden)
+                          SizedBox(
+                            key: const Key('thread-wide-left-pane'),
+                            width: persistentPaneWidth,
+                            child: DecoratedBox(
+                              decoration: const BoxDecoration(
+                                border: Border(
+                                  right: BorderSide(color: Colors.white10),
+                                ),
+                              ),
+                              child: _ThreadListSurface(
+                                bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+                                state: state,
+                                controller: controller,
+                                searchController: _searchController,
+                                visibleThreadsPerGroup:
+                                    _defaultVisibleThreadsPerGroup,
+                                isGroupCollapsed: (groupId) =>
+                                    _isGroupCollapsed(state, groupId),
+                                isGroupThreadListExpanded: (groupId) =>
+                                    _isGroupThreadListExpanded(state, groupId),
+                                onToggleGroupCollapsed: _toggleGroupCollapsed,
+                                onToggleGroupThreadExpansion:
+                                    _toggleGroupThreadExpansion,
+                                onOpenThread: (threadId) => _openThreadDetail(
+                                  controller,
+                                  threadId,
+                                  forceWideSelection: true,
+                                ),
+                                onCreateThread: state.isLoading
+                                    ? null
+                                    : () => _startNewThread(state),
+                                onCollapseList: () {
+                                  setState(() {
+                                    _isWideThreadListHidden = true;
+                                  });
+                                },
+                                selectedThreadId: selectedThreadId,
+                              ),
+                            ),
+                          ),
+                        if (!_isWideThreadListHidden)
+                          SizedBox(
+                            key: const Key('thread-wide-gap'),
+                            width: paneGap,
+                          ),
+                        Expanded(
+                          child: _WideThreadDetailPane(
+                            bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+                            selection: _wideSelection,
+                            selectedThreadId: selectedThreadId,
+                            onDraftCreated: (transition) {
+                              setState(() {
+                                _wideSelection =
+                                    _WideThreadWorkspaceSelection.createdThread(
+                                      transition,
+                                    );
+                              });
+                            },
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                  IconButton(
-                    key: const Key('open-approvals-queue'),
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (context) => ApprovalsQueuePage(
-                          bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+                    if (_isWideThreadListHidden)
+                      Positioned(
+                        top: 12,
+                        left: 12,
+                        child: IconButton.filledTonal(
+                          key: const Key('thread-wide-open-drawer-button'),
+                          style: IconButton.styleFrom(
+                            backgroundColor: AppTheme.surfaceZinc900,
+                            foregroundColor: AppTheme.textMain,
+                          ),
+                          onPressed: () {
+                            _wideScaffoldKey.currentState?.openDrawer();
+                          },
+                          icon: PhosphorIcon(
+                            PhosphorIcons.sidebarSimple(),
+                            size: 18,
+                          ),
                         ),
                       ),
-                    ),
-                    icon: PhosphorIcon(
-                      PhosphorIcons.shieldWarning(PhosphorIconsStyle.duotone),
-                      size: 20,
-                      color: AppTheme.amber,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'ACTIVE THREADS',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
-                        letterSpacing: 1.0,
-                        color: AppTheme.textMain,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    key: const Key('thread-list-create-button'),
-                    onPressed: state.isLoading
-                        ? null
-                        : () => _startNewThread(state),
-                    icon: PhosphorIcon(
-                      PhosphorIcons.plus(PhosphorIconsStyle.bold),
-                      size: 20,
-                      color: AppTheme.textMain,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            ConnectionStatusBanner(
-              state: _threadListConnectionBannerState(
-                state.liveConnectionState,
-              ),
-              detail: _threadListConnectionBannerDetail(state),
-              compact: true,
-              margin: const EdgeInsets.fromLTRB(24, 0, 24, 4),
-            ),
-
-            // Search Bar
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: AppTheme.surfaceZinc800.withValues(alpha: 0.5),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.05),
-                  ),
-                ),
-                child: TextField(
-                  key: const Key('thread-search-input'),
-                  controller: _searchController,
-                  onChanged: controller.updateSearchQuery,
-                  style: const TextStyle(
-                    color: AppTheme.textMain,
-                    fontSize: 14,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: 'Search threads...',
-                    hintStyle: const TextStyle(color: AppTheme.textSubtle),
-                    prefixIcon: Padding(
-                      padding: const EdgeInsets.all(12.0),
-                      child: PhosphorIcon(
-                        PhosphorIcons.magnifyingGlass(),
-                        size: 20,
-                        color: AppTheme.textSubtle,
-                      ),
-                    ),
-                    suffixIcon: state.hasQuery
-                        ? IconButton(
-                            onPressed: () {
-                              _searchController.clear();
-                              controller.clearSearchQuery();
-                            },
-                            icon: PhosphorIcon(
-                              PhosphorIcons.x(),
-                              size: 16,
-                              color: AppTheme.textSubtle,
-                            ),
-                          )
-                        : null,
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
-                    ),
-                  ),
+                  ],
                 ),
               ),
-            ),
-
-            Expanded(child: _buildBody(state, controller)),
-          ],
+            );
+          },
         ),
       ),
     );
   }
+}
 
-  ConnectionBannerState _threadListConnectionBannerState(
-    LiveConnectionState state,
-  ) {
-    switch (state) {
-      case LiveConnectionState.connected:
-        return ConnectionBannerState.connected;
-      case LiveConnectionState.reconnecting:
-        return ConnectionBannerState.reconnecting;
-      case LiveConnectionState.disconnected:
-        return ConnectionBannerState.disconnected;
-    }
+class _ThreadListSurface extends StatelessWidget {
+  const _ThreadListSurface({
+    required this.bridgeApiBaseUrl,
+    required this.state,
+    required this.controller,
+    required this.searchController,
+    required this.visibleThreadsPerGroup,
+    required this.isGroupCollapsed,
+    required this.isGroupThreadListExpanded,
+    required this.onToggleGroupCollapsed,
+    required this.onToggleGroupThreadExpansion,
+    required this.onOpenThread,
+    required this.onCreateThread,
+    this.onBack,
+    this.onCollapseList,
+    this.selectedThreadId,
+  });
+
+  final String bridgeApiBaseUrl;
+  final ThreadListState state;
+  final ThreadListController controller;
+  final TextEditingController searchController;
+  final int visibleThreadsPerGroup;
+  final bool Function(String groupId) isGroupCollapsed;
+  final bool Function(String groupId) isGroupThreadListExpanded;
+  final ValueChanged<String> onToggleGroupCollapsed;
+  final ValueChanged<String> onToggleGroupThreadExpansion;
+  final ValueChanged<String> onOpenThread;
+  final VoidCallback? onCreateThread;
+  final VoidCallback? onBack;
+  final VoidCallback? onCollapseList;
+  final String? selectedThreadId;
+
+  bool get _isWidePane => onBack == null;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          color: AppTheme.background.withValues(alpha: 0.8),
+          child: Row(
+            children: [
+              if (onBack != null)
+                IconButton(
+                  onPressed: onBack,
+                  icon: PhosphorIcon(
+                    PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
+                    size: 20,
+                    color: AppTheme.textMuted,
+                  ),
+                ),
+              if (onCollapseList != null)
+                IconButton(
+                  key: const Key('thread-wide-collapse-button'),
+                  onPressed: onCollapseList,
+                  icon: PhosphorIcon(
+                    PhosphorIcons.sidebarSimple(),
+                    size: 18,
+                    color: AppTheme.textMuted,
+                  ),
+                ),
+              IconButton(
+                key: const Key('open-approvals-queue'),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (context) =>
+                        ApprovalsQueuePage(bridgeApiBaseUrl: bridgeApiBaseUrl),
+                  ),
+                ),
+                icon: PhosphorIcon(
+                  PhosphorIcons.shieldWarning(PhosphorIconsStyle.duotone),
+                  size: 20,
+                  color: AppTheme.amber,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'ACTIVE THREADS',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 1.0,
+                    color: AppTheme.textMain,
+                  ),
+                ),
+              ),
+              IconButton(
+                key: const Key('thread-list-create-button'),
+                onPressed: onCreateThread,
+                icon: PhosphorIcon(
+                  PhosphorIcons.plus(PhosphorIconsStyle.bold),
+                  size: 20,
+                  color: AppTheme.textMain,
+                ),
+              ),
+            ],
+          ),
+        ),
+        ConnectionStatusBanner(
+          state: _threadListConnectionBannerState(state.liveConnectionState),
+          detail: _threadListConnectionBannerDetail(state),
+          compact: true,
+          margin: EdgeInsets.fromLTRB(24, 0, 24, _isWidePane ? 8 : 4),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+          child: Container(
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceZinc800.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+            ),
+            child: TextField(
+              key: const Key('thread-search-input'),
+              controller: searchController,
+              onChanged: controller.updateSearchQuery,
+              style: const TextStyle(color: AppTheme.textMain, fontSize: 14),
+              decoration: InputDecoration(
+                hintText: 'Search threads...',
+                hintStyle: const TextStyle(color: AppTheme.textSubtle),
+                prefixIcon: Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: PhosphorIcon(
+                    PhosphorIcons.magnifyingGlass(),
+                    size: 20,
+                    color: AppTheme.textSubtle,
+                  ),
+                ),
+                suffixIcon: state.hasQuery
+                    ? IconButton(
+                        onPressed: () {
+                          searchController.clear();
+                          controller.clearSearchQuery();
+                        },
+                        icon: PhosphorIcon(
+                          PhosphorIcons.x(),
+                          size: 16,
+                          color: AppTheme.textSubtle,
+                        ),
+                      )
+                    : null,
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 14,
+                ),
+              ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: _ThreadListBody(
+            state: state,
+            controller: controller,
+            visibleThreadsPerGroup: visibleThreadsPerGroup,
+            isGroupCollapsed: isGroupCollapsed,
+            isGroupThreadListExpanded: isGroupThreadListExpanded,
+            onToggleGroupCollapsed: onToggleGroupCollapsed,
+            onToggleGroupThreadExpansion: onToggleGroupThreadExpansion,
+            onOpenThread: onOpenThread,
+            selectedThreadId: selectedThreadId,
+          ),
+        ),
+      ],
+    );
   }
+}
 
-  String _threadListConnectionBannerDetail(ThreadListState state) {
-    switch (state.liveConnectionState) {
-      case LiveConnectionState.connected:
-        return 'Thread socket is live.';
-      case LiveConnectionState.reconnecting:
-        return state.staleMessage ?? 'Live updates dropped. Reconnecting now.';
-      case LiveConnectionState.disconnected:
-        return state.errorMessage ??
-            state.staleMessage ??
-            'Bridge is offline. Thread updates are unavailable.';
-    }
-  }
+class _ThreadListBody extends StatelessWidget {
+  const _ThreadListBody({
+    required this.state,
+    required this.controller,
+    required this.visibleThreadsPerGroup,
+    required this.isGroupCollapsed,
+    required this.isGroupThreadListExpanded,
+    required this.onToggleGroupCollapsed,
+    required this.onToggleGroupThreadExpansion,
+    required this.onOpenThread,
+    this.selectedThreadId,
+  });
 
-  Widget _buildBody(ThreadListState state, ThreadListController controller) {
+  final ThreadListState state;
+  final ThreadListController controller;
+  final int visibleThreadsPerGroup;
+  final bool Function(String groupId) isGroupCollapsed;
+  final bool Function(String groupId) isGroupThreadListExpanded;
+  final ValueChanged<String> onToggleGroupCollapsed;
+  final ValueChanged<String> onToggleGroupThreadExpansion;
+  final ValueChanged<String> onOpenThread;
+  final String? selectedThreadId;
+
+  @override
+  Widget build(BuildContext context) {
     if (state.isLoading && !state.hasAnyThread) {
       return const Center(
         child: Column(
@@ -488,21 +737,203 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
           final group = state.visibleGroups[index];
           return _ThreadWorkspaceSection(
             group: group,
-            isCollapsed: _isGroupCollapsed(state, group.groupId),
-            isThreadListExpanded: _isGroupThreadListExpanded(
-              state,
-              group.groupId,
-            ),
-            visibleThreadLimit: _defaultVisibleThreadsPerGroup,
-            onToggleCollapsed: () => _toggleGroupCollapsed(group.groupId),
+            isCollapsed: isGroupCollapsed(group.groupId),
+            isThreadListExpanded: isGroupThreadListExpanded(group.groupId),
+            visibleThreadLimit: visibleThreadsPerGroup,
+            selectedThreadId: selectedThreadId,
+            onToggleCollapsed: () => onToggleGroupCollapsed(group.groupId),
             onToggleThreadExpansion: () =>
-                _toggleGroupThreadExpansion(group.groupId),
-            onOpenDetail: (threadId) =>
-                unawaited(_openThreadDetail(controller, threadId)),
+                onToggleGroupThreadExpansion(group.groupId),
+            onOpenDetail: onOpenThread,
           );
         },
       ),
     );
+  }
+}
+
+class _WideThreadDetailPane extends StatelessWidget {
+  const _WideThreadDetailPane({
+    required this.bridgeApiBaseUrl,
+    required this.selection,
+    required this.selectedThreadId,
+    required this.onDraftCreated,
+  });
+
+  final String bridgeApiBaseUrl;
+  final _WideThreadWorkspaceSelection? selection;
+  final String? selectedThreadId;
+  final ValueChanged<ThreadDraftCreatedTransition> onDraftCreated;
+
+  @override
+  Widget build(BuildContext context) {
+    final draftGroup = selection?.draftGroup;
+    if (draftGroup != null) {
+      return ThreadDetailPage.draft(
+        key: ValueKey('thread-draft-${draftGroup.groupId}'),
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        draftWorkspacePath: draftGroup.workspacePath,
+        draftWorkspaceLabel: draftGroup.label,
+        showBackButton: false,
+        embedInScaffold: false,
+        onDraftThreadCreated: onDraftCreated,
+      );
+    }
+
+    if (selectedThreadId?.isNotEmpty ?? false) {
+      return ThreadDetailPage(
+        key: ValueKey(
+          'thread-wide-detail-${selection?.presentationKey ?? selectedThreadId}',
+        ),
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: selectedThreadId,
+        initialComposerInput: selection?.initialComposerInput,
+        initialAttachedImages:
+            selection?.initialAttachedImages ?? const <XFile>[],
+        initialSelectedModel: selection?.initialSelectedModel,
+        initialSelectedReasoningEffort:
+            selection?.initialSelectedReasoningEffort,
+        showBackButton: false,
+        embedInScaffold: false,
+      );
+    }
+
+    return const _WideThreadEmptyState();
+  }
+}
+
+class _WideThreadEmptyState extends StatelessWidget {
+  const _WideThreadEmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('thread-list-wide-placeholder'),
+      color: AppTheme.background,
+      padding: const EdgeInsets.all(32),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: Container(
+            padding: const EdgeInsets.all(28),
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceZinc900,
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceZinc800,
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: PhosphorIcon(
+                    PhosphorIcons.chatCircleDots(PhosphorIconsStyle.duotone),
+                    color: AppTheme.emerald,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'Pick a thread or start a new session',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.6,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'The right pane stays ready for live detail, composer controls, and approvals as soon as you select a thread from the workspace list.',
+                  style: TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 15,
+                    height: 1.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WideThreadWorkspaceSelection {
+  const _WideThreadWorkspaceSelection._({
+    this.threadId,
+    this.draftGroup,
+    this.initialComposerInput,
+    this.initialAttachedImages = const [],
+    this.initialSelectedModel,
+    this.initialSelectedReasoningEffort,
+    this.presentationKey,
+  });
+
+  factory _WideThreadWorkspaceSelection.thread(String threadId) {
+    return _WideThreadWorkspaceSelection._(
+      threadId: threadId,
+      presentationKey: threadId,
+    );
+  }
+
+  factory _WideThreadWorkspaceSelection.draft(ThreadWorkspaceGroup draftGroup) {
+    return _WideThreadWorkspaceSelection._(
+      draftGroup: draftGroup,
+      presentationKey: 'draft-${draftGroup.groupId}',
+    );
+  }
+
+  factory _WideThreadWorkspaceSelection.createdThread(
+    ThreadDraftCreatedTransition transition,
+  ) {
+    return _WideThreadWorkspaceSelection._(
+      threadId: transition.threadId,
+      initialComposerInput: transition.initialComposerInput,
+      initialAttachedImages: transition.initialAttachedImages,
+      initialSelectedModel: transition.initialSelectedModel,
+      initialSelectedReasoningEffort: transition.initialSelectedReasoningEffort,
+      presentationKey:
+          '${transition.threadId}-${DateTime.now().microsecondsSinceEpoch}',
+    );
+  }
+
+  final String? threadId;
+  final ThreadWorkspaceGroup? draftGroup;
+  final String? initialComposerInput;
+  final List<XFile> initialAttachedImages;
+  final String? initialSelectedModel;
+  final String? initialSelectedReasoningEffort;
+  final String? presentationKey;
+}
+
+ConnectionBannerState _threadListConnectionBannerState(
+  LiveConnectionState state,
+) {
+  switch (state) {
+    case LiveConnectionState.connected:
+      return ConnectionBannerState.connected;
+    case LiveConnectionState.reconnecting:
+      return ConnectionBannerState.reconnecting;
+    case LiveConnectionState.disconnected:
+      return ConnectionBannerState.disconnected;
+  }
+}
+
+String _threadListConnectionBannerDetail(ThreadListState state) {
+  switch (state.liveConnectionState) {
+    case LiveConnectionState.connected:
+      return 'Thread socket is live.';
+    case LiveConnectionState.reconnecting:
+      return state.staleMessage ?? 'Live updates dropped. Reconnecting now.';
+    case LiveConnectionState.disconnected:
+      return state.errorMessage ??
+          state.staleMessage ??
+          'Bridge is offline. Thread updates are unavailable.';
   }
 }
 
@@ -515,6 +946,7 @@ class _ThreadWorkspaceSection extends StatelessWidget {
     required this.onToggleCollapsed,
     required this.onToggleThreadExpansion,
     required this.onOpenDetail,
+    this.selectedThreadId,
   });
 
   final ThreadWorkspaceGroup group;
@@ -524,6 +956,7 @@ class _ThreadWorkspaceSection extends StatelessWidget {
   final VoidCallback onToggleCollapsed;
   final VoidCallback onToggleThreadExpansion;
   final ValueChanged<String> onOpenDetail;
+  final String? selectedThreadId;
 
   @override
   Widget build(BuildContext context) {
@@ -550,14 +983,16 @@ class _ThreadWorkspaceSection extends StatelessWidget {
                   color: AppTheme.emerald,
                 ),
                 const SizedBox(width: 10),
-                Text(
-                  group.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.jetBrainsMono(
-                    color: AppTheme.textMuted,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
+                Flexible(
+                  child: Text(
+                    group.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.jetBrainsMono(
+                      color: AppTheme.textMuted,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -594,6 +1029,8 @@ class _ThreadWorkspaceSection extends StatelessWidget {
                     ) ...[
                       _ThreadSummaryCard(
                         thread: visibleThreads[index],
+                        isSelected:
+                            visibleThreads[index].threadId == selectedThreadId,
                         onOpenDetail: () =>
                             onOpenDetail(visibleThreads[index].threadId),
                       ),
@@ -633,10 +1070,15 @@ class _ThreadWorkspaceSection extends StatelessWidget {
 }
 
 class _ThreadSummaryCard extends StatelessWidget {
-  const _ThreadSummaryCard({required this.thread, required this.onOpenDetail});
+  const _ThreadSummaryCard({
+    required this.thread,
+    required this.onOpenDetail,
+    this.isSelected = false,
+  });
 
   final ThreadSummaryDto thread;
   final VoidCallback onOpenDetail;
+  final bool isSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -669,9 +1111,22 @@ class _ThreadSummaryCard extends StatelessWidget {
     return InkWell(
       key: Key('thread-summary-card-${thread.threadId}'),
       onTap: onOpenDetail,
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
+      borderRadius: BorderRadius.circular(18),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? AppTheme.surfaceZinc800.withValues(alpha: 0.92)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: isSelected
+                ? AppTheme.emerald.withValues(alpha: 0.35)
+                : Colors.transparent,
+          ),
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

@@ -13,6 +13,7 @@ class _ThreadDetailHeader extends StatelessWidget {
     required this.onStartCommitAction,
     required this.onOpenOnMac,
     required this.isHeaderCollapsed,
+    required this.showBackButton,
   });
 
   final ThreadDetailState state;
@@ -26,6 +27,7 @@ class _ThreadDetailHeader extends StatelessWidget {
   final Future<void> Function() onStartCommitAction;
   final Future<void> Function() onOpenOnMac;
   final ValueListenable<bool> isHeaderCollapsed;
+  final bool showBackButton;
 
   @override
   Widget build(BuildContext context) {
@@ -36,6 +38,7 @@ class _ThreadDetailHeader extends StatelessWidget {
         connectionDetail: state.errorMessage == null
             ? _threadDetailConnectionBannerDetail(state)
             : null,
+        showBackButton: showBackButton,
       );
     }
 
@@ -52,6 +55,7 @@ class _ThreadDetailHeader extends StatelessWidget {
       isHeaderCollapsed: isHeaderCollapsed,
       connectionState: state.liveConnectionState,
       connectionDetail: _threadDetailConnectionBannerDetail(state),
+      showBackButton: showBackButton,
     );
   }
 }
@@ -70,6 +74,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
     required this.isHeaderCollapsed,
     required this.connectionState,
     required this.connectionDetail,
+    required this.showBackButton,
   });
 
   final ThreadDetailState state;
@@ -84,6 +89,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
   final ValueListenable<bool> isHeaderCollapsed;
   final LiveConnectionState connectionState;
   final String? connectionDetail;
+  final bool showBackButton;
 
   @override
   Widget build(BuildContext context) {
@@ -104,15 +110,18 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
         children: [
           Row(
             children: [
-              IconButton(
-                key: const Key('thread-detail-back-button'),
-                onPressed: onBack,
-                icon: PhosphorIcon(
-                  PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
-                  size: 20,
-                  color: AppTheme.textMuted,
-                ),
-              ),
+              if (showBackButton)
+                IconButton(
+                  key: const Key('thread-detail-back-button'),
+                  onPressed: onBack,
+                  icon: PhosphorIcon(
+                    PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
+                    size: 20,
+                    color: AppTheme.textMuted,
+                  ),
+                )
+              else
+                const SizedBox(width: 16),
               Expanded(
                 child: Text(
                   thread.title,
@@ -129,7 +138,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
             ],
           ),
           Padding(
-            padding: const EdgeInsets.only(left: 36),
+            padding: EdgeInsets.only(left: showBackButton ? 36 : 16),
             child: SingleChildScrollView(
               key: const Key('thread-detail-metadata-scroll'),
               scrollDirection: Axis.horizontal,
@@ -186,7 +195,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
             state: _threadDetailConnectionBannerState(connectionState),
             detail: connectionDetail,
             compact: true,
-            margin: const EdgeInsets.fromLTRB(36, 12, 0, 0),
+            margin: EdgeInsets.fromLTRB(showBackButton ? 36 : 16, 12, 0, 0),
           ),
           ValueListenableBuilder<bool>(
             valueListenable: isHeaderCollapsed,
@@ -204,7 +213,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
               children: [
                 const SizedBox(height: 16),
                 Padding(
-                  padding: const EdgeInsets.only(left: 36),
+                  padding: EdgeInsets.only(left: showBackButton ? 36 : 16),
                   child: Row(
                     children: [
                       Expanded(
@@ -382,11 +391,13 @@ class _UnavailableThreadDetailHeader extends StatelessWidget {
     required this.onBack,
     required this.connectionState,
     required this.connectionDetail,
+    required this.showBackButton,
   });
 
   final VoidCallback onBack;
   final LiveConnectionState connectionState;
   final String? connectionDetail;
+  final bool showBackButton;
 
   @override
   Widget build(BuildContext context) {
@@ -400,15 +411,18 @@ class _UnavailableThreadDetailHeader extends StatelessWidget {
         children: [
           Row(
             children: [
-              IconButton(
-                key: const Key('thread-detail-back-button'),
-                onPressed: onBack,
-                icon: PhosphorIcon(
-                  PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
-                  size: 20,
-                  color: AppTheme.textMuted,
-                ),
-              ),
+              if (showBackButton)
+                IconButton(
+                  key: const Key('thread-detail-back-button'),
+                  onPressed: onBack,
+                  icon: PhosphorIcon(
+                    PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
+                    size: 20,
+                    color: AppTheme.textMuted,
+                  ),
+                )
+              else
+                const SizedBox(width: 8),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
