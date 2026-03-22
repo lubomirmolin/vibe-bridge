@@ -17,6 +17,9 @@ String _explorationExpansionId(
   return 'exploration:$anchorEventId:$sourceIds';
 }
 
+String _workSummaryExpansionId(ThreadTimelineWorkSummary summary) =>
+    'work-summary:${summary.sourceEventIds.join('|')}';
+
 class _ThreadActivityCard extends StatelessWidget {
   const _ThreadActivityCard({
     required this.item,
@@ -216,6 +219,125 @@ class _ThreadActivityCard extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _WorkSummaryCard extends StatelessWidget {
+  const _WorkSummaryCard({
+    required this.summary,
+    required this.isTimelineCardExpanded,
+    required this.onTimelineCardExpansionChanged,
+  });
+
+  final ThreadTimelineWorkSummary summary;
+  final bool Function(String id, {required bool defaultValue})
+  isTimelineCardExpanded;
+  final void Function(String id, bool isExpanded)
+  onTimelineCardExpansionChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final expansionId = _workSummaryExpansionId(summary);
+    final isExpanded = isTimelineCardExpanded(expansionId, defaultValue: false);
+    final workedForLabel = _workedForLabel(summary.totalWallTimeSeconds);
+    final actionLabel =
+        '${summary.actionCount} ${summary.actionCount == 1 ? 'action' : 'actions'}';
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceZinc900.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: () =>
+                onTimelineCardExpansionChanged(expansionId, !isExpanded),
+            borderRadius: BorderRadius.circular(16),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.05),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: PhosphorIcon(
+                      PhosphorIcons.terminalWindow(),
+                      color: AppTheme.textMuted,
+                      size: 16,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          workedForLabel ?? 'Bundled activity',
+                          key: const Key('thread-work-summary-title'),
+                          style: const TextStyle(
+                            color: AppTheme.textMain,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          actionLabel,
+                          key: const Key('thread-work-summary-subtitle'),
+                          style: const TextStyle(
+                            color: AppTheme.textMuted,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  PhosphorIcon(
+                    isExpanded
+                        ? PhosphorIcons.caretUp()
+                        : PhosphorIcons.caretDown(),
+                    color: AppTheme.textSubtle,
+                    size: 16,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (isExpanded) ...[
+            Divider(height: 1, color: Colors.white.withValues(alpha: 0.06)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children:
+                    summary.blocks
+                        .map(
+                          (block) => <Widget>[
+                            _ThreadTimelineBlockView(
+                              block: block,
+                              isTimelineCardExpanded: isTimelineCardExpanded,
+                              onTimelineCardExpansionChanged:
+                                  onTimelineCardExpansionChanged,
+                            ),
+                            const SizedBox(height: 12),
+                          ],
+                        )
+                        .expand((widgets) => widgets)
+                        .toList()
+                      ..removeLast(),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

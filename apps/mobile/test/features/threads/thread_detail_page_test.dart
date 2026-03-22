@@ -211,6 +211,98 @@ void main() {
   );
 
   testWidgets(
+    'live thread detail refreshes the generated title without leaving the page',
+    (tester) async {
+      final initialDetail = ThreadDetailDto(
+        contractVersion: contractVersion,
+        threadId: 'thread-123',
+        title: 'New Thread',
+        status: ThreadStatus.running,
+        workspace: '/workspace/codex-mobile-companion',
+        repository: 'codex-mobile-companion',
+        branch: 'master',
+        createdAt: '2026-03-18T09:45:00Z',
+        updatedAt: '2026-03-18T10:00:00Z',
+        source: 'cli',
+        accessMode: AccessMode.controlWithApprovals,
+        lastTurnSummary: 'Starting up',
+      );
+      final refreshedDetail = ThreadDetailDto(
+        contractVersion: contractVersion,
+        threadId: 'thread-123',
+        title: 'Implement shared contracts',
+        status: ThreadStatus.running,
+        workspace: '/workspace/codex-mobile-companion',
+        repository: 'codex-mobile-companion',
+        branch: 'master',
+        createdAt: '2026-03-18T09:45:00Z',
+        updatedAt: '2026-03-18T10:00:02Z',
+        source: 'cli',
+        accessMode: AccessMode.controlWithApprovals,
+        lastTurnSummary: 'Normalizing shared contract fields',
+      );
+      final listApi = FakeThreadListBridgeApi(
+        scriptedResults: [
+          [
+            const ThreadSummaryDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'New Thread',
+              status: ThreadStatus.running,
+              workspace: '/workspace/codex-mobile-companion',
+              repository: 'codex-mobile-companion',
+              branch: 'master',
+              updatedAt: '2026-03-18T10:00:00Z',
+            ),
+          ],
+        ],
+      );
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [initialDetail, refreshedDetail],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+      );
+      final liveStream = FakeThreadLiveStream();
+
+      await _pumpThreadListApp(
+        tester,
+        listApi: listApi,
+        detailApi: detailApi,
+        liveStream: liveStream,
+      );
+
+      await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('New Thread'), findsOneWidget);
+      expect(find.text('Implement shared contracts'), findsNothing);
+
+      liveStream.emit(
+        BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-title-refresh',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:00:01Z',
+          payload: {
+            'type': 'agentMessage',
+            'delta': 'Normalizing shared contract fields',
+          },
+        ),
+      );
+
+      await tester.pump(const Duration(milliseconds: 750));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Implement shared contracts'), findsOneWidget);
+      expect(find.text('New Thread'), findsNothing);
+    },
+  );
+
+  testWidgets(
     'draft thread submission navigates even when selected-thread persistence stalls',
     (tester) async {
       final createdThread = ThreadDetailDto(
@@ -286,7 +378,7 @@ void main() {
   );
 
   testWidgets(
-    'real-thread initial 80-entry slice keeps latest context and meaningful command/file activity visible',
+    'real-thread initial 80-entry slice keeps latest context and bundled work activity visible',
     (tester) async {
       final fixture = _loadRealThreadFixture();
 
@@ -310,7 +402,7 @@ void main() {
       final latestMessage = find.textContaining(
         'All of the old local app/server processes are down.',
       );
-      final latestCommand = find.textContaining('kill -9 16121 16103');
+      final workSummary = find.byKey(const Key('thread-work-summary-title'));
 
       final args = ThreadDetailControllerArgs(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
@@ -324,11 +416,10 @@ void main() {
         threadDetailControllerProvider(args),
       );
 
-      await _scrollUntilVisible(tester, latestCommand);
       await _scrollUntilVisible(tester, latestMessage);
 
       expect(latestMessage, findsOneWidget);
-      expect(latestCommand, findsOneWidget);
+      expect(workSummary, findsWidgets);
       expect(
         controllerState.visibleItems.any(
           (item) =>
@@ -345,10 +436,6 @@ void main() {
         ),
         isTrue,
       );
-
-      final commandY = tester.getTopLeft(latestCommand).dy;
-      final messageY = tester.getTopLeft(latestMessage).dy;
-      expect(commandY, lessThan(messageY));
       expect(detailApi.timelineFetchCount, 1);
     },
   );
@@ -561,14 +648,19 @@ void main() {
 
       await _scrollUntilVisible(
         tester,
-        find.byKey(const Key('thread-explored-files-summary')),
+        find.byKey(const Key('thread-work-summary-title')),
       );
 
       expect(find.text('write_stdin'), findsNothing);
       expect(
-        find.byKey(const Key('thread-explored-files-summary')),
+        find.byKey(const Key('thread-work-summary-title')),
         findsOneWidget,
       );
+      expect(find.text('Explored 1 file, 1 search'), findsNothing);
+
+      await tester.tap(find.byKey(const Key('thread-work-summary-title')));
+      await tester.pumpAndSettle();
+
       expect(find.text('Explored 1 file, 1 search'), findsOneWidget);
       expect(find.text('Read thread_api.rs'), findsOneWidget);
       expect(
@@ -630,8 +722,17 @@ void main() {
 
       await _scrollUntilVisible(
         tester,
-        find.byKey(const Key('thread-explored-files-summary')),
+        find.byKey(const Key('thread-work-summary-title')),
       );
+
+      expect(
+        find.byKey(const Key('thread-work-summary-title')),
+        findsOneWidget,
+      );
+      expect(find.text('Explored 2 files, 4 searches'), findsNothing);
+
+      await tester.tap(find.byKey(const Key('thread-work-summary-title')));
+      await tester.pumpAndSettle();
 
       expect(find.text('Explored 2 files, 4 searches'), findsOneWidget);
       expect(find.text('Read thread_detail_controller.dart'), findsOneWidget);
@@ -1606,7 +1707,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
   });
 
   testWidgets(
-    'read-only inspection commands collapse into an exploration summary',
+    'read-only inspection commands collapse into a bundled work summary',
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(
         detailScriptByThreadId: {
@@ -1675,18 +1776,19 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
 
       await _scrollUntilVisible(
         tester,
-        find.byKey(const Key('thread-explored-files-summary')),
+        find.byKey(const Key('thread-work-summary-title')),
       );
       expect(
-        find.byKey(const Key('thread-explored-files-summary')),
+        find.byKey(const Key('thread-work-summary-title')),
         findsOneWidget,
       );
-      expect(find.text('Explored 2 files, 1 search'), findsOneWidget);
       expect(
-        find.byKey(const Key('thread-worked-for-summary')),
+        find.byKey(const Key('thread-work-summary-subtitle')),
         findsOneWidget,
       );
       expect(find.text('Worked for 49s'), findsOneWidget);
+      expect(find.text('4 actions'), findsOneWidget);
+      expect(find.text('Explored 2 files, 1 search'), findsNothing);
       expect(
         find.textContaining('Background terminal finished with nl -ba'),
         findsNothing,
@@ -1701,10 +1803,19 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       );
       expect(
         find.textContaining('Read thread_activity_item.dart'),
-        findsOneWidget,
+        findsNothing,
       );
       expect(
         find.textContaining('Read parsed_command_output.dart'),
+        findsNothing,
+      );
+
+      await tester.tap(find.byKey(const Key('thread-work-summary-title')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Explored 2 files, 1 search'), findsOneWidget);
+      expect(
+        find.byKey(const Key('thread-worked-for-summary')),
         findsOneWidget,
       );
     },

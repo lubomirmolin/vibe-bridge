@@ -1,5 +1,6 @@
 import 'package:codex_mobile_companion/features/threads/domain/parsed_command_output.dart';
 import 'package:codex_mobile_companion/features/threads/domain/thread_activity_item.dart';
+import 'package:codex_mobile_companion/features/threads/domain/thread_timeline_block.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -336,4 +337,53 @@ Output:
       );
     },
   );
+
+  test('consecutive work items bundle into a work summary block', () {
+    final items = <ThreadActivityItem>[
+      ThreadActivityItem.fromTimelineEntry(
+        ThreadTimelineEntryDto(
+          eventId: 'event-1',
+          kind: BridgeEventKind.commandDelta,
+          occurredAt: '2026-03-19T17:35:04.000Z',
+          summary: 'Background terminal finished',
+          payload: <String, dynamic>{
+            'output': '''
+Command: /bin/zsh -lc "rg -n foo apps/mobile/lib"
+Wall time: 1.2 seconds
+Output:
+Background terminal finished with rg -n foo apps/mobile/lib
+''',
+          },
+        ),
+      ),
+      ThreadActivityItem.fromTimelineEntry(
+        ThreadTimelineEntryDto(
+          eventId: 'event-2',
+          kind: BridgeEventKind.commandDelta,
+          occurredAt: '2026-03-19T17:35:06.000Z',
+          summary: 'Background terminal finished',
+          payload: <String, dynamic>{
+            'output': '''
+Command: /bin/zsh -lc "sed -n '1,20p' apps/mobile/lib/main.dart"
+Wall time: 2.0 seconds
+Output:
+Background terminal finished with sed -n '1,20p' apps/mobile/lib/main.dart
+''',
+          },
+          annotations: ThreadTimelineAnnotationsDto(
+            groupKind: ThreadTimelineGroupKind.exploration,
+            explorationKind: ThreadTimelineExplorationKind.read,
+            entryLabel: 'Read main.dart',
+          ),
+        ),
+      ),
+    ];
+
+    final blocks = buildThreadTimelineBlocks(items);
+
+    expect(blocks, hasLength(1));
+    expect(blocks.single.workSummary, isNotNull);
+    expect(blocks.single.workSummary!.actionCount, 2);
+    expect(blocks.single.workSummary!.totalWallTimeSeconds, 3.2);
+  });
 }

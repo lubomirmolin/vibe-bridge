@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/application/thread_list_controller.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
+import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
@@ -276,37 +277,43 @@ void main() {
     );
   });
 
-  testWidgets(
-    'saved selected thread does not auto-open detail on thread list load',
-    (tester) async {
-      final cacheRepository = _newCacheRepository();
-      await cacheRepository.saveSelectedThreadId('thread-123');
+  testWidgets('saved selected thread auto-opens detail on thread list load', (
+    tester,
+  ) async {
+    final cacheRepository = _newCacheRepository();
+    await cacheRepository.saveSelectedThreadId('thread-123');
 
-      final bridgeApi = FakeThreadListBridgeApi(
-        scriptedResults: [_sampleThreads()],
-      );
+    final listApi = FakeThreadListBridgeApi(
+      scriptedResults: [_sampleThreads()],
+    );
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+    );
 
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            threadListBridgeApiProvider.overrideWithValue(bridgeApi),
-            approvalBridgeApiProvider.overrideWithValue(
-              EmptyApprovalBridgeApi(),
-            ),
-            threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
-            threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
-          ],
-          child: const MaterialApp(
-            home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
-          ),
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          threadListBridgeApiProvider.overrideWithValue(listApi),
+          approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
+          threadDetailBridgeApiProvider.overrideWithValue(detailApi),
+          threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+          threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
+        ],
+        child: const MaterialApp(
+          home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
         ),
-      );
-      await tester.pumpAndSettle();
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(find.text('Implement shared contracts'), findsOneWidget);
-      expect(find.byKey(const Key('thread-detail-back-button')), findsNothing);
-    },
-  );
+    expect(find.text('Implement shared contracts'), findsOneWidget);
+    expect(find.byKey(const Key('thread-detail-back-button')), findsOneWidget);
+  });
 
   testWidgets(
     'stale thread-list reload does not overwrite newer detail-synced metadata',
@@ -664,6 +671,23 @@ ThreadDetailDto _loadRealThreadDetailFixture() {
   return ThreadDetailDto.fromJson(detailJson);
 }
 
+ThreadDetailDto _thread123Detail() {
+  return const ThreadDetailDto(
+    contractVersion: contractVersion,
+    threadId: 'thread-123',
+    title: 'Implement shared contracts',
+    status: ThreadStatus.running,
+    workspace: '/workspace/codex-mobile-companion',
+    repository: 'codex-mobile-companion',
+    branch: 'master',
+    createdAt: '2026-03-18T09:45:00Z',
+    updatedAt: '2026-03-18T10:00:00Z',
+    source: 'cli',
+    accessMode: AccessMode.controlWithApprovals,
+    lastTurnSummary: 'Normalize event payloads',
+  );
+}
+
 List<ThreadSummaryDto> _sampleThreads() {
   return const [
     ThreadSummaryDto(
@@ -846,6 +870,165 @@ class FakeThreadListBridgeApi implements ThreadListBridgeApi {
   }
 }
 
+class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
+  FakeThreadDetailBridgeApi({
+    required Map<String, List<Object>> detailScriptByThreadId,
+    required Map<String, List<Object>> timelineScriptByThreadId,
+  }) : _detailScriptByThreadId = detailScriptByThreadId,
+       _timelineScriptByThreadId = timelineScriptByThreadId;
+
+  final Map<String, List<Object>> _detailScriptByThreadId;
+  final Map<String, List<Object>> _timelineScriptByThreadId;
+
+  @override
+  Future<ModelCatalogDto> fetchModelCatalog({
+    required String bridgeApiBaseUrl,
+  }) async {
+    return fallbackModelCatalog;
+  }
+
+  @override
+  Future<ThreadSnapshotDto> createThread({
+    required String bridgeApiBaseUrl,
+    required String workspace,
+    String? model,
+  }) async {
+    throw const ThreadCreateBridgeException(
+      message: 'Thread creation is not used in thread-list tests.',
+    );
+  }
+
+  @override
+  Future<ThreadDetailDto> fetchThreadDetail({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    final scriptedResult = _nextResult(_detailScriptByThreadId, threadId);
+    if (scriptedResult is ThreadDetailDto) {
+      return scriptedResult;
+    }
+    if (scriptedResult is ThreadDetailBridgeException) {
+      throw scriptedResult;
+    }
+
+    throw StateError('Unsupported detail scripted result: $scriptedResult');
+  }
+
+  @override
+  Future<List<ThreadTimelineEntryDto>> fetchThreadTimeline({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    final scriptedResult = _nextResult(_timelineScriptByThreadId, threadId);
+    if (scriptedResult is List<ThreadTimelineEntryDto>) {
+      return scriptedResult;
+    }
+    if (scriptedResult is ThreadDetailBridgeException) {
+      throw scriptedResult;
+    }
+
+    throw StateError('Unsupported timeline scripted result: $scriptedResult');
+  }
+
+  @override
+  Future<ThreadTimelinePageDto> fetchThreadTimelinePage({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? before,
+    int limit = 50,
+  }) async {
+    final detail = _detailScriptByThreadId[threadId]?.first;
+    if (detail is! ThreadDetailDto) {
+      throw StateError('Missing scripted detail for thread "$threadId".');
+    }
+
+    final entries = await fetchThreadTimeline(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+    );
+
+    return ThreadTimelinePageDto(
+      contractVersion: contractVersion,
+      thread: detail,
+      entries: entries,
+      nextBefore: null,
+      hasMoreBefore: false,
+    );
+  }
+
+  @override
+  Future<TurnMutationResult> startTurn({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String prompt,
+    List<String> images = const <String>[],
+    String? model,
+    String? effort,
+  }) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<TurnMutationResult> steerTurn({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String instruction,
+  }) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<TurnMutationResult> interruptTurn({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<OpenOnMacResponseDto> openOnMac({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<GitStatusResponseDto> fetchGitStatus({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<MutationResultResponseDto> switchBranch({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String branch,
+  }) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<MutationResultResponseDto> pullRepository({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? remote,
+  }) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<MutationResultResponseDto> pushRepository({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? remote,
+  }) async {
+    throw UnimplementedError();
+  }
+}
+
 class EmptyApprovalBridgeApi implements ApprovalBridgeApi {
   @override
   Future<AccessMode> fetchAccessMode({required String bridgeApiBaseUrl}) async {
@@ -911,4 +1094,20 @@ class FakeThreadLiveStream implements ThreadLiveStream {
       }
     }
   }
+}
+
+Object _nextResult(
+  Map<String, List<Object>> scriptByThreadId,
+  String threadId,
+) {
+  final results = scriptByThreadId[threadId];
+  if (results == null || results.isEmpty) {
+    throw StateError('Missing scripted result for thread "$threadId".');
+  }
+
+  final result = results.first;
+  if (results.length > 1) {
+    results.removeAt(0);
+  }
+  return result;
 }
