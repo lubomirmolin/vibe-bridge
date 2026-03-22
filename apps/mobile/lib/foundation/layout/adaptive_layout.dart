@@ -8,22 +8,24 @@ class AdaptiveLayoutInfo {
     required this.verticalFoldBounds,
   });
 
-  static const double tabletBreakpoint = 900;
+  static const double tabletBreakpoint = 720;
+  static const double shortestSideWideBreakpoint = 700;
   static const double maxContentWidth = 1440;
-  static const double splitPaneMinWidth = 360;
+  static const double splitPaneMinWidth = 320;
 
   final Size windowSize;
   final Rect? verticalFoldBounds;
 
   factory AdaptiveLayoutInfo.fromMediaQuery(MediaQueryData mediaQuery) {
     final verticalFold = mediaQuery.displayFeatures
-        .map((feature) => feature.bounds)
-        .where((bounds) {
-          return bounds.width > 0 &&
-              bounds.height >= mediaQuery.size.height * 0.6 &&
-              bounds.left > 0 &&
-              bounds.right < mediaQuery.size.width;
+        .where((feature) {
+          final bounds = feature.bounds;
+          final spansHeight = bounds.height >= mediaQuery.size.height * 0.6;
+          final splitsScreen =
+              bounds.left > 0 && bounds.right < mediaQuery.size.width;
+          return spansHeight && splitsScreen;
         })
+        .map((feature) => feature.bounds)
         .cast<Rect?>()
         .firstWhere((bounds) => bounds != null, orElse: () => null);
 
@@ -40,7 +42,8 @@ class AdaptiveLayoutInfo {
       return leftWidth >= splitPaneMinWidth && rightWidth >= splitPaneMinWidth;
     }
 
-    return windowSize.width >= tabletBreakpoint;
+    return windowSize.width >= tabletBreakpoint ||
+        windowSize.shortestSide >= shortestSideWideBreakpoint;
   }
 
   bool get hasSeparatingFold => verticalFoldBounds != null && isWideLayout;

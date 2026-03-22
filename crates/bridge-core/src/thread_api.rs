@@ -12,7 +12,9 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 use serde_json::Value;
-use shared_contracts::{BridgeEventEnvelope, ThreadDetailDto, ThreadStatus, ThreadSummaryDto};
+use shared_contracts::{
+    BridgeEventEnvelope, ThreadDetailDto, ThreadGitDiffMode, ThreadStatus, ThreadSummaryDto,
+};
 
 use self::archive::{is_file_change_custom_tool, is_file_change_text};
 pub(crate) use self::archive::{
@@ -129,4 +131,10 @@ pub struct MutationResultResponse {
 pub struct MutationDispatch {
     pub response: MutationResultResponse,
     pub events: Vec<BridgeEventEnvelope<Value>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadGitDiffQuery {
+    pub mode: ThreadGitDiffMode,
+    pub path: Option<String>,
 }

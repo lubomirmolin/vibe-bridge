@@ -12,6 +12,7 @@ class _ThreadDetailHeader extends StatelessWidget {
     required this.onOpenGitSyncSheet,
     required this.onStartCommitAction,
     required this.onOpenOnMac,
+    required this.onOpenDiff,
     required this.isHeaderCollapsed,
     required this.showBackButton,
   });
@@ -26,6 +27,7 @@ class _ThreadDetailHeader extends StatelessWidget {
   final Future<void> Function() onOpenGitSyncSheet;
   final Future<void> Function() onStartCommitAction;
   final Future<void> Function() onOpenOnMac;
+  final Future<void> Function() onOpenDiff;
   final ValueListenable<bool> isHeaderCollapsed;
   final bool showBackButton;
 
@@ -52,6 +54,7 @@ class _ThreadDetailHeader extends StatelessWidget {
       onOpenGitSyncSheet: onOpenGitSyncSheet,
       onStartCommitAction: onStartCommitAction,
       onOpenOnMac: onOpenOnMac,
+      onOpenDiff: onOpenDiff,
       isHeaderCollapsed: isHeaderCollapsed,
       connectionState: state.liveConnectionState,
       connectionDetail: _threadDetailConnectionBannerDetail(state),
@@ -71,6 +74,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
     required this.onOpenGitSyncSheet,
     required this.onStartCommitAction,
     required this.onOpenOnMac,
+    required this.onOpenDiff,
     required this.isHeaderCollapsed,
     required this.connectionState,
     required this.connectionDetail,
@@ -86,6 +90,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
   final Future<void> Function() onOpenGitSyncSheet;
   final Future<void> Function() onStartCommitAction;
   final Future<void> Function() onOpenOnMac;
+  final Future<void> Function() onOpenDiff;
   final ValueListenable<bool> isHeaderCollapsed;
   final LiveConnectionState connectionState;
   final String? connectionDetail;
@@ -286,6 +291,45 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
                           label: Text(
                             gitControls.syncLabel,
                             style: const TextStyle(fontSize: 13),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 2,
+                        child: FilledButton.tonalIcon(
+                          key: const Key('git-header-diff-button'),
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            backgroundColor: AppTheme.surfaceZinc800.withValues(
+                              alpha: 0.5,
+                            ),
+                            foregroundColor: AppTheme.textMain,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              side: BorderSide(
+                                color: Colors.white.withValues(alpha: 0.05),
+                              ),
+                            ),
+                          ),
+                          onPressed: state.thread == null
+                              ? null
+                              : () async {
+                                  await onOpenDiff();
+                                },
+                          icon: PhosphorIcon(
+                            PhosphorIcons.gitDiff(),
+                            size: 16,
+                            color: AppTheme.textSubtle,
+                          ),
+                          label: const Text(
+                            'Diff',
+                            style: TextStyle(fontSize: 13),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
