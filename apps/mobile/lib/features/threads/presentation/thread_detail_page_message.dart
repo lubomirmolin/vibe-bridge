@@ -264,24 +264,41 @@ class _ThreadMessageBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final segments = _MessageBodyParser.parse(body);
-    if (segments.length == 1 && !segments.first.isCode && imageUrls.isEmpty) {
-      return SelectableText(segments.first.content, style: textStyle);
+    if (segments.length == 1 &&
+        segments.first.kind == _MessageSegmentKind.text &&
+        imageUrls.isEmpty) {
+      return _ThreadInlineText(
+        key: const Key('thread-message-text-0'),
+        text: segments.first.content,
+        textStyle: textStyle,
+      );
     }
 
     final children = <Widget>[];
     if (body.isNotEmpty) {
       for (var index = 0; index < segments.length; index++) {
         final segment = segments[index];
-        if (segment.isCode) {
-          children.add(
-            _ThreadCodeBlockViewer(
-              code: segment.content,
-              languageHint: segment.languageHint,
-              filePathHint: segment.filePathHint,
-            ),
-          );
-        } else if (segment.content.isNotEmpty) {
-          children.add(SelectableText(segment.content, style: textStyle));
+        switch (segment.kind) {
+          case _MessageSegmentKind.code:
+            children.add(
+              _ThreadCodeBlockViewer(
+                code: segment.content,
+                languageHint: segment.languageHint,
+                filePathHint: segment.filePathHint,
+              ),
+            );
+            break;
+          case _MessageSegmentKind.text:
+            if (segment.content.isNotEmpty) {
+              children.add(
+                _ThreadInlineText(
+                  key: Key('thread-message-text-$index'),
+                  text: segment.content,
+                  textStyle: textStyle,
+                ),
+              );
+            }
+            break;
         }
 
         if (index < segments.length - 1) {
@@ -302,6 +319,31 @@ class _ThreadMessageBody extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: children,
+    );
+  }
+}
+
+class _ThreadInlineText extends StatelessWidget {
+  const _ThreadInlineText({
+    super.key,
+    required this.text,
+    required this.textStyle,
+  });
+
+  final String text;
+  final TextStyle textStyle;
+
+  @override
+  Widget build(BuildContext context) {
+    final spans = _InlineQuoteParser.parse(text, textStyle);
+    final onlySpan = spans.length == 1 ? spans.first : null;
+    if (onlySpan is TextSpan && onlySpan.style == textStyle) {
+      return SelectableText(text, key: key, style: textStyle);
+    }
+
+    return SelectableText.rich(
+      key: key,
+      TextSpan(style: textStyle, children: spans),
     );
   }
 }
@@ -553,7 +595,9 @@ class _MessageBodyParser {
   static List<_MessageSegment> parse(String body) {
     final matches = _codeFencePattern.allMatches(body).toList(growable: false);
     if (matches.isEmpty) {
-      return <_MessageSegment>[_MessageSegment.text(body)];
+      return body.isEmpty
+          ? const <_MessageSegment>[]
+          : <_MessageSegment>[_MessageSegment.text(body)];
     }
 
     final segments = <_MessageSegment>[];
@@ -589,16 +633,155 @@ class _MessageBodyParser {
   }
 }
 
+class _InlineQuoteParser {
+  static List<InlineSpan> parse(String text, TextStyle textStyle) {
+    if (text.isEmpty) {
+      return const <InlineSpan>[];
+    }
+
+    final spans = <InlineSpan>[];
+    final buffer = StringBuffer();
+    var index = 0;
+
+    void flushText() {
+      if (buffer.isEmpty) {
+        return;
+      }
+      spans.add(TextSpan(text: buffer.toString(), style: textStyle));
+      buffer.clear();
+    }
+
+    while (index < text.length) {
+      final char = text[index];
+      final link = _tryParseMarkdownLink(text, index);
+      if (link != null) {
+        flushText();
+        spans.add(_buildLinkSpan(link.label, textStyle));
+        index = link.end;
+        continue;
+      }
+
+      if (char != '`' || _isPartOfBacktickRun(text, index)) {
+        buffer.write(char);
+        index += 1;
+        continue;
+      }
+
+      final closingIndex = _findClosingBacktick(text, index + 1);
+      if (closingIndex == null) {
+        buffer.write(char);
+        index += 1;
+        continue;
+      }
+
+      flushText();
+      final quotedText = text.substring(index + 1, closingIndex);
+      spans.add(
+        TextSpan(
+          text: quotedText,
+          style: textStyle.copyWith(
+            color: textStyle.color?.withValues(alpha: 0.92),
+            fontStyle: FontStyle.italic,
+            backgroundColor: AppTheme.surfaceZinc800.withValues(alpha: 0.7),
+          ),
+        ),
+      );
+      index = closingIndex + 1;
+    }
+
+    flushText();
+    return spans;
+  }
+
+  static TextSpan _buildLinkSpan(String label, TextStyle textStyle) {
+    final isFileLike = _looksLikeFileReference(label);
+    final baseStyle = textStyle.copyWith(
+      color: AppTheme.emerald,
+      fontWeight: FontWeight.w600,
+    );
+    final style = isFileLike
+        ? GoogleFonts.jetBrainsMono(
+            textStyle: baseStyle,
+            fontSize: textStyle.fontSize,
+            height: textStyle.height,
+          )
+        : baseStyle;
+    return TextSpan(text: label, style: style);
+  }
+
+  static bool _isPartOfBacktickRun(String text, int index) {
+    final previousIsBacktick = index > 0 && text[index - 1] == '`';
+    final nextIsBacktick = index + 1 < text.length && text[index + 1] == '`';
+    return previousIsBacktick || nextIsBacktick;
+  }
+
+  static int? _findClosingBacktick(String text, int start) {
+    for (var index = start; index < text.length; index++) {
+      if (text[index] != '`') {
+        continue;
+      }
+      if (_isPartOfBacktickRun(text, index)) {
+        continue;
+      }
+      return index;
+    }
+    return null;
+  }
+
+  static _MarkdownLinkMatch? _tryParseMarkdownLink(String text, int start) {
+    if (text[start] != '[') {
+      return null;
+    }
+
+    final labelEnd = text.indexOf(']', start + 1);
+    if (labelEnd == -1 || labelEnd + 1 >= text.length) {
+      return null;
+    }
+    if (text[labelEnd + 1] != '(') {
+      return null;
+    }
+
+    final targetEnd = text.indexOf(')', labelEnd + 2);
+    if (targetEnd == -1) {
+      return null;
+    }
+
+    final label = text.substring(start + 1, labelEnd).trim();
+    if (label.isEmpty) {
+      return null;
+    }
+
+    return _MarkdownLinkMatch(label: label, end: targetEnd + 1);
+  }
+
+  static bool _looksLikeFileReference(String label) {
+    return label.contains('/') ||
+        RegExp(
+          r'\.[a-z0-9]{1,8}(?::\d+)?$',
+          caseSensitive: false,
+        ).hasMatch(label);
+  }
+}
+
+class _MarkdownLinkMatch {
+  const _MarkdownLinkMatch({required this.label, required this.end});
+
+  final String label;
+  final int end;
+}
+
+enum _MessageSegmentKind { text, code }
+
 class _MessageSegment {
   const _MessageSegment._({
     required this.content,
-    required this.isCode,
+    required this.kind,
     this.languageHint,
     this.filePathHint,
   });
 
   factory _MessageSegment.text(String content) {
-    return _MessageSegment._(content: content, isCode: false);
+    return _MessageSegment._(content: content, kind: _MessageSegmentKind.text);
   }
 
   factory _MessageSegment.code(
@@ -608,14 +791,14 @@ class _MessageSegment {
   }) {
     return _MessageSegment._(
       content: content,
-      isCode: true,
+      kind: _MessageSegmentKind.code,
       languageHint: languageHint,
       filePathHint: filePathHint,
     );
   }
 
   final String content;
-  final bool isCode;
+  final _MessageSegmentKind kind;
   final String? languageHint;
   final String? filePathHint;
 }

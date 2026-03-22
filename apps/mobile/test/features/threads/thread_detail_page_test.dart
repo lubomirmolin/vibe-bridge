@@ -17,6 +17,7 @@ import 'package:codex_mobile_companion/features/threads/presentation/thread_list
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store_provider.dart';
+import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -694,6 +695,124 @@ void main() {
       );
     },
   );
+
+  testWidgets('assistant inline backticks render as quoted text', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-quote',
+              kind: BridgeEventKind.messageDelta,
+              summary: 'Assistant output',
+              payload: {
+                'type': 'agentMessage',
+                'text':
+                    'Summary: `This came from the earlier discussion.` Next step.',
+              },
+              occurredAt: '2026-03-18T10:02:00Z',
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('thread-message-text-0')),
+    );
+    final textFinder = find.byKey(const Key('thread-message-text-0'));
+    expect(textFinder, findsWidgets);
+    final selectableTextFinder = find.descendant(
+      of: textFinder.first,
+      matching: find.byType(SelectableText),
+    );
+    expect(selectableTextFinder, findsOneWidget);
+    final messageText = tester.widget<SelectableText>(selectableTextFinder);
+    final rootSpan = messageText.textSpan;
+    expect(rootSpan, isNotNull);
+    final children = rootSpan!.children;
+    expect(children, hasLength(3));
+    expect((children![0] as TextSpan).text, 'Summary: ');
+    expect(
+      (children[1] as TextSpan).text,
+      'This came from the earlier discussion.',
+    );
+    expect((children[1] as TextSpan).style?.fontStyle, FontStyle.italic);
+    expect((children[2] as TextSpan).text, ' Next step.');
+  });
+
+  testWidgets('markdown file links show only the label in accent color', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-link',
+              kind: BridgeEventKind.messageDelta,
+              summary: 'Assistant output',
+              payload: {
+                'type': 'agentMessage',
+                'text':
+                    'See [apps/mobile/pubspec.yaml](/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile/pubspec.yaml#L33) for details.',
+              },
+              occurredAt: '2026-03-18T10:02:00Z',
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('thread-message-text-0')),
+    );
+    expect(
+      find.textContaining('/Users/lubomirmolin/PhpstormProjects'),
+      findsNothing,
+    );
+
+    final textFinder = find.byKey(const Key('thread-message-text-0'));
+    expect(textFinder, findsWidgets);
+    final selectableTextFinder = find.descendant(
+      of: textFinder.first,
+      matching: find.byType(SelectableText),
+    );
+    expect(selectableTextFinder, findsOneWidget);
+    final messageText = tester.widget<SelectableText>(selectableTextFinder);
+    final rootSpan = messageText.textSpan;
+    expect(rootSpan, isNotNull);
+    final children = rootSpan!.children;
+    expect(children, hasLength(3));
+    expect((children![0] as TextSpan).text, 'See ');
+    expect((children[1] as TextSpan).text, 'apps/mobile/pubspec.yaml');
+    expect((children[1] as TextSpan).style?.color, AppTheme.emerald);
+    expect((children[2] as TextSpan).text, ' for details.');
+  });
 
   testWidgets(
     'thread detail hides lifecycle and security noise from the conversation timeline',
