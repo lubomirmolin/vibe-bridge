@@ -943,6 +943,13 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       );
     }
 
+    Future<void> startCommitAction() async {
+      await controller.submitCommitAction(
+        model: _selectedModel,
+        reasoningEffort: _selectedReasoningEffortWireValue(),
+      );
+    }
+
     return Scaffold(
       backgroundColor: AppTheme.background,
       body: SafeArea(
@@ -993,6 +1000,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                       onBackWhenUnavailable: () => Navigator.of(context).pop(),
                       onOpenGitBranchSheet: openGitBranchSheet,
                       onOpenGitSyncSheet: openGitSyncSheet,
+                      onStartCommitAction: startCommitAction,
                       onOpenOnMac: controller.openOnMac,
                       isHeaderCollapsed: _isHeaderCollapsed,
                     ),

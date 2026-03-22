@@ -104,6 +104,17 @@ abstract class ThreadDetailBridgeApi {
     required String threadId,
   });
 
+  Future<TurnMutationResult> startCommitAction({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? model,
+    String? effort,
+  }) async {
+    throw const ThreadTurnBridgeException(
+      message: 'Commit is unavailable in this build.',
+    );
+  }
+
   Future<OpenOnMacResponseDto> openOnMac({
     required String bridgeApiBaseUrl,
     required String threadId,
@@ -385,6 +396,25 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   }
 
   @override
+  Future<TurnMutationResult> startCommitAction({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? model,
+    String? effort,
+  }) {
+    return _postActionMutation(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+      operation: 'commit',
+      actionPath: 'actions/commit',
+      body: <String, dynamic>{
+        if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
+        if (effort != null && effort.trim().isNotEmpty) 'effort': effort.trim(),
+      },
+    );
+  }
+
+  @override
   Future<OpenOnMacResponseDto> openOnMac({
     required String bridgeApiBaseUrl,
     required String threadId,
@@ -564,12 +594,50 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String routeSegment,
     required Map<String, dynamic> body,
   }) async {
+    return _postTurnLikeMutation(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+      operation: operation,
+      uri: _buildThreadTurnMutationUri(
+        bridgeApiBaseUrl,
+        threadId,
+        routeSegment,
+      ),
+      body: body,
+    );
+  }
+
+  Future<TurnMutationResult> _postActionMutation({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String operation,
+    required String actionPath,
+    required Map<String, dynamic> body,
+  }) async {
+    return _postTurnLikeMutation(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+      operation: operation,
+      uri: _buildThreadActionMutationUri(
+        bridgeApiBaseUrl,
+        threadId,
+        actionPath,
+      ),
+      body: body,
+    );
+  }
+
+  Future<TurnMutationResult> _postTurnLikeMutation({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String operation,
+    required Uri uri,
+    required Map<String, dynamic> body,
+  }) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
 
     try {
-      final request = await client.postUrl(
-        _buildThreadTurnMutationUri(bridgeApiBaseUrl, threadId, routeSegment),
-      );
+      final request = await client.postUrl(uri);
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
       request.write(jsonEncode(body));
@@ -1021,6 +1089,24 @@ Uri _buildThreadTurnMutationUri(
       : baseUri.path;
   final fullPath =
       '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/${Uri.encodeComponent(action)}';
+  return baseUri.replace(path: fullPath, queryParameters: null);
+}
+
+Uri _buildThreadActionMutationUri(
+  String baseUrl,
+  String threadId,
+  String actionPath,
+) {
+  final baseUri = Uri.parse(baseUrl);
+  final normalizedBasePath = baseUri.path.endsWith('/')
+      ? baseUri.path.substring(0, baseUri.path.length - 1)
+      : baseUri.path;
+  final normalizedActionPath = actionPath
+      .split('/')
+      .map(Uri.encodeComponent)
+      .join('/');
+  final fullPath =
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/$normalizedActionPath';
   return baseUri.replace(path: fullPath, queryParameters: null);
 }
 

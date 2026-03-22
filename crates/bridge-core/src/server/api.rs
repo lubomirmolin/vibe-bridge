@@ -50,6 +50,10 @@ pub fn router(state: BridgeAppState) -> Router {
         .route("/threads/:thread_id/git/pull", post(thread_git_pull))
         .route("/threads/:thread_id/git/push", post(thread_git_push))
         .route("/threads/:thread_id/turns", post(start_turn))
+        .route(
+            "/threads/:thread_id/actions/commit",
+            post(start_commit_action),
+        )
         .route("/threads/:thread_id/interrupt", post(interrupt_turn))
         .route("/approvals", get(list_approvals))
         .route("/approvals/:approval_id/approve", post(approve_approval))
@@ -258,6 +262,14 @@ struct CreateThreadRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct CommitActionRequest {
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default, alias = "reasoning_effort")]
+    effort: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct InterruptTurnRequest {
     turn_id: Option<String>,
 }
@@ -349,6 +361,71 @@ async fn start_turn(
             eprintln!("bridge start_turn failed for {thread_id}: {error}");
             Err(StatusCode::BAD_GATEWAY)
         }
+    }
+}
+
+async fn start_commit_action(
+    State(state): State<BridgeAppState>,
+    Path(thread_id): Path<String>,
+    request: Option<ExtractJson<CommitActionRequest>>,
+) -> Result<Json<TurnMutationAcceptedDto>, (StatusCode, Json<ErrorEnvelope>)> {
+    match state.decide_policy(PolicyAction::TurnCommit).await {
+        PolicyDecision::Allow => {}
+        PolicyDecision::Deny { reason } | PolicyDecision::RequireApproval { reason } => {
+            state
+                .record_security_audit(
+                    "warn",
+                    "turn",
+                    thread_id.clone(),
+                    SecurityAuditEventDto {
+                        actor: "mobile-device".to_string(),
+                        action: "turn_commit".to_string(),
+                        target: "thread.commit".to_string(),
+                        outcome: "denied".to_string(),
+                        reason: reason.to_string(),
+                    },
+                )
+                .await;
+            return Err(error_response(
+                StatusCode::FORBIDDEN,
+                "turn_commit_failed",
+                "policy_denied",
+                reason,
+            ));
+        }
+    }
+
+    let request = request.map(|ExtractJson(request)| request);
+    let model = request
+        .as_ref()
+        .and_then(|value| value.model.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let effort = request
+        .as_ref()
+        .and_then(|value| value.effort.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    match state.start_commit_action(&thread_id, model, effort).await {
+        Ok(response) => {
+            state
+                .record_security_audit(
+                    "info",
+                    "turn",
+                    thread_id.clone(),
+                    SecurityAuditEventDto {
+                        actor: "mobile-device".to_string(),
+                        action: "turn_commit".to_string(),
+                        target: "thread.commit".to_string(),
+                        outcome: "allowed".to_string(),
+                        reason: "policy_allow".to_string(),
+                    },
+                )
+                .await;
+            Ok(Json(response))
+        }
+        Err(error) => Err(git_error_response(&thread_id, error, "turn_commit_failed")),
     }
 }
 
@@ -904,6 +981,7 @@ mod tests {
 
     use axum::body::Body;
     use axum::http::Request;
+    use axum::http::StatusCode;
     use serde_json::Value;
     use serde_json::json;
     use tower::util::ServiceExt;
@@ -972,6 +1050,18 @@ mod tests {
 
         assert_eq!(request.prompt, "");
         assert_eq!(request.images, vec!["data:image/png;base64,AAA"]);
+    }
+
+    #[test]
+    fn commit_action_request_accepts_effort_alias() {
+        let request: super::CommitActionRequest = serde_json::from_value(json!({
+            "model": "gpt-5-mini",
+            "reasoning_effort": "high",
+        }))
+        .expect("request should deserialize");
+
+        assert_eq!(request.model.as_deref(), Some("gpt-5-mini"));
+        assert_eq!(request.effort.as_deref(), Some("high"));
     }
 
     #[tokio::test]
@@ -1282,6 +1372,36 @@ mod tests {
             .expect("body should read");
         let status_json: Value = serde_json::from_slice(&status_body).expect("body should decode");
         assert_eq!(status_json["status"]["behind_by"], 0);
+    }
+
+    #[tokio::test]
+    async fn read_only_commit_action_is_denied() {
+        let sandbox = GitRepoSandbox::new("commit-read-only");
+        let state = test_state();
+        prime_thread(
+            &state,
+            "thread-123",
+            &sandbox.repo_dir,
+            AccessMode::ReadOnly,
+        )
+        .await;
+        let app = router(state);
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/threads/thread-123/actions/commit",
+                json!({}),
+            ))
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert_eq!(decoded["code"], "policy_denied");
     }
 
     #[tokio::test]

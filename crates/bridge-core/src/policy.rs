@@ -5,6 +5,7 @@ pub enum PolicyAction {
     TurnStart,
     TurnSteer,
     TurnInterrupt,
+    TurnCommit,
     ApprovalResolve,
     GitBranchSwitch,
     GitPull,
@@ -50,6 +51,7 @@ impl PolicyEngine {
                 PolicyAction::TurnStart
                 | PolicyAction::TurnSteer
                 | PolicyAction::TurnInterrupt
+                | PolicyAction::TurnCommit
                 | PolicyAction::ApprovalResolve
                 | PolicyAction::GitBranchSwitch
                 | PolicyAction::GitPull
@@ -58,9 +60,10 @@ impl PolicyEngine {
                 },
             },
             AccessMode::ControlWithApprovals => match action {
-                PolicyAction::TurnStart | PolicyAction::TurnSteer | PolicyAction::TurnInterrupt => {
-                    PolicyDecision::Allow
-                }
+                PolicyAction::TurnStart
+                | PolicyAction::TurnSteer
+                | PolicyAction::TurnInterrupt
+                | PolicyAction::TurnCommit => PolicyDecision::Allow,
                 PolicyAction::ApprovalResolve => PolicyDecision::Deny {
                     reason: "approval_resolution_requires_full_control",
                 },
@@ -110,6 +113,10 @@ mod tests {
 
         assert_eq!(
             engine.decide(PolicyAction::TurnSteer),
+            PolicyDecision::Allow
+        );
+        assert_eq!(
+            engine.decide(PolicyAction::TurnCommit),
             PolicyDecision::Allow
         );
         assert_eq!(
