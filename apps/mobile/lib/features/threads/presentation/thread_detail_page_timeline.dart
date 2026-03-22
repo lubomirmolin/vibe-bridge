@@ -3,8 +3,12 @@ part of 'thread_detail_page.dart';
 String _terminalExpansionId(ThreadActivityItem item) =>
     'terminal:${item.eventId}';
 
-String _fileChangeExpansionId(ThreadActivityItem item) =>
-    'file-change:${item.eventId}';
+String _fileChangeExpansionId(ThreadActivityItem item, {String? filePath}) {
+  if (filePath == null || filePath.isEmpty) {
+    return 'file-change:${item.eventId}';
+  }
+  return 'file-change:${item.eventId}:$filePath';
+}
 
 String _explorationExpansionId(
   ThreadTimelineExplorationSummary exploration, {
@@ -46,20 +50,30 @@ class _ThreadActivityCard extends StatelessWidget {
         return const SizedBox.shrink();
       }
       if (parsedContent.hasDiffBlock) {
+        final diffDocument = parsedContent.diffDocument;
         content = Padding(
           padding: const EdgeInsets.only(bottom: 16),
-          child: _CollapsibleFileChangeCard(
-            item: item,
-            parsed: parsedContent,
-            isExpanded: isTimelineCardExpanded(
-              _fileChangeExpansionId(item),
-              defaultValue: false,
-            ),
-            onExpansionChanged: (isExpanded) => onTimelineCardExpansionChanged(
-              _fileChangeExpansionId(item),
-              isExpanded,
-            ),
-          ),
+          child: diffDocument != null && diffDocument.files.length > 1
+              ? _MultiFileChangeCardGroup(
+                  item: item,
+                  parsed: parsedContent,
+                  isTimelineCardExpanded: isTimelineCardExpanded,
+                  onTimelineCardExpansionChanged:
+                      onTimelineCardExpansionChanged,
+                )
+              : _CollapsibleFileChangeCard(
+                  item: item,
+                  parsed: parsedContent,
+                  isExpanded: isTimelineCardExpanded(
+                    _fileChangeExpansionId(item),
+                    defaultValue: false,
+                  ),
+                  onExpansionChanged: (isExpanded) =>
+                      onTimelineCardExpansionChanged(
+                        _fileChangeExpansionId(item),
+                        isExpanded,
+                      ),
+                ),
         );
       } else if (parsedContent.readSnippet != null) {
         content = Padding(
@@ -928,6 +942,188 @@ class _CollapsibleFileChangeCard extends StatelessWidget {
         return 'Deleted file';
       case ParsedDiffChangeType.modified:
       case null:
+        return 'Edited file';
+    }
+  }
+}
+
+class _MultiFileChangeCardGroup extends StatelessWidget {
+  const _MultiFileChangeCardGroup({
+    required this.item,
+    required this.parsed,
+    required this.isTimelineCardExpanded,
+    required this.onTimelineCardExpansionChanged,
+  });
+
+  final ThreadActivityItem item;
+  final ParsedCommandOutput parsed;
+  final bool Function(String id, {required bool defaultValue})
+  isTimelineCardExpanded;
+  final void Function(String id, bool isExpanded)
+  onTimelineCardExpansionChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final diffDocument = parsed.diffDocument;
+    if (diffDocument == null || diffDocument.files.isEmpty) {
+      return _CollapsibleFileChangeCard(
+        item: item,
+        parsed: parsed,
+        isExpanded: isTimelineCardExpanded(
+          _fileChangeExpansionId(item),
+          defaultValue: false,
+        ),
+        onExpansionChanged: (isExpanded) => onTimelineCardExpansionChanged(
+          _fileChangeExpansionId(item),
+          isExpanded,
+        ),
+      );
+    }
+
+    final cards = <Widget>[];
+    for (var index = 0; index < diffDocument.files.length; index += 1) {
+      final file = diffDocument.files[index];
+      if (index > 0) {
+        cards.add(const SizedBox(height: 8));
+      }
+      cards.add(
+        _CollapsibleParsedDiffFileCard(
+          item: item,
+          file: file,
+          isExpanded: isTimelineCardExpanded(
+            _fileChangeExpansionId(item, filePath: file.path),
+            defaultValue: false,
+          ),
+          onExpansionChanged: (isExpanded) => onTimelineCardExpansionChanged(
+            _fileChangeExpansionId(item, filePath: file.path),
+            isExpanded,
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: cards,
+    );
+  }
+}
+
+class _CollapsibleParsedDiffFileCard extends StatelessWidget {
+  const _CollapsibleParsedDiffFileCard({
+    required this.item,
+    required this.file,
+    required this.isExpanded,
+    required this.onExpansionChanged,
+  });
+
+  final ThreadActivityItem item;
+  final ParsedDiffFile file;
+  final bool isExpanded;
+  final ValueChanged<bool> onExpansionChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final fileName = _CodeLanguageResolver.displayName(file.path) ?? file.path;
+    final titlePrefix = _titleForSummary(file.changeType);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceZinc800.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: () => onExpansionChanged(!isExpanded),
+            key: Key('thread-file-change-toggle-$fileName'),
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  PhosphorIcon(
+                    PhosphorIcons.fileCode(),
+                    color: AppTheme.textSubtle,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: RichText(
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      text: TextSpan(
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: AppTheme.textMain,
+                        ),
+                        children: [
+                          TextSpan(text: '$titlePrefix '),
+                          TextSpan(
+                            text: file.path,
+                            style: GoogleFonts.jetBrainsMono(
+                              color: AppTheme.textMain,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          TextSpan(
+                            text: '  +${file.additions}',
+                            style: GoogleFonts.jetBrainsMono(
+                              color: AppTheme.emerald,
+                            ),
+                          ),
+                          TextSpan(
+                            text: ' -${file.deletions}',
+                            style: GoogleFonts.jetBrainsMono(
+                              color: AppTheme.rose,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  PhosphorIcon(
+                    isExpanded
+                        ? PhosphorIcons.caretUp()
+                        : PhosphorIcons.caretDown(),
+                    color: AppTheme.textSubtle,
+                    size: 16,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (isExpanded) ...[
+            const Divider(height: 1, color: Colors.white10),
+            Container(
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.3),
+                borderRadius: const BorderRadius.only(
+                  bottomLeft: Radius.circular(12),
+                  bottomRight: Radius.circular(12),
+                ),
+              ),
+              child: _ThreadDiffViewer(
+                document: ParsedDiffDocument(files: <ParsedDiffFile>[file]),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _titleForSummary(ParsedDiffChangeType changeType) {
+    switch (changeType) {
+      case ParsedDiffChangeType.added:
+        return 'Created file';
+      case ParsedDiffChangeType.deleted:
+        return 'Deleted file';
+      case ParsedDiffChangeType.modified:
         return 'Edited file';
     }
   }

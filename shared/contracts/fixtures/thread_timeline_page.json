@@ -1,7 +1,7 @@
 {
-  "contract_version": "2026-03-20",
+  "contract_version": "2026-03-22",
   "thread": {
-    "contract_version": "2026-03-20",
+    "contract_version": "2026-03-22",
     "thread_id": "thread-123",
     "title": "Improve mobile bridge caching",
     "status": "running",

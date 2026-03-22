@@ -1463,6 +1463,70 @@ Output:
     expect(find.text('Modified'), findsOneWidget);
   });
 
+  testWidgets('multi-file diffs render one visible card per edited file', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-multi-file-diff',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Edited files',
+              payload: {
+                'output': '''
+diff --git a/apps/mobile/lib/main.dart b/apps/mobile/lib/main.dart
+index 1111111..2222222 100644
+--- a/apps/mobile/lib/main.dart
++++ b/apps/mobile/lib/main.dart
+@@ -1,1 +1,1 @@
+-oldMainValue
++newMainValue
+diff --git a/apps/mobile/lib/features/threads/presentation/thread_detail_page.dart b/apps/mobile/lib/features/threads/presentation/thread_detail_page.dart
+index 3333333..4444444 100644
+--- a/apps/mobile/lib/features/threads/presentation/thread_detail_page.dart
++++ b/apps/mobile/lib/features/threads/presentation/thread_detail_page.dart
+@@ -2,1 +2,1 @@
+-oldDetailValue
++newDetailValue
+''',
+              },
+              occurredAt: '2026-03-18T10:02:00Z',
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
+
+    final mainToggle = find.byKey(
+      const Key('thread-file-change-toggle-main.dart'),
+    );
+    final detailToggle = find.byKey(
+      const Key('thread-file-change-toggle-thread_detail_page.dart'),
+    );
+
+    await _scrollUntilVisible(tester, mainToggle);
+    expect(mainToggle, findsOneWidget);
+    expect(detailToggle, findsOneWidget);
+
+    await tester.tap(mainToggle);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('thread-diff-file-main.dart')), findsOneWidget);
+    expect(detailToggle, findsOneWidget);
+  });
+
   testWidgets(
     'expanded file change cards stay expanded after scrolling away and back',
     (tester) async {
@@ -3863,6 +3927,9 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     Map<String, List<Object>>? pullScriptByThreadId,
     Map<String, List<Object>>? pushScriptByThreadId,
     Map<String, List<Object>>? openOnMacScriptByThreadId,
+    this.speechStatus,
+    this.speechTranscriptionResult,
+    this.speechTranscriptionError,
     this.onGitApprovalRequired,
   }) : _detailScriptByThreadId = detailScriptByThreadId,
        _timelineScriptByThreadId = timelineScriptByThreadId,
@@ -3891,10 +3958,14 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   final Map<String, List<Object>> _pullScriptByThreadId;
   final Map<String, List<Object>> _pushScriptByThreadId;
   final Map<String, List<Object>> _openOnMacScriptByThreadId;
+  final SpeechModelStatusDto? speechStatus;
+  final SpeechTranscriptionResultDto? speechTranscriptionResult;
+  final ThreadSpeechBridgeException? speechTranscriptionError;
   final void Function(ApprovalRecordDto approval)? onGitApprovalRequired;
   int detailFetchCount = 0;
   int timelineFetchCount = 0;
   int createThreadCallCount = 0;
+  int transcribeAudioCallCount = 0;
   final List<String> createdThreadWorkspaces = <String>[];
   final List<String?> createdThreadModels = <String?>[];
   final Map<String, List<String>> startTurnPromptsByThreadId =
@@ -3922,12 +3993,13 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   Future<SpeechModelStatusDto> fetchSpeechStatus({
     required String bridgeApiBaseUrl,
   }) async {
-    return const SpeechModelStatusDto(
-      contractVersion: contractVersion,
-      provider: 'fluid_audio',
-      modelId: 'parakeet-tdt-0.6b-v3-coreml',
-      state: SpeechModelState.unsupported,
-    );
+    return speechStatus ??
+        const SpeechModelStatusDto(
+          contractVersion: contractVersion,
+          provider: 'fluid_audio',
+          modelId: 'parakeet-tdt-0.6b-v3-coreml',
+          state: SpeechModelState.unsupported,
+        );
   }
 
   @override
@@ -3936,6 +4008,13 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required List<int> audioBytes,
     String fileName = 'voice-message.wav',
   }) async {
+    transcribeAudioCallCount += 1;
+    if (speechTranscriptionError != null) {
+      throw speechTranscriptionError!;
+    }
+    if (speechTranscriptionResult != null) {
+      return speechTranscriptionResult!;
+    }
     throw const ThreadSpeechBridgeException(message: 'Speech is unused here.');
   }
 

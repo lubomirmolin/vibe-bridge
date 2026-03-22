@@ -51,6 +51,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
     this.initialAttachedImages = const <XFile>[],
     this.initialSelectedModel,
     this.initialSelectedReasoningEffort,
+    this.speechRecorder,
   }) : draftWorkspacePath = null,
        draftWorkspaceLabel = null;
 
@@ -60,6 +61,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
     required String this.draftWorkspacePath,
     required String this.draftWorkspaceLabel,
     this.initialVisibleTimelineEntries = 80,
+    this.speechRecorder,
   }) : threadId = null,
        initialComposerInput = null,
        initialAttachedImages = const <XFile>[],
@@ -73,6 +75,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
   final List<XFile> initialAttachedImages;
   final String? initialSelectedModel;
   final String? initialSelectedReasoningEffort;
+  final AudioRecorder? speechRecorder;
 
   bool get isDraft => threadId == null;
   final String bridgeApiBaseUrl;
@@ -92,7 +95,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   late final ValueNotifier<bool> _isHeaderCollapsed;
   late final ValueNotifier<bool> _showNewMessagePill;
   final ImagePicker _imagePicker = ImagePicker();
-  final AudioRecorder _audioRecorder = AudioRecorder();
+  late final AudioRecorder _audioRecorder;
 
   List<ModelOptionDto> _availableModelOptions = fallbackModelCatalog.models;
   List<String> _availableReasoningOptions = const <String>[];
@@ -145,6 +148,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     _timelineScrollController = ScrollController();
     _isHeaderCollapsed = ValueNotifier(false);
     _showNewMessagePill = ValueNotifier(false);
+    _audioRecorder = widget.speechRecorder ?? AudioRecorder();
     _composerFocusNode.addListener(_handleComposerFocusChange);
     _timelineScrollController.addListener(_onScroll);
     _setComposerSelectionsFromCatalog(_availableModelOptions);
