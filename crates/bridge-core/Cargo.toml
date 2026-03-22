@@ -7,10 +7,6 @@ edition = "2024"
 name = "bridge-server"
 path = "src/bin/bridge_server.rs"
 
-[[bin]]
-name = "bridge-server-legacy"
-path = "src/main.rs"
-
 [dependencies]
 axum = { version = "0.7", features = ["http1", "json", "ws"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
