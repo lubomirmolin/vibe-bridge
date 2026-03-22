@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use crate::codex_runtime::CodexRuntimeMode;
 use crate::codex_transport::CodexJsonTransport;
-use crate::rewrite::config::RewriteCodexConfig;
+use crate::server::config::BridgeCodexConfig;
 use crate::thread_api::{
     CodexNotificationNormalizer, CodexNotificationStream,
     load_archive_timeline_entries_for_session_path, load_archive_timeline_entries_for_thread,
@@ -21,7 +21,7 @@ use crate::thread_api::{
 
 #[derive(Debug, Clone)]
 pub struct CodexGateway {
-    config: RewriteCodexConfig,
+    config: BridgeCodexConfig,
     reserved_transports: Arc<Mutex<HashMap<String, ReservedTransport>>>,
 }
 
@@ -123,7 +123,7 @@ impl CodexGateway {
     const MAX_THREADS_TO_FETCH: usize = 100;
     const RESERVED_TRANSPORT_TTL: Duration = Duration::from_secs(120);
 
-    pub fn new(config: RewriteCodexConfig) -> Self {
+    pub fn new(config: BridgeCodexConfig) -> Self {
         Self {
             config,
             reserved_transports: Arc::new(Mutex::new(HashMap::new())),
@@ -419,7 +419,7 @@ fn start_turn(
         .map_err(|error| format!("invalid turn/start response from codex: {error}"))
 }
 
-fn connect_transport(config: &RewriteCodexConfig) -> Result<CodexJsonTransport, String> {
+fn connect_transport(config: &BridgeCodexConfig) -> Result<CodexJsonTransport, String> {
     match config.mode {
         CodexRuntimeMode::Attach => {
             CodexJsonTransport::start(&config.command, &config.args, config.endpoint.as_deref())
@@ -1432,7 +1432,7 @@ mod tests {
         prefer_archive_timeline_when_rpc_lacks_tool_events,
     };
     use crate::codex_runtime::CodexRuntimeMode;
-    use crate::rewrite::config::RewriteCodexConfig;
+    use crate::server::config::BridgeCodexConfig;
     use serde_json::json;
     use shared_contracts::{BridgeEventKind, ThreadTimelineEntryDto};
     use std::sync::mpsc;
@@ -1553,7 +1553,7 @@ mod tests {
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| "codex".to_string());
 
-            let gateway = CodexGateway::new(RewriteCodexConfig {
+            let gateway = CodexGateway::new(BridgeCodexConfig {
                 mode: CodexRuntimeMode::Spawn,
                 endpoint: None,
                 command: codex_bin,

@@ -1,17 +1,17 @@
 use std::path::PathBuf;
 
 use crate::codex_runtime::CodexRuntimeMode;
-use crate::rewrite::pairing_route::{PairingRouteState, resolve_pairing_route_contract};
+use crate::server::pairing_route::{PairingRouteState, resolve_pairing_route_contract};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RewriteCodexConfig {
+pub struct BridgeCodexConfig {
     pub mode: CodexRuntimeMode,
     pub endpoint: Option<String>,
     pub command: String,
     pub args: Vec<String>,
 }
 
-impl Default for RewriteCodexConfig {
+impl Default for BridgeCodexConfig {
     fn default() -> Self {
         Self {
             mode: CodexRuntimeMode::Auto,
@@ -23,15 +23,15 @@ impl Default for RewriteCodexConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RewriteConfig {
+pub struct BridgeConfig {
     pub host: String,
     pub port: u16,
     pub state_directory: PathBuf,
     pub pairing_route: PairingRouteState,
-    pub codex: RewriteCodexConfig,
+    pub codex: BridgeCodexConfig,
 }
 
-impl RewriteConfig {
+impl BridgeConfig {
     pub fn from_env_and_args<I>(args: I) -> Result<Self, String>
     where
         I: IntoIterator<Item = String>,
@@ -146,7 +146,7 @@ impl RewriteConfig {
                 port,
                 pairing_route_contract.requires_runtime_serve_check,
             ),
-            codex: RewriteCodexConfig {
+            codex: BridgeCodexConfig {
                 mode: codex_mode,
                 endpoint: codex_endpoint,
                 command: codex_command,
@@ -160,11 +160,11 @@ impl RewriteConfig {
 mod tests {
     use std::path::PathBuf;
 
-    use super::RewriteConfig;
+    use super::BridgeConfig;
 
     #[test]
     fn parses_args_overriding_defaults() {
-        let config = RewriteConfig::from_env_and_args([
+        let config = BridgeConfig::from_env_and_args([
             "--host".to_string(),
             "0.0.0.0".to_string(),
             "--port".to_string(),

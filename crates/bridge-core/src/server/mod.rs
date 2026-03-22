@@ -9,12 +9,12 @@ mod state;
 use axum::serve;
 use tokio::net::TcpListener;
 
-pub use config::RewriteConfig;
-use state::RewriteAppState;
+pub use config::BridgeConfig;
+use state::BridgeAppState;
 
 pub async fn run_from_env() -> Result<(), String> {
-    let config = RewriteConfig::from_env_and_args(std::env::args().skip(1))?;
-    let state = RewriteAppState::from_config(config.clone()).await;
+    let config = BridgeConfig::from_env_and_args(std::env::args().skip(1))?;
+    let state = BridgeAppState::from_config(config.clone()).await;
     state.start_notification_forwarder();
     state.start_summary_reconciler();
     let app = api::router(state);

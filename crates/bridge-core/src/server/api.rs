@@ -15,11 +15,11 @@ use crate::pairing::{
     PairingFinalizeError, PairingFinalizeRequest, PairingHandshakeError, PairingHandshakeRequest,
     PairingTrustSnapshot,
 };
-use crate::rewrite::events::{EventSubscriptionQuery, stream_events};
-use crate::rewrite::pairing_route::PairingRouteHealth;
-use crate::rewrite::state::RewriteAppState;
+use crate::server::events::{EventSubscriptionQuery, stream_events};
+use crate::server::pairing_route::PairingRouteHealth;
+use crate::server::state::BridgeAppState;
 
-pub fn router(state: RewriteAppState) -> Router {
+pub fn router(state: BridgeAppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/bootstrap", get(bootstrap))
@@ -56,16 +56,16 @@ async fn healthz() -> Json<serde_json::Value> {
     }))
 }
 
-async fn bootstrap(State(state): State<RewriteAppState>) -> Json<BootstrapDto> {
+async fn bootstrap(State(state): State<BridgeAppState>) -> Json<BootstrapDto> {
     Json(state.bootstrap_payload().await)
 }
 
-async fn model_catalog(State(state): State<RewriteAppState>) -> Json<ModelCatalogDto> {
+async fn model_catalog(State(state): State<BridgeAppState>) -> Json<ModelCatalogDto> {
     Json(state.model_catalog_payload().await)
 }
 
 async fn pairing_session(
-    State(state): State<RewriteAppState>,
+    State(state): State<BridgeAppState>,
 ) -> Result<Json<crate::pairing::PairingSessionResponse>, (StatusCode, Json<ErrorEnvelope>)> {
     let pairing_route = state.pairing_route_health();
     if !pairing_route.reachable {
@@ -83,12 +83,12 @@ async fn pairing_session(
     Ok(Json(state.issue_pairing_session()))
 }
 
-async fn list_threads(State(state): State<RewriteAppState>) -> Json<Vec<ThreadSummaryDto>> {
+async fn list_threads(State(state): State<BridgeAppState>) -> Json<Vec<ThreadSummaryDto>> {
     Json(state.projections().list_summaries().await)
 }
 
 async fn thread_snapshot(
-    State(state): State<RewriteAppState>,
+    State(state): State<BridgeAppState>,
     Path(thread_id): Path<String>,
 ) -> Result<Json<ThreadSnapshotDto>, StatusCode> {
     match state.ensure_snapshot(&thread_id).await {
@@ -97,7 +97,7 @@ async fn thread_snapshot(
     }
 }
 
-async fn get_access_mode(State(state): State<RewriteAppState>) -> Json<AccessModeResponse> {
+async fn get_access_mode(State(state): State<BridgeAppState>) -> Json<AccessModeResponse> {
     Json(AccessModeResponse {
         contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
         access_mode: state.access_mode().await,
@@ -105,7 +105,7 @@ async fn get_access_mode(State(state): State<RewriteAppState>) -> Json<AccessMod
 }
 
 async fn set_access_mode(
-    State(state): State<RewriteAppState>,
+    State(state): State<BridgeAppState>,
     Query(query): Query<AccessModeMutationQuery>,
 ) -> Result<Json<AccessModeResponse>, (StatusCode, Json<ErrorEnvelope>)> {
     let Some(access_mode) = parse_access_mode(&query.mode) else {
@@ -167,16 +167,14 @@ async fn set_access_mode(
     }))
 }
 
-async fn list_approvals(State(state): State<RewriteAppState>) -> Json<ApprovalListResponse> {
+async fn list_approvals(State(state): State<BridgeAppState>) -> Json<ApprovalListResponse> {
     Json(ApprovalListResponse {
         contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
         approvals: state.projections().list_approvals().await,
     })
 }
 
-async fn list_security_events(
-    State(state): State<RewriteAppState>,
-) -> Json<SecurityEventsResponse> {
+async fn list_security_events(State(state): State<BridgeAppState>) -> Json<SecurityEventsResponse> {
     Json(SecurityEventsResponse {
         contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
         events: state.security_events_snapshot().await,
@@ -237,7 +235,7 @@ struct InterruptTurnRequest {
 }
 
 async fn pairing_finalize(
-    State(state): State<RewriteAppState>,
+    State(state): State<BridgeAppState>,
     Query(query): Query<PairingFinalizeQuery>,
 ) -> Result<Json<crate::pairing::PairingFinalizeResponse>, (StatusCode, Json<ErrorEnvelope>)> {
     let request = PairingFinalizeRequest {
@@ -255,7 +253,7 @@ async fn pairing_finalize(
 }
 
 async fn pairing_handshake(
-    State(state): State<RewriteAppState>,
+    State(state): State<BridgeAppState>,
     Query(query): Query<PairingHandshakeQuery>,
 ) -> Result<Json<crate::pairing::PairingHandshakeResponse>, (StatusCode, Json<ErrorEnvelope>)> {
     let request = PairingHandshakeRequest {
@@ -271,7 +269,7 @@ async fn pairing_handshake(
 }
 
 async fn pairing_revoke(
-    State(state): State<RewriteAppState>,
+    State(state): State<BridgeAppState>,
     Query(query): Query<PairingRevokeQuery>,
 ) -> Result<Json<crate::pairing::PairingRevokeResponse>, (StatusCode, Json<ErrorEnvelope>)> {
     state
@@ -287,30 +285,30 @@ async fn pairing_revoke(
         })
 }
 
-async fn pairing_trust(State(state): State<RewriteAppState>) -> Json<PairingTrustSnapshot> {
+async fn pairing_trust(State(state): State<BridgeAppState>) -> Json<PairingTrustSnapshot> {
     Json(state.trust_snapshot())
 }
 
-async fn pairing_route(State(state): State<RewriteAppState>) -> Json<PairingRouteHealth> {
+async fn pairing_route(State(state): State<BridgeAppState>) -> Json<PairingRouteHealth> {
     Json(state.pairing_route_health())
 }
 
 async fn start_turn(
-    State(state): State<RewriteAppState>,
+    State(state): State<BridgeAppState>,
     Path(thread_id): Path<String>,
     ExtractJson(request): ExtractJson<StartTurnRequest>,
 ) -> Result<Json<TurnMutationAcceptedDto>, StatusCode> {
     match state.start_turn(&thread_id, &request.prompt).await {
         Ok(response) => Ok(Json(response)),
         Err(error) => {
-            eprintln!("rewrite start_turn failed for {thread_id}: {error}");
+            eprintln!("bridge start_turn failed for {thread_id}: {error}");
             Err(StatusCode::BAD_GATEWAY)
         }
     }
 }
 
 async fn create_thread(
-    State(state): State<RewriteAppState>,
+    State(state): State<BridgeAppState>,
     ExtractJson(request): ExtractJson<CreateThreadRequest>,
 ) -> Result<Json<ThreadSnapshotDto>, StatusCode> {
     match state
@@ -320,7 +318,7 @@ async fn create_thread(
         Ok(snapshot) => Ok(Json(snapshot)),
         Err(error) => {
             eprintln!(
-                "rewrite create_thread failed for workspace {}: {error}",
+                "bridge create_thread failed for workspace {}: {error}",
                 request.workspace
             );
             Err(StatusCode::BAD_GATEWAY)
@@ -329,7 +327,7 @@ async fn create_thread(
 }
 
 async fn interrupt_turn(
-    State(state): State<RewriteAppState>,
+    State(state): State<BridgeAppState>,
     Path(thread_id): Path<String>,
     request: Option<ExtractJson<InterruptTurnRequest>>,
 ) -> Result<Json<TurnMutationAcceptedDto>, StatusCode> {
@@ -339,14 +337,14 @@ async fn interrupt_turn(
     match state.interrupt_turn(&thread_id, turn_id).await {
         Ok(response) => Ok(Json(response)),
         Err(error) => {
-            eprintln!("rewrite interrupt_turn failed for {thread_id}: {error}");
+            eprintln!("bridge interrupt_turn failed for {thread_id}: {error}");
             Err(StatusCode::BAD_GATEWAY)
         }
     }
 }
 
 async fn thread_history(
-    State(state): State<RewriteAppState>,
+    State(state): State<BridgeAppState>,
     Path(thread_id): Path<String>,
     Query(query): Query<ThreadHistoryQuery>,
 ) -> Result<Json<ThreadTimelinePageDto>, StatusCode> {
@@ -362,7 +360,7 @@ async fn thread_history(
 
 async fn events(
     ws: WebSocketUpgrade,
-    State(state): State<RewriteAppState>,
+    State(state): State<BridgeAppState>,
     Query(query): Query<EventSubscriptionQuery>,
 ) -> Response {
     let receiver = state.event_hub().subscribe();
@@ -392,7 +390,7 @@ struct ApprovalListResponse {
 #[derive(Debug, Serialize)]
 struct SecurityEventsResponse {
     contract_version: String,
-    events: Vec<crate::rewrite::state::SecurityEventRecordDto>,
+    events: Vec<crate::server::state::SecurityEventRecordDto>,
 }
 
 fn parse_access_mode(raw: &str) -> Option<AccessMode> {
@@ -471,12 +469,12 @@ mod tests {
 
     use super::router;
     use crate::pairing::PairingFinalizeRequest;
-    use crate::rewrite::config::{RewriteCodexConfig, RewriteConfig};
-    use crate::rewrite::pairing_route::PairingRouteState;
-    use crate::rewrite::state::RewriteAppState;
+    use crate::server::config::{BridgeCodexConfig, BridgeConfig};
+    use crate::server::pairing_route::PairingRouteState;
+    use crate::server::state::BridgeAppState;
 
     #[tokio::test]
-    async fn bootstrap_route_returns_rewrite_contract() {
+    async fn bootstrap_route_returns_bridge_contract() {
         let app = router(test_state());
         let response = app
             .oneshot(
@@ -492,7 +490,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn model_catalog_route_returns_rewrite_contract() {
+    async fn model_catalog_route_returns_bridge_contract() {
         let app = router(test_state());
         let response = app
             .oneshot(
@@ -645,16 +643,16 @@ mod tests {
         assert_eq!(events[0]["event"]["payload"]["reason"], "mode=full_control");
     }
 
-    fn test_state() -> RewriteAppState {
+    fn test_state() -> BridgeAppState {
         let temp_state_directory = std::env::temp_dir().join(format!(
-            "rewrite-pairing-test-{}",
+            "bridge-pairing-test-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock should be monotonic enough")
                 .as_nanos()
         ));
 
-        let config = RewriteConfig {
+        let config = BridgeConfig {
             host: "127.0.0.1".to_string(),
             port: 3110,
             state_directory: temp_state_directory,
@@ -665,10 +663,10 @@ mod tests {
                 3110,
                 false,
             ),
-            codex: RewriteCodexConfig::default(),
+            codex: BridgeCodexConfig::default(),
         };
 
-        RewriteAppState::new(
+        BridgeAppState::new(
             config.codex,
             crate::pairing::PairingSessionService::new(
                 config.host.as_str(),

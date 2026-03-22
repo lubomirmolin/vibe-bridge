@@ -41,9 +41,9 @@ pub mod logging;
 pub mod pairing;
 pub mod persistence;
 pub mod policy;
-pub mod rewrite;
 pub mod runtime_sync;
 pub mod secure_storage;
+pub mod server;
 pub mod stream_router;
 pub mod thread_api;
 

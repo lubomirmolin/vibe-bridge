@@ -18,19 +18,19 @@ use crate::pairing::{
     PairingHandshakeRequest, PairingHandshakeResponse, PairingRevokeRequest, PairingRevokeResponse,
     PairingSessionResponse, PairingSessionService, PairingTrustSnapshot,
 };
-use crate::rewrite::config::{RewriteCodexConfig, RewriteConfig};
-use crate::rewrite::events::EventHub;
-use crate::rewrite::gateway::CodexGateway;
-use crate::rewrite::pairing_route::{PairingRouteHealth, PairingRouteState};
-use crate::rewrite::projection::ProjectionStore;
+use crate::server::config::{BridgeCodexConfig, BridgeConfig};
+use crate::server::events::EventHub;
+use crate::server::gateway::CodexGateway;
+use crate::server::pairing_route::{PairingRouteHealth, PairingRouteState};
+use crate::server::projection::ProjectionStore;
 
 #[derive(Debug, Clone)]
-pub struct RewriteAppState {
-    inner: Arc<RewriteAppStateInner>,
+pub struct BridgeAppState {
+    inner: Arc<BridgeAppStateInner>,
 }
 
 #[derive(Debug)]
-struct RewriteAppStateInner {
+struct BridgeAppStateInner {
     projections: ProjectionStore,
     codex_health: RwLock<ServiceHealthDto>,
     available_models: RwLock<Vec<ModelOptionDto>>,
@@ -50,14 +50,14 @@ pub struct SecurityEventRecordDto {
     pub event: BridgeEventEnvelope<Value>,
 }
 
-impl RewriteAppState {
+impl BridgeAppState {
     pub fn new(
-        config: RewriteCodexConfig,
+        config: BridgeCodexConfig,
         pairing_sessions: PairingSessionService,
         pairing_route: PairingRouteState,
     ) -> Self {
         Self {
-            inner: Arc::new(RewriteAppStateInner {
+            inner: Arc::new(BridgeAppStateInner {
                 projections: ProjectionStore::new(),
                 codex_health: RwLock::new(ServiceHealthDto {
                     status: ServiceHealthStatus::Degraded,
@@ -75,7 +75,7 @@ impl RewriteAppState {
         }
     }
 
-    pub async fn from_config(config: RewriteConfig) -> Self {
+    pub async fn from_config(config: BridgeConfig) -> Self {
         let pairing_sessions = PairingSessionService::new(
             config.host.as_str(),
             config.port,
@@ -299,7 +299,7 @@ impl RewriteAppState {
                         stream
                     }
                     Err(error) => {
-                        eprintln!("rewrite notification stream failed to start: {error}");
+                        eprintln!("bridge notification stream failed to start: {error}");
                         let state = state.clone();
                         handle.block_on(async move {
                             state
@@ -358,7 +358,7 @@ impl RewriteAppState {
                             break;
                         }
                         Err(error) => {
-                            eprintln!("rewrite notification stream failed: {error}");
+                            eprintln!("bridge notification stream failed: {error}");
                             let state = state.clone();
                             handle.block_on(async move {
                                 state
