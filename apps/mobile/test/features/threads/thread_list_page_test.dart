@@ -10,6 +10,7 @@ import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_
 import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:codex_mobile_companion/foundation/layout/adaptive_layout.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store_provider.dart';
 import 'package:flutter/material.dart';
@@ -17,6 +18,171 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets(
+    'wide layout keeps list visible beside an empty detail placeholder',
+    (tester) async {
+      await _setDisplaySize(tester, const Size(1400, 900));
+      final cacheRepository = _newCacheRepository();
+      final bridgeApi = FakeThreadListBridgeApi(
+        scriptedResults: [_sampleThreads()],
+      );
+
+      await _pumpThreadListPage(
+        tester,
+        bridgeApi: bridgeApi,
+        cacheRepository: cacheRepository,
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('thread-list-wide-placeholder')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('thread-wide-left-pane')), findsOneWidget);
+      expect(find.text('Implement shared contracts'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'wide layout opens thread detail inline without removing the list',
+    (tester) async {
+      await _setDisplaySize(tester, const Size(1400, 900));
+      final cacheRepository = _newCacheRepository();
+      final bridgeApi = FakeThreadListBridgeApi(
+        scriptedResults: [_sampleThreads()],
+      );
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+      );
+
+      await _pumpThreadListPage(
+        tester,
+        bridgeApi: bridgeApi,
+        detailApi: detailApi,
+        cacheRepository: cacheRepository,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
+      expect(find.byKey(const Key('thread-wide-left-pane')), findsOneWidget);
+      expect(find.byKey(const Key('thread-detail-back-button')), findsNothing);
+    },
+  );
+
+  testWidgets('wide layout opens draft detail inline from create action', (
+    tester,
+  ) async {
+    await _setDisplaySize(tester, const Size(1400, 900));
+    final cacheRepository = _newCacheRepository();
+    final bridgeApi = FakeThreadListBridgeApi(
+      scriptedResults: [_sampleThreads()],
+    );
+
+    await _pumpThreadListPage(
+      tester,
+      bridgeApi: bridgeApi,
+      cacheRepository: cacheRepository,
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('thread-list-create-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(
+        const Key(
+          'thread-list-workspace-option-/workspace/codex-mobile-companion',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('thread-draft-title')), findsOneWidget);
+    expect(find.byKey(const Key('thread-draft-back-button')), findsNothing);
+  });
+
+  testWidgets('wide layout can collapse the list and reopen it via drawer', (
+    tester,
+  ) async {
+    await _setDisplaySize(tester, const Size(1400, 900));
+    final cacheRepository = _newCacheRepository();
+    final bridgeApi = FakeThreadListBridgeApi(
+      scriptedResults: [_sampleThreads()],
+    );
+
+    await _pumpThreadListPage(
+      tester,
+      bridgeApi: bridgeApi,
+      cacheRepository: cacheRepository,
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('thread-wide-collapse-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('thread-wide-left-pane')), findsNothing);
+    expect(
+      find.byKey(const Key('thread-wide-open-drawer-button')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('thread-wide-open-drawer-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Drawer), findsOneWidget);
+    expect(find.text('Implement shared contracts'), findsOneWidget);
+  });
+
+  testWidgets('narrow layout still pushes to the full-screen detail route', (
+    tester,
+  ) async {
+    await _setDisplaySize(tester, const Size(430, 900));
+    final cacheRepository = _newCacheRepository();
+    final bridgeApi = FakeThreadListBridgeApi(
+      scriptedResults: [_sampleThreads()],
+    );
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+    );
+
+    await _pumpThreadListPage(
+      tester,
+      bridgeApi: bridgeApi,
+      detailApi: detailApi,
+      cacheRepository: cacheRepository,
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
+    expect(find.byKey(const Key('thread-detail-back-button')), findsOneWidget);
+    expect(find.byKey(const Key('thread-wide-left-pane')), findsNothing);
+  });
+
+  test('adaptive layout treats a vertical hinge as a wide split workspace', () {
+    const layout = AdaptiveLayoutInfo(
+      windowSize: Size(1280, 900),
+      verticalFoldBounds: Rect.fromLTWH(420, 0, 48, 900),
+    );
+
+    expect(layout.isWideLayout, isTrue);
+    expect(layout.hasSeparatingFold, isTrue);
+  });
+
   testWidgets(
     'shows loading then populated thread rows with status and context',
     (tester) async {
@@ -676,6 +842,50 @@ ThreadCacheRepository _newCacheRepository() {
   return SecureStoreThreadCacheRepository(
     secureStore: InMemorySecureStore(),
     nowUtc: () => DateTime.utc(2026, 3, 18, 10, 0),
+  );
+}
+
+Future<void> _setDisplaySize(WidgetTester tester, Size size) async {
+  tester.view
+    ..physicalSize = size
+    ..devicePixelRatio = 1.0;
+  addTearDown(() {
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+  });
+}
+
+Future<void> _pumpThreadListPage(
+  WidgetTester tester, {
+  required FakeThreadListBridgeApi bridgeApi,
+  required ThreadCacheRepository cacheRepository,
+  FakeThreadDetailBridgeApi? detailApi,
+  FakeThreadLiveStream? liveStream,
+  Widget Function(Widget child)? appBuilder,
+}) async {
+  final app = MaterialApp(
+    home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
+  );
+
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+        approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
+        threadDetailBridgeApiProvider.overrideWithValue(
+          detailApi ??
+              FakeThreadDetailBridgeApi(
+                detailScriptByThreadId: const {},
+                timelineScriptByThreadId: const {},
+              ),
+        ),
+        threadLiveStreamProvider.overrideWithValue(
+          liveStream ?? FakeThreadLiveStream(),
+        ),
+        threadCacheRepositoryProvider.overrideWithValue(cacheRepository),
+      ],
+      child: appBuilder == null ? app : appBuilder(app),
+    ),
   );
 }
 

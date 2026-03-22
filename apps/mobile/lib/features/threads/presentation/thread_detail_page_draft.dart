@@ -5,11 +5,13 @@ class _DraftThreadDetailHeader extends StatelessWidget {
     required this.workspacePath,
     required this.workspaceLabel,
     required this.onBack,
+    required this.showBackButton,
   });
 
   final String workspacePath;
   final String workspaceLabel;
   final VoidCallback onBack;
+  final bool showBackButton;
 
   @override
   Widget build(BuildContext context) {
@@ -24,15 +26,18 @@ class _DraftThreadDetailHeader extends StatelessWidget {
         children: [
           Row(
             children: [
-              IconButton(
-                key: const Key('thread-draft-back-button'),
-                onPressed: onBack,
-                icon: PhosphorIcon(
-                  PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
-                  size: 20,
-                  color: AppTheme.textMuted,
-                ),
-              ),
+              if (showBackButton)
+                IconButton(
+                  key: const Key('thread-draft-back-button'),
+                  onPressed: onBack,
+                  icon: PhosphorIcon(
+                    PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
+                    size: 20,
+                    color: AppTheme.textMuted,
+                  ),
+                )
+              else
+                const SizedBox(width: 16),
               Expanded(
                 child: Text(
                   'New Thread',
@@ -49,7 +54,7 @@ class _DraftThreadDetailHeader extends StatelessWidget {
             ],
           ),
           Padding(
-            padding: const EdgeInsets.only(left: 36),
+            padding: EdgeInsets.only(left: showBackButton ? 36 : 16),
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -82,10 +87,10 @@ class _DraftThreadDetailHeader extends StatelessWidget {
             state: ConnectionBannerState.connected,
             detail: 'Ready to start a new session in this workspace.',
             compact: true,
-            margin: const EdgeInsets.fromLTRB(36, 12, 0, 0),
+            margin: EdgeInsets.fromLTRB(showBackButton ? 36 : 16, 12, 0, 0),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(36, 12, 0, 0),
+            padding: EdgeInsets.fromLTRB(showBackButton ? 36 : 16, 12, 0, 0),
             child: Text(
               workspacePath,
               key: const Key('thread-draft-workspace-path'),

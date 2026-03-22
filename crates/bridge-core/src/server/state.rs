@@ -44,6 +44,7 @@ struct BridgeAppStateInner {
     available_models: RwLock<Vec<ModelOptionDto>>,
     active_turn_ids: RwLock<HashMap<String, String>>,
     pending_user_message_images: RwLock<HashMap<String, Vec<String>>>,
+    pending_synthetic_user_messages: RwLock<HashMap<String, String>>,
     access_mode: RwLock<AccessMode>,
     security_events: RwLock<Vec<SecurityEventRecordDto>>,
     gateway: CodexGateway,
@@ -160,6 +161,7 @@ impl BridgeAppState {
                 available_models: RwLock::new(Vec::new()),
                 active_turn_ids: RwLock::new(HashMap::new()),
                 pending_user_message_images: RwLock::new(HashMap::new()),
+                pending_synthetic_user_messages: RwLock::new(HashMap::new()),
                 access_mode: RwLock::new(AccessMode::ControlWithApprovals),
                 security_events: RwLock::new(Vec::new()),
                 gateway: CodexGateway::new(config),
@@ -830,8 +832,18 @@ impl BridgeAppState {
         }
         let visible_prompt = visible_prompt.trim();
         if !visible_prompt.is_empty() {
-            self.publish_synthetic_user_message(thread_id, visible_prompt)
+            self.publish_synthetic_user_message(thread_id, visible_prompt, &normalized_images)
                 .await;
+            self.inner
+                .pending_synthetic_user_messages
+                .write()
+                .await
+                .insert(thread_id.to_string(), visible_prompt.to_string());
+            self.inner
+                .pending_user_message_images
+                .write()
+                .await
+                .remove(thread_id);
         }
         let state = self.clone();
         let handle = tokio::runtime::Handle::current();
@@ -851,6 +863,14 @@ impl BridgeAppState {
                     return;
                 }
                 if should_suppress_live_event(&normalized) {
+                    return;
+                }
+                let state = state.clone();
+                if handle.block_on(async {
+                    state
+                        .should_suppress_duplicate_synthetic_user_message(&normalized)
+                        .await
+                }) {
                     return;
                 }
                 let state = state.clone();
@@ -874,6 +894,12 @@ impl BridgeAppState {
                                 .write()
                                 .await
                                 .remove(&normalized.thread_id);
+                            state
+                                .inner
+                                .pending_synthetic_user_messages
+                                .write()
+                                .await
+                                .remove(&normalized.thread_id);
                         }
                         return;
                     }
@@ -888,6 +914,11 @@ impl BridgeAppState {
         if result.turn_id.is_none() {
             self.inner
                 .pending_user_message_images
+                .write()
+                .await
+                .remove(thread_id);
+            self.inner
+                .pending_synthetic_user_messages
                 .write()
                 .await
                 .remove(thread_id);
@@ -906,7 +937,18 @@ impl BridgeAppState {
         Ok(result.response)
     }
 
-    async fn publish_synthetic_user_message(&self, thread_id: &str, message: &str) {
+    async fn publish_synthetic_user_message(
+        &self,
+        thread_id: &str,
+        message: &str,
+        images: &[String],
+    ) {
+        let image_payload = images
+            .iter()
+            .map(|image| image.trim())
+            .filter(|image| !image.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
         let occurred_at = Utc::now().to_rfc3339();
         let event = BridgeEventEnvelope {
             contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
@@ -920,11 +962,36 @@ impl BridgeAppState {
                 "role": "user",
                 "delta": message,
                 "replace": true,
+                "images": image_payload,
             }),
             annotations: None,
         };
         self.projections().apply_live_event(&event).await;
         self.event_hub().publish(event);
+    }
+
+    async fn should_suppress_duplicate_synthetic_user_message(
+        &self,
+        event: &BridgeEventEnvelope<Value>,
+    ) -> bool {
+        let mut pending = self.inner.pending_synthetic_user_messages.write().await;
+        let Some(expected_text) = pending.get(&event.thread_id).map(String::as_str) else {
+            return false;
+        };
+
+        if !is_duplicate_synthetic_user_message(expected_text, event) {
+            return false;
+        }
+
+        pending.remove(&event.thread_id);
+        drop(pending);
+
+        self.inner
+            .pending_user_message_images
+            .write()
+            .await
+            .remove(&event.thread_id);
+        true
     }
 
     async fn merge_pending_user_message_images(&self, event: &mut BridgeEventEnvelope<Value>) {
@@ -1257,6 +1324,27 @@ fn payload_primary_text(payload: &Value) -> Option<&str> {
         .filter(|text| !text.is_empty())
 }
 
+fn is_duplicate_synthetic_user_message(
+    expected_text: &str,
+    event: &BridgeEventEnvelope<Value>,
+) -> bool {
+    if event.kind != BridgeEventKind::MessageDelta {
+        return false;
+    }
+    if event.payload.get("role").and_then(Value::as_str) != Some("user") {
+        return false;
+    }
+
+    let Some(live_text) = payload_primary_text(&event.payload).map(str::trim) else {
+        return false;
+    };
+    if live_text.is_empty() {
+        return false;
+    }
+
+    expected_text.trim() == live_text
+}
+
 fn is_hidden_message(message: &str) -> bool {
     let trimmed = message.trim();
     trimmed.starts_with("# AGENTS.md instructions for ")
@@ -1284,4 +1372,70 @@ If there is nothing appropriate to commit, say that clearly and do not create an
 After you finish, respond with a short summary of the commit split you made, including commit messages and any skipped files.
 </app-context>"#
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use shared_contracts::{BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION};
+
+    use super::is_duplicate_synthetic_user_message;
+
+    #[test]
+    fn duplicate_synthetic_user_message_matches_trimmed_user_delta() {
+        let event = BridgeEventEnvelope {
+            contract_version: CONTRACT_VERSION.to_string(),
+            event_id: "evt-1".to_string(),
+            thread_id: "thread-1".to_string(),
+            kind: BridgeEventKind::MessageDelta,
+            occurred_at: "2026-03-22T10:00:00Z".to_string(),
+            payload: json!({
+                "role": "user",
+                "delta": "hello",
+                "replace": true,
+            }),
+            annotations: None,
+        };
+
+        assert!(is_duplicate_synthetic_user_message(" hello ", &event));
+    }
+
+    #[test]
+    fn duplicate_synthetic_user_message_rejects_non_user_or_mismatched_text() {
+        let assistant_event = BridgeEventEnvelope {
+            contract_version: CONTRACT_VERSION.to_string(),
+            event_id: "evt-2".to_string(),
+            thread_id: "thread-1".to_string(),
+            kind: BridgeEventKind::MessageDelta,
+            occurred_at: "2026-03-22T10:00:00Z".to_string(),
+            payload: json!({
+                "role": "assistant",
+                "delta": "hello",
+                "replace": true,
+            }),
+            annotations: None,
+        };
+        assert!(!is_duplicate_synthetic_user_message(
+            "hello",
+            &assistant_event
+        ));
+
+        let mismatched_text_event = BridgeEventEnvelope {
+            contract_version: CONTRACT_VERSION.to_string(),
+            event_id: "evt-3".to_string(),
+            thread_id: "thread-1".to_string(),
+            kind: BridgeEventKind::MessageDelta,
+            occurred_at: "2026-03-22T10:00:00Z".to_string(),
+            payload: json!({
+                "role": "user",
+                "delta": "hello world",
+                "replace": true,
+            }),
+            annotations: None,
+        };
+        assert!(!is_duplicate_synthetic_user_message(
+            "hello",
+            &mismatched_text_event
+        ));
+    }
 }

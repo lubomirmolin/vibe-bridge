@@ -41,6 +41,22 @@ part 'thread_detail_page_header.dart';
 part 'thread_detail_page_message.dart';
 part 'thread_detail_page_timeline.dart';
 
+class ThreadDraftCreatedTransition {
+  const ThreadDraftCreatedTransition({
+    required this.threadId,
+    required this.initialComposerInput,
+    required this.initialAttachedImages,
+    required this.initialSelectedModel,
+    required this.initialSelectedReasoningEffort,
+  });
+
+  final String threadId;
+  final String initialComposerInput;
+  final List<XFile> initialAttachedImages;
+  final String initialSelectedModel;
+  final String? initialSelectedReasoningEffort;
+}
+
 class ThreadDetailPage extends ConsumerStatefulWidget {
   const ThreadDetailPage({
     super.key,
@@ -52,6 +68,10 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
     this.initialSelectedModel,
     this.initialSelectedReasoningEffort,
     this.speechRecorder,
+    this.showBackButton = true,
+    this.embedInScaffold = true,
+    this.onBack,
+    this.onDraftThreadCreated,
   }) : draftWorkspacePath = null,
        draftWorkspaceLabel = null;
 
@@ -62,6 +82,10 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
     required String this.draftWorkspaceLabel,
     this.initialVisibleTimelineEntries = 80,
     this.speechRecorder,
+    this.showBackButton = true,
+    this.embedInScaffold = true,
+    this.onBack,
+    this.onDraftThreadCreated,
   }) : threadId = null,
        initialComposerInput = null,
        initialAttachedImages = const <XFile>[],
@@ -76,6 +100,10 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
   final String? initialSelectedModel;
   final String? initialSelectedReasoningEffort;
   final AudioRecorder? speechRecorder;
+  final bool showBackButton;
+  final bool embedInScaffold;
+  final VoidCallback? onBack;
+  final ValueChanged<ThreadDraftCreatedTransition>? onDraftThreadCreated;
 
   bool get isDraft => threadId == null;
   final String bridgeApiBaseUrl;
@@ -825,17 +853,29 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         return true;
       }
 
+      final transition = ThreadDraftCreatedTransition(
+        threadId: thread.threadId,
+        initialComposerInput: input,
+        initialAttachedImages: _attachedImages,
+        initialSelectedModel: _selectedModel,
+        initialSelectedReasoningEffort: _selectedReasoningEffortWireValue(),
+      );
+      if (widget.onDraftThreadCreated != null) {
+        widget.onDraftThreadCreated!(transition);
+        return true;
+      }
+
       unawaited(
         Navigator.of(context).pushReplacement(
           MaterialPageRoute<void>(
             builder: (context) => ThreadDetailPage(
               bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
-              threadId: thread.threadId,
-              initialComposerInput: input,
-              initialAttachedImages: _attachedImages,
-              initialSelectedModel: _selectedModel,
+              threadId: transition.threadId,
+              initialComposerInput: transition.initialComposerInput,
+              initialAttachedImages: transition.initialAttachedImages,
+              initialSelectedModel: transition.initialSelectedModel,
               initialSelectedReasoningEffort:
-                  _selectedReasoningEffortWireValue(),
+                  transition.initialSelectedReasoningEffort,
             ),
           ),
         ),
@@ -999,95 +1039,98 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       final isReadOnlyMode = effectiveAccessMode == AccessMode.readOnly;
       final controlsEnabled = !isReadOnlyMode;
 
-      return Scaffold(
-        backgroundColor: AppTheme.background,
-        body: SafeArea(
-          child: Column(
-            children: [
-              Expanded(
-                child: Stack(
-                  children: [
-                    _ThreadDraftBody(
+      return _wrapContent(
+        Column(
+          children: [
+            Expanded(
+              child: Stack(
+                children: [
+                  _ThreadDraftBody(
+                    workspacePath: widget.draftWorkspacePath!,
+                    workspaceLabel: widget.draftWorkspaceLabel!,
+                    isReadOnlyMode: isReadOnlyMode,
+                    draftErrorMessage: _draftThreadErrorMessage,
+                  ),
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: _DraftThreadDetailHeader(
                       workspacePath: widget.draftWorkspacePath!,
                       workspaceLabel: widget.draftWorkspaceLabel!,
-                      isReadOnlyMode: isReadOnlyMode,
-                      draftErrorMessage: _draftThreadErrorMessage,
+                      onBack:
+                          widget.onBack ?? () => Navigator.of(context).pop(),
+                      showBackButton: widget.showBackButton,
                     ),
-                    Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      child: _DraftThreadDetailHeader(
-                        workspacePath: widget.draftWorkspacePath!,
-                        workspaceLabel: widget.draftWorkspaceLabel!,
-                        onBack: () => Navigator.of(context).pop(),
-                      ),
-                    ),
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              AppTheme.background.withValues(alpha: 0.0),
-                              AppTheme.background,
-                              AppTheme.background,
-                            ],
-                            stops: const [0.0, 0.45, 1.0],
-                          ),
+                  ),
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            AppTheme.background.withValues(alpha: 0.0),
+                            AppTheme.background,
+                            AppTheme.background,
+                          ],
+                          stops: const [0.0, 0.45, 1.0],
                         ),
-                        child: SafeArea(
-                          top: false,
-                          child: _PinnedTurnComposer(
-                            composerController: _composerController,
-                            composerFocusNode: _composerFocusNode,
-                            isTurnActive: false,
-                            controlsEnabled: controlsEnabled,
-                            isComposerMutationInFlight:
-                                _isDraftThreadCreationInFlight,
-                            isInterruptMutationInFlight: false,
-                            isSpeechRecording: _isSpeechRecording,
-                            isSpeechTranscribing: _isSpeechTranscribing,
-                            speechDurationSeconds: _speechDurationSeconds,
-                            speechAmplitudeStream: _isSpeechRecording ? _audioRecorder.onAmplitudeChanged(const Duration(milliseconds: 50)) : null,
-                            speechMessage: _speechMessage,
-                            speechMessageIsError: _speechMessageIsError,
-                            isComposerFocused: _isComposerFocused,
-                            attachedImages: _attachedImages,
-                            modelOptions: _availableModelOptions,
-                            reasoningOptions: _availableReasoningOptions,
-                            selectedModel: _selectedModel,
-                            selectedReasoning: _selectedReasoning,
-                            accessMode: effectiveAccessMode,
-                            trustedBridge: pairingState.trustedBridge,
-                            isAccessModeUpdating:
-                                deviceSettingsState.isAccessModeUpdating,
-                            accessModeErrorMessage:
-                                deviceSettingsState.accessModeErrorMessage,
-                            onPickImages: _pickImages,
-                            onToggleSpeechInput: _toggleSpeechInput,
-                            onRemoveImage: _removeAttachedImage,
-                            onModelChanged: _onComposerModelChanged,
-                            onReasoningChanged: (value) {
-                              setState(() {
-                                _selectedReasoning = value;
-                              });
-                            },
-                            onAccessModeChanged: changeAccessMode,
-                            onSubmitComposer: _submitDraftComposerInput,
-                          ),
+                      ),
+                      child: SafeArea(
+                        top: false,
+                        child: _PinnedTurnComposer(
+                          composerController: _composerController,
+                          composerFocusNode: _composerFocusNode,
+                          isTurnActive: false,
+                          controlsEnabled: controlsEnabled,
+                          isComposerMutationInFlight:
+                              _isDraftThreadCreationInFlight,
+                          isInterruptMutationInFlight: false,
+                          isSpeechRecording: _isSpeechRecording,
+                          isSpeechTranscribing: _isSpeechTranscribing,
+                          speechDurationSeconds: _speechDurationSeconds,
+                          speechAmplitudeStream: _isSpeechRecording
+                              ? _audioRecorder.onAmplitudeChanged(
+                                  const Duration(milliseconds: 50),
+                                )
+                              : null,
+                          speechMessage: _speechMessage,
+                          speechMessageIsError: _speechMessageIsError,
+                          isComposerFocused: _isComposerFocused,
+                          attachedImages: _attachedImages,
+                          modelOptions: _availableModelOptions,
+                          reasoningOptions: _availableReasoningOptions,
+                          selectedModel: _selectedModel,
+                          selectedReasoning: _selectedReasoning,
+                          accessMode: effectiveAccessMode,
+                          trustedBridge: pairingState.trustedBridge,
+                          isAccessModeUpdating:
+                              deviceSettingsState.isAccessModeUpdating,
+                          accessModeErrorMessage:
+                              deviceSettingsState.accessModeErrorMessage,
+                          onPickImages: _pickImages,
+                          onToggleSpeechInput: _toggleSpeechInput,
+                          onRemoveImage: _removeAttachedImage,
+                          onModelChanged: _onComposerModelChanged,
+                          onReasoningChanged: (value) {
+                            setState(() {
+                              _selectedReasoning = value;
+                            });
+                          },
+                          onAccessModeChanged: changeAccessMode,
+                          onSubmitComposer: _submitDraftComposerInput,
                         ),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       );
     }
@@ -1222,203 +1265,210 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       );
     }
 
-    return Scaffold(
-      backgroundColor: AppTheme.background,
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: Stack(
-                children: [
-                  _ThreadDetailBody(
+    return _wrapContent(
+      Column(
+        children: [
+          Expanded(
+            child: Stack(
+              children: [
+                _ThreadDetailBody(
+                  state: state,
+                  isReadOnlyMode: isReadOnlyMode,
+                  controlsEnabled: controlsEnabled,
+                  onInterruptActiveTurn: controller.interruptActiveTurn,
+                  desktopIntegrationEnabled: desktopIntegrationState.isEnabled,
+                  onRetry: controller.loadThread,
+                  onRetryReconnect: controller.retryReconnectCatchUp,
+                  threadApprovals: threadApprovals,
+                  approvalsErrorMessage: approvalsState.errorMessage,
+                  canResolveApprovals: approvalsState.canResolveApprovals,
+                  gitErrorMessage: state.gitErrorMessage,
+                  gitMutationMessage: state.gitMutationMessage,
+                  gitControlsUnavailableReason:
+                      state.gitControlsUnavailableReason,
+                  openOnMacMessage: state.openOnMacMessage,
+                  openOnMacErrorMessage: state.openOnMacErrorMessage,
+                  hasPinnedComposer: state.thread != null,
+                  onRefreshApprovals: () {
+                    approvalsController.loadApprovals(showLoading: false);
+                  },
+                  onTimelineUserScroll: _markTimelineUserScroll,
+                  scrollController: _timelineScrollController,
+                  isTimelineCardExpanded: _isTimelineCardExpanded,
+                  onTimelineCardExpansionChanged: _setTimelineCardExpanded,
+                ),
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: _ThreadDetailHeader(
                     state: state,
-                    isReadOnlyMode: isReadOnlyMode,
-                    controlsEnabled: controlsEnabled,
-                    onInterruptActiveTurn: controller.interruptActiveTurn,
-                    desktopIntegrationEnabled:
-                        desktopIntegrationState.isEnabled,
-                    onRetry: controller.loadThread,
-                    onRetryReconnect: controller.retryReconnectCatchUp,
-                    threadApprovals: threadApprovals,
-                    approvalsErrorMessage: approvalsState.errorMessage,
-                    canResolveApprovals: approvalsState.canResolveApprovals,
-                    gitErrorMessage: state.gitErrorMessage,
-                    gitMutationMessage: state.gitMutationMessage,
-                    gitControlsUnavailableReason:
-                        state.gitControlsUnavailableReason,
-                    openOnMacMessage: state.openOnMacMessage,
-                    openOnMacErrorMessage: state.openOnMacErrorMessage,
-                    hasPinnedComposer: state.thread != null,
-                    onRefreshApprovals: () {
-                      approvalsController.loadApprovals(showLoading: false);
-                    },
-                    onTimelineUserScroll: _markTimelineUserScroll,
-                    scrollController: _timelineScrollController,
-                    isTimelineCardExpanded: _isTimelineCardExpanded,
-                    onTimelineCardExpansionChanged: _setTimelineCardExpanded,
+                    hasPendingApprovals: threadApprovals.isNotEmpty,
+                    gitControls: gitControls,
+                    canOpenOnMac:
+                        desktopIntegrationControlsEnabled &&
+                        desktopIntegrationState.isEnabled &&
+                        !state.isOpenOnMacInFlight,
+                    onBackWhenLoaded:
+                        widget.onBack ?? () => Navigator.of(context).maybePop(),
+                    onBackWhenUnavailable:
+                        widget.onBack ?? () => Navigator.of(context).pop(),
+                    onOpenGitBranchSheet: openGitBranchSheet,
+                    onOpenGitSyncSheet: openGitSyncSheet,
+                    onStartCommitAction: startCommitAction,
+                    onOpenOnMac: controller.openOnMac,
+                    isHeaderCollapsed: _isHeaderCollapsed,
+                    showBackButton: widget.showBackButton,
                   ),
+                ),
+                if (state.thread != null)
                   Positioned(
-                    top: 0,
+                    bottom: 0,
                     left: 0,
                     right: 0,
-                    child: _ThreadDetailHeader(
-                      state: state,
-                      hasPendingApprovals: threadApprovals.isNotEmpty,
-                      gitControls: gitControls,
-                      canOpenOnMac:
-                          desktopIntegrationControlsEnabled &&
-                          desktopIntegrationState.isEnabled &&
-                          !state.isOpenOnMacInFlight,
-                      onBackWhenLoaded: () => Navigator.of(context).maybePop(),
-                      onBackWhenUnavailable: () => Navigator.of(context).pop(),
-                      onOpenGitBranchSheet: openGitBranchSheet,
-                      onOpenGitSyncSheet: openGitSyncSheet,
-                      onStartCommitAction: startCommitAction,
-                      onOpenOnMac: controller.openOnMac,
-                      isHeaderCollapsed: _isHeaderCollapsed,
-                    ),
-                  ),
-                  if (state.thread != null)
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              AppTheme.background.withValues(alpha: 0.0),
-                              AppTheme.background,
-                              AppTheme.background,
-                            ],
-                            stops: const [0.0, 0.45, 1.0],
-                          ),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            AppTheme.background.withValues(alpha: 0.0),
+                            AppTheme.background,
+                            AppTheme.background,
+                          ],
+                          stops: const [0.0, 0.45, 1.0],
                         ),
-                        child: SafeArea(
-                          top: false,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              ValueListenableBuilder<bool>(
-                                valueListenable: _showNewMessagePill,
-                                builder: (context, show, child) {
-                                  return AnimatedSwitcher(
-                                    duration: const Duration(milliseconds: 240),
-                                    transitionBuilder: (child, animation) =>
-                                        FadeTransition(
-                                          opacity: animation,
-                                          child: SlideTransition(
-                                            position:
-                                                Tween<Offset>(
-                                                  begin: const Offset(0, 0.4),
-                                                  end: Offset.zero,
-                                                ).animate(
-                                                  CurvedAnimation(
-                                                    parent: animation,
-                                                    curve: Curves.easeOutBack,
+                      ),
+                      child: SafeArea(
+                        top: false,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ValueListenableBuilder<bool>(
+                              valueListenable: _showNewMessagePill,
+                              builder: (context, show, child) {
+                                return AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 240),
+                                  transitionBuilder: (child, animation) =>
+                                      FadeTransition(
+                                        opacity: animation,
+                                        child: SlideTransition(
+                                          position:
+                                              Tween<Offset>(
+                                                begin: const Offset(0, 0.4),
+                                                end: Offset.zero,
+                                              ).animate(
+                                                CurvedAnimation(
+                                                  parent: animation,
+                                                  curve: Curves.easeOutBack,
+                                                ),
+                                              ),
+                                          child: child,
+                                        ),
+                                      ),
+                                  child: show
+                                      ? Padding(
+                                          padding: const EdgeInsets.only(
+                                            top: 8,
+                                          ),
+                                          child: MagneticButton(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 18,
+                                              vertical: 10,
+                                            ),
+                                            variant:
+                                                MagneticButtonVariant.secondary,
+                                            onClick: () {
+                                              _showNewMessagePill.value = false;
+                                              _jumpToTimelineBottom(attempt: 0);
+                                            },
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                const Text(
+                                                  'New messages',
+                                                  style: TextStyle(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w600,
                                                   ),
                                                 ),
-                                            child: child,
+                                                const SizedBox(width: 8),
+                                                PhosphorIcon(
+                                                  PhosphorIcons.arrowDown(),
+                                                  size: 16,
+                                                ),
+                                              ],
+                                            ),
                                           ),
-                                        ),
-                                    child: show
-                                        ? Padding(
-                                            padding: const EdgeInsets.only(
-                                              top: 8,
-                                            ),
-                                            child: MagneticButton(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 18,
-                                                    vertical: 10,
-                                                  ),
-                                              variant: MagneticButtonVariant
-                                                  .secondary,
-                                              onClick: () {
-                                                _showNewMessagePill.value =
-                                                    false;
-                                                _jumpToTimelineBottom(
-                                                  attempt: 0,
-                                                );
-                                              },
-                                              child: Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  const Text(
-                                                    'New messages',
-                                                    style: TextStyle(
-                                                      fontSize: 14,
-                                                      fontWeight:
-                                                          FontWeight.w600,
-                                                    ),
-                                                  ),
-                                                  const SizedBox(width: 8),
-                                                  PhosphorIcon(
-                                                    PhosphorIcons.arrowDown(),
-                                                    size: 16,
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          )
-                                        : const SizedBox.shrink(),
-                                  );
-                                },
-                              ),
-                              _PinnedTurnComposer(
-                                composerController: _composerController,
-                                composerFocusNode: _composerFocusNode,
-                                isTurnActive: state.isTurnActive,
-                                controlsEnabled: controlsEnabled,
-                                isComposerMutationInFlight:
-                                    state.isComposerMutationInFlight,
-                                isInterruptMutationInFlight:
-                                    state.isInterruptMutationInFlight,
-                                isSpeechRecording: _isSpeechRecording,
-                                isSpeechTranscribing: _isSpeechTranscribing,
-                                speechDurationSeconds: _speechDurationSeconds,
-                                speechAmplitudeStream: _isSpeechRecording ? _audioRecorder.onAmplitudeChanged(const Duration(milliseconds: 50)) : null,
-                                speechMessage: _speechMessage,
-                                speechMessageIsError: _speechMessageIsError,
-                                isComposerFocused: _isComposerFocused,
-                                attachedImages: _attachedImages,
-                                modelOptions: _availableModelOptions,
-                                reasoningOptions: _availableReasoningOptions,
-                                selectedModel: _selectedModel,
-                                selectedReasoning: _selectedReasoning,
-                                accessMode: effectiveAccessMode,
-                                trustedBridge: pairingState.trustedBridge,
-                                isAccessModeUpdating:
-                                    deviceSettingsState.isAccessModeUpdating,
-                                accessModeErrorMessage:
-                                    deviceSettingsState.accessModeErrorMessage,
-                                onPickImages: _pickImages,
-                                onToggleSpeechInput: _toggleSpeechInput,
-                                onRemoveImage: _removeAttachedImage,
-                                onModelChanged: _onComposerModelChanged,
-                                onReasoningChanged: (value) {
-                                  setState(() {
-                                    _selectedReasoning = value;
-                                  });
-                                },
-                                onAccessModeChanged: changeAccessMode,
-                                onSubmitComposer: (value) =>
-                                    _submitComposerInput(controller, value),
-                              ),
-                            ],
-                          ),
+                                        )
+                                      : const SizedBox.shrink(),
+                                );
+                              },
+                            ),
+                            _PinnedTurnComposer(
+                              composerController: _composerController,
+                              composerFocusNode: _composerFocusNode,
+                              isTurnActive: state.isTurnActive,
+                              controlsEnabled: controlsEnabled,
+                              isComposerMutationInFlight:
+                                  state.isComposerMutationInFlight,
+                              isInterruptMutationInFlight:
+                                  state.isInterruptMutationInFlight,
+                              isSpeechRecording: _isSpeechRecording,
+                              isSpeechTranscribing: _isSpeechTranscribing,
+                              speechDurationSeconds: _speechDurationSeconds,
+                              speechAmplitudeStream: _isSpeechRecording
+                                  ? _audioRecorder.onAmplitudeChanged(
+                                      const Duration(milliseconds: 50),
+                                    )
+                                  : null,
+                              speechMessage: _speechMessage,
+                              speechMessageIsError: _speechMessageIsError,
+                              isComposerFocused: _isComposerFocused,
+                              attachedImages: _attachedImages,
+                              modelOptions: _availableModelOptions,
+                              reasoningOptions: _availableReasoningOptions,
+                              selectedModel: _selectedModel,
+                              selectedReasoning: _selectedReasoning,
+                              accessMode: effectiveAccessMode,
+                              trustedBridge: pairingState.trustedBridge,
+                              isAccessModeUpdating:
+                                  deviceSettingsState.isAccessModeUpdating,
+                              accessModeErrorMessage:
+                                  deviceSettingsState.accessModeErrorMessage,
+                              onPickImages: _pickImages,
+                              onToggleSpeechInput: _toggleSpeechInput,
+                              onRemoveImage: _removeAttachedImage,
+                              onModelChanged: _onComposerModelChanged,
+                              onReasoningChanged: (value) {
+                                setState(() {
+                                  _selectedReasoning = value;
+                                });
+                              },
+                              onAccessModeChanged: changeAccessMode,
+                              onSubmitComposer: (value) =>
+                                  _submitComposerInput(controller, value),
+                            ),
+                          ],
                         ),
                       ),
                     ),
-                ],
-              ),
+                  ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
+  }
+
+  Widget _wrapContent(Widget child) {
+    final content = widget.embedInScaffold ? SafeArea(child: child) : child;
+    if (!widget.embedInScaffold) {
+      return ColoredBox(color: AppTheme.background, child: content);
+    }
+
+    return Scaffold(backgroundColor: AppTheme.background, body: content);
   }
 }
 
