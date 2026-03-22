@@ -1174,6 +1174,67 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     return false;
   }
 
+  Future<bool> submitCommitAction({
+    String? model,
+    String? reasoningEffort,
+  }) async {
+    final thread = state.thread;
+    if (thread == null) {
+      return false;
+    }
+
+    if (!state.canRunMutatingActions) {
+      state = state.copyWith(
+        turnControlErrorMessage:
+            'Turn controls are unavailable while the bridge is offline.',
+      );
+      return false;
+    }
+
+    if (state.isTurnActive) {
+      state = state.copyWith(
+        turnControlErrorMessage:
+            'Interrupt the active turn or wait for it to finish before starting Commit.',
+      );
+      return false;
+    }
+
+    state = state.copyWith(
+      isComposerMutationInFlight: true,
+      clearTurnControlError: true,
+    );
+
+    try {
+      final mutationResult = await _bridgeApi.startCommitAction(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: state.threadId,
+        model: model,
+        effort: reasoningEffort,
+      );
+
+      _pendingPromptSubmittedAt = DateTime.now();
+      _applyTurnMutationResult(mutationResult);
+      state = state.copyWith(
+        isComposerMutationInFlight: false,
+        clearTurnControlError: true,
+      );
+      return true;
+    } on ThreadTurnBridgeException catch (error) {
+      state = state.copyWith(
+        isComposerMutationInFlight: false,
+        turnControlErrorMessage: error.message,
+      );
+      return false;
+    } catch (_) {
+      state = state.copyWith(
+        isComposerMutationInFlight: false,
+        turnControlErrorMessage:
+            'Couldn’t start Commit right now. Please try again.',
+      );
+      return false;
+    }
+  }
+
   Future<bool> interruptActiveTurn() async {
     if (!state.isTurnActive) {
       return false;

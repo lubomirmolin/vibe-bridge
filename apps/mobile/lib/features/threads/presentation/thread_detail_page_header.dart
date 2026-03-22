@@ -10,6 +10,7 @@ class _ThreadDetailHeader extends StatelessWidget {
     required this.onBackWhenUnavailable,
     required this.onOpenGitBranchSheet,
     required this.onOpenGitSyncSheet,
+    required this.onStartCommitAction,
     required this.onOpenOnMac,
     required this.isHeaderCollapsed,
   });
@@ -22,6 +23,7 @@ class _ThreadDetailHeader extends StatelessWidget {
   final VoidCallback onBackWhenUnavailable;
   final Future<void> Function() onOpenGitBranchSheet;
   final Future<void> Function() onOpenGitSyncSheet;
+  final Future<void> Function() onStartCommitAction;
   final Future<void> Function() onOpenOnMac;
   final ValueListenable<bool> isHeaderCollapsed;
 
@@ -45,6 +47,7 @@ class _ThreadDetailHeader extends StatelessWidget {
       onBack: onBackWhenLoaded,
       onOpenGitBranchSheet: onOpenGitBranchSheet,
       onOpenGitSyncSheet: onOpenGitSyncSheet,
+      onStartCommitAction: onStartCommitAction,
       onOpenOnMac: onOpenOnMac,
       isHeaderCollapsed: isHeaderCollapsed,
       connectionState: state.liveConnectionState,
@@ -62,6 +65,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
     required this.onBack,
     required this.onOpenGitBranchSheet,
     required this.onOpenGitSyncSheet,
+    required this.onStartCommitAction,
     required this.onOpenOnMac,
     required this.isHeaderCollapsed,
     required this.connectionState,
@@ -75,6 +79,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
   final VoidCallback onBack;
   final Future<void> Function() onOpenGitBranchSheet;
   final Future<void> Function() onOpenGitSyncSheet;
+  final Future<void> Function() onStartCommitAction;
   final Future<void> Function() onOpenOnMac;
   final ValueListenable<bool> isHeaderCollapsed;
   final LiveConnectionState connectionState;
@@ -83,6 +88,10 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final thread = state.thread!;
+    final canStartCommit =
+        state.canRunMutatingActions &&
+        !state.isComposerMutationInFlight &&
+        !state.isTurnActive;
 
     return Container(
       padding: const EdgeInsets.only(top: 0, right: 16, bottom: 8),
@@ -268,6 +277,53 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
                           label: Text(
                             gitControls.syncLabel,
                             style: const TextStyle(fontSize: 13),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 2,
+                        child: FilledButton.tonalIcon(
+                          key: const Key('git-header-commit-button'),
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            backgroundColor: AppTheme.surfaceZinc800.withValues(
+                              alpha: 0.5,
+                            ),
+                            foregroundColor: AppTheme.textMain,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              side: BorderSide(
+                                color: Colors.white.withValues(alpha: 0.05),
+                              ),
+                            ),
+                          ),
+                          onPressed: canStartCommit
+                              ? () async {
+                                  await onStartCommitAction();
+                                }
+                              : null,
+                          icon: state.isComposerMutationInFlight
+                              ? const SizedBox.square(
+                                  dimension: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: AppTheme.textMain,
+                                  ),
+                                )
+                              : PhosphorIcon(
+                                  PhosphorIcons.gitCommit(),
+                                  size: 16,
+                                  color: AppTheme.textSubtle,
+                                ),
+                          label: const Text(
+                            'Commit',
+                            style: TextStyle(fontSize: 13),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),

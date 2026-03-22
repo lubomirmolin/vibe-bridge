@@ -780,6 +780,36 @@ impl BridgeAppState {
         model: Option<&str>,
         effort: Option<&str>,
     ) -> Result<TurnMutationAcceptedDto, String> {
+        self.start_turn_with_visible_prompt(thread_id, prompt, prompt, images, model, effort)
+            .await
+    }
+
+    pub async fn start_commit_action(
+        &self,
+        thread_id: &str,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<TurnMutationAcceptedDto, String> {
+        self.start_turn_with_visible_prompt(
+            thread_id,
+            "Commit",
+            &build_hidden_commit_prompt(),
+            &[],
+            model,
+            effort,
+        )
+        .await
+    }
+
+    async fn start_turn_with_visible_prompt(
+        &self,
+        thread_id: &str,
+        visible_prompt: &str,
+        upstream_prompt: &str,
+        images: &[String],
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<TurnMutationAcceptedDto, String> {
         let normalized_images = images
             .iter()
             .map(|image| image.trim())
@@ -793,12 +823,17 @@ impl BridgeAppState {
                 .await
                 .insert(thread_id.to_string(), normalized_images.clone());
         }
+        let visible_prompt = visible_prompt.trim();
+        if !visible_prompt.is_empty() {
+            self.publish_synthetic_user_message(thread_id, visible_prompt)
+                .await;
+        }
         let state = self.clone();
         let handle = tokio::runtime::Handle::current();
         let compactor = Arc::new(std::sync::Mutex::new(LiveDeltaCompactor::default()));
         let result = self.inner.gateway.start_turn_streaming(
             thread_id,
-            prompt,
+            upstream_prompt,
             images,
             model,
             effort,
@@ -808,6 +843,9 @@ impl BridgeAppState {
                     .expect("turn stream compactor lock should not be poisoned")
                     .compact(event);
                 if !should_publish_compacted_event(&normalized) {
+                    return;
+                }
+                if should_suppress_live_event(&normalized) {
                     return;
                 }
                 let state = state.clone();
@@ -861,6 +899,27 @@ impl BridgeAppState {
             .mark_thread_running(thread_id, &occurred_at)
             .await;
         Ok(result.response)
+    }
+
+    async fn publish_synthetic_user_message(&self, thread_id: &str, message: &str) {
+        let occurred_at = Utc::now().to_rfc3339();
+        let event = BridgeEventEnvelope {
+            contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+            event_id: format!("{thread_id}-user-{}", occurred_at),
+            thread_id: thread_id.to_string(),
+            kind: BridgeEventKind::MessageDelta,
+            occurred_at,
+            payload: json!({
+                "id": format!("{thread_id}-user-message"),
+                "type": "message",
+                "role": "user",
+                "delta": message,
+                "replace": true,
+            }),
+            annotations: None,
+        };
+        self.projections().apply_live_event(&event).await;
+        self.event_hub().publish(event);
     }
 
     async fn merge_pending_user_message_images(&self, event: &mut BridgeEventEnvelope<Value>) {
@@ -1134,4 +1193,63 @@ fn should_publish_compacted_event(event: &BridgeEventEnvelope<Value>) -> bool {
         }
         _ => true,
     }
+}
+
+fn should_suppress_live_event(event: &BridgeEventEnvelope<Value>) -> bool {
+    event.kind == BridgeEventKind::MessageDelta && payload_contains_hidden_message(&event.payload)
+}
+
+fn payload_contains_hidden_message(payload: &Value) -> bool {
+    payload_primary_text(payload)
+        .map(is_hidden_message)
+        .unwrap_or(false)
+}
+
+fn payload_primary_text(payload: &Value) -> Option<&str> {
+    for key in ["text", "delta", "message"] {
+        if let Some(value) = payload.get(key).and_then(Value::as_str) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
+            }
+        }
+    }
+
+    payload
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find_map(|item| item.get("text").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+}
+
+fn is_hidden_message(message: &str) -> bool {
+    let trimmed = message.trim();
+    trimmed.starts_with("# AGENTS.md instructions for ")
+        || trimmed.starts_with("<permissions instructions>")
+        || trimmed.starts_with("<app-context>")
+        || trimmed.starts_with("<environment_context>")
+        || trimmed.starts_with("<collaboration_mode>")
+        || trimmed.starts_with("<turn_aborted>")
+}
+
+fn build_hidden_commit_prompt() -> String {
+    r#"<app-context>
+Mobile quick action: the user tapped Commit in the current session. In the visible thread transcript, the user message should appear as exactly:
+
+Commit
+
+Treat that visible message as the full user request.
+
+Analyze the current workspace changes for this session.
+Stage only files that belong to the current task or clear logical units.
+Split commits logically when the changes should not land as one commit.
+Use concise commit messages consistent with the repository style.
+If there are unrelated, risky, or incomplete changes, leave them unstaged and explain why.
+If there is nothing appropriate to commit, say that clearly and do not create an empty commit.
+After you finish, respond with a short summary of the commit split you made, including commit messages and any skipped files.
+</app-context>"#
+        .to_string()
 }
