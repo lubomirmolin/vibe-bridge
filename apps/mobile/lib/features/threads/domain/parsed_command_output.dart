@@ -1,5 +1,20 @@
 import 'package:flutter/foundation.dart';
 
+const Set<String> hiddenToolInvocationNames = <String>{
+  'close_agent',
+  'list_mcp_resource_templates',
+  'list_mcp_resources',
+  'read_mcp_resource',
+  'read_thread_terminal',
+  'request_user_input',
+  'resume_agent',
+  'send_input',
+  'spawn_agent',
+  'update_plan',
+  'wait_agent',
+  'write_stdin',
+};
+
 @immutable
 class ParsedCommandOutput {
   const ParsedCommandOutput({
@@ -13,6 +28,7 @@ class ParsedCommandOutput {
     this.diffPath,
     this.diffAdditions = 0,
     this.diffDeletions = 0,
+    this.readSnippet,
   });
 
   final String? command;
@@ -26,6 +42,7 @@ class ParsedCommandOutput {
   final String? diffPath;
   final int diffAdditions;
   final int diffDeletions;
+  final ParsedReadSnippet? readSnippet;
 
   bool get isSuccess => exitCode == 0;
   String? get backgroundTerminalSummary {
@@ -114,6 +131,14 @@ class ParsedCommandOutput {
       }
     }
 
+    final normalizedBody = body.trim();
+    if (command == null &&
+        _looksLikeToolInvocationName(normalizedBody) &&
+        !hiddenToolInvocationNames.contains(normalizedBody)) {
+      command = normalizedBody;
+      body = '';
+    }
+
     if (exitCodeMatch != null) {
       exitCode = int.tryParse(exitCodeMatch.group(1) ?? '');
     }
@@ -133,6 +158,7 @@ class ParsedCommandOutput {
     String? diffPath;
     int diffAdditions = 0;
     int diffDeletions = 0;
+    ParsedReadSnippet? readSnippet;
 
     final diffStart = body.indexOf('[diff_block_start]');
     final diffEnd = body.indexOf('[diff_block_end]');
@@ -222,6 +248,13 @@ class ParsedCommandOutput {
       }
     }
 
+    if (!hasDiffBlock) {
+      readSnippet = ParsedReadSnippet.tryParse(
+        command: command,
+        outputBody: body,
+      );
+    }
+
     return ParsedCommandOutput(
       command: command,
       exitCode: exitCode,
@@ -233,8 +266,256 @@ class ParsedCommandOutput {
       diffPath: diffPath,
       diffAdditions: diffAdditions,
       diffDeletions: diffDeletions,
+      readSnippet: readSnippet,
     );
   }
+}
+
+bool _looksLikeToolInvocationName(String value) {
+  if (value.isEmpty || value.contains(RegExp(r'\s'))) {
+    return false;
+  }
+
+  return value.contains('_') && RegExp(r'^[a-z0-9_]+$').hasMatch(value);
+}
+
+@immutable
+class ParsedReadSnippet {
+  const ParsedReadSnippet({
+    required this.path,
+    required this.code,
+    this.startLine,
+    this.endLine,
+    this.requestedLineCount,
+    this.isTail = false,
+  });
+
+  final String path;
+  final String code;
+  final int? startLine;
+  final int? endLine;
+  final int? requestedLineCount;
+  final bool isTail;
+
+  String get fileName {
+    final normalized = path.replaceAll('\\', '/');
+    final segments = normalized.split('/');
+    return segments.isEmpty ? normalized : segments.last;
+  }
+
+  String get summaryLabel {
+    if (startLine != null && endLine != null) {
+      return 'Read $fileName:$startLine-$endLine';
+    }
+    if (isTail && requestedLineCount != null) {
+      return 'Read $fileName (last $requestedLineCount lines)';
+    }
+    if (requestedLineCount != null && startLine == 1) {
+      return 'Read $fileName:1-$requestedLineCount';
+    }
+    return 'Read $fileName';
+  }
+
+  static ParsedReadSnippet? tryParse({
+    required String? command,
+    required String outputBody,
+  }) {
+    final trimmedCommand = command?.trim();
+    final trimmedBody = outputBody.trimRight();
+    if (trimmedCommand == null ||
+        trimmedCommand.isEmpty ||
+        trimmedBody.isEmpty ||
+        _looksLikeToolInvocationName(trimmedCommand)) {
+      return null;
+    }
+
+    final numberedBody = _ParsedNumberedCodeBody.tryParse(trimmedBody);
+
+    final nlWithSedMatch = RegExp(
+      r'''(?:^|[;&]\s*)nl\s+-ba\s+(?:"([^"]+)"|'([^']+)'|([^\s|;]+))\s*\|\s*sed\s+-n\s+["'](\d+),(\d+)p["']''',
+      multiLine: true,
+      caseSensitive: false,
+      dotAll: true,
+    ).firstMatch(trimmedCommand);
+    if (nlWithSedMatch != null) {
+      final path = _firstNonEmptyGroup(nlWithSedMatch, 1, 2, 3);
+      final startLine = int.tryParse(nlWithSedMatch.group(4) ?? '');
+      final endLine = int.tryParse(nlWithSedMatch.group(5) ?? '');
+      if (path != null && startLine != null && endLine != null) {
+        return ParsedReadSnippet(
+          path: path,
+          code: numberedBody?.code ?? trimmedBody,
+          startLine: numberedBody?.startLine ?? startLine,
+          endLine: numberedBody?.endLine ?? endLine,
+        );
+      }
+    }
+
+    final sedMatch = RegExp(
+      r'''(?:^|[;&]\s*)sed\s+-n\s+["'](\d+),(\d+)p["']\s+(?:--\s+)?(?:"([^"]+)"|'([^']+)'|([^\s|;]+))''',
+      multiLine: true,
+      caseSensitive: false,
+      dotAll: true,
+    ).firstMatch(trimmedCommand);
+    if (sedMatch != null) {
+      final path = _firstNonEmptyGroup(sedMatch, 3, 4, 5);
+      final startLine = int.tryParse(sedMatch.group(1) ?? '');
+      final endLine = int.tryParse(sedMatch.group(2) ?? '');
+      if (path != null && startLine != null && endLine != null) {
+        return ParsedReadSnippet(
+          path: path,
+          code: trimmedBody,
+          startLine: startLine,
+          endLine: endLine,
+        );
+      }
+    }
+
+    final headMatch = RegExp(
+      r'''(?:^|[;&]\s*)head\s+-n\s+(\d+)\s+(?:--\s+)?(?:"([^"]+)"|'([^']+)'|([^\s|;]+))''',
+      multiLine: true,
+      caseSensitive: false,
+      dotAll: true,
+    ).firstMatch(trimmedCommand);
+    if (headMatch != null) {
+      final path = _firstNonEmptyGroup(headMatch, 2, 3, 4);
+      final requestedLineCount = int.tryParse(headMatch.group(1) ?? '');
+      if (path != null && requestedLineCount != null) {
+        final actualLineCount = '\n'.allMatches(trimmedBody).length + 1;
+        return ParsedReadSnippet(
+          path: path,
+          code: trimmedBody,
+          startLine: 1,
+          endLine: actualLineCount,
+          requestedLineCount: requestedLineCount,
+        );
+      }
+    }
+
+    final tailMatch = RegExp(
+      r'''(?:^|[;&]\s*)tail\s+-n\s+(\d+)\s+(?:--\s+)?(?:"([^"]+)"|'([^']+)'|([^\s|;]+))''',
+      multiLine: true,
+      caseSensitive: false,
+      dotAll: true,
+    ).firstMatch(trimmedCommand);
+    if (tailMatch != null) {
+      final path = _firstNonEmptyGroup(tailMatch, 2, 3, 4);
+      final requestedLineCount = int.tryParse(tailMatch.group(1) ?? '');
+      if (path != null && requestedLineCount != null) {
+        return ParsedReadSnippet(
+          path: path,
+          code: trimmedBody,
+          startLine: numberedBody?.startLine,
+          endLine: numberedBody?.endLine,
+          requestedLineCount: requestedLineCount,
+          isTail: true,
+        );
+      }
+    }
+
+    final catMatch = RegExp(
+      r'''(?:^|[;&]\s*)cat\s+(?:--\s+)?(?:"([^"]+)"|'([^']+)'|([^\s|;]+))''',
+      multiLine: true,
+      caseSensitive: false,
+      dotAll: true,
+    ).firstMatch(trimmedCommand);
+    if (catMatch != null) {
+      final path = _firstNonEmptyGroup(catMatch, 1, 2, 3);
+      if (path != null) {
+        return ParsedReadSnippet(
+          path: path,
+          code: trimmedBody,
+          startLine: numberedBody?.startLine,
+          endLine: numberedBody?.endLine,
+        );
+      }
+    }
+
+    if (numberedBody != null) {
+      final nlMatch = RegExp(
+        r'''(?:^|[;&]\s*)nl\s+-ba\s+(?:"([^"]+)"|'([^']+)'|([^\s|;]+))''',
+        multiLine: true,
+        caseSensitive: false,
+        dotAll: true,
+      ).firstMatch(trimmedCommand);
+      final path = nlMatch == null
+          ? null
+          : _firstNonEmptyGroup(nlMatch, 1, 2, 3);
+      if (path != null) {
+        return ParsedReadSnippet(
+          path: path,
+          code: numberedBody.code,
+          startLine: numberedBody.startLine,
+          endLine: numberedBody.endLine,
+        );
+      }
+    }
+
+    return null;
+  }
+}
+
+class _ParsedNumberedCodeBody {
+  const _ParsedNumberedCodeBody({
+    required this.code,
+    required this.startLine,
+    required this.endLine,
+  });
+
+  final String code;
+  final int startLine;
+  final int endLine;
+
+  static _ParsedNumberedCodeBody? tryParse(String body) {
+    final lines = body.split('\n');
+    if (lines.isEmpty) {
+      return null;
+    }
+
+    final cleanedLines = <String>[];
+    int? startLine;
+    int? endLine;
+
+    for (final line in lines) {
+      final match = RegExp(r'^\s*(\d+)\t?(.*)$').firstMatch(line);
+      if (match == null) {
+        return null;
+      }
+
+      final lineNumber = int.tryParse(match.group(1) ?? '');
+      if (lineNumber == null) {
+        return null;
+      }
+      startLine ??= lineNumber;
+      endLine = lineNumber;
+      cleanedLines.add(match.group(2) ?? '');
+    }
+
+    if (startLine == null || endLine == null) {
+      return null;
+    }
+
+    return _ParsedNumberedCodeBody(
+      code: cleanedLines.join('\n'),
+      startLine: startLine,
+      endLine: endLine,
+    );
+  }
+}
+
+String? _firstNonEmptyGroup(
+  RegExpMatch match,
+  int first,
+  int second,
+  int third,
+) {
+  for (final index in <int>[first, second, third]) {
+    final value = match.group(index);
+    if (value != null && value.trim().isNotEmpty) {
+      return value.trim();
+    }
+  }
+  return null;
 }
 
 String _unwrapZshCommand(String value) {

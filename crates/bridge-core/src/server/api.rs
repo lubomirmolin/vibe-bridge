@@ -220,6 +220,10 @@ struct ThreadHistoryQuery {
 #[derive(Debug, Deserialize)]
 struct StartTurnRequest {
     prompt: String,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default, alias = "reasoning_effort")]
+    effort: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -298,7 +302,23 @@ async fn start_turn(
     Path(thread_id): Path<String>,
     ExtractJson(request): ExtractJson<StartTurnRequest>,
 ) -> Result<Json<TurnMutationAcceptedDto>, StatusCode> {
-    match state.start_turn(&thread_id, &request.prompt).await {
+    match state
+        .start_turn(
+            &thread_id,
+            &request.prompt,
+            request
+                .model
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
+            request
+                .effort
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
+        )
+        .await
+    {
         Ok(response) => Ok(Json(response)),
         Err(error) => {
             eprintln!("bridge start_turn failed for {thread_id}: {error}");
@@ -465,6 +485,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::Request;
     use serde_json::Value;
+    use serde_json::json;
     use tower::util::ServiceExt;
 
     use super::router;
@@ -503,6 +524,20 @@ mod tests {
             .expect("request should succeed");
 
         assert_eq!(response.status(), 200);
+    }
+
+    #[test]
+    fn start_turn_request_accepts_model_and_effort_aliases() {
+        let request: super::StartTurnRequest = serde_json::from_value(json!({
+            "prompt": "Ship model propagation",
+            "model": "gpt-5-mini",
+            "reasoning_effort": "high",
+        }))
+        .expect("request should deserialize");
+
+        assert_eq!(request.prompt, "Ship model propagation");
+        assert_eq!(request.model.as_deref(), Some("gpt-5-mini"));
+        assert_eq!(request.effort.as_deref(), Some("high"));
     }
 
     #[tokio::test]

@@ -1574,6 +1574,8 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    String? model,
+    String? effort,
   }) async {
     return TurnMutationResult(
       contractVersion: contractVersion,

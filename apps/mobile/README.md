@@ -20,6 +20,13 @@ flutter devices
 flutter run -d <simulator-or-emulator-id>
 ```
 
+If Android debug builds fail inside Rust-backed Flutter plugins, use the repo
+wrapper so `flutter run` always gets the expected Rust environment:
+
+```bash
+./tool/run_android_debug.sh -d <android-device-id>
+```
+
 ## Test
 
 ```bash

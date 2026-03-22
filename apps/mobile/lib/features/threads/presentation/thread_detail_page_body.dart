@@ -20,6 +20,8 @@ class _ThreadDetailBody extends StatelessWidget {
     required this.onRefreshApprovals,
     required this.onTimelineUserScroll,
     required this.scrollController,
+    required this.isTimelineCardExpanded,
+    required this.onTimelineCardExpansionChanged,
   });
 
   final ThreadDetailState state;
@@ -40,6 +42,10 @@ class _ThreadDetailBody extends StatelessWidget {
   final VoidCallback onRefreshApprovals;
   final VoidCallback onTimelineUserScroll;
   final ScrollController scrollController;
+  final bool Function(String id, {required bool defaultValue})
+  isTimelineCardExpanded;
+  final void Function(String id, bool isExpanded)
+  onTimelineCardExpansionChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -183,8 +189,22 @@ class _ThreadDetailBody extends StatelessWidget {
                         ? _ThreadActivityCard(
                             item: block.item!,
                             exploration: block.exploration,
+                            isTimelineCardExpanded: isTimelineCardExpanded,
+                            onTimelineCardExpansionChanged:
+                                onTimelineCardExpansionChanged,
                           )
-                        : _ExploredFilesCard(exploration: block.exploration!),
+                        : _ExploredFilesCard(
+                            exploration: block.exploration!,
+                            isExpanded: isTimelineCardExpanded(
+                              _explorationExpansionId(block.exploration!),
+                              defaultValue: true,
+                            ),
+                            onExpansionChanged: (isExpanded) =>
+                                onTimelineCardExpansionChanged(
+                                  _explorationExpansionId(block.exploration!),
+                                  isExpanded,
+                                ),
+                          ),
                   )
                   .expand((widget) => [widget, const SizedBox(height: 12)]),
             if (state.isTurnActive) ...const [

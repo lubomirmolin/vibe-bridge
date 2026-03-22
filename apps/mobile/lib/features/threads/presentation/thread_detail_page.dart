@@ -46,6 +46,8 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
     required this.threadId,
     this.initialVisibleTimelineEntries = 80,
     this.initialComposerInput,
+    this.initialSelectedModel,
+    this.initialSelectedReasoningEffort,
   }) : draftWorkspacePath = null,
        draftWorkspaceLabel = null;
 
@@ -56,12 +58,16 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
     required String this.draftWorkspaceLabel,
     this.initialVisibleTimelineEntries = 80,
   }) : threadId = null,
-       initialComposerInput = null;
+       initialComposerInput = null,
+       initialSelectedModel = null,
+       initialSelectedReasoningEffort = null;
 
   final String? threadId;
   final String? draftWorkspacePath;
   final String? draftWorkspaceLabel;
   final String? initialComposerInput;
+  final String? initialSelectedModel;
+  final String? initialSelectedReasoningEffort;
 
   bool get isDraft => threadId == null;
   final String bridgeApiBaseUrl;
@@ -96,6 +102,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   bool _isDraftThreadCreationInFlight = false;
   Future<void> Function()? _loadEarlierHistory;
   String? _draftThreadErrorMessage;
+  final Map<String, bool> _timelineExpansionState = <String, bool>{};
 
   double _lastScrollOffset = 0;
   double _scrollOffsetOnDirectionChange = 0;
@@ -104,6 +111,16 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialSelectedModel != null &&
+        widget.initialSelectedModel!.trim().isNotEmpty) {
+      _selectedModel = widget.initialSelectedModel!.trim();
+    }
+    if (widget.initialSelectedReasoningEffort != null &&
+        widget.initialSelectedReasoningEffort!.trim().isNotEmpty) {
+      _selectedReasoning = _formatReasoningLabel(
+        widget.initialSelectedReasoningEffort!,
+      );
+    }
     _composerController = TextEditingController();
     _composerFocusNode = FocusNode();
     _gitBranchController = TextEditingController();
@@ -197,6 +214,25 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
               : '${word[0].toUpperCase()}${word.substring(1)}',
         )
         .join(' ');
+  }
+
+  String? _selectedReasoningEffortWireValue() {
+    final selectedModel = _availableModelOptions.firstWhere(
+      (candidate) => candidate.id == _selectedModel,
+      orElse: () => _availableModelOptions.first,
+    );
+
+    for (final option in selectedModel.supportedReasoningEfforts) {
+      if (_formatReasoningLabel(option.reasoningEffort) == _selectedReasoning) {
+        return option.reasoningEffort;
+      }
+    }
+
+    final normalized = _selectedReasoning.trim().toLowerCase().replaceAll(
+      ' ',
+      '_',
+    );
+    return normalized.isEmpty ? null : normalized;
   }
 
   void _onComposerModelChanged(String modelId) {
@@ -324,6 +360,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     if (oldWidget.threadId != widget.threadId) {
       _didInitialScrollToBottom = false;
       _didSubmitInitialComposerInput = false;
+      _timelineExpansionState.clear();
     }
     if (oldWidget.bridgeApiBaseUrl != widget.bridgeApiBaseUrl) {
       unawaited(_loadComposerModelCatalog());
@@ -370,6 +407,20 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       if (attempt < 2) {
         _jumpToTimelineBottom(attempt: attempt + 1);
       }
+    });
+  }
+
+  bool _isTimelineCardExpanded(String id, {required bool defaultValue}) {
+    return _timelineExpansionState[id] ?? defaultValue;
+  }
+
+  void _setTimelineCardExpanded(String id, bool isExpanded) {
+    if (_timelineExpansionState[id] == isExpanded) {
+      return;
+    }
+
+    setState(() {
+      _timelineExpansionState[id] = isExpanded;
     });
   }
 
@@ -500,6 +551,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
               bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
               threadId: thread.threadId,
               initialComposerInput: input,
+              initialSelectedModel: _selectedModel,
+              initialSelectedReasoningEffort:
+                  _selectedReasoningEffortWireValue(),
             ),
           ),
         ),
@@ -719,7 +773,13 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
           if (!mounted) {
             return;
           }
-          unawaited(controller.submitComposerInput(initialComposerInput));
+          unawaited(
+            controller.submitComposerInput(
+              initialComposerInput,
+              model: _selectedModel,
+              reasoningEffort: _selectedReasoningEffortWireValue(),
+            ),
+          );
         });
       }
     }
@@ -809,6 +869,8 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                     },
                     onTimelineUserScroll: _markTimelineUserScroll,
                     scrollController: _timelineScrollController,
+                    isTimelineCardExpanded: _isTimelineCardExpanded,
+                    onTimelineCardExpansionChanged: _setTimelineCardExpanded,
                   ),
                   Positioned(
                     top: 0,
@@ -949,8 +1011,13 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                                   });
                                 },
                                 onAccessModeChanged: changeAccessMode,
-                                onSubmitComposer:
-                                    controller.submitComposerInput,
+                                onSubmitComposer: (value) =>
+                                    controller.submitComposerInput(
+                                      value,
+                                      model: _selectedModel,
+                                      reasoningEffort:
+                                          _selectedReasoningEffortWireValue(),
+                                    ),
                                 onInterruptActiveTurn:
                                     controller.interruptActiveTurn,
                               ),
