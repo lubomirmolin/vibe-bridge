@@ -386,4 +386,98 @@ Background terminal finished with sed -n '1,20p' apps/mobile/lib/main.dart
     expect(blocks.single.workSummary!.actionCount, 2);
     expect(blocks.single.workSummary!.totalWallTimeSeconds, 3.2);
   });
+
+  test('file changes split bundled work into separate blocks', () {
+    final items = <ThreadActivityItem>[
+      ThreadActivityItem.fromTimelineEntry(
+        ThreadTimelineEntryDto(
+          eventId: 'event-1',
+          kind: BridgeEventKind.commandDelta,
+          occurredAt: '2026-03-19T17:35:04.000Z',
+          summary: 'Background terminal finished',
+          payload: <String, dynamic>{
+            'output': '''
+Command: /bin/zsh -lc "rg -n foo apps/mobile/lib"
+Wall time: 1.0 seconds
+Output:
+Background terminal finished with rg -n foo apps/mobile/lib
+''',
+          },
+        ),
+      ),
+      ThreadActivityItem.fromTimelineEntry(
+        ThreadTimelineEntryDto(
+          eventId: 'event-1b',
+          kind: BridgeEventKind.commandDelta,
+          occurredAt: '2026-03-19T17:35:04.500Z',
+          summary: 'Background terminal finished',
+          payload: <String, dynamic>{'output': 'Background terminal finished'},
+          annotations: ThreadTimelineAnnotationsDto(
+            groupKind: ThreadTimelineGroupKind.exploration,
+            explorationKind: ThreadTimelineExplorationKind.search,
+            entryLabel: 'Search',
+          ),
+        ),
+      ),
+      ThreadActivityItem.fromTimelineEntry(
+        ThreadTimelineEntryDto(
+          eventId: 'event-2',
+          kind: BridgeEventKind.fileChange,
+          occurredAt: '2026-03-19T17:35:05.000Z',
+          summary: 'Edited file',
+          payload: <String, dynamic>{
+            'resolved_unified_diff': '''
+diff --git a/apps/mobile/lib/main.dart b/apps/mobile/lib/main.dart
+--- a/apps/mobile/lib/main.dart
++++ b/apps/mobile/lib/main.dart
+@@ -1,1 +1,1 @@
+-oldValue
++newValue
+''',
+          },
+        ),
+      ),
+      ThreadActivityItem.fromTimelineEntry(
+        ThreadTimelineEntryDto(
+          eventId: 'event-3',
+          kind: BridgeEventKind.commandDelta,
+          occurredAt: '2026-03-19T17:35:06.000Z',
+          summary: 'Background terminal finished',
+          payload: <String, dynamic>{
+            'output': '''
+Command: /bin/zsh -lc "sed -n '1,20p' apps/mobile/lib/main.dart"
+Wall time: 2.0 seconds
+Output:
+Background terminal finished with sed -n '1,20p' apps/mobile/lib/main.dart
+''',
+          },
+        ),
+      ),
+      ThreadActivityItem.fromTimelineEntry(
+        ThreadTimelineEntryDto(
+          eventId: 'event-3b',
+          kind: BridgeEventKind.commandDelta,
+          occurredAt: '2026-03-19T17:35:06.500Z',
+          summary: 'Background terminal finished',
+          payload: <String, dynamic>{'output': 'Background terminal finished'},
+          annotations: ThreadTimelineAnnotationsDto(
+            groupKind: ThreadTimelineGroupKind.exploration,
+            explorationKind: ThreadTimelineExplorationKind.read,
+            entryLabel: 'Read main.dart',
+          ),
+        ),
+      ),
+    ];
+
+    final blocks = buildThreadTimelineBlocks(items);
+
+    expect(blocks, hasLength(3));
+    expect(blocks[0].workSummary, isNotNull);
+    expect(blocks[0].workSummary!.actionCount, 2);
+    expect(blocks[1].item?.type, ThreadActivityItemType.fileChange);
+    expect(blocks[1].workSummary, isNull);
+    expect(blocks[1].exploration, isNull);
+    expect(blocks[2].workSummary, isNotNull);
+    expect(blocks[2].workSummary!.actionCount, 2);
+  });
 }

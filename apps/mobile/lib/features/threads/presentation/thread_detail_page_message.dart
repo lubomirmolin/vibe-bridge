@@ -502,15 +502,11 @@ class _ThreadCodeBlockViewer extends StatelessWidget {
     required this.code,
     this.languageHint,
     this.filePathHint,
-    this.startLineNumber = 1,
-    this.showHeader = true,
   });
 
   final String code;
   final String? languageHint;
   final String? filePathHint;
-  final int startLineNumber;
-  final bool showHeader;
 
   @override
   Widget build(BuildContext context) {
@@ -522,8 +518,7 @@ class _ThreadCodeBlockViewer extends StatelessWidget {
         _CodeLanguageResolver.fromFilePath(filePathHint);
     final fileName = _CodeLanguageResolver.displayName(filePathHint);
     final languageLabel = _CodeLanguageResolver.label(language);
-    final shouldShowHeader =
-        showHeader && (fileName != null || languageLabel != null);
+    final shouldShowHeader = fileName != null || languageLabel != null;
 
     return Container(
       width: double.infinity,
@@ -650,6 +645,7 @@ class _ThreadCodeBlockViewer extends StatelessWidget {
   }
 
   String _lineNumbers(int lineCount) {
+    const startLineNumber = 1;
     final buffer = StringBuffer();
     for (
       var line = startLineNumber;
@@ -1154,8 +1150,55 @@ class _CodeLanguageResolver {
   }
 }
 
+String _runningTurnPhaseLabel(List<ThreadActivityItem> items) {
+  for (final item in items.reversed) {
+    final presentation = item.presentation;
+    if (presentation != null) {
+      switch (presentation.entryKind) {
+        case ThreadActivityPresentationEntryKind.read:
+          return 'Reading files';
+        case ThreadActivityPresentationEntryKind.search:
+          return 'Searching';
+        case ThreadActivityPresentationEntryKind.generic:
+          break;
+      }
+    }
+
+    switch (item.type) {
+      case ThreadActivityItemType.fileChange:
+        return 'Editing files';
+      case ThreadActivityItemType.planUpdate:
+        return 'Planning';
+      case ThreadActivityItemType.terminalOutput:
+        return 'Running commands';
+      case ThreadActivityItemType.assistantOutput:
+        return item.body.trim().isEmpty ? 'Thinking' : 'Writing';
+      case ThreadActivityItemType.approvalRequest:
+        return 'Waiting for approval';
+      case ThreadActivityItemType.securityEvent:
+        return 'Running checks';
+      case ThreadActivityItemType.userPrompt:
+      case ThreadActivityItemType.lifecycleUpdate:
+      case ThreadActivityItemType.generic:
+        break;
+    }
+  }
+
+  return 'Thinking';
+}
+
 class _ChatLoadingMessageCard extends StatefulWidget {
-  const _ChatLoadingMessageCard();
+  const _ChatLoadingMessageCard({
+    required this.phaseLabel,
+    required this.controlsEnabled,
+    required this.isInterruptMutationInFlight,
+    required this.onInterruptActiveTurn,
+  });
+
+  final String phaseLabel;
+  final bool controlsEnabled;
+  final bool isInterruptMutationInFlight;
+  final Future<bool> Function() onInterruptActiveTurn;
 
   @override
   State<_ChatLoadingMessageCard> createState() =>
@@ -1165,9 +1208,22 @@ class _ChatLoadingMessageCard extends StatefulWidget {
 class _ChatLoadingMessageCardState extends State<_ChatLoadingMessageCard>
     with SingleTickerProviderStateMixin {
   late final Timer _timer;
+  final List<String> _frames = const <String>[
+    '⠋',
+    '⠙',
+    '⠹',
+    '⠸',
+    '⠼',
+    '⠴',
+    '⠦',
+    '⠧',
+    '⠇',
+    '⠏',
+  ];
   final String _chars = r'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$*&%';
   final math.Random _random = math.Random();
   String _currentText = '';
+  int _frameIndex = 0;
 
   @override
   void initState() {
@@ -1180,12 +1236,13 @@ class _ChatLoadingMessageCardState extends State<_ChatLoadingMessageCard>
 
   void _generateRandomText() {
     final length = 12 + _random.nextInt(10);
-    final buffer = StringBuffer('⠋ ');
+    final buffer = StringBuffer('${_frames[_frameIndex]} ');
     for (int i = 0; i < length; i++) {
       buffer.write(_chars[_random.nextInt(_chars.length)]);
     }
     setState(() {
       _currentText = buffer.toString();
+      _frameIndex = (_frameIndex + 1) % _frames.length;
     });
   }
 
@@ -1198,6 +1255,7 @@ class _ChatLoadingMessageCardState extends State<_ChatLoadingMessageCard>
   @override
   Widget build(BuildContext context) {
     return Container(
+      key: const Key('thread-running-indicator-card'),
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
@@ -1213,11 +1271,66 @@ class _ChatLoadingMessageCardState extends State<_ChatLoadingMessageCard>
             size: 16,
           ),
           const SizedBox(width: 12),
-          Text(
-            _currentText,
-            style: GoogleFonts.jetBrainsMono(
-              color: AppTheme.textMuted,
-              fontSize: 13,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.phaseLabel,
+                  key: const Key('thread-running-phase-label'),
+                  style: GoogleFonts.jetBrainsMono(
+                    color: AppTheme.textMain,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _currentText,
+                  key: const Key('thread-running-scramble'),
+                  style: GoogleFonts.jetBrainsMono(
+                    color: AppTheme.textMuted,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          TextButton.icon(
+            key: const Key('turn-interrupt-button'),
+            onPressed:
+                widget.controlsEnabled && !widget.isInterruptMutationInFlight
+                ? () async {
+                    await widget.onInterruptActiveTurn();
+                  }
+                : null,
+            style: TextButton.styleFrom(
+              foregroundColor: AppTheme.rose,
+              backgroundColor: AppTheme.rose.withValues(alpha: 0.08),
+              disabledForegroundColor: AppTheme.textSubtle,
+              disabledBackgroundColor: AppTheme.surfaceZinc800.withValues(
+                alpha: 0.35,
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              minimumSize: const Size(0, 40),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: AppTheme.rose.withValues(alpha: 0.16)),
+              ),
+            ),
+            icon: widget.isInterruptMutationInFlight
+                ? const SizedBox.square(
+                    dimension: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : PhosphorIcon(PhosphorIcons.stop(), size: 16),
+            label: Text(
+              widget.isInterruptMutationInFlight ? 'Cancelling' : 'Cancel',
+              style: GoogleFonts.jetBrainsMono(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],

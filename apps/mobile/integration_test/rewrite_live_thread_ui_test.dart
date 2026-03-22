@@ -67,10 +67,9 @@ void main() {
       await tester.tap(submitFinder);
       await tester.pump();
 
-      final loadingFinder = find.byWidgetPredicate((widget) {
-        return widget is Text &&
-            (widget.data?.startsWith('⠋ ') ?? false);
-      });
+      final loadingFinder = find.byKey(
+        const Key('thread-running-indicator-card'),
+      );
       await _pumpUntilFound(
         tester,
         loadingFinder,
