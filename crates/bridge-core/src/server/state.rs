@@ -18,11 +18,18 @@ use crate::pairing::{
     PairingHandshakeRequest, PairingHandshakeResponse, PairingRevokeRequest, PairingRevokeResponse,
     PairingSessionResponse, PairingSessionService, PairingTrustSnapshot,
 };
+use crate::policy::{PolicyAction, PolicyDecision, PolicyEngine};
 use crate::server::config::{BridgeCodexConfig, BridgeConfig};
+use crate::server::controls::{
+    ApprovalGateResponse, ApprovalRecordDto, ApprovalResolutionResponse, ApprovalStatus,
+    ExecutedGitMutation, PendingApprovalAction, execute_branch_switch, execute_pull, execute_push,
+    read_git_state,
+};
 use crate::server::events::EventHub;
 use crate::server::gateway::CodexGateway;
 use crate::server::pairing_route::{PairingRouteHealth, PairingRouteState};
 use crate::server::projection::ProjectionStore;
+use crate::thread_api::{GitStatusResponse, MutationResultResponse, RepositoryContextDto};
 
 #[derive(Debug, Clone)]
 pub struct BridgeAppState {
@@ -35,12 +42,14 @@ struct BridgeAppStateInner {
     codex_health: RwLock<ServiceHealthDto>,
     available_models: RwLock<Vec<ModelOptionDto>>,
     active_turn_ids: RwLock<HashMap<String, String>>,
+    pending_user_message_images: RwLock<HashMap<String, Vec<String>>>,
     access_mode: RwLock<AccessMode>,
     security_events: RwLock<Vec<SecurityEventRecordDto>>,
     gateway: CodexGateway,
     event_hub: EventHub,
     pairing_sessions: Mutex<PairingSessionService>,
     pairing_route: PairingRouteState,
+    git_controls: Mutex<GitControlState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -48,6 +57,88 @@ pub struct SecurityEventRecordDto {
     pub severity: String,
     pub category: String,
     pub event: BridgeEventEnvelope<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingApprovalRecord {
+    approval: ApprovalRecordDto,
+    action: PendingApprovalAction,
+}
+
+#[derive(Debug, Default)]
+struct GitControlState {
+    approvals: HashMap<String, PendingApprovalRecord>,
+    next_approval_sequence: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolveApprovalError {
+    NotFound,
+    NotPending,
+    TargetNotFound,
+    MutationFailed(String),
+}
+
+impl GitControlState {
+    fn queue_approval(
+        &mut self,
+        action: PendingApprovalAction,
+        reason: &str,
+        repository: RepositoryContextDto,
+        git_status: crate::thread_api::GitStatusDto,
+        occurred_at: &str,
+    ) -> ApprovalRecordDto {
+        self.next_approval_sequence = self.next_approval_sequence.saturating_add(1);
+        let approval = ApprovalRecordDto {
+            contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+            approval_id: format!("approval-{}", self.next_approval_sequence),
+            thread_id: action.thread_id().to_string(),
+            action: action.operation_name().to_string(),
+            target: action.target_name(),
+            reason: reason.to_string(),
+            status: ApprovalStatus::Pending,
+            requested_at: occurred_at.to_string(),
+            resolved_at: None,
+            repository,
+            git_status,
+        };
+        self.approvals.insert(
+            approval.approval_id.clone(),
+            PendingApprovalRecord {
+                approval: approval.clone(),
+                action,
+            },
+        );
+        approval
+    }
+
+    fn resolve_approval(
+        &mut self,
+        approval_id: &str,
+        approved: bool,
+        resolved_at: &str,
+    ) -> Result<PendingApprovalRecord, ResolveApprovalError> {
+        let Some(record) = self.approvals.get_mut(approval_id) else {
+            return Err(ResolveApprovalError::NotFound);
+        };
+        if record.approval.status != ApprovalStatus::Pending {
+            return Err(ResolveApprovalError::NotPending);
+        }
+        record.approval.status = if approved {
+            ApprovalStatus::Approved
+        } else {
+            ApprovalStatus::Rejected
+        };
+        record.approval.resolved_at = Some(resolved_at.to_string());
+        Ok(record.clone())
+    }
+
+    fn restore_pending(&mut self, approval_id: &str) {
+        if let Some(record) = self.approvals.get_mut(approval_id) {
+            record.approval.status = ApprovalStatus::Pending;
+            record.approval.resolved_at = None;
+        }
+    }
 }
 
 impl BridgeAppState {
@@ -65,12 +156,14 @@ impl BridgeAppState {
                 }),
                 available_models: RwLock::new(Vec::new()),
                 active_turn_ids: RwLock::new(HashMap::new()),
+                pending_user_message_images: RwLock::new(HashMap::new()),
                 access_mode: RwLock::new(AccessMode::ControlWithApprovals),
                 security_events: RwLock::new(Vec::new()),
                 gateway: CodexGateway::new(config),
                 event_hub: EventHub::new(512),
                 pairing_sessions: Mutex::new(pairing_sessions),
                 pairing_route,
+                git_controls: Mutex::new(GitControlState::default()),
             }),
         }
     }
@@ -185,8 +278,16 @@ impl BridgeAppState {
         self.projections().set_access_mode(access_mode).await;
     }
 
+    pub async fn decide_policy(&self, action: PolicyAction) -> PolicyDecision {
+        PolicyEngine::new(self.access_mode().await).decide(action)
+    }
+
     pub async fn security_events_snapshot(&self) -> Vec<SecurityEventRecordDto> {
         self.inner.security_events.read().await.clone()
+    }
+
+    pub async fn approval_records(&self) -> Vec<ApprovalRecordDto> {
+        self.projections().list_approval_records().await
     }
 
     pub async fn record_security_audit(
@@ -271,12 +372,271 @@ impl BridgeAppState {
         Ok(page)
     }
 
+    pub async fn git_status(&self, thread_id: &str) -> Result<GitStatusResponse, String> {
+        let snapshot = self.ensure_snapshot(thread_id).await?;
+        let git_state = read_git_state(&snapshot.thread.workspace, thread_id)?;
+        self.projections()
+            .update_git_state(
+                thread_id,
+                &git_state.response.repository,
+                &git_state.response.status,
+                None,
+                None,
+            )
+            .await;
+        Ok(git_state.response)
+    }
+
+    pub async fn queue_git_approval(
+        &self,
+        action: PendingApprovalAction,
+        reason: &str,
+    ) -> Result<ApprovalGateResponse, String> {
+        let thread_id = action.thread_id().to_string();
+        let snapshot = self.ensure_snapshot(&thread_id).await?;
+        let git_state = read_git_state(&snapshot.thread.workspace, &thread_id)?;
+        let occurred_at = Utc::now().to_rfc3339();
+        let approval = {
+            let mut git_controls = self
+                .inner
+                .git_controls
+                .lock()
+                .expect("git controls lock should not be poisoned");
+            git_controls.queue_approval(
+                action,
+                reason,
+                git_state.response.repository.clone(),
+                git_state.response.status.clone(),
+                &occurred_at,
+            )
+        };
+
+        self.projections()
+            .upsert_approval_record(approval.clone())
+            .await;
+        let event = BridgeEventEnvelope {
+            contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+            event_id: format!("evt-{}", approval.approval_id),
+            thread_id: approval.thread_id.clone(),
+            kind: BridgeEventKind::ApprovalRequested,
+            occurred_at: approval.requested_at.clone(),
+            payload: serde_json::to_value(&approval)
+                .expect("approval event payload should serialize"),
+            annotations: None,
+        };
+        self.projections().apply_live_event(&event).await;
+        self.event_hub().publish(event);
+
+        Ok(ApprovalGateResponse {
+            contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+            operation: approval.action.clone(),
+            outcome: "approval_required".to_string(),
+            message: "Dangerous action was gated pending explicit approval".to_string(),
+            approval,
+        })
+    }
+
+    pub async fn resolve_approval(
+        &self,
+        approval_id: &str,
+        approved: bool,
+    ) -> Result<ApprovalResolutionResponse, ResolveApprovalError> {
+        let occurred_at = Utc::now().to_rfc3339();
+        let record = {
+            let mut git_controls = self
+                .inner
+                .git_controls
+                .lock()
+                .expect("git controls lock should not be poisoned");
+            git_controls.resolve_approval(approval_id, approved, &occurred_at)?
+        };
+
+        if !approved {
+            self.projections()
+                .upsert_approval_record(record.approval.clone())
+                .await;
+            return Ok(ApprovalResolutionResponse {
+                contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+                approval: record.approval,
+                mutation_result: None,
+            });
+        }
+
+        let result = self
+            .execute_pending_approval_action(&record, &occurred_at)
+            .await;
+        match result {
+            Ok(mutation_result) => {
+                self.projections()
+                    .upsert_approval_record(record.approval.clone())
+                    .await;
+                Ok(ApprovalResolutionResponse {
+                    contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+                    approval: record.approval,
+                    mutation_result: Some(mutation_result),
+                })
+            }
+            Err(error) => {
+                let restored_approval = {
+                    let mut git_controls = self
+                        .inner
+                        .git_controls
+                        .lock()
+                        .expect("git controls lock should not be poisoned");
+                    git_controls.restore_pending(approval_id);
+                    git_controls
+                        .approvals
+                        .get(approval_id)
+                        .expect("approval should exist after restore")
+                        .approval
+                        .clone()
+                };
+                self.projections()
+                    .upsert_approval_record(restored_approval)
+                    .await;
+                Err(error)
+            }
+        }
+    }
+
+    pub async fn execute_git_branch_switch(
+        &self,
+        thread_id: &str,
+        branch: &str,
+    ) -> Result<MutationResultResponse, String> {
+        self.execute_git_operation(thread_id, |workspace, status, occurred_at| {
+            execute_branch_switch(workspace, thread_id, branch, status, occurred_at)
+        })
+        .await
+    }
+
+    pub async fn execute_git_pull(
+        &self,
+        thread_id: &str,
+        remote: Option<&str>,
+    ) -> Result<MutationResultResponse, String> {
+        self.execute_git_operation(thread_id, |workspace, status, occurred_at| {
+            execute_pull(workspace, thread_id, remote, status, occurred_at)
+        })
+        .await
+    }
+
+    pub async fn execute_git_push(
+        &self,
+        thread_id: &str,
+        remote: Option<&str>,
+    ) -> Result<MutationResultResponse, String> {
+        self.execute_git_operation(thread_id, |workspace, status, occurred_at| {
+            execute_push(workspace, thread_id, remote, status, occurred_at)
+        })
+        .await
+    }
+
     async fn set_codex_health(&self, health: ServiceHealthDto) {
         *self.inner.codex_health.write().await = health;
     }
 
     async fn set_available_models(&self, models: Vec<ModelOptionDto>) {
         *self.inner.available_models.write().await = models;
+    }
+
+    async fn execute_pending_approval_action(
+        &self,
+        record: &PendingApprovalRecord,
+        occurred_at: &str,
+    ) -> Result<MutationResultResponse, ResolveApprovalError> {
+        let snapshot = self.projections().snapshot(record.action.thread_id()).await;
+        let snapshot = match snapshot {
+            Some(snapshot) => snapshot,
+            None => self
+                .ensure_snapshot(record.action.thread_id())
+                .await
+                .map_err(|_| ResolveApprovalError::TargetNotFound)?,
+        };
+
+        let executed = match &record.action {
+            PendingApprovalAction::BranchSwitch { branch, .. } => execute_branch_switch(
+                &snapshot.thread.workspace,
+                record.action.thread_id(),
+                branch,
+                snapshot.thread.status,
+                occurred_at,
+            ),
+            PendingApprovalAction::Pull { remote, .. } => execute_pull(
+                &snapshot.thread.workspace,
+                record.action.thread_id(),
+                remote.as_deref(),
+                snapshot.thread.status,
+                occurred_at,
+            ),
+            PendingApprovalAction::Push { remote, .. } => execute_push(
+                &snapshot.thread.workspace,
+                record.action.thread_id(),
+                remote.as_deref(),
+                snapshot.thread.status,
+                occurred_at,
+            ),
+        }
+        .map_err(ResolveApprovalError::MutationFailed)?;
+
+        self.projections()
+            .apply_live_event(&executed.command_event)
+            .await;
+        self.event_hub().publish(executed.command_event);
+        self.projections()
+            .update_git_state(
+                record.action.thread_id(),
+                &executed.mutation.repository,
+                &executed.mutation.status,
+                Some(occurred_at),
+                Some(&executed.mutation.message),
+            )
+            .await;
+        Ok(executed.mutation)
+    }
+
+    async fn execute_git_operation<F>(
+        &self,
+        thread_id: &str,
+        operation: F,
+    ) -> Result<MutationResultResponse, String>
+    where
+        F: FnOnce(&str, ThreadStatus, &str) -> Result<ExecutedGitMutation, String>,
+    {
+        let occurred_at = Utc::now().to_rfc3339();
+        self.execute_git_operation_with_snapshot(thread_id, &occurred_at, operation)
+            .await
+    }
+
+    async fn execute_git_operation_with_snapshot<F>(
+        &self,
+        thread_id: &str,
+        occurred_at: &str,
+        operation: F,
+    ) -> Result<MutationResultResponse, String>
+    where
+        F: FnOnce(&str, ThreadStatus, &str) -> Result<ExecutedGitMutation, String>,
+    {
+        let snapshot = self.ensure_snapshot(thread_id).await?;
+        let executed = operation(
+            &snapshot.thread.workspace,
+            snapshot.thread.status,
+            occurred_at,
+        )?;
+        self.projections()
+            .apply_live_event(&executed.command_event)
+            .await;
+        self.event_hub().publish(executed.command_event);
+        self.projections()
+            .update_git_state(
+                thread_id,
+                &executed.mutation.repository,
+                &executed.mutation.status,
+                Some(occurred_at),
+                Some(&executed.mutation.message),
+            )
+            .await;
+        Ok(executed.mutation)
     }
 
     pub fn start_notification_forwarder(&self) {
@@ -416,19 +776,34 @@ impl BridgeAppState {
         &self,
         thread_id: &str,
         prompt: &str,
+        images: &[String],
         model: Option<&str>,
         effort: Option<&str>,
     ) -> Result<TurnMutationAcceptedDto, String> {
+        let normalized_images = images
+            .iter()
+            .map(|image| image.trim())
+            .filter(|image| !image.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        if !normalized_images.is_empty() {
+            self.inner
+                .pending_user_message_images
+                .write()
+                .await
+                .insert(thread_id.to_string(), normalized_images.clone());
+        }
         let state = self.clone();
         let handle = tokio::runtime::Handle::current();
         let compactor = Arc::new(std::sync::Mutex::new(LiveDeltaCompactor::default()));
         let result = self.inner.gateway.start_turn_streaming(
             thread_id,
             prompt,
+            images,
             model,
             effort,
             move |event| {
-                let normalized = compactor
+                let mut normalized = compactor
                     .lock()
                     .expect("turn stream compactor lock should not be poisoned")
                     .compact(event);
@@ -450,14 +825,30 @@ impl BridgeAppState {
                                 .write()
                                 .await
                                 .remove(&normalized.thread_id);
+                            state
+                                .inner
+                                .pending_user_message_images
+                                .write()
+                                .await
+                                .remove(&normalized.thread_id);
                         }
                         return;
                     }
+                    state
+                        .merge_pending_user_message_images(&mut normalized)
+                        .await;
                     state.projections().apply_live_event(&normalized).await;
                     state.event_hub().publish(normalized);
                 });
             },
         )?;
+        if result.turn_id.is_none() {
+            self.inner
+                .pending_user_message_images
+                .write()
+                .await
+                .remove(thread_id);
+        }
         if let Some(turn_id) = result.turn_id {
             self.inner
                 .active_turn_ids
@@ -470,6 +861,41 @@ impl BridgeAppState {
             .mark_thread_running(thread_id, &occurred_at)
             .await;
         Ok(result.response)
+    }
+
+    async fn merge_pending_user_message_images(&self, event: &mut BridgeEventEnvelope<Value>) {
+        if event.kind != BridgeEventKind::MessageDelta {
+            return;
+        }
+        if event.payload.get("role").and_then(Value::as_str) != Some("user") {
+            return;
+        }
+
+        let Some(pending_images) = self
+            .inner
+            .pending_user_message_images
+            .write()
+            .await
+            .remove(&event.thread_id)
+        else {
+            return;
+        };
+
+        let has_images = event
+            .payload
+            .get("images")
+            .and_then(Value::as_array)
+            .is_some_and(|images| !images.is_empty());
+        if has_images {
+            return;
+        }
+
+        if let Some(object) = event.payload.as_object_mut() {
+            object.insert(
+                "images".to_string(),
+                Value::Array(pending_images.into_iter().map(Value::String).collect()),
+            );
+        }
     }
 
     pub async fn interrupt_turn(

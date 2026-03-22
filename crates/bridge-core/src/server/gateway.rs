@@ -218,6 +218,7 @@ impl CodexGateway {
         &self,
         thread_id: &str,
         prompt: &str,
+        images: &[String],
         model: Option<&str>,
         effort: Option<&str>,
         on_event: F,
@@ -228,6 +229,7 @@ impl CodexGateway {
         let config = self.config.clone();
         let thread_id = thread_id.to_string();
         let prompt = prompt.to_string();
+        let images = images.to_vec();
         let model = model.map(str::to_string);
         let effort = effort.map(str::to_string);
         let reserved_transports = Arc::clone(&self.reserved_transports);
@@ -252,6 +254,7 @@ impl CodexGateway {
                 &mut transport,
                 &thread_id,
                 &prompt,
+                &images,
                 model.as_deref(),
                 effort.as_deref(),
             ) {
@@ -398,14 +401,15 @@ fn start_turn_with_resume(
     transport: &mut CodexJsonTransport,
     thread_id: &str,
     prompt: &str,
+    images: &[String],
     model: Option<&str>,
     effort: Option<&str>,
 ) -> Result<CodexTurnStartResult, String> {
-    match start_turn(transport, thread_id, prompt, model, effort) {
+    match start_turn(transport, thread_id, prompt, images, model, effort) {
         Ok(response) => Ok(response),
         Err(error) if should_resume_thread(&error) => {
             resume_thread(transport, thread_id)?;
-            start_turn(transport, thread_id, prompt, model, effort)
+            start_turn(transport, thread_id, prompt, images, model, effort)
         }
         Err(error) => Err(error),
     }
@@ -415,19 +419,13 @@ fn start_turn(
     transport: &mut CodexJsonTransport,
     thread_id: &str,
     prompt: &str,
+    images: &[String],
     model: Option<&str>,
     effort: Option<&str>,
 ) -> Result<CodexTurnStartResult, String> {
     let mut params = serde_json::Map::new();
     params.insert("threadId".to_string(), Value::String(thread_id.to_string()));
-    params.insert(
-        "input".to_string(),
-        Value::Array(vec![serde_json::json!({
-            "type": "text",
-            "text": prompt,
-            "text_elements": [],
-        })]),
-    );
+    params.insert("input".to_string(), build_turn_start_input(prompt, images));
     if let Some(model) = model {
         params.insert("model".to_string(), Value::String(model.to_string()));
     }
@@ -438,6 +436,29 @@ fn start_turn(
     let response = transport.request("turn/start", Value::Object(params))?;
     serde_json::from_value(response)
         .map_err(|error| format!("invalid turn/start response from codex: {error}"))
+}
+
+fn build_turn_start_input(prompt: &str, images: &[String]) -> Value {
+    let mut input = Vec::new();
+    if !prompt.trim().is_empty() {
+        input.push(serde_json::json!({
+            "type": "text",
+            "text": prompt,
+            "text_elements": [],
+        }));
+    }
+    for image in images
+        .iter()
+        .map(|image| image.trim())
+        .filter(|image| !image.is_empty())
+    {
+        input.push(serde_json::json!({
+            "type": "image",
+            "url": image,
+        }));
+    }
+
+    Value::Array(input)
 }
 
 fn connect_transport(config: &BridgeCodexConfig) -> Result<CodexJsonTransport, String> {
@@ -1146,6 +1167,7 @@ fn extract_message_images(item: &Value) -> Vec<String> {
         .filter_map(|entry| {
             entry
                 .get("image_url")
+                .or_else(|| entry.get("url"))
                 .or_else(|| entry.get("path"))
                 .and_then(Value::as_str)
         })
@@ -1448,8 +1470,8 @@ fn extract_file_name_from_command(command: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CodexGateway, derive_repository_name_from_cwd, normalize_codex_item_payload,
-        parse_model_options, parse_repository_name_from_origin,
+        CodexGateway, build_turn_start_input, derive_repository_name_from_cwd,
+        normalize_codex_item_payload, parse_model_options, parse_repository_name_from_origin,
         prefer_archive_timeline_when_rpc_lacks_tool_events,
     };
     use crate::codex_runtime::CodexRuntimeMode;
@@ -1489,6 +1511,53 @@ mod tests {
         assert_eq!(kind, BridgeEventKind::CommandDelta);
         assert_eq!(payload["command"], "exec_command");
         assert_eq!(payload["arguments"], "{\"cmd\":\"flutter analyze\"}");
+    }
+
+    #[test]
+    fn turn_start_input_includes_text_and_image_parts() {
+        let input = build_turn_start_input(
+            "Describe this image",
+            &["data:image/png;base64,AAA".to_string()],
+        );
+
+        assert_eq!(
+            input,
+            json!([
+                {
+                    "type": "text",
+                    "text": "Describe this image",
+                    "text_elements": [],
+                },
+                {
+                    "type": "image",
+                    "url": "data:image/png;base64,AAA",
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn normalize_message_item_preserves_image_urls_from_codex_content() {
+        let item = json!({
+            "id": "msg-1",
+            "type": "userMessage",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Screenshot attached",
+                },
+                {
+                    "type": "image",
+                    "url": "data:image/png;base64,AAA",
+                }
+            ],
+        });
+
+        let (kind, payload) =
+            normalize_codex_item_payload(&item).expect("message should normalize");
+        assert_eq!(kind, BridgeEventKind::MessageDelta);
+        assert_eq!(payload["role"], "user");
+        assert_eq!(payload["images"], json!(["data:image/png;base64,AAA"]));
     }
 
     #[test]
@@ -1607,6 +1676,7 @@ mod tests {
                 .start_turn_streaming(
                     &snapshot.thread.thread_id,
                     &prompt,
+                    &[],
                     None,
                     None,
                     move |event| {

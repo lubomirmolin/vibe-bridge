@@ -311,21 +311,11 @@ pub(super) fn normalize_codex_item_payload(
     match item_type {
         "userMessage" => Some((
             BridgeEventKind::MessageDelta,
-            json!({
-                "id": item.get("id").and_then(Value::as_str).unwrap_or_default(),
-                "type": "userMessage",
-                "role": "user",
-                "text": extract_codex_message_text(item),
-            }),
+            normalize_message_item(item, "user"),
         )),
         "agentMessage" => Some((
             BridgeEventKind::MessageDelta,
-            json!({
-                "id": item.get("id").and_then(Value::as_str).unwrap_or_default(),
-                "type": "agentMessage",
-                "role": "assistant",
-                "text": extract_codex_message_text(item),
-            }),
+            normalize_message_item(item, "assistant"),
         )),
         "plan" => Some((
             BridgeEventKind::PlanDelta,
@@ -351,6 +341,48 @@ pub(super) fn normalize_codex_item_payload(
         "functionCallOutput" | "customToolCallOutput" => normalize_codex_tool_output_item(item),
         _ => None,
     }
+}
+
+fn normalize_message_item(item: &Value, role: &str) -> Value {
+    let mut payload = json!({
+        "id": item.get("id").and_then(Value::as_str).unwrap_or_default(),
+        "type": if role == "user" {
+            "userMessage"
+        } else {
+            "agentMessage"
+        },
+        "role": role,
+        "text": extract_codex_message_text(item),
+    });
+
+    let images = extract_message_images(item);
+    if !images.is_empty()
+        && let Some(object) = payload.as_object_mut()
+    {
+        object.insert(
+            "images".to_string(),
+            Value::Array(images.into_iter().map(Value::String).collect()),
+        );
+    }
+
+    payload
+}
+
+fn extract_message_images(item: &Value) -> Vec<String> {
+    item.get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            entry
+                .get("image_url")
+                .or_else(|| entry.get("url"))
+                .or_else(|| entry.get("path"))
+                .and_then(Value::as_str)
+        })
+        .filter(|image| !image.trim().is_empty())
+        .map(ToString::to_string)
+        .collect()
 }
 
 fn extract_codex_message_text(item: &Value) -> String {

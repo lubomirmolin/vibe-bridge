@@ -495,7 +495,8 @@ List<String> _extractMessageImageUrls(Map<String, dynamic> payload) {
         continue;
       }
       if (itemType == 'image' || itemType == 'input_image') {
-        final imageUrl = _optionalString(item, 'image_url');
+        final imageUrl =
+            _optionalString(item, 'image_url') ?? _optionalString(item, 'url');
         if (imageUrl != null) {
           urls.add(imageUrl);
         }
