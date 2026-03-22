@@ -143,6 +143,7 @@ void main() {
       expect(loadingGoneMs, greaterThanOrEqualTo(firstVisibleAssistantMs));
       expect(find.textContaining(token), findsOneWidget);
     },
+    skip: !_runLiveThreadUiTest(),
   );
 }
 
@@ -164,6 +165,10 @@ String _resolveBridgeApiBaseUrl() {
   }
 
   return 'http://127.0.0.1:3216';
+}
+
+bool _runLiveThreadUiTest() {
+  return const bool.fromEnvironment('RUN_LIVE_THREAD_UI_TEST');
 }
 
 class _FakeApprovalBridgeApi implements ApprovalBridgeApi {
