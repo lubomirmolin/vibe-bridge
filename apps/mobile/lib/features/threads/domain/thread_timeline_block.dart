@@ -28,12 +28,14 @@ class ThreadTimelineBlock {
 class ThreadTimelineWorkSummary {
   const ThreadTimelineWorkSummary({
     required this.blocks,
+    required this.anchorEventId,
     required this.sourceEventIds,
     required this.actionCount,
     this.totalWallTimeSeconds,
   });
 
   final List<ThreadTimelineBlock> blocks;
+  final String anchorEventId;
   final List<String> sourceEventIds;
   final int actionCount;
   final double? totalWallTimeSeconds;
@@ -226,6 +228,7 @@ List<ThreadTimelineBlock> _bundleWorkBlocks(List<ThreadTimelineBlock> blocks) {
     }
 
     final workBlocks = blocks.sublist(index, scanIndex);
+    String? anchorEventId;
     final sourceEventIds = <String>[];
     var actionCount = 0;
     var totalWallTimeSeconds = 0.0;
@@ -235,6 +238,7 @@ List<ThreadTimelineBlock> _bundleWorkBlocks(List<ThreadTimelineBlock> blocks) {
       final item = block.item;
       final exploration = block.exploration;
       if (item != null) {
+        anchorEventId ??= item.eventId;
         sourceEventIds.add(item.eventId);
         actionCount += 1;
         final wallTimeSeconds = item.parsedCommandOutput?.wallTimeSeconds;
@@ -245,6 +249,9 @@ List<ThreadTimelineBlock> _bundleWorkBlocks(List<ThreadTimelineBlock> blocks) {
       }
 
       if (exploration != null) {
+        if (anchorEventId == null && exploration.sourceEventIds.isNotEmpty) {
+          anchorEventId = exploration.sourceEventIds.first;
+        }
         sourceEventIds.addAll(exploration.sourceEventIds);
         actionCount += exploration.sourceEventIds.length;
         final wallTimeSeconds = exploration.totalWallTimeSeconds;
@@ -265,6 +272,7 @@ List<ThreadTimelineBlock> _bundleWorkBlocks(List<ThreadTimelineBlock> blocks) {
       ThreadTimelineBlock.workSummary(
         ThreadTimelineWorkSummary(
           blocks: List<ThreadTimelineBlock>.unmodifiable(workBlocks),
+          anchorEventId: anchorEventId ?? sourceEventIds.first,
           sourceEventIds: List<String>.unmodifiable(sourceEventIds),
           actionCount: actionCount,
           totalWallTimeSeconds: hasWallTime ? totalWallTimeSeconds : null,

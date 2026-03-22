@@ -114,6 +114,8 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   bool _isSpeechRecording = false;
   bool _isSpeechTranscribing = false;
   String? _speechRecordingPath;
+  Timer? _speechRecordingTimer;
+  int _speechDurationSeconds = 0;
   bool _didInitialScrollToBottom = false;
   bool _isComposerFocused = false;
   bool _canLoadEarlierHistory = false;
@@ -437,6 +439,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     if (_isSpeechRecording) {
       unawaited(_audioRecorder.stop());
     }
+    _speechRecordingTimer?.cancel();
     _audioRecorder.dispose();
     _composerController.dispose();
     _composerFocusNode
@@ -595,9 +598,18 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       }
       setState(() {
         _isSpeechRecording = true;
+        _speechDurationSeconds = 0;
         _speechRecordingPath = recordingPath;
         _speechMessage = 'Recording voice message… tap the mic again to stop.';
         _speechMessageIsError = false;
+        _speechRecordingTimer?.cancel();
+        _speechRecordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+          if (mounted) {
+            setState(() {
+              _speechDurationSeconds++;
+            });
+          }
+        });
       });
     } catch (_) {
       _setSpeechMessage(
@@ -608,6 +620,8 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   }
 
   Future<void> _stopSpeechRecordingAndTranscribe() async {
+    _speechRecordingTimer?.cancel();
+    _speechRecordingTimer = null;
     final previousRecordingPath = _speechRecordingPath;
     setState(() {
       _isSpeechRecording = false;
@@ -1038,6 +1052,8 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                             isInterruptMutationInFlight: false,
                             isSpeechRecording: _isSpeechRecording,
                             isSpeechTranscribing: _isSpeechTranscribing,
+                            speechDurationSeconds: _speechDurationSeconds,
+                            speechAmplitudeStream: _isSpeechRecording ? _audioRecorder.onAmplitudeChanged(const Duration(milliseconds: 50)) : null,
                             speechMessage: _speechMessage,
                             speechMessageIsError: _speechMessageIsError,
                             isComposerFocused: _isComposerFocused,
@@ -1362,6 +1378,8 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                                     state.isInterruptMutationInFlight,
                                 isSpeechRecording: _isSpeechRecording,
                                 isSpeechTranscribing: _isSpeechTranscribing,
+                                speechDurationSeconds: _speechDurationSeconds,
+                                speechAmplitudeStream: _isSpeechRecording ? _audioRecorder.onAmplitudeChanged(const Duration(milliseconds: 50)) : null,
                                 speechMessage: _speechMessage,
                                 speechMessageIsError: _speechMessageIsError,
                                 isComposerFocused: _isComposerFocused,

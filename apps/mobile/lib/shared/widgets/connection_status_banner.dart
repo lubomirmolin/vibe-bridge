@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
 import 'package:codex_mobile_companion/foundation/theme/liquid_styles.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
@@ -16,6 +17,9 @@ class ConnectionStatusBanner extends StatefulWidget {
     this.compact = false,
     this.margin,
     this.showConnectedFor = const Duration(milliseconds: 900),
+    this.minimumNotConnectedDurationToShowConnected = const Duration(
+      seconds: 1,
+    ),
   });
 
   final ConnectionBannerState state;
@@ -23,6 +27,7 @@ class ConnectionStatusBanner extends StatefulWidget {
   final bool compact;
   final EdgeInsetsGeometry? margin;
   final Duration showConnectedFor;
+  final Duration minimumNotConnectedDurationToShowConnected;
 
   @override
   State<ConnectionStatusBanner> createState() => _ConnectionStatusBannerState();
@@ -31,47 +36,76 @@ class ConnectionStatusBanner extends StatefulWidget {
 class _ConnectionStatusBannerState extends State<ConnectionStatusBanner> {
   Timer? _hideTimer;
   bool _isVisible = true;
+  Duration? _notConnectedSince;
 
   @override
   void initState() {
     super.initState();
-    _isVisible = true;
+    final now = _currentTimestamp;
     if (widget.state == ConnectionBannerState.connected) {
-      _startHideTimer();
+      _isVisible = false;
+      return;
     }
+
+    _isVisible = true;
+    _notConnectedSince = now;
   }
 
   @override
   void didUpdateWidget(covariant ConnectionStatusBanner oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.state != widget.state) {
-      _syncVisibility(showConnectedBanner: true);
+      _syncVisibilityForTransition(oldState: oldWidget.state);
       return;
     }
 
     if (widget.state != ConnectionBannerState.connected && !_isVisible) {
-      _syncVisibility(showConnectedBanner: false);
+      _showBanner();
     }
   }
 
-  void _syncVisibility({required bool showConnectedBanner}) {
+  void _syncVisibilityForTransition({required ConnectionBannerState oldState}) {
     _hideTimer?.cancel();
+    final now = _currentTimestamp;
 
     if (widget.state == ConnectionBannerState.connected) {
-      if (showConnectedBanner && !_isVisible) {
-        setState(() {
-          _isVisible = true;
-        });
+      final notConnectedSince = _notConnectedSince;
+      _notConnectedSince = null;
+      if (notConnectedSince != null &&
+          now - notConnectedSince >=
+              widget.minimumNotConnectedDurationToShowConnected) {
+        _showBanner();
+        _startHideTimer();
+        return;
       }
-      _startHideTimer();
+
+      _hideBanner();
       return;
     }
 
-    if (!_isVisible) {
-      setState(() {
-        _isVisible = true;
-      });
+    if (oldState == ConnectionBannerState.connected ||
+        _notConnectedSince == null) {
+      _notConnectedSince = now;
     }
+    _showBanner();
+  }
+
+  void _showBanner() {
+    if (_isVisible) {
+      return;
+    }
+    setState(() {
+      _isVisible = true;
+    });
+  }
+
+  void _hideBanner() {
+    if (!_isVisible) {
+      return;
+    }
+    setState(() {
+      _isVisible = false;
+    });
   }
 
   void _startHideTimer() {
@@ -80,11 +114,12 @@ class _ConnectionStatusBannerState extends State<ConnectionStatusBanner> {
       if (!mounted) {
         return;
       }
-      setState(() {
-        _isVisible = false;
-      });
+      _hideBanner();
     });
   }
+
+  Duration get _currentTimestamp =>
+      SchedulerBinding.instance.currentFrameTimeStamp;
 
   @override
   void dispose() {
