@@ -36,7 +36,8 @@ impl ThreadApiService {
             return false;
         };
 
-        let elapsed = super::current_unix_epoch_millis().saturating_sub(receipt.synced_at_millis);
+        let elapsed =
+            super::timeline::current_unix_epoch_millis().saturating_sub(receipt.synced_at_millis);
         if elapsed > THREAD_SYNC_REUSE_WINDOW_MILLIS {
             return false;
         }
@@ -55,7 +56,7 @@ impl ThreadApiService {
         self.thread_sync_receipts_by_id.insert(
             thread_id.to_string(),
             ThreadSyncReceipt {
-                synced_at_millis: super::current_unix_epoch_millis(),
+                synced_at_millis: super::timeline::current_unix_epoch_millis(),
                 signature,
                 session_index_modified_at_millis: self.session_index_modified_at_millis(),
             },
