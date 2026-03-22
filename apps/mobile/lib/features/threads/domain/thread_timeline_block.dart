@@ -25,11 +25,13 @@ class ThreadTimelineExplorationSummary {
     required this.files,
     required this.searchCount,
     required this.searchLabels,
+    required this.sourceEventIds,
   });
 
   final List<String> files;
   final int searchCount;
   final Map<String, int> searchLabels;
+  final List<String> sourceEventIds;
 
   String get label {
     final parts = <String>[];
@@ -111,6 +113,7 @@ class _ExplorationSummaryBuilder {
   final List<String> _files = <String>[];
   final Set<String> _seenFiles = <String>{};
   final Map<String, int> _searchLabels = <String, int>{};
+  final List<String> _sourceEventIds = <String>[];
   int _searchCount = 0;
 
   bool get hasContent => _files.isNotEmpty || _searchCount > 0;
@@ -120,6 +123,8 @@ class _ExplorationSummaryBuilder {
     if (presentation == null) {
       return;
     }
+
+    _sourceEventIds.add(item.eventId);
 
     switch (presentation.entryKind) {
       case ThreadActivityPresentationEntryKind.search:
@@ -145,6 +150,7 @@ class _ExplorationSummaryBuilder {
       files: List<String>.unmodifiable(_files),
       searchCount: _searchCount,
       searchLabels: Map<String, int>.unmodifiable(_searchLabels),
+      sourceEventIds: List<String>.unmodifiable(_sourceEventIds),
     );
   }
 }

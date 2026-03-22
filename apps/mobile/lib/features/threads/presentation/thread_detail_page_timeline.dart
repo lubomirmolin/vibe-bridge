@@ -1,10 +1,36 @@
 part of 'thread_detail_page.dart';
 
+String _terminalExpansionId(ThreadActivityItem item) =>
+    'terminal:${item.eventId}';
+
+String _fileChangeExpansionId(ThreadActivityItem item) =>
+    'file-change:${item.eventId}';
+
+String _explorationExpansionId(
+  ThreadTimelineExplorationSummary exploration, {
+  String? anchorEventId,
+}) {
+  final sourceIds = exploration.sourceEventIds.join('|');
+  if (anchorEventId == null || anchorEventId.isEmpty) {
+    return 'exploration:$sourceIds';
+  }
+  return 'exploration:$anchorEventId:$sourceIds';
+}
+
 class _ThreadActivityCard extends StatelessWidget {
-  const _ThreadActivityCard({required this.item, this.exploration});
+  const _ThreadActivityCard({
+    required this.item,
+    required this.isTimelineCardExpanded,
+    required this.onTimelineCardExpansionChanged,
+    this.exploration,
+  });
 
   final ThreadActivityItem item;
   final ThreadTimelineExplorationSummary? exploration;
+  final bool Function(String id, {required bool defaultValue})
+  isTimelineCardExpanded;
+  final void Function(String id, bool isExpanded)
+  onTimelineCardExpansionChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -19,12 +45,42 @@ class _ThreadActivityCard extends StatelessWidget {
       if (parsedContent.hasDiffBlock) {
         content = Padding(
           padding: const EdgeInsets.only(bottom: 16),
-          child: _CollapsibleFileChangeCard(item: item, parsed: parsedContent),
+          child: _CollapsibleFileChangeCard(
+            item: item,
+            parsed: parsedContent,
+            isExpanded: isTimelineCardExpanded(
+              _fileChangeExpansionId(item),
+              defaultValue: false,
+            ),
+            onExpansionChanged: (isExpanded) => onTimelineCardExpansionChanged(
+              _fileChangeExpansionId(item),
+              isExpanded,
+            ),
+          ),
+        );
+      } else if (parsedContent.readSnippet != null) {
+        content = Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: _CollapsibleReadSnippetCard(
+            parsed: parsedContent,
+            snippet: parsedContent.readSnippet!,
+          ),
         );
       } else {
         content = Padding(
           padding: const EdgeInsets.only(bottom: 16),
-          child: _CollapsibleTerminalCard(item: item, parsed: parsedContent),
+          child: _CollapsibleTerminalCard(
+            item: item,
+            parsed: parsedContent,
+            isExpanded: isTimelineCardExpanded(
+              _terminalExpansionId(item),
+              defaultValue: false,
+            ),
+            onExpansionChanged: (isExpanded) => onTimelineCardExpansionChanged(
+              _terminalExpansionId(item),
+              isExpanded,
+            ),
+          ),
         );
       }
     } else if (item.type == ThreadActivityItemType.assistantOutput ||
@@ -142,7 +198,23 @@ class _ThreadActivityCard extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         content,
-        _ExploredFilesCard(exploration: explorationSummary),
+        _ExploredFilesCard(
+          exploration: explorationSummary,
+          isExpanded: isTimelineCardExpanded(
+            _explorationExpansionId(
+              explorationSummary,
+              anchorEventId: item.eventId,
+            ),
+            defaultValue: true,
+          ),
+          onExpansionChanged: (isExpanded) => onTimelineCardExpansionChanged(
+            _explorationExpansionId(
+              explorationSummary,
+              anchorEventId: item.eventId,
+            ),
+            isExpanded,
+          ),
+        ),
       ],
     );
   }
@@ -213,28 +285,26 @@ String? _workedForLabel(double? wallTimeSeconds) {
   return 'Worked for ${minutes}m ${seconds}s';
 }
 
-class _CollapsibleTerminalCard extends StatefulWidget {
-  const _CollapsibleTerminalCard({required this.item, required this.parsed});
+class _CollapsibleTerminalCard extends StatelessWidget {
+  const _CollapsibleTerminalCard({
+    required this.item,
+    required this.parsed,
+    required this.isExpanded,
+    required this.onExpansionChanged,
+  });
 
   final ThreadActivityItem item;
   final ParsedCommandOutput parsed;
-
-  @override
-  State<_CollapsibleTerminalCard> createState() =>
-      _CollapsibleTerminalCardState();
-}
-
-class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
-  bool _isExpanded = false;
+  final bool isExpanded;
+  final ValueChanged<bool> onExpansionChanged;
 
   @override
   Widget build(BuildContext context) {
-    final commandStr = widget.parsed.terminalDisplayTitle;
-    final outputBody = widget.parsed.terminalDisplayBody;
-    final isSuccess = widget.parsed.isSuccess;
-    final isBackgroundTerminal =
-        widget.parsed.backgroundTerminalSummary != null;
-    final workedForLabel = _workedForLabel(widget.parsed.wallTimeSeconds);
+    final commandStr = parsed.terminalDisplayTitle;
+    final outputBody = parsed.terminalDisplayBody;
+    final isSuccess = parsed.isSuccess;
+    final isBackgroundTerminal = parsed.backgroundTerminalSummary != null;
+    final workedForLabel = _workedForLabel(parsed.wallTimeSeconds);
     final cardDecoration = isBackgroundTerminal
         ? BoxDecoration(
             color: AppTheme.surfaceZinc900.withValues(alpha: 0.55),
@@ -252,7 +322,7 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           InkWell(
-            onTap: () => setState(() => _isExpanded = !_isExpanded),
+            onTap: () => onExpansionChanged(!isExpanded),
             borderRadius: BorderRadius.circular(isBackgroundTerminal ? 10 : 12),
             child: Padding(
               padding: EdgeInsets.fromLTRB(
@@ -303,7 +373,7 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  if (widget.parsed.exitCode != null)
+                  if (parsed.exitCode != null)
                     Icon(
                       isSuccess
                           ? Icons.check_circle_rounded
@@ -313,7 +383,7 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
                     ),
                   const SizedBox(width: 8),
                   PhosphorIcon(
-                    _isExpanded
+                    isExpanded
                         ? PhosphorIcons.caretUp()
                         : PhosphorIcons.caretDown(),
                     color: AppTheme.textSubtle,
@@ -323,7 +393,7 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
               ),
             ),
           ),
-          if (_isExpanded && outputBody.isNotEmpty) ...[
+          if (isExpanded && outputBody.isNotEmpty) ...[
             Divider(
               height: 1,
               color: isBackgroundTerminal
@@ -402,21 +472,20 @@ class _CollapsibleTerminalCardState extends State<_CollapsibleTerminalCard> {
   }
 }
 
-class _ExploredFilesCard extends StatefulWidget {
-  const _ExploredFilesCard({required this.exploration});
+class _ExploredFilesCard extends StatelessWidget {
+  const _ExploredFilesCard({
+    required this.exploration,
+    required this.isExpanded,
+    required this.onExpansionChanged,
+  });
 
   final ThreadTimelineExplorationSummary exploration;
-
-  @override
-  State<_ExploredFilesCard> createState() => _ExploredFilesCardState();
-}
-
-class _ExploredFilesCardState extends State<_ExploredFilesCard> {
-  bool _isExpanded = true;
+  final bool isExpanded;
+  final ValueChanged<bool> onExpansionChanged;
 
   List<String> get _explorationRows {
-    final rows = <String>[...widget.exploration.files];
-    widget.exploration.searchLabels.forEach((label, count) {
+    final rows = <String>[...exploration.files];
+    exploration.searchLabels.forEach((label, count) {
       rows.add(count > 1 ? '$label ($count)' : label);
     });
     return rows;
@@ -434,14 +503,14 @@ class _ExploredFilesCardState extends State<_ExploredFilesCard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           InkWell(
-            onTap: () => setState(() => _isExpanded = !_isExpanded),
+            onTap: () => onExpansionChanged(!isExpanded),
             borderRadius: BorderRadius.circular(12),
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Row(
                 children: [
                   Text(
-                    widget.exploration.label,
+                    exploration.label,
                     key: const Key('thread-explored-files-summary'),
                     style: const TextStyle(
                       color: AppTheme.textSubtle,
@@ -451,7 +520,7 @@ class _ExploredFilesCardState extends State<_ExploredFilesCard> {
                   ),
                   const SizedBox(width: 8),
                   PhosphorIcon(
-                    _isExpanded
+                    isExpanded
                         ? PhosphorIcons.caretDown()
                         : PhosphorIcons.caretRight(),
                     color: AppTheme.textSubtle,
@@ -461,7 +530,7 @@ class _ExploredFilesCardState extends State<_ExploredFilesCard> {
               ),
             ),
           ),
-          if (_isExpanded)
+          if (isExpanded)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
               child: Column(
@@ -489,28 +558,129 @@ class _ExploredFilesCardState extends State<_ExploredFilesCard> {
   }
 }
 
-class _CollapsibleFileChangeCard extends StatefulWidget {
-  const _CollapsibleFileChangeCard({required this.item, required this.parsed});
+class _CollapsibleReadSnippetCard extends StatefulWidget {
+  const _CollapsibleReadSnippetCard({
+    required this.parsed,
+    required this.snippet,
+  });
+
+  final ParsedCommandOutput parsed;
+  final ParsedReadSnippet snippet;
+
+  @override
+  State<_CollapsibleReadSnippetCard> createState() =>
+      _CollapsibleReadSnippetCardState();
+}
+
+class _CollapsibleReadSnippetCardState
+    extends State<_CollapsibleReadSnippetCard> {
+  @override
+  Widget build(BuildContext context) {
+    final workedForLabel = _workedForLabel(widget.parsed.wallTimeSeconds);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceZinc800.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                PhosphorIcon(
+                  PhosphorIcons.fileText(),
+                  color: AppTheme.textSubtle,
+                  size: 16,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    widget.snippet.summaryLabel,
+                    key: const Key('thread-read-snippet-summary'),
+                    style: GoogleFonts.jetBrainsMono(
+                      color: AppTheme.textMain,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (widget.parsed.exitCode != null)
+                  Icon(
+                    widget.parsed.isSuccess
+                        ? Icons.check_circle_rounded
+                        : Icons.cancel_rounded,
+                    color: widget.parsed.isSuccess
+                        ? AppTheme.emerald
+                        : AppTheme.rose,
+                    size: 16,
+                  ),
+              ],
+            ),
+          ),
+          if (workedForLabel != null) ...[
+            Divider(height: 1, color: Colors.white.withValues(alpha: 0.05)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      height: 1,
+                      color: Colors.white.withValues(alpha: 0.06),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    child: Text(
+                      workedForLabel,
+                      style: const TextStyle(
+                        color: AppTheme.textMuted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Container(
+                      height: 1,
+                      color: Colors.white.withValues(alpha: 0.06),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _CollapsibleFileChangeCard extends StatelessWidget {
+  const _CollapsibleFileChangeCard({
+    required this.item,
+    required this.parsed,
+    required this.isExpanded,
+    required this.onExpansionChanged,
+  });
 
   final ThreadActivityItem item;
   final ParsedCommandOutput parsed;
-
-  @override
-  State<_CollapsibleFileChangeCard> createState() =>
-      _CollapsibleFileChangeCardState();
-}
-
-class _CollapsibleFileChangeCardState
-    extends State<_CollapsibleFileChangeCard> {
-  bool _isExpanded = false;
+  final bool isExpanded;
+  final ValueChanged<bool> onExpansionChanged;
 
   @override
   Widget build(BuildContext context) {
-    final diffDocument = widget.parsed.diffDocument;
+    final diffDocument = parsed.diffDocument;
     final fileCount = diffDocument?.files.length ?? 0;
-    final fileName = widget.parsed.diffPath ?? 'unknown file';
-    final adds = widget.parsed.diffAdditions;
-    final dels = widget.parsed.diffDeletions;
+    final fileName = parsed.diffPath ?? 'unknown file';
+    final adds = parsed.diffAdditions;
+    final dels = parsed.diffDeletions;
     final primaryChangeType = fileCount == 1
         ? diffDocument?.files.first.changeType
         : null;
@@ -529,7 +699,7 @@ class _CollapsibleFileChangeCardState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           InkWell(
-            onTap: () => setState(() => _isExpanded = !_isExpanded),
+            onTap: () => onExpansionChanged(!isExpanded),
             key: Key('thread-file-change-toggle-$fileName'),
             borderRadius: BorderRadius.circular(12),
             child: Padding(
@@ -585,7 +755,7 @@ class _CollapsibleFileChangeCardState
                   ),
                   const SizedBox(width: 8),
                   PhosphorIcon(
-                    _isExpanded
+                    isExpanded
                         ? PhosphorIcons.caretUp()
                         : PhosphorIcons.caretDown(),
                     color: AppTheme.textSubtle,
@@ -595,7 +765,7 @@ class _CollapsibleFileChangeCardState
               ),
             ),
           ),
-          if (_isExpanded) ...[
+          if (isExpanded) ...[
             const Divider(height: 1, color: Colors.white10),
             Container(
               width: double.infinity,
@@ -608,9 +778,9 @@ class _CollapsibleFileChangeCardState
               ),
               child: diffDocument == null
                   ? _ThreadCodeBlockViewer(
-                      code: widget.parsed.outputBody,
+                      code: parsed.outputBody,
                       languageHint: _CodeLanguageResolver.fromFilePath(
-                        widget.parsed.diffPath,
+                        parsed.diffPath,
                       ),
                     )
                   : _ThreadDiffViewer(document: diffDocument),

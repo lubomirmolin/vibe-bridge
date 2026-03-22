@@ -912,6 +912,53 @@ void main() {
     expect(find.byKey(const Key('thread-message-image-0')), findsOneWidget);
   });
 
+  testWidgets('network images reserve space before the frame resolves', (
+    tester,
+  ) async {
+    const unresolvedImageUrl = 'https://example.invalid/thread-image.png';
+
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-network-image',
+              kind: BridgeEventKind.messageDelta,
+              summary: 'Attached image',
+              payload: {
+                'type': 'userMessage',
+                'content': [
+                  {'type': 'text', 'text': 'Check this remote image'},
+                  {'type': 'image', 'image_url': unresolvedImageUrl},
+                ],
+              },
+              occurredAt: '2026-03-18T10:02:00Z',
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+
+    final imageFinder = find.byKey(const Key('thread-message-image-0'));
+    await _scrollUntilVisible(tester, imageFinder);
+
+    final initialHeight = tester.getSize(imageFinder).height;
+    await tester.pump(const Duration(milliseconds: 250));
+    final settledHeight = tester.getSize(imageFinder).height;
+
+    expect(initialHeight, greaterThan(180));
+    expect(settledHeight, initialHeight);
+  });
+
   testWidgets('message swipe settles cleanly without a persistent timestamp', (
     tester,
   ) async {
@@ -1134,6 +1181,81 @@ Output:
     expect(find.text('write_stdin'), findsNothing);
   });
 
+  testWidgets('MCP tool invocations show their tool id instead of unknown', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-playwright-resize',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Called mcp__playwright__browser_resize',
+              payload: {'command': 'mcp__playwright__browser_resize'},
+              occurredAt: '2026-03-22T10:55:39Z',
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('\$ Unknown command'), findsNothing);
+    expect(find.text('mcp__playwright__browser_resize'), findsOneWidget);
+  });
+
+  testWidgets('read-only sed commands render as read snippets with line ranges', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-read-sed',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Command output',
+              payload: {
+                'output':
+                    'Command: /bin/zsh -lc "sed -n \'520,760p\' downloaded-templates/styles/_custom.scss"\n'
+                    'Process exited with code 0\n'
+                    'Output:\n'
+                    '.bf-cart-btn-secondary {\n'
+                    '  background: #fff;\n'
+                    '}\n',
+              },
+              occurredAt: '2026-03-22T10:55:39Z',
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('\$ Unknown command'), findsNothing);
+    expect(find.text("Read _custom.scss:520-760"), findsOneWidget);
+    expect(find.text('.bf-cart-btn-secondary {'), findsNothing);
+  });
+
   testWidgets('exec_command invocations render as terminal activity', (
     tester,
   ) async {
@@ -1239,6 +1361,76 @@ Output:
     expect(find.text('-1'), findsOneWidget);
     expect(find.text('Modified'), findsOneWidget);
   });
+
+  testWidgets(
+    'expanded file change cards stay expanded after scrolling away and back',
+    (tester) async {
+      final timeline = <ThreadTimelineEntryDto>[
+        for (var index = 0; index < 24; index += 1)
+          _timelineEvent(
+            id: 'evt-before-$index',
+            kind: BridgeEventKind.messageDelta,
+            summary: 'Assistant output',
+            payload: {'delta': 'Before filler $index'},
+            occurredAt: '2026-03-18T10:${index.toString().padLeft(2, '0')}:00Z',
+          ),
+        _timelineEvent(
+          id: 'evt-sticky-file-change',
+          kind: BridgeEventKind.commandDelta,
+          summary: 'Edited file',
+          payload: {
+            'output': '''
+*** Begin Patch
+*** Update File: /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile/lib/features/threads/presentation/thread_detail_page.dart
+@@
+-    return oldValue;
++    return newValue;
+*** End Patch
+''',
+          },
+          occurredAt: '2026-03-18T11:30:00Z',
+        ),
+      ];
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [timeline],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+        initialVisibleTimelineEntries: timeline.length,
+      );
+      await tester.pumpAndSettle();
+
+      const toggleKey = Key(
+        'thread-file-change-toggle-thread_detail_page.dart',
+      );
+      const diffKey = Key('thread-diff-file-thread_detail_page.dart');
+      final scrollable = find.byKey(const Key('thread-detail-scroll-view'));
+
+      expect(find.byKey(toggleKey), findsOneWidget);
+      await tester.tap(find.byKey(toggleKey));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(diffKey), findsOneWidget);
+
+      await tester.fling(scrollable, const Offset(0, 2800), 6000);
+      await tester.pumpAndSettle();
+      expect(find.text('Before filler 0'), findsOneWidget);
+
+      await tester.fling(scrollable, const Offset(0, -2800), 6000);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(toggleKey), findsOneWidget);
+      expect(find.byKey(diffKey), findsOneWidget);
+    },
+  );
 
   testWidgets('structured diffs show one result-side line number column', (
     tester,
@@ -3658,6 +3850,8 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    String? model,
+    String? effort,
   }) async {
     startTurnPromptsByThreadId
         .putIfAbsent(threadId, () => <String>[])

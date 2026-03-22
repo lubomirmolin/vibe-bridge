@@ -88,6 +88,8 @@ abstract class ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    String? model,
+    String? effort,
   });
 
   Future<TurnMutationResult> steerTurn({
@@ -289,13 +291,19 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    String? model,
+    String? effort,
   }) {
     return _postTurnMutation(
       bridgeApiBaseUrl: bridgeApiBaseUrl,
       threadId: threadId,
       operation: 'start',
       routeSegment: 'turns',
-      body: <String, dynamic>{'prompt': prompt},
+      body: <String, dynamic>{
+        'prompt': prompt,
+        if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
+        if (effort != null && effort.trim().isNotEmpty) 'effort': effort.trim(),
+      },
     );
   }
 

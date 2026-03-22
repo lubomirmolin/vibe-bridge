@@ -416,14 +416,18 @@ impl BridgeAppState {
         &self,
         thread_id: &str,
         prompt: &str,
+        model: Option<&str>,
+        effort: Option<&str>,
     ) -> Result<TurnMutationAcceptedDto, String> {
         let state = self.clone();
         let handle = tokio::runtime::Handle::current();
         let compactor = Arc::new(std::sync::Mutex::new(LiveDeltaCompactor::default()));
-        let result = self
-            .inner
-            .gateway
-            .start_turn_streaming(thread_id, prompt, move |event| {
+        let result = self.inner.gateway.start_turn_streaming(
+            thread_id,
+            prompt,
+            model,
+            effort,
+            move |event| {
                 let normalized = compactor
                     .lock()
                     .expect("turn stream compactor lock should not be poisoned")
@@ -452,7 +456,8 @@ impl BridgeAppState {
                     state.projections().apply_live_event(&normalized).await;
                     state.event_hub().publish(normalized);
                 });
-            })?;
+            },
+        )?;
         if let Some(turn_id) = result.turn_id {
             self.inner
                 .active_turn_ids

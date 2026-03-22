@@ -16,17 +16,71 @@ val rustAndroidTargets =
         "i686-linux-android",
     )
 
+val patchCargokitRunScripts =
+    tasks.register("patchCargokitRunScripts") {
+        group = "build setup"
+        description = "Patches Cargokit run scripts in pub cache so IDE-launched Gradle builds can find the correct Rust toolchain."
+
+        doLast {
+            val userHome = System.getProperty("user.home")
+            val pubCache = File(userHome, ".pub-cache/hosted/pub.dev")
+            if (!pubCache.exists()) {
+                return@doLast
+            }
+
+            val marker = "# codex-mobile-companion rust env"
+            val snippet =
+                """
+$marker
+export CARGO_HOME="$userHome/.cargo"
+export RUSTUP_HOME="$userHome/.rustup"
+case ":${'$'}PATH:" in
+  *":${'$'}CARGO_HOME/bin:"*) ;;
+  *) export PATH="${'$'}CARGO_HOME/bin:${'$'}PATH" ;;
+esac
+""".trimIndent()
+
+            pubCache
+                .walkTopDown()
+                .filter { it.isFile && it.name == "run_build_tool.sh" && it.parentFile?.name == "cargokit" }
+                .forEach { script ->
+                    val original = script.readText()
+                    val updatedWithSnippet =
+                        if (original.contains(marker)) {
+                            original.replace(
+                                Regex("""(?ms)^# codex-mobile-companion rust env\n.*?^esac\n"""),
+                            ) {
+                                "$snippet\n"
+                            }
+                        } else if (original.contains("set -e")) {
+                            original.replaceFirst("set -e", "set -e\n\n$snippet")
+                        } else {
+                            "$snippet\n\n$original"
+                        }
+
+                    val normalizedScript =
+                        updatedWithSnippet.replace(
+                            "rm \"\$PACKAGE_HASH_FILE\"",
+                            "rm -f \"\$PACKAGE_HASH_FILE\"",
+                        )
+
+                    if (normalizedScript == original) {
+                        return@forEach
+                    }
+                    script.writeText(normalizedScript)
+                }
+        }
+    }
+
 val ensureRustAndroidTargets =
     tasks.register("ensureRustAndroidTargets") {
         group = "build setup"
         description = "Ensures Rust Android stdlib targets exist for Flutter plugins that build Rust code."
 
         doLast {
-            val rustupFromCargoHome =
-                System.getenv("CARGO_HOME")?.let { File(it, "bin/rustup") }
             val rustupFromDefaultHome = File(System.getProperty("user.home"), ".cargo/bin/rustup")
             val rustupExecutable =
-                listOfNotNull(rustupFromCargoHome, rustupFromDefaultHome)
+                listOf(rustupFromDefaultHome)
                     .firstOrNull { it.exists() }
                     ?.absolutePath
                     ?: "rustup"
@@ -70,6 +124,7 @@ subprojects {
 subprojects {
     tasks.configureEach {
         if (name.startsWith("cargokitCargoBuild")) {
+            dependsOn(rootProject.tasks.named("patchCargokitRunScripts"))
             dependsOn(rootProject.tasks.named("ensureRustAndroidTargets"))
         }
     }

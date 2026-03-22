@@ -276,4 +276,64 @@ Formatted 1 file (0 changed) in 0.02 seconds.
       'Formatted 1 file (0 changed) in 0.02 seconds.',
     );
   });
+
+  test('plain MCP tool identifiers render as the command title', () {
+    final parsed = ParsedCommandOutput.parse('mcp__playwright__browser_resize');
+
+    expect(parsed.command, 'mcp__playwright__browser_resize');
+    expect(parsed.terminalDisplayTitle, 'mcp__playwright__browser_resize');
+    expect(parsed.terminalDisplayBody, isEmpty);
+  });
+
+  test('internal tool identifiers remain hidden-command bodies', () {
+    final parsed = ParsedCommandOutput.parse('write_stdin');
+
+    expect(parsed.command, isNull);
+    expect(parsed.outputBody, 'write_stdin');
+    expect(parsed.terminalDisplayTitle, 'Unknown command');
+  });
+
+  test('sed reads parse into a read snippet with an explicit line range', () {
+    final parsed = ParsedCommandOutput.parse('''
+Command: /bin/zsh -lc "sed -n '520,760p' downloaded-templates/styles/_custom.scss"
+Output:
+.bf-cart-btn-secondary {
+  background: #fff;
+}
+''');
+
+    expect(parsed.readSnippet, isNotNull);
+    expect(
+      parsed.readSnippet!.path,
+      'downloaded-templates/styles/_custom.scss',
+    );
+    expect(parsed.readSnippet!.startLine, 520);
+    expect(parsed.readSnippet!.endLine, 760);
+    expect(parsed.readSnippet!.summaryLabel, 'Read _custom.scss:520-760');
+  });
+
+  test(
+    'numbered nl output is normalized into clean code with line numbers',
+    () {
+      final parsed = ParsedCommandOutput.parse('''
+Command: /bin/zsh -lc "nl -ba apps/mobile/lib/features/threads/domain/parsed_command_output.dart | sed -n '2226,2228p'"
+Output:
+  2226\tclass Example {
+  2227\t  const Example();
+  2228\t}
+''');
+
+      expect(parsed.readSnippet, isNotNull);
+      expect(
+        parsed.readSnippet!.path,
+        'apps/mobile/lib/features/threads/domain/parsed_command_output.dart',
+      );
+      expect(parsed.readSnippet!.startLine, 2226);
+      expect(parsed.readSnippet!.endLine, 2228);
+      expect(
+        parsed.readSnippet!.code,
+        'class Example {\n  const Example();\n}',
+      );
+    },
+  );
 }

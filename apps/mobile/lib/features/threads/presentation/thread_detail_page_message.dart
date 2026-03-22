@@ -354,6 +354,9 @@ class _ThreadMessageImage extends StatelessWidget {
   final String imageUrl;
   final int index;
 
+  static const double _maxHeight = 320;
+  static const double _heightRatio = 0.75;
+
   @override
   Widget build(BuildContext context) {
     final imageWidget = _buildImage();
@@ -361,18 +364,31 @@ class _ThreadMessageImage extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        key: Key('thread-message-image-$index'),
-        constraints: const BoxConstraints(maxHeight: 320),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.25),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final boundedWidth = constraints.hasBoundedWidth
+            ? constraints.maxWidth
+            : _maxHeight / _heightRatio;
+        final reservedHeight = math.min(
+          boundedWidth * _heightRatio,
+          _maxHeight,
+        );
+
+        return ClipRRect(
           borderRadius: BorderRadius.circular(12),
-        ),
-        child: imageWidget,
-      ),
+          child: Container(
+            key: Key('thread-message-image-$index'),
+            width: double.infinity,
+            height: reservedHeight,
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.25),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: imageWidget,
+          ),
+        );
+      },
     );
   }
 
@@ -388,18 +404,96 @@ class _ThreadMessageImage extends StatelessWidget {
       if (bytes == null || bytes.isEmpty) {
         return null;
       }
-      return Image.memory(bytes, fit: BoxFit.contain, gaplessPlayback: true);
+      return _buildFramedImage(
+        Image.memory(bytes, fit: BoxFit.contain, gaplessPlayback: true),
+      );
     }
 
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-      return Image.network(
-        trimmed,
-        fit: BoxFit.contain,
-        errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),
+      return _buildFramedImage(
+        Image.network(
+          trimmed,
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) => _ImageFailureState(),
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) {
+              return child;
+            }
+            return Stack(
+              fit: StackFit.expand,
+              children: [child, const _ImageLoadingState()],
+            );
+          },
+        ),
       );
     }
 
     return null;
+  }
+
+  Widget _buildFramedImage(Widget child) {
+    return ColoredBox(
+      color: Colors.black.withValues(alpha: 0.12),
+      child: Center(child: child),
+    );
+  }
+}
+
+class _ImageLoadingState extends StatelessWidget {
+  const _ImageLoadingState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          PhosphorIcon(
+            PhosphorIcons.imageSquare(),
+            color: AppTheme.textSubtle,
+            size: 20,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Loading image…',
+            style: GoogleFonts.jetBrainsMono(
+              color: AppTheme.textSubtle,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ImageFailureState extends StatelessWidget {
+  const _ImageFailureState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          PhosphorIcon(
+            PhosphorIcons.imageBroken(),
+            color: AppTheme.textMuted,
+            size: 20,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Image unavailable',
+            style: GoogleFonts.jetBrainsMono(
+              color: AppTheme.textMuted,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -408,11 +502,15 @@ class _ThreadCodeBlockViewer extends StatelessWidget {
     required this.code,
     this.languageHint,
     this.filePathHint,
+    this.startLineNumber = 1,
+    this.showHeader = true,
   });
 
   final String code;
   final String? languageHint;
   final String? filePathHint;
+  final int startLineNumber;
+  final bool showHeader;
 
   @override
   Widget build(BuildContext context) {
@@ -424,7 +522,8 @@ class _ThreadCodeBlockViewer extends StatelessWidget {
         _CodeLanguageResolver.fromFilePath(filePathHint);
     final fileName = _CodeLanguageResolver.displayName(filePathHint);
     final languageLabel = _CodeLanguageResolver.label(language);
-    final showHeader = fileName != null || languageLabel != null;
+    final shouldShowHeader =
+        showHeader && (fileName != null || languageLabel != null);
 
     return Container(
       width: double.infinity,
@@ -436,7 +535,7 @@ class _ThreadCodeBlockViewer extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (showHeader)
+          if (shouldShowHeader)
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
@@ -552,7 +651,11 @@ class _ThreadCodeBlockViewer extends StatelessWidget {
 
   String _lineNumbers(int lineCount) {
     final buffer = StringBuffer();
-    for (var line = 1; line <= lineCount; line++) {
+    for (
+      var line = startLineNumber;
+      line < startLineNumber + lineCount;
+      line++
+    ) {
       buffer.writeln(line);
     }
     return buffer.toString().trimRight();

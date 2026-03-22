@@ -218,6 +218,8 @@ impl CodexGateway {
         &self,
         thread_id: &str,
         prompt: &str,
+        model: Option<&str>,
+        effort: Option<&str>,
         on_event: F,
     ) -> Result<GatewayTurnMutation, String>
     where
@@ -226,6 +228,8 @@ impl CodexGateway {
         let config = self.config.clone();
         let thread_id = thread_id.to_string();
         let prompt = prompt.to_string();
+        let model = model.map(str::to_string);
+        let effort = effort.map(str::to_string);
         let reserved_transports = Arc::clone(&self.reserved_transports);
         let (result_tx, result_rx) = mpsc::sync_channel(1);
 
@@ -244,7 +248,13 @@ impl CodexGateway {
             };
 
             let _ = resume_thread(&mut transport, &thread_id);
-            let payload = match start_turn_with_resume(&mut transport, &thread_id, &prompt) {
+            let payload = match start_turn_with_resume(
+                &mut transport,
+                &thread_id,
+                &prompt,
+                model.as_deref(),
+                effort.as_deref(),
+            ) {
                 Ok(payload) => payload,
                 Err(error) => {
                     if had_reserved_transport {
@@ -388,12 +398,14 @@ fn start_turn_with_resume(
     transport: &mut CodexJsonTransport,
     thread_id: &str,
     prompt: &str,
+    model: Option<&str>,
+    effort: Option<&str>,
 ) -> Result<CodexTurnStartResult, String> {
-    match start_turn(transport, thread_id, prompt) {
+    match start_turn(transport, thread_id, prompt, model, effort) {
         Ok(response) => Ok(response),
         Err(error) if should_resume_thread(&error) => {
             resume_thread(transport, thread_id)?;
-            start_turn(transport, thread_id, prompt)
+            start_turn(transport, thread_id, prompt, model, effort)
         }
         Err(error) => Err(error),
     }
@@ -403,18 +415,27 @@ fn start_turn(
     transport: &mut CodexJsonTransport,
     thread_id: &str,
     prompt: &str,
+    model: Option<&str>,
+    effort: Option<&str>,
 ) -> Result<CodexTurnStartResult, String> {
-    let response = transport.request(
-        "turn/start",
-        serde_json::json!({
-            "threadId": thread_id,
-            "input": [{
-                "type": "text",
-                "text": prompt,
-                "text_elements": [],
-            }],
-        }),
-    )?;
+    let mut params = serde_json::Map::new();
+    params.insert("threadId".to_string(), Value::String(thread_id.to_string()));
+    params.insert(
+        "input".to_string(),
+        Value::Array(vec![serde_json::json!({
+            "type": "text",
+            "text": prompt,
+            "text_elements": [],
+        })]),
+    );
+    if let Some(model) = model {
+        params.insert("model".to_string(), Value::String(model.to_string()));
+    }
+    if let Some(effort) = effort {
+        params.insert("effort".to_string(), Value::String(effort.to_string()));
+    }
+
+    let response = transport.request("turn/start", Value::Object(params))?;
     serde_json::from_value(response)
         .map_err(|error| format!("invalid turn/start response from codex: {error}"))
 }
@@ -1583,9 +1604,15 @@ mod tests {
             let prompt = format!("Reply with exactly {token}");
             let (event_tx, event_rx) = mpsc::channel();
             gateway
-                .start_turn_streaming(&snapshot.thread.thread_id, &prompt, move |event| {
-                    let _ = event_tx.send(event);
-                })
+                .start_turn_streaming(
+                    &snapshot.thread.thread_id,
+                    &prompt,
+                    None,
+                    None,
+                    move |event| {
+                        let _ = event_tx.send(event);
+                    },
+                )
                 .expect("turn should start");
 
             let wait_deadline = Instant::now() + Duration::from_secs(60);

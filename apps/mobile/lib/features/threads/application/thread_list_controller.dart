@@ -573,6 +573,7 @@ class ThreadListController extends StateNotifier<ThreadListState> {
         clearStaleMessage: true,
         isLoading: false,
         isShowingCachedData: false,
+        liveConnectionState: LiveConnectionState.connected,
       );
 
       return true;

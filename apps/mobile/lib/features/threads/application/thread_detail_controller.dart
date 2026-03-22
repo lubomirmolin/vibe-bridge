@@ -973,7 +973,11 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     );
   }
 
-  Future<bool> submitComposerInput(String rawInput) async {
+  Future<bool> submitComposerInput(
+    String rawInput, {
+    String? model,
+    String? reasoningEffort,
+  }) async {
     final thread = state.thread;
     if (thread == null) {
       return false;
@@ -1015,6 +1019,8 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
         threadId: state.threadId,
         prompt: input,
+        model: model,
+        effort: reasoningEffort,
       );
 
       _pendingPromptSubmittedAt = DateTime.now();
