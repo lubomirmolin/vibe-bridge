@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -46,6 +47,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
     required this.threadId,
     this.initialVisibleTimelineEntries = 80,
     this.initialComposerInput,
+    this.initialAttachedImages = const <XFile>[],
     this.initialSelectedModel,
     this.initialSelectedReasoningEffort,
   }) : draftWorkspacePath = null,
@@ -59,6 +61,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
     this.initialVisibleTimelineEntries = 80,
   }) : threadId = null,
        initialComposerInput = null,
+       initialAttachedImages = const <XFile>[],
        initialSelectedModel = null,
        initialSelectedReasoningEffort = null;
 
@@ -66,6 +69,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
   final String? draftWorkspacePath;
   final String? draftWorkspaceLabel;
   final String? initialComposerInput;
+  final List<XFile> initialAttachedImages;
   final String? initialSelectedModel;
   final String? initialSelectedReasoningEffort;
 
@@ -130,6 +134,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     _composerFocusNode.addListener(_handleComposerFocusChange);
     _timelineScrollController.addListener(_onScroll);
     _setComposerSelectionsFromCatalog(_availableModelOptions);
+    _attachedImages = List<XFile>.unmodifiable(widget.initialAttachedImages);
     unawaited(_loadComposerModelCatalog());
   }
 
@@ -368,6 +373,15 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     if (oldWidget.initialComposerInput != widget.initialComposerInput) {
       _didSubmitInitialComposerInput = false;
     }
+    if (!listEquals(
+      oldWidget.initialAttachedImages,
+      widget.initialAttachedImages,
+    )) {
+      _attachedImages = List<XFile>.unmodifiable(widget.initialAttachedImages);
+      if (widget.initialAttachedImages.isNotEmpty) {
+        _didSubmitInitialComposerInput = false;
+      }
+    }
   }
 
   @override
@@ -515,9 +529,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     }
 
     final input = rawInput.trim();
-    if (input.isEmpty) {
+    if (input.isEmpty && _attachedImages.isEmpty) {
       setState(() {
-        _draftThreadErrorMessage = 'Enter a prompt to start a turn.';
+        _draftThreadErrorMessage =
+            'Enter a prompt or attach an image to start a turn.';
       });
       return false;
     }
@@ -551,6 +566,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
               bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
               threadId: thread.threadId,
               initialComposerInput: input,
+              initialAttachedImages: _attachedImages,
               initialSelectedModel: _selectedModel,
               initialSelectedReasoningEffort:
                   _selectedReasoningEffortWireValue(),
@@ -579,6 +595,98 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       });
       return false;
     }
+  }
+
+  Future<bool> _submitComposerInput(
+    ThreadDetailController controller,
+    String rawInput, {
+    List<XFile>? attachedImages,
+  }) async {
+    final imageDataUrls = await _encodeAttachedImages(
+      attachedImages ?? _attachedImages,
+    );
+    final success = await controller.submitComposerInput(
+      rawInput,
+      images: imageDataUrls,
+      model: _selectedModel,
+      reasoningEffort: _selectedReasoningEffortWireValue(),
+    );
+    if (!mounted || !success) {
+      return success;
+    }
+
+    setState(() {
+      _attachedImages = const <XFile>[];
+      _draftThreadErrorMessage = null;
+    });
+    return true;
+  }
+
+  Future<List<String>> _encodeAttachedImages(List<XFile> images) async {
+    final encoded = <String>[];
+    for (final image in images) {
+      final dataUrl = await _encodeImageAsDataUrl(image);
+      if (dataUrl != null) {
+        encoded.add(dataUrl);
+      }
+    }
+    return List<String>.unmodifiable(encoded);
+  }
+
+  Future<String?> _encodeImageAsDataUrl(XFile image) async {
+    final bytes = await image.readAsBytes();
+    if (bytes.isEmpty) {
+      return null;
+    }
+
+    final mimeType = _detectImageMimeType(bytes, image);
+    return 'data:$mimeType;base64,${base64Encode(bytes)}';
+  }
+
+  String _detectImageMimeType(Uint8List bytes, XFile image) {
+    if (bytes.length >= 8 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47) {
+      return 'image/png';
+    }
+    if (bytes.length >= 3 &&
+        bytes[0] == 0xFF &&
+        bytes[1] == 0xD8 &&
+        bytes[2] == 0xFF) {
+      return 'image/jpeg';
+    }
+    if (bytes.length >= 6) {
+      final header = ascii.decode(bytes.sublist(0, 6), allowInvalid: true);
+      if (header == 'GIF87a' || header == 'GIF89a') {
+        return 'image/gif';
+      }
+    }
+    if (bytes.length >= 12 &&
+        ascii.decode(bytes.sublist(0, 4), allowInvalid: true) == 'RIFF' &&
+        ascii.decode(bytes.sublist(8, 12), allowInvalid: true) == 'WEBP') {
+      return 'image/webp';
+    }
+
+    final candidate = '${image.name} ${image.path}'.toLowerCase();
+    if (candidate.contains('.png')) {
+      return 'image/png';
+    }
+    if (candidate.contains('.gif')) {
+      return 'image/gif';
+    }
+    if (candidate.contains('.webp')) {
+      return 'image/webp';
+    }
+    if (candidate.contains('.heic')) {
+      return 'image/heic';
+    }
+    if (candidate.contains('.heif')) {
+      return 'image/heif';
+    }
+
+    return 'image/jpeg';
   }
 
   void _persistSelectedThreadId(
@@ -767,18 +875,15 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         !state.isTurnActive &&
         !state.isComposerMutationInFlight) {
       final initialComposerInput = widget.initialComposerInput?.trim();
-      if (initialComposerInput != null && initialComposerInput.isNotEmpty) {
+      if ((initialComposerInput != null && initialComposerInput.isNotEmpty) ||
+          _attachedImages.isNotEmpty) {
         _didSubmitInitialComposerInput = true;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) {
             return;
           }
           unawaited(
-            controller.submitComposerInput(
-              initialComposerInput,
-              model: _selectedModel,
-              reasoningEffort: _selectedReasoningEffortWireValue(),
-            ),
+            _submitComposerInput(controller, initialComposerInput ?? ''),
           );
         });
       }
@@ -1012,12 +1117,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                                 },
                                 onAccessModeChanged: changeAccessMode,
                                 onSubmitComposer: (value) =>
-                                    controller.submitComposerInput(
-                                      value,
-                                      model: _selectedModel,
-                                      reasoningEffort:
-                                          _selectedReasoningEffortWireValue(),
-                                    ),
+                                    _submitComposerInput(controller, value),
                                 onInterruptActiveTurn:
                                     controller.interruptActiveTurn,
                               ),

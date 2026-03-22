@@ -1,5 +1,6 @@
 mod api;
 mod config;
+mod controls;
 mod events;
 mod gateway;
 mod pairing_route;

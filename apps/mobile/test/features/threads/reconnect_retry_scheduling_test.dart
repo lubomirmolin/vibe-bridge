@@ -335,6 +335,72 @@ void main() {
       );
     },
   );
+
+  test(
+    'thread-detail forwards image attachments when submitting a turn',
+    () async {
+      final listController = ThreadListController(
+        bridgeApi: ScriptedThreadListBridgeApi(
+          scriptedResults: [
+            _threadSummaries(
+              reconnectThreadStatus: ThreadStatus.idle,
+              reconnectUpdatedAt: '2026-03-18T09:30:00Z',
+            ),
+          ],
+        ),
+        cacheRepository: _newCacheRepository(),
+        liveStream: ScriptedThreadLiveStream(),
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+      );
+      addTearDown(listController.dispose);
+
+      final detailApi = ScriptedThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.idle,
+              workspace: '/workspace/codex-mobile-companion',
+              repository: 'codex-mobile-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:00:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Normalize event payloads',
+            ),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+      );
+      final detailController = ThreadDetailController(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: 'thread-123',
+        initialVisibleTimelineEntries: 20,
+        bridgeApi: detailApi,
+        liveStream: ScriptedThreadLiveStream(),
+        threadListController: listController,
+      );
+      addTearDown(detailController.dispose);
+
+      await _waitUntil(() => !detailController.state.isLoading);
+
+      final submitted = await detailController.submitComposerInput(
+        '',
+        images: const <String>['data:image/png;base64,AAA'],
+      );
+
+      expect(submitted, isTrue);
+      expect(detailApi.startTurnPromptsByThreadId['thread-123'], ['']);
+      expect(detailApi.startTurnImagesByThreadId['thread-123'], [
+        ['data:image/png;base64,AAA'],
+      ]);
+    },
+  );
 }
 
 Future<void> _waitUntil(
@@ -464,6 +530,10 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   final Map<String, List<Object>> _detailScriptByThreadId;
   final Map<String, List<Object>> _timelineScriptByThreadId;
   int detailFetchCount = 0;
+  final Map<String, List<String>> startTurnPromptsByThreadId =
+      <String, List<String>>{};
+  final Map<String, List<List<String>>> startTurnImagesByThreadId =
+      <String, List<List<String>>>{};
 
   @override
   Future<ModelCatalogDto> fetchModelCatalog({
@@ -582,9 +652,16 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    List<String> images = const <String>[],
     String? model,
     String? effort,
   }) {
+    startTurnPromptsByThreadId
+        .putIfAbsent(threadId, () => <String>[])
+        .add(prompt);
+    startTurnImagesByThreadId
+        .putIfAbsent(threadId, () => <List<String>>[])
+        .add(List<String>.unmodifiable(images));
     return Future<TurnMutationResult>.value(
       TurnMutationResult(
         contractVersion: contractVersion,

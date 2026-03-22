@@ -998,6 +998,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    List<String> images = const <String>[],
     String? model,
     String? effort,
   }) async {

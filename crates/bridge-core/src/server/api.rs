@@ -7,14 +7,16 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
 use shared_contracts::{
-    AccessMode, ApprovalSummaryDto, BootstrapDto, ModelCatalogDto, SecurityAuditEventDto,
-    ThreadSnapshotDto, ThreadSummaryDto, ThreadTimelinePageDto, TurnMutationAcceptedDto,
+    AccessMode, BootstrapDto, ModelCatalogDto, SecurityAuditEventDto, ThreadSnapshotDto,
+    ThreadSummaryDto, ThreadTimelinePageDto, TurnMutationAcceptedDto,
 };
 
 use crate::pairing::{
     PairingFinalizeError, PairingFinalizeRequest, PairingHandshakeError, PairingHandshakeRequest,
     PairingTrustSnapshot,
 };
+use crate::policy::{PolicyAction, PolicyDecision};
+use crate::server::controls::{ApprovalRecordDto, ApprovalResolutionResponse};
 use crate::server::events::{EventSubscriptionQuery, stream_events};
 use crate::server::pairing_route::PairingRouteHealth;
 use crate::server::state::BridgeAppState;
@@ -40,9 +42,18 @@ pub fn router(state: BridgeAppState) -> Router {
         .route("/threads", get(list_threads).post(create_thread))
         .route("/threads/:thread_id/snapshot", get(thread_snapshot))
         .route("/threads/:thread_id/history", get(thread_history))
+        .route("/threads/:thread_id/git/status", get(thread_git_status))
+        .route(
+            "/threads/:thread_id/git/branch-switch",
+            post(thread_git_branch_switch),
+        )
+        .route("/threads/:thread_id/git/pull", post(thread_git_pull))
+        .route("/threads/:thread_id/git/push", post(thread_git_push))
         .route("/threads/:thread_id/turns", post(start_turn))
         .route("/threads/:thread_id/interrupt", post(interrupt_turn))
         .route("/approvals", get(list_approvals))
+        .route("/approvals/:approval_id/approve", post(approve_approval))
+        .route("/approvals/:approval_id/reject", post(reject_approval))
         .route("/security/events", get(list_security_events))
         .route("/events", get(events))
         .with_state(state)
@@ -170,7 +181,7 @@ async fn set_access_mode(
 async fn list_approvals(State(state): State<BridgeAppState>) -> Json<ApprovalListResponse> {
     Json(ApprovalListResponse {
         contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
-        approvals: state.projections().list_approvals().await,
+        approvals: state.approval_records().await,
     })
 }
 
@@ -218,8 +229,21 @@ struct ThreadHistoryQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct GitBranchSwitchRequest {
+    branch: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct GitRemoteRequest {
+    #[serde(default)]
+    remote: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct StartTurnRequest {
     prompt: String,
+    #[serde(default)]
+    images: Vec<String>,
     #[serde(default)]
     model: Option<String>,
     #[serde(default, alias = "reasoning_effort")]
@@ -306,6 +330,7 @@ async fn start_turn(
         .start_turn(
             &thread_id,
             &request.prompt,
+            &request.images,
             request
                 .model
                 .as_deref()
@@ -325,6 +350,142 @@ async fn start_turn(
             Err(StatusCode::BAD_GATEWAY)
         }
     }
+}
+
+async fn thread_git_status(
+    State(state): State<BridgeAppState>,
+    Path(thread_id): Path<String>,
+) -> Result<Json<crate::thread_api::GitStatusResponse>, (StatusCode, Json<ErrorEnvelope>)> {
+    state
+        .git_status(&thread_id)
+        .await
+        .map(Json)
+        .map_err(|error| git_error_response(&thread_id, error, "git_status_unavailable"))
+}
+
+async fn thread_git_branch_switch(
+    State(state): State<BridgeAppState>,
+    Path(thread_id): Path<String>,
+    ExtractJson(request): ExtractJson<GitBranchSwitchRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ErrorEnvelope>)> {
+    let branch = request.branch.trim();
+    if branch.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "git_branch_switch_failed",
+            "invalid_branch",
+            "Branch name cannot be empty.",
+        ));
+    }
+
+    match state.decide_policy(PolicyAction::GitBranchSwitch).await {
+        PolicyDecision::Deny { reason } => {
+            record_policy_denied(
+                &state,
+                &thread_id,
+                "git_branch_switch",
+                "git.branch_switch",
+                reason,
+            )
+            .await;
+            Err(error_response(
+                StatusCode::FORBIDDEN,
+                "git_branch_switch_failed",
+                "policy_denied",
+                reason,
+            ))
+        }
+        PolicyDecision::RequireApproval { reason } => {
+            let response = state
+                .queue_git_approval(
+                    crate::server::controls::PendingApprovalAction::BranchSwitch {
+                        thread_id: thread_id.clone(),
+                        branch: branch.to_string(),
+                    },
+                    reason,
+                )
+                .await
+                .map_err(|error| {
+                    git_error_response(&thread_id, error, "git_branch_switch_failed")
+                })?;
+            state
+                .record_security_audit(
+                    "warn",
+                    "git",
+                    thread_id.clone(),
+                    SecurityAuditEventDto {
+                        actor: "mobile-device".to_string(),
+                        action: response.approval.action.clone(),
+                        target: response.approval.target.clone(),
+                        outcome: "gated".to_string(),
+                        reason: reason.to_string(),
+                    },
+                )
+                .await;
+            Ok((
+                StatusCode::ACCEPTED,
+                Json(serde_json::to_value(response).expect("approval gate should serialize")),
+            ))
+        }
+        PolicyDecision::Allow => {
+            let response = state
+                .execute_git_branch_switch(&thread_id, branch)
+                .await
+                .map_err(|error| {
+                    git_error_response(&thread_id, error, "git_branch_switch_failed")
+                })?;
+            state
+                .record_security_audit(
+                    "info",
+                    "git",
+                    thread_id.clone(),
+                    SecurityAuditEventDto {
+                        actor: "mobile-device".to_string(),
+                        action: "git_branch_switch".to_string(),
+                        target: "git.branch_switch".to_string(),
+                        outcome: "allowed".to_string(),
+                        reason: "policy_allow".to_string(),
+                    },
+                )
+                .await;
+            Ok((
+                StatusCode::OK,
+                Json(serde_json::to_value(response).expect("mutation result should serialize")),
+            ))
+        }
+    }
+}
+
+async fn thread_git_pull(
+    State(state): State<BridgeAppState>,
+    Path(thread_id): Path<String>,
+    ExtractJson(request): ExtractJson<GitRemoteRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ErrorEnvelope>)> {
+    handle_git_remote_mutation(
+        state,
+        thread_id,
+        request.remote,
+        PolicyAction::GitPull,
+        "git_pull",
+        "git.pull",
+    )
+    .await
+}
+
+async fn thread_git_push(
+    State(state): State<BridgeAppState>,
+    Path(thread_id): Path<String>,
+    ExtractJson(request): ExtractJson<GitRemoteRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ErrorEnvelope>)> {
+    handle_git_remote_mutation(
+        state,
+        thread_id,
+        request.remote,
+        PolicyAction::GitPush,
+        "git_push",
+        "git.push",
+    )
+    .await
 }
 
 async fn create_thread(
@@ -378,6 +539,20 @@ async fn thread_history(
     }
 }
 
+async fn approve_approval(
+    State(state): State<BridgeAppState>,
+    Path(approval_id): Path<String>,
+) -> Result<Json<ApprovalResolutionResponse>, (StatusCode, Json<ErrorEnvelope>)> {
+    resolve_approval(state, approval_id, true).await
+}
+
+async fn reject_approval(
+    State(state): State<BridgeAppState>,
+    Path(approval_id): Path<String>,
+) -> Result<Json<ApprovalResolutionResponse>, (StatusCode, Json<ErrorEnvelope>)> {
+    resolve_approval(state, approval_id, false).await
+}
+
 async fn events(
     ws: WebSocketUpgrade,
     State(state): State<BridgeAppState>,
@@ -404,13 +579,254 @@ struct AccessModeResponse {
 #[derive(Debug, Serialize)]
 struct ApprovalListResponse {
     contract_version: String,
-    approvals: Vec<ApprovalSummaryDto>,
+    approvals: Vec<ApprovalRecordDto>,
 }
 
 #[derive(Debug, Serialize)]
 struct SecurityEventsResponse {
     contract_version: String,
     events: Vec<crate::server::state::SecurityEventRecordDto>,
+}
+
+async fn handle_git_remote_mutation(
+    state: BridgeAppState,
+    thread_id: String,
+    remote: Option<String>,
+    action: PolicyAction,
+    action_name: &str,
+    target: &str,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ErrorEnvelope>)> {
+    match state.decide_policy(action).await {
+        PolicyDecision::Deny { reason } => {
+            record_policy_denied(&state, &thread_id, action_name, target, reason).await;
+            Err(error_response(
+                StatusCode::FORBIDDEN,
+                format!("{action_name}_failed"),
+                "policy_denied",
+                reason,
+            ))
+        }
+        PolicyDecision::RequireApproval { reason } => {
+            let response = state
+                .queue_git_approval(
+                    match action {
+                        PolicyAction::GitPull => {
+                            crate::server::controls::PendingApprovalAction::Pull {
+                                thread_id: thread_id.clone(),
+                                remote: remote
+                                    .clone()
+                                    .map(|value| value.trim().to_string())
+                                    .filter(|value| !value.is_empty()),
+                            }
+                        }
+                        PolicyAction::GitPush => {
+                            crate::server::controls::PendingApprovalAction::Push {
+                                thread_id: thread_id.clone(),
+                                remote: remote
+                                    .clone()
+                                    .map(|value| value.trim().to_string())
+                                    .filter(|value| !value.is_empty()),
+                            }
+                        }
+                        _ => unreachable!("only pull and push use this helper"),
+                    },
+                    reason,
+                )
+                .await
+                .map_err(|error| {
+                    git_error_response(&thread_id, error, format!("{action_name}_failed"))
+                })?;
+            state
+                .record_security_audit(
+                    "warn",
+                    "git",
+                    thread_id.clone(),
+                    SecurityAuditEventDto {
+                        actor: "mobile-device".to_string(),
+                        action: response.approval.action.clone(),
+                        target: response.approval.target.clone(),
+                        outcome: "gated".to_string(),
+                        reason: reason.to_string(),
+                    },
+                )
+                .await;
+            Ok((
+                StatusCode::ACCEPTED,
+                Json(serde_json::to_value(response).expect("approval gate should serialize")),
+            ))
+        }
+        PolicyDecision::Allow => {
+            let response = match action {
+                PolicyAction::GitPull => {
+                    state.execute_git_pull(&thread_id, remote.as_deref()).await
+                }
+                PolicyAction::GitPush => {
+                    state.execute_git_push(&thread_id, remote.as_deref()).await
+                }
+                _ => unreachable!("only pull and push use this helper"),
+            }
+            .map_err(|error| {
+                git_error_response(&thread_id, error, format!("{action_name}_failed"))
+            })?;
+            state
+                .record_security_audit(
+                    "info",
+                    "git",
+                    thread_id.clone(),
+                    SecurityAuditEventDto {
+                        actor: "mobile-device".to_string(),
+                        action: action_name.to_string(),
+                        target: target.to_string(),
+                        outcome: "allowed".to_string(),
+                        reason: "policy_allow".to_string(),
+                    },
+                )
+                .await;
+            Ok((
+                StatusCode::OK,
+                Json(serde_json::to_value(response).expect("mutation result should serialize")),
+            ))
+        }
+    }
+}
+
+async fn resolve_approval(
+    state: BridgeAppState,
+    approval_id: String,
+    approved: bool,
+) -> Result<Json<ApprovalResolutionResponse>, (StatusCode, Json<ErrorEnvelope>)> {
+    match state.decide_policy(PolicyAction::ApprovalResolve).await {
+        PolicyDecision::Allow => {}
+        PolicyDecision::Deny { reason } | PolicyDecision::RequireApproval { reason } => {
+            state
+                .record_security_audit(
+                    "warn",
+                    "approval",
+                    "approval",
+                    SecurityAuditEventDto {
+                        actor: "mobile-device".to_string(),
+                        action: if approved {
+                            "approval_approve".to_string()
+                        } else {
+                            "approval_reject".to_string()
+                        },
+                        target: "approval.resolve".to_string(),
+                        outcome: "denied".to_string(),
+                        reason: reason.to_string(),
+                    },
+                )
+                .await;
+            return Err(error_response(
+                StatusCode::FORBIDDEN,
+                "approval_resolution_failed",
+                "policy_denied",
+                reason,
+            ));
+        }
+    }
+
+    let response = state
+        .resolve_approval(&approval_id, approved)
+        .await
+        .map_err(|error| match error {
+            crate::server::state::ResolveApprovalError::NotFound => error_response(
+                StatusCode::NOT_FOUND,
+                "approval_resolution_failed",
+                "approval_not_found",
+                "Approval request was not found.",
+            ),
+            crate::server::state::ResolveApprovalError::NotPending => error_response(
+                StatusCode::CONFLICT,
+                "approval_resolution_failed",
+                "approval_not_pending",
+                "Approval is no longer actionable.",
+            ),
+            crate::server::state::ResolveApprovalError::TargetNotFound => error_response(
+                StatusCode::NOT_FOUND,
+                "approval_resolution_failed",
+                "approval_target_not_found",
+                "The target thread for this approval is no longer available.",
+            ),
+            crate::server::state::ResolveApprovalError::MutationFailed(message) => error_response(
+                StatusCode::BAD_REQUEST,
+                "approval_resolution_failed",
+                "git_mutation_failed",
+                message,
+            ),
+        })?;
+
+    state
+        .record_security_audit(
+            if approved { "info" } else { "warn" },
+            "approval",
+            response.approval.thread_id.clone(),
+            SecurityAuditEventDto {
+                actor: "mobile-device".to_string(),
+                action: if approved {
+                    "approval_approve".to_string()
+                } else {
+                    "approval_reject".to_string()
+                },
+                target: response.approval.target.clone(),
+                outcome: if approved {
+                    "allowed".to_string()
+                } else {
+                    "rejected".to_string()
+                },
+                reason: if approved {
+                    "approval_resolved".to_string()
+                } else {
+                    "approval_rejected".to_string()
+                },
+            },
+        )
+        .await;
+    Ok(Json(response))
+}
+
+async fn record_policy_denied(
+    state: &BridgeAppState,
+    thread_id: &str,
+    action: &str,
+    target: &str,
+    reason: &str,
+) {
+    state
+        .record_security_audit(
+            "warn",
+            "git",
+            thread_id,
+            SecurityAuditEventDto {
+                actor: "mobile-device".to_string(),
+                action: action.to_string(),
+                target: target.to_string(),
+                outcome: "denied".to_string(),
+                reason: reason.to_string(),
+            },
+        )
+        .await;
+}
+
+fn git_error_response(
+    thread_id: &str,
+    message: String,
+    error_name: impl Into<String>,
+) -> (StatusCode, Json<ErrorEnvelope>) {
+    if message.contains("thread ") && message.contains(" not found") {
+        return error_response(
+            StatusCode::NOT_FOUND,
+            error_name,
+            "thread_not_found",
+            message,
+        );
+    }
+
+    error_response(
+        StatusCode::BAD_REQUEST,
+        error_name,
+        "git_operation_failed",
+        format!("{thread_id}: {message}"),
+    )
 }
 
 fn parse_access_mode(raw: &str) -> Option<AccessMode> {
@@ -482,6 +898,10 @@ fn normalize_optional_query(value: String) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
     use axum::body::Body;
     use axum::http::Request;
     use serde_json::Value;
@@ -493,6 +913,7 @@ mod tests {
     use crate::server::config::{BridgeCodexConfig, BridgeConfig};
     use crate::server::pairing_route::PairingRouteState;
     use crate::server::state::BridgeAppState;
+    use shared_contracts::{AccessMode, ThreadSnapshotDto, ThreadSummaryDto};
 
     #[tokio::test]
     async fn bootstrap_route_returns_bridge_contract() {
@@ -536,8 +957,21 @@ mod tests {
         .expect("request should deserialize");
 
         assert_eq!(request.prompt, "Ship model propagation");
+        assert!(request.images.is_empty());
         assert_eq!(request.model.as_deref(), Some("gpt-5-mini"));
         assert_eq!(request.effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn start_turn_request_accepts_image_attachments() {
+        let request: super::StartTurnRequest = serde_json::from_value(json!({
+            "prompt": "",
+            "images": ["data:image/png;base64,AAA"],
+        }))
+        .expect("request should deserialize");
+
+        assert_eq!(request.prompt, "");
+        assert_eq!(request.images, vec!["data:image/png;base64,AAA"]);
     }
 
     #[tokio::test]
@@ -678,6 +1112,279 @@ mod tests {
         assert_eq!(events[0]["event"]["payload"]["reason"], "mode=full_control");
     }
 
+    #[tokio::test]
+    async fn git_status_route_returns_live_repo_state() {
+        let sandbox = GitRepoSandbox::new("status-live");
+        sandbox.commit_local("local ahead");
+        sandbox.commit_remote("remote behind");
+        run_git(&sandbox.repo_dir, ["fetch", "origin"]);
+        fs::write(sandbox.repo_dir.join("dirty.txt"), "dirty change\n")
+            .expect("dirty file should write");
+
+        let state = test_state();
+        prime_thread(
+            &state,
+            "thread-123",
+            &sandbox.repo_dir,
+            AccessMode::FullControl,
+        )
+        .await;
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/threads/thread-123/git/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), 200);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert_eq!(decoded["repository"]["branch"], "main");
+        assert_eq!(decoded["repository"]["remote"], "origin");
+        assert_eq!(decoded["status"]["dirty"], true);
+        assert_eq!(decoded["status"]["ahead_by"], 1);
+        assert_eq!(decoded["status"]["behind_by"], 1);
+    }
+
+    #[tokio::test]
+    async fn full_control_branch_switch_route_returns_product_shape() {
+        let sandbox = GitRepoSandbox::new("branch-switch");
+        run_git(&sandbox.repo_dir, ["checkout", "-b", "release/2026"]);
+        run_git(&sandbox.repo_dir, ["checkout", "main"]);
+
+        let state = test_state();
+        prime_thread(
+            &state,
+            "thread-123",
+            &sandbox.repo_dir,
+            AccessMode::FullControl,
+        )
+        .await;
+        let app = router(state);
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/threads/thread-123/git/branch-switch",
+                json!({"branch":"release/2026"}),
+            ))
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), 200);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert_eq!(decoded["operation"], "git_branch_switch");
+        assert_eq!(decoded["repository"]["branch"], "release/2026");
+        assert_eq!(decoded["message"], "Switched branch to release/2026");
+    }
+
+    #[tokio::test]
+    async fn control_with_approvals_gates_pull_until_approval_resolution() {
+        let sandbox = GitRepoSandbox::new("pull-approval");
+        sandbox.commit_remote("remote change");
+        run_git(&sandbox.repo_dir, ["fetch", "origin"]);
+
+        let state = test_state();
+        prime_thread(
+            &state,
+            "thread-123",
+            &sandbox.repo_dir,
+            AccessMode::ControlWithApprovals,
+        )
+        .await;
+        let app = router(state.clone());
+
+        let gated = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/threads/thread-123/git/pull",
+                json!({}),
+            ))
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(gated.status(), 202);
+        let gated_body = axum::body::to_bytes(gated.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let gated_json: Value = serde_json::from_slice(&gated_body).expect("body should decode");
+        let approval_id = gated_json["approval"]["approval_id"]
+            .as_str()
+            .expect("approval id should exist")
+            .to_string();
+        assert_eq!(gated_json["outcome"], "approval_required");
+        assert_eq!(gated_json["approval"]["git_status"]["behind_by"], 1);
+
+        let approvals = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/approvals")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+        assert_eq!(approvals.status(), 200);
+        let approvals_body = axum::body::to_bytes(approvals.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let approvals_json: Value =
+            serde_json::from_slice(&approvals_body).expect("body should decode");
+        assert_eq!(
+            approvals_json["approvals"][0]["repository"]["remote"],
+            "origin"
+        );
+
+        state.set_access_mode(AccessMode::FullControl).await;
+        let resolved = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/approvals/{approval_id}/approve"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(resolved.status(), 200);
+        let resolved_body = axum::body::to_bytes(resolved.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let resolved_json: Value =
+            serde_json::from_slice(&resolved_body).expect("body should decode");
+        assert_eq!(resolved_json["mutation_result"]["operation"], "git_pull");
+
+        let status_after = app
+            .oneshot(
+                Request::builder()
+                    .uri("/threads/thread-123/git/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+        let status_body = axum::body::to_bytes(status_after.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let status_json: Value = serde_json::from_slice(&status_body).expect("body should decode");
+        assert_eq!(status_json["status"]["behind_by"], 0);
+    }
+
+    #[tokio::test]
+    async fn approval_reject_marks_request_rejected_without_running_git() {
+        let sandbox = GitRepoSandbox::new("reject-approval");
+        sandbox.commit_remote("remote change");
+        run_git(&sandbox.repo_dir, ["fetch", "origin"]);
+
+        let state = test_state();
+        prime_thread(
+            &state,
+            "thread-123",
+            &sandbox.repo_dir,
+            AccessMode::ControlWithApprovals,
+        )
+        .await;
+        let app = router(state.clone());
+
+        let gated = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/threads/thread-123/git/pull",
+                json!({}),
+            ))
+            .await
+            .expect("request should succeed");
+        let gated_body = axum::body::to_bytes(gated.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let gated_json: Value = serde_json::from_slice(&gated_body).expect("body should decode");
+        let approval_id = gated_json["approval"]["approval_id"]
+            .as_str()
+            .expect("approval id should exist");
+
+        state.set_access_mode(AccessMode::FullControl).await;
+        let rejected = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/approvals/{approval_id}/reject"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+        assert_eq!(rejected.status(), 200);
+        let rejected_body = axum::body::to_bytes(rejected.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let rejected_json: Value =
+            serde_json::from_slice(&rejected_body).expect("body should decode");
+        assert_eq!(rejected_json["approval"]["status"], "rejected");
+        assert!(rejected_json["mutation_result"].is_null());
+
+        let status_after = app
+            .oneshot(
+                Request::builder()
+                    .uri("/threads/thread-123/git/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+        let status_body = axum::body::to_bytes(status_after.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let status_json: Value = serde_json::from_slice(&status_body).expect("body should decode");
+        assert_eq!(status_json["status"]["behind_by"], 1);
+    }
+
+    #[tokio::test]
+    async fn read_only_blocks_git_mutations() {
+        let sandbox = GitRepoSandbox::new("read-only");
+
+        let state = test_state();
+        prime_thread(
+            &state,
+            "thread-123",
+            &sandbox.repo_dir,
+            AccessMode::ReadOnly,
+        )
+        .await;
+        let app = router(state);
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/threads/thread-123/git/push",
+                json!({}),
+            ))
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), 403);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert_eq!(decoded["code"], "policy_denied");
+    }
+
     fn test_state() -> BridgeAppState {
         let temp_state_directory = std::env::temp_dir().join(format!(
             "bridge-pairing-test-{}",
@@ -711,5 +1418,190 @@ mod tests {
             ),
             config.pairing_route,
         )
+    }
+
+    async fn prime_thread(
+        state: &BridgeAppState,
+        thread_id: &str,
+        repo_dir: &Path,
+        access_mode: AccessMode,
+    ) {
+        state.set_access_mode(access_mode).await;
+        let workspace = repo_dir.to_string_lossy().to_string();
+        let repository = repo_dir
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("repo")
+            .to_string();
+        let snapshot = ThreadSnapshotDto {
+            contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+            thread: shared_contracts::ThreadDetailDto {
+                contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+                thread_id: thread_id.to_string(),
+                title: "Git thread".to_string(),
+                status: shared_contracts::ThreadStatus::Idle,
+                workspace: workspace.clone(),
+                repository: repository.clone(),
+                branch: "main".to_string(),
+                created_at: "2026-03-21T09:00:00Z".to_string(),
+                updated_at: "2026-03-21T09:00:00Z".to_string(),
+                source: "cli".to_string(),
+                access_mode,
+                last_turn_summary: String::new(),
+            },
+            entries: vec![],
+            approvals: vec![],
+            git_status: Some(shared_contracts::GitStatusDto {
+                workspace: workspace.clone(),
+                repository: repository.clone(),
+                branch: "main".to_string(),
+                remote: Some("origin".to_string()),
+                dirty: false,
+                ahead_by: 0,
+                behind_by: 0,
+            }),
+        };
+        state.projections().put_snapshot(snapshot.clone()).await;
+        state
+            .projections()
+            .replace_summaries(vec![ThreadSummaryDto {
+                contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+                thread_id: thread_id.to_string(),
+                title: snapshot.thread.title,
+                status: snapshot.thread.status,
+                workspace,
+                repository,
+                branch: "main".to_string(),
+                updated_at: "2026-03-21T09:00:00Z".to_string(),
+            }])
+            .await;
+    }
+
+    fn json_request(method: &str, uri: &str, body: Value) -> Request<Body> {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    }
+
+    struct GitRepoSandbox {
+        root_dir: PathBuf,
+        repo_dir: PathBuf,
+        remote_dir: PathBuf,
+        clone_dir: PathBuf,
+    }
+
+    impl GitRepoSandbox {
+        fn new(label: &str) -> Self {
+            let root_dir = unique_temp_dir(label);
+            let repo_dir = root_dir.join("repo");
+            let remote_dir = root_dir.join("remote.git");
+            let clone_dir = root_dir.join("clone");
+
+            fs::create_dir_all(&repo_dir).expect("repo dir should exist");
+            run_git(&repo_dir, ["init"]);
+            run_git(&repo_dir, ["config", "user.name", "Codex"]);
+            run_git(&repo_dir, ["config", "user.email", "codex@example.com"]);
+            run_git(&repo_dir, ["branch", "-M", "main"]);
+            fs::write(repo_dir.join("README.md"), "initial\n").expect("readme should write");
+            run_git(&repo_dir, ["add", "."]);
+            run_git(&repo_dir, ["commit", "-m", "initial"]);
+
+            let bare_parent = unique_temp_dir("git-remote");
+            run_git_in(
+                bare_parent.as_path(),
+                ["init", "--bare", remote_dir.to_string_lossy().as_ref()],
+            );
+            run_git(
+                &repo_dir,
+                [
+                    "remote",
+                    "add",
+                    "origin",
+                    remote_dir.to_string_lossy().as_ref(),
+                ],
+            );
+            run_git(&repo_dir, ["push", "-u", "origin", "main"]);
+
+            Self {
+                root_dir,
+                repo_dir,
+                remote_dir,
+                clone_dir,
+            }
+        }
+
+        fn commit_local(&self, message: &str) {
+            fs::write(self.repo_dir.join("local.txt"), format!("{message}\n"))
+                .expect("local file should write");
+            run_git(&self.repo_dir, ["add", "."]);
+            run_git(&self.repo_dir, ["commit", "-m", message]);
+        }
+
+        fn commit_remote(&self, message: &str) {
+            run_git_in(
+                self.root_dir.as_path(),
+                [
+                    "clone",
+                    self.remote_dir.to_string_lossy().as_ref(),
+                    self.clone_dir.to_string_lossy().as_ref(),
+                ],
+            );
+            run_git(&self.clone_dir, ["config", "user.name", "Codex"]);
+            run_git(
+                &self.clone_dir,
+                ["config", "user.email", "codex@example.com"],
+            );
+            run_git(&self.clone_dir, ["checkout", "main"]);
+            fs::write(self.clone_dir.join("remote.txt"), format!("{message}\n"))
+                .expect("remote file should write");
+            run_git(&self.clone_dir, ["add", "."]);
+            run_git(&self.clone_dir, ["commit", "-m", message]);
+            run_git(&self.clone_dir, ["push", "origin", "main"]);
+            let _ = fs::remove_dir_all(&self.clone_dir);
+        }
+    }
+
+    impl Drop for GitRepoSandbox {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root_dir);
+            let _ = fs::remove_dir_all(&self.clone_dir);
+        }
+    }
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "bridge-core-{label}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock should move forward")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).expect("temp dir should exist");
+        path
+    }
+
+    fn run_git(cwd: &Path, args: impl IntoIterator<Item = impl AsRef<str>>) {
+        let args = args
+            .into_iter()
+            .map(|value| value.as_ref().to_string())
+            .collect::<Vec<_>>();
+        let output = Command::new("git")
+            .args(&args)
+            .current_dir(cwd)
+            .output()
+            .expect("git command should run");
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn run_git_in(cwd: &Path, args: impl IntoIterator<Item = impl AsRef<str>>) {
+        run_git(cwd, args);
     }
 }

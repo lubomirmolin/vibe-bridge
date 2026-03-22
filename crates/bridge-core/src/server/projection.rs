@@ -9,6 +9,9 @@ use shared_contracts::{
 };
 use tokio::sync::RwLock;
 
+use crate::server::controls::ApprovalRecordDto;
+use crate::thread_api::RepositoryContextDto;
+
 #[derive(Debug, Default, Clone)]
 pub struct ProjectionStore {
     inner: Arc<RwLock<ProjectionState>>,
@@ -19,6 +22,7 @@ struct ProjectionState {
     summaries: HashMap<String, ThreadSummaryDto>,
     snapshots: HashMap<String, ThreadSnapshotDto>,
     approvals: HashMap<String, ApprovalSummaryDto>,
+    approval_records: HashMap<String, ApprovalRecordDto>,
 }
 
 impl ProjectionStore {
@@ -32,6 +36,13 @@ impl ProjectionStore {
             .into_iter()
             .map(|summary| (summary.thread_id.clone(), summary))
             .collect();
+        let summaries_by_thread_id = state.summaries.clone();
+        state.snapshots.retain(|thread_id, snapshot| {
+            summaries_by_thread_id
+                .get(thread_id)
+                .map(|summary| summary.updated_at <= snapshot.thread.updated_at)
+                .unwrap_or(true)
+        });
     }
 
     pub async fn list_summaries(&self) -> Vec<ThreadSummaryDto> {
@@ -58,9 +69,9 @@ impl ProjectionStore {
         state.snapshots.get(thread_id).cloned()
     }
 
-    pub async fn list_approvals(&self) -> Vec<ApprovalSummaryDto> {
+    pub async fn list_approval_records(&self) -> Vec<ApprovalRecordDto> {
         let state = self.inner.read().await;
-        let mut approvals: Vec<_> = state.approvals.values().cloned().collect();
+        let mut approvals: Vec<_> = state.approval_records.values().cloned().collect();
         approvals.sort_by(|left, right| left.approval_id.cmp(&right.approval_id));
         approvals
     }
@@ -211,6 +222,50 @@ impl ProjectionStore {
             snapshot.thread.access_mode = access_mode;
         }
     }
+
+    pub async fn upsert_approval_record(&self, approval: ApprovalRecordDto) {
+        let mut state = self.inner.write().await;
+        upsert_approval_locked(&mut state, approval);
+    }
+
+    pub async fn update_git_state(
+        &self,
+        thread_id: &str,
+        repository: &RepositoryContextDto,
+        status: &crate::thread_api::GitStatusDto,
+        occurred_at: Option<&str>,
+        last_turn_summary: Option<&str>,
+    ) {
+        let mut state = self.inner.write().await;
+
+        if let Some(summary) = state.summaries.get_mut(thread_id) {
+            summary.repository = repository.repository.clone();
+            summary.branch = repository.branch.clone();
+            if let Some(occurred_at) = occurred_at {
+                summary.updated_at = occurred_at.to_string();
+            }
+        }
+
+        if let Some(snapshot) = state.snapshots.get_mut(thread_id) {
+            snapshot.thread.repository = repository.repository.clone();
+            snapshot.thread.branch = repository.branch.clone();
+            if let Some(occurred_at) = occurred_at {
+                snapshot.thread.updated_at = occurred_at.to_string();
+            }
+            if let Some(last_turn_summary) = last_turn_summary {
+                snapshot.thread.last_turn_summary = last_turn_summary.to_string();
+            }
+            snapshot.git_status = Some(shared_contracts::GitStatusDto {
+                workspace: repository.workspace.clone(),
+                repository: repository.repository.clone(),
+                branch: repository.branch.clone(),
+                remote: (repository.remote != "unknown").then(|| repository.remote.clone()),
+                dirty: status.dirty,
+                ahead_by: status.ahead_by,
+                behind_by: status.behind_by,
+            });
+        }
+    }
 }
 
 fn parse_thread_status(raw: &str) -> ThreadStatus {
@@ -257,6 +312,42 @@ fn parse_approval_status(raw: &str) -> ApprovalStatus {
         "approved" => ApprovalStatus::Approved,
         "rejected" => ApprovalStatus::Rejected,
         _ => ApprovalStatus::Pending,
+    }
+}
+
+fn upsert_approval_locked(state: &mut ProjectionState, approval: ApprovalRecordDto) {
+    let summary = approval_summary_from_record(&approval);
+    if let Some(snapshot) = state.snapshots.get_mut(&approval.thread_id) {
+        if let Some(index) = snapshot
+            .approvals
+            .iter()
+            .position(|existing| existing.approval_id == approval.approval_id)
+        {
+            snapshot.approvals[index] = summary.clone();
+        } else {
+            snapshot.approvals.push(summary.clone());
+        }
+    }
+    state
+        .approvals
+        .insert(approval.approval_id.clone(), summary);
+    state
+        .approval_records
+        .insert(approval.approval_id.clone(), approval);
+}
+
+fn approval_summary_from_record(approval: &ApprovalRecordDto) -> ApprovalSummaryDto {
+    ApprovalSummaryDto {
+        approval_id: approval.approval_id.clone(),
+        thread_id: approval.thread_id.clone(),
+        action: approval.action.clone(),
+        status: match approval.status {
+            crate::server::controls::ApprovalStatus::Pending => ApprovalStatus::Pending,
+            crate::server::controls::ApprovalStatus::Approved => ApprovalStatus::Approved,
+            crate::server::controls::ApprovalStatus::Rejected => ApprovalStatus::Rejected,
+        },
+        reason: approval.reason.clone(),
+        target: (!approval.target.trim().is_empty()).then(|| approval.target.clone()),
     }
 }
 
@@ -325,13 +416,21 @@ fn merge_live_payload(existing: Option<&Value>, kind: BridgeEventKind, incoming:
                     .unwrap_or_default(),
                 replace,
             );
-
-            serde_json::json!({
+            let mut payload = serde_json::json!({
                 "id": incoming.get("id").and_then(Value::as_str).or_else(|| existing.and_then(|payload| payload.get("id")).and_then(Value::as_str)).unwrap_or_default(),
                 "type": "message",
                 "role": incoming.get("role").and_then(Value::as_str).or_else(|| existing.and_then(|payload| payload.get("role")).and_then(Value::as_str)).unwrap_or("assistant"),
                 "text": next_text,
-            })
+            });
+            if let Some(images) = incoming
+                .get("images")
+                .cloned()
+                .or_else(|| existing.and_then(|payload| payload.get("images")).cloned())
+                && let Some(object) = payload.as_object_mut()
+            {
+                object.insert("images".to_string(), images);
+            }
+            payload
         }
         BridgeEventKind::PlanDelta => {
             let replace = incoming
@@ -431,7 +530,7 @@ mod tests {
     use super::ProjectionStore;
     use shared_contracts::{
         AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ThreadDetailDto,
-        ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto,
+        ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto, ThreadTimelineEntryDto,
     };
 
     #[tokio::test]
@@ -539,5 +638,140 @@ mod tests {
         assert_eq!(page.entries.len(), 1);
         assert!(!page.has_more_before);
         assert_eq!(page.entries[0].event_id, "evt-1");
+    }
+
+    #[tokio::test]
+    async fn apply_live_message_event_preserves_images() {
+        let store = ProjectionStore::new();
+        store
+            .replace_summaries(vec![ThreadSummaryDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "thread-1".to_string(),
+                title: "Hot thread".to_string(),
+                status: ThreadStatus::Idle,
+                workspace: "/tmp/a".to_string(),
+                repository: "repo-a".to_string(),
+                branch: "main".to_string(),
+                updated_at: "2026-03-21T10:00:00Z".to_string(),
+            }])
+            .await;
+        store
+            .put_snapshot(ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "thread-1".to_string(),
+                    title: "Hot thread".to_string(),
+                    status: ThreadStatus::Idle,
+                    workspace: "/tmp/a".to_string(),
+                    repository: "repo-a".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-03-21T09:00:00Z".to_string(),
+                    updated_at: "2026-03-21T10:00:00Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "initial".to_string(),
+                },
+                entries: vec![],
+                approvals: vec![],
+                git_status: None,
+            })
+            .await;
+
+        store
+            .apply_live_event(&BridgeEventEnvelope {
+                contract_version: CONTRACT_VERSION.to_string(),
+                event_id: "evt-1".to_string(),
+                thread_id: "thread-1".to_string(),
+                kind: BridgeEventKind::MessageDelta,
+                occurred_at: "2026-03-21T10:01:00Z".to_string(),
+                payload: json!({
+                    "id": "msg-1",
+                    "type": "message",
+                    "role": "user",
+                    "text": "See attachment",
+                    "images": ["data:image/png;base64,AAA"],
+                }),
+                annotations: None,
+            })
+            .await;
+
+        let snapshot = store
+            .snapshot("thread-1")
+            .await
+            .expect("snapshot should exist");
+        assert_eq!(
+            snapshot.entries[0].payload["images"],
+            json!(["data:image/png;base64,AAA"])
+        );
+    }
+
+    #[tokio::test]
+    async fn replace_summaries_invalidates_stale_snapshot_when_summary_is_newer() {
+        let store = ProjectionStore::new();
+        store
+            .replace_summaries(vec![ThreadSummaryDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "thread-1".to_string(),
+                title: "Thread".to_string(),
+                status: ThreadStatus::Idle,
+                workspace: "/tmp/a".to_string(),
+                repository: "repo-a".to_string(),
+                branch: "main".to_string(),
+                updated_at: "2026-03-21T10:00:00Z".to_string(),
+            }])
+            .await;
+        store
+            .put_snapshot(ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "thread-1".to_string(),
+                    title: "Thread".to_string(),
+                    status: ThreadStatus::Idle,
+                    workspace: "/tmp/a".to_string(),
+                    repository: "repo-a".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-03-21T09:00:00Z".to_string(),
+                    updated_at: "2026-03-21T10:00:00Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "older summary".to_string(),
+                },
+                entries: vec![ThreadTimelineEntryDto {
+                    event_id: "evt-1".to_string(),
+                    kind: BridgeEventKind::MessageDelta,
+                    occurred_at: "2026-03-21T10:00:00Z".to_string(),
+                    summary: "older summary".to_string(),
+                    payload: json!({
+                        "id": "msg-1",
+                        "type": "message",
+                        "role": "assistant",
+                        "text": "older summary",
+                    }),
+                    annotations: None,
+                }],
+                approvals: vec![],
+                git_status: None,
+            })
+            .await;
+
+        store
+            .replace_summaries(vec![ThreadSummaryDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "thread-1".to_string(),
+                title: "Thread".to_string(),
+                status: ThreadStatus::Idle,
+                workspace: "/tmp/a".to_string(),
+                repository: "repo-a".to_string(),
+                branch: "main".to_string(),
+                updated_at: "2026-03-21T10:05:00Z".to_string(),
+            }])
+            .await;
+
+        assert!(
+            store.snapshot("thread-1").await.is_none(),
+            "stale cached snapshots should be evicted so the next detail/history read refetches"
+        );
     }
 }

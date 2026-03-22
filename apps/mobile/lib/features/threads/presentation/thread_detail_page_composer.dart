@@ -227,7 +227,9 @@ class _PinnedTurnComposer extends StatelessWidget {
                 child: ListenableBuilder(
                   listenable: composerController,
                   builder: (context, _) {
-                    final hasInput = composerController.text.trim().isNotEmpty;
+                    final hasInput =
+                        composerController.text.trim().isNotEmpty ||
+                        attachedImages.isNotEmpty;
                     final showStopAction =
                         isTurnActive || isInterruptMutationInFlight;
                     final canRunPrimaryAction = showStopAction

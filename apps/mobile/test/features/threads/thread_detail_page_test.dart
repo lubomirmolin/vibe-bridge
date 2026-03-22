@@ -2179,7 +2179,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
   );
 
   testWidgets(
-    'bridge disables git mutations while still showing thread context',
+    'bridge resolves git status and enables git mutations while showing thread context',
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(
         detailScriptByThreadId: {
@@ -2199,21 +2199,13 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       await _openGitBranchSheet(tester);
       expect(find.text('Repository: codex-mobile-companion'), findsOneWidget);
       expect(find.text('Branch: master'), findsOneWidget);
-      expect(find.text('Remote: unknown'), findsOneWidget);
-      expect(find.text('Resolving git status'), findsOneWidget);
-      expect(
-        find.text('Git controls are unavailable in this build.'),
-        findsWidgets,
-      );
+      expect(find.text('Remote: origin'), findsOneWidget);
+      expect(find.text('Status: Clean • Ahead 0 • Behind 0'), findsOneWidget);
 
       final switchButton = tester.widget<FilledButton>(
         find.byKey(const Key('git-branch-switch-button')),
       );
-      await tester.enterText(
-        find.byKey(const Key('git-branch-input')),
-        '  release/2026  ',
-      );
-      expect(switchButton.onPressed, isNull);
+      expect(switchButton.onPressed, isNotNull);
       await _closeModalSheet(tester);
 
       await _openGitSyncSheet(tester);
@@ -2223,19 +2215,16 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       final pushButton = tester.widget<OutlinedButton>(
         find.byKey(const Key('git-push-button')),
       );
-      expect(pullButton.onPressed, isNull);
-      expect(pushButton.onPressed, isNull);
-      expect(
-        find.text('Git controls are unavailable in this build.'),
-        findsWidgets,
-      );
+      expect(pullButton.onPressed, isNotNull);
+      expect(pushButton.onPressed, isNotNull);
+      expect(detailApi.gitStatusFetchCountByThreadId['thread-123'], 1);
       expect(detailApi.branchSwitchRequestsByThreadId['thread-123'], isNull);
       expect(detailApi.pullCallsByThreadId['thread-123'], isNull);
       expect(detailApi.pushCallsByThreadId['thread-123'], isNull);
     },
   );
 
-  testWidgets('full-control mode does not bypass bridge git disablement', (
+  testWidgets('full-control mode applies branch switch results immediately', (
     tester,
   ) async {
     final detailApi = FakeThreadDetailBridgeApi(
@@ -2244,6 +2233,22 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       },
       timelineScriptByThreadId: {
         'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+      gitStatusScriptByThreadId: {
+        'thread-123': [_gitStatus(threadId: 'thread-123', branch: 'master')],
+      },
+      branchSwitchScriptByThreadId: {
+        'thread-123': [
+          _gitMutationResult(
+            threadId: 'thread-123',
+            operation: 'git_branch_switch',
+            message: 'Switched branch to release/2026',
+            repository: 'codex-mobile-companion',
+            branch: 'release/2026',
+            remote: 'origin',
+            threadStatus: ThreadStatus.idle,
+          ),
+        ],
       },
     );
 
@@ -2255,32 +2260,20 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     );
 
     await _openGitBranchSheet(tester);
-    expect(
-      find.text('Git controls are unavailable in this build.'),
-      findsWidgets,
+    await tester.enterText(
+      find.byKey(const Key('git-branch-input')),
+      'release/2026',
     );
-    final switchButton = tester.widget<FilledButton>(
-      find.byKey(const Key('git-branch-switch-button')),
-    );
-    expect(switchButton.onPressed, isNull);
-    await _closeModalSheet(tester);
+    await tester.tap(find.byKey(const Key('git-branch-switch-button')));
+    await tester.pumpAndSettle();
 
-    await _openGitSyncSheet(tester);
-    final pullButton = tester.widget<OutlinedButton>(
-      find.byKey(const Key('git-pull-button')),
-    );
-    final pushButton = tester.widget<OutlinedButton>(
-      find.byKey(const Key('git-push-button')),
-    );
-    expect(
-      find.text('Git controls are unavailable in this build.'),
-      findsWidgets,
-    );
-    expect(pullButton.onPressed, isNull);
-    expect(pushButton.onPressed, isNull);
-    expect(detailApi.branchSwitchRequestsByThreadId['thread-123'], isNull);
-    expect(detailApi.pullCallsByThreadId['thread-123'], isNull);
-    expect(detailApi.pushCallsByThreadId['thread-123'], isNull);
+    expect(detailApi.branchSwitchRequestsByThreadId['thread-123'], [
+      'release/2026',
+    ]);
+    expect(find.text('Switched branch to release/2026'), findsOneWidget);
+
+    await _openGitBranchSheet(tester);
+    expect(find.text('Branch: release/2026'), findsOneWidget);
   });
 
   testWidgets('open-on-Mac is surfaced as unavailable in this build', (
@@ -2371,7 +2364,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
   });
 
   testWidgets(
-    'changing access mode from settings still gates turn controls in this build',
+    'changing access mode from settings still gates turn controls and git mutations',
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(
         detailScriptByThreadId: {
@@ -2410,10 +2403,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       expect(detailApi.interruptTurnCallsByThreadId['thread-123'], isNull);
       expect(pullAfter.onPressed, isNull);
       expect(openOnMacAfter.onPressed, isNotNull);
-      expect(
-        find.text('Git controls are unavailable in this build.'),
-        findsWidgets,
-      );
+      expect(find.text('Read-only mode blocks git mutations.'), findsWidgets);
     },
   );
 
@@ -2435,27 +2425,45 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
 
     await _openGitBranchSheet(tester);
     await tester.enterText(find.byKey(const Key('git-branch-input')), '   ');
-    final switchButton = tester.widget<FilledButton>(
-      find.byKey(const Key('git-branch-switch-button')),
-    );
+    await tester.tap(find.byKey(const Key('git-branch-switch-button')));
+    await tester.pumpAndSettle();
 
-    expect(
-      find.text('Git controls are unavailable in this build.'),
-      findsWidgets,
-    );
-    expect(switchButton.onPressed, isNull);
     expect(detailApi.branchSwitchRequestsByThreadId['thread-123'], isNull);
+    expect(find.text('Enter a branch name.'), findsOneWidget);
   });
 
-  testWidgets('git mutation buttons stay disabled in this build', (
+  testWidgets('approval-required git pull surfaces the bridge message', (
     tester,
   ) async {
+    final approval = ApprovalRecordDto(
+      contractVersion: contractVersion,
+      approvalId: 'approval-1',
+      threadId: 'thread-123',
+      action: 'git_pull',
+      target: 'origin',
+      reason: 'dangerous_action_requires_approval',
+      status: ApprovalStatus.pending,
+      requestedAt: '2026-03-18T11:00:00Z',
+      resolvedAt: null,
+      repository: _gitStatus(threadId: 'thread-123').repository,
+      gitStatus: _gitStatus(threadId: 'thread-123').status,
+    );
     final detailApi = FakeThreadDetailBridgeApi(
       detailScriptByThreadId: {
         'thread-123': [_thread123Detail()],
       },
       timelineScriptByThreadId: {
         'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+      pullScriptByThreadId: {
+        'thread-123': [
+          ThreadGitApprovalRequiredException(
+            message: 'Dangerous action was gated pending explicit approval',
+            operation: 'git_pull',
+            outcome: 'approval_required',
+            approval: approval,
+          ),
+        ],
       },
     );
 
@@ -2465,26 +2473,15 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       threadId: 'thread-123',
     );
 
-    await _openGitBranchSheet(tester);
-    final switchButton = tester.widget<FilledButton>(
-      find.byKey(const Key('git-branch-switch-button')),
-    );
-    await _closeModalSheet(tester);
     await _openGitSyncSheet(tester);
-    final pullButton = tester.widget<OutlinedButton>(
-      find.byKey(const Key('git-pull-button')),
-    );
-    final pushButton = tester.widget<OutlinedButton>(
-      find.byKey(const Key('git-push-button')),
-    );
+    await tester.tap(find.byKey(const Key('git-pull-button')));
+    await tester.pumpAndSettle();
 
+    expect(detailApi.pullCallsByThreadId['thread-123'], 1);
     expect(
-      find.text('Git controls are unavailable in this build.'),
-      findsWidgets,
+      find.text('Dangerous action was gated pending explicit approval'),
+      findsOneWidget,
     );
-    expect(switchButton.onPressed, isNull);
-    expect(pullButton.onPressed, isNull);
-    expect(pushButton.onPressed, isNull);
   });
 
   testWidgets('non-repository context disables git mutations safely', (
@@ -2599,16 +2596,25 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
 
     expect(detailApi.pullCallsByThreadId['thread-123'], isNull);
     expect(detailApi.pullCallsByThreadId['thread-456'], isNull);
-    expect(pullButton.onPressed, isNull);
+    expect(pullButton.onPressed, isNotNull);
   });
 
-  testWidgets('bridge never attempts failing git mutations', (tester) async {
+  testWidgets('bridge surfaces git mutation failures after attempted pull', (
+    tester,
+  ) async {
     final detailApi = FakeThreadDetailBridgeApi(
       detailScriptByThreadId: {
         'thread-123': [_thread123Detail()],
       },
       timelineScriptByThreadId: {
         'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+      pullScriptByThreadId: {
+        'thread-123': [
+          const ThreadGitMutationBridgeException(
+            message: 'Pull failed: remote rejected the update.',
+          ),
+        ],
       },
     );
 
@@ -2619,14 +2625,13 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     );
 
     await _openGitSyncSheet(tester);
-    final pullButton = tester.widget<OutlinedButton>(
-      find.byKey(const Key('git-pull-button')),
-    );
-    expect(pullButton.onPressed, isNull);
-    expect(detailApi.pullCallsByThreadId['thread-123'], isNull);
+    await tester.tap(find.byKey(const Key('git-pull-button')));
+    await tester.pumpAndSettle();
+
+    expect(detailApi.pullCallsByThreadId['thread-123'], 1);
     expect(
-      find.text('Git controls are unavailable in this build.'),
-      findsWidgets,
+      find.text('Pull failed: remote rejected the update.'),
+      findsOneWidget,
     );
   });
 
@@ -3706,6 +3711,8 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   final List<String?> createdThreadModels = <String?>[];
   final Map<String, List<String>> startTurnPromptsByThreadId =
       <String, List<String>>{};
+  final Map<String, List<List<String>>> startTurnImagesByThreadId =
+      <String, List<List<String>>>{};
   final Map<String, List<String>> steerTurnInstructionsByThreadId =
       <String, List<String>>{};
   final Map<String, int> interruptTurnCallsByThreadId = <String, int>{};
@@ -3850,12 +3857,16 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    List<String> images = const <String>[],
     String? model,
     String? effort,
   }) async {
     startTurnPromptsByThreadId
         .putIfAbsent(threadId, () => <String>[])
         .add(prompt);
+    startTurnImagesByThreadId
+        .putIfAbsent(threadId, () => <List<String>>[])
+        .add(List<String>.unmodifiable(images));
 
     final script = _startTurnScriptByThreadId[threadId];
     if (script == null || script.isEmpty) {
