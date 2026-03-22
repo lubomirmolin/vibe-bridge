@@ -5,6 +5,7 @@ class _ThreadDetailBody extends StatelessWidget {
     required this.state,
     required this.isReadOnlyMode,
     required this.controlsEnabled,
+    required this.onInterruptActiveTurn,
     required this.desktopIntegrationEnabled,
     required this.onRetry,
     required this.onRetryReconnect,
@@ -27,6 +28,7 @@ class _ThreadDetailBody extends StatelessWidget {
   final ThreadDetailState state;
   final bool isReadOnlyMode;
   final bool controlsEnabled;
+  final Future<bool> Function() onInterruptActiveTurn;
   final bool desktopIntegrationEnabled;
   final Future<void> Function() onRetry;
   final Future<void> Function() onRetryReconnect;
@@ -193,9 +195,14 @@ class _ThreadDetailBody extends StatelessWidget {
                     ),
                   )
                   .expand((widget) => [widget, const SizedBox(height: 12)]),
-            if (state.isTurnActive) ...const [
-              _ChatLoadingMessageCard(),
-              SizedBox(height: 12),
+            if (state.isTurnActive) ...[
+              _ChatLoadingMessageCard(
+                phaseLabel: _runningTurnPhaseLabel(state.visibleItems),
+                controlsEnabled: controlsEnabled,
+                isInterruptMutationInFlight: state.isInterruptMutationInFlight,
+                onInterruptActiveTurn: onInterruptActiveTurn,
+              ),
+              const SizedBox(height: 12),
             ],
           ],
         ),

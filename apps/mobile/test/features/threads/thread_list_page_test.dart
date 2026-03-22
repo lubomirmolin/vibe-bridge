@@ -986,6 +986,16 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   }
 
   @override
+  Future<TurnMutationResult> startCommitAction({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? model,
+    String? effort,
+  }) async {
+    throw UnimplementedError();
+  }
+
+  @override
   Future<OpenOnMacResponseDto> openOnMac({
     required String bridgeApiBaseUrl,
     required String threadId,

@@ -1620,6 +1620,23 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   }
 
   @override
+  Future<TurnMutationResult> startCommitAction({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? model,
+    String? effort,
+  }) async {
+    return TurnMutationResult(
+      contractVersion: contractVersion,
+      threadId: threadId,
+      operation: 'commit',
+      outcome: 'accepted',
+      message: 'Commit started and streaming is active',
+      threadStatus: ThreadStatus.running,
+    );
+  }
+
+  @override
   Future<GitStatusResponseDto> fetchGitStatus({
     required String bridgeApiBaseUrl,
     required String threadId,

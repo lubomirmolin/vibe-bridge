@@ -806,7 +806,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                             },
                             onAccessModeChanged: changeAccessMode,
                             onSubmitComposer: _submitDraftComposerInput,
-                            onInterruptActiveTurn: () async => false,
                           ),
                         ),
                       ),
@@ -962,6 +961,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                     state: state,
                     isReadOnlyMode: isReadOnlyMode,
                     controlsEnabled: controlsEnabled,
+                    onInterruptActiveTurn: controller.interruptActiveTurn,
                     desktopIntegrationEnabled:
                         desktopIntegrationState.isEnabled,
                     onRetry: controller.loadThread,
@@ -1126,8 +1126,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                                 onAccessModeChanged: changeAccessMode,
                                 onSubmitComposer: (value) =>
                                     _submitComposerInput(controller, value),
-                                onInterruptActiveTurn:
-                                    controller.interruptActiveTurn,
                               ),
                             ],
                           ),

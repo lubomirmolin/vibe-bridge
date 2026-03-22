@@ -104,19 +104,25 @@ List<ThreadTimelineBlock> _buildBaseTimelineBlocks(
       }
     }
 
-    var scanIndex = index + 1;
-    while (scanIndex < items.length && _isExplorationItem(items[scanIndex])) {
-      exploration.add(items[scanIndex]);
-      scanIndex += 1;
+    if (_canAttachExplorationToItem(item)) {
+      var scanIndex = index + 1;
+      while (scanIndex < items.length && _isExplorationItem(items[scanIndex])) {
+        exploration.add(items[scanIndex]);
+        scanIndex += 1;
+      }
+
+      blocks.add(
+        ThreadTimelineBlock.activity(
+          item,
+          exploration: exploration.hasContent ? exploration.build() : null,
+        ),
+      );
+      index = scanIndex;
+      continue;
     }
 
-    blocks.add(
-      ThreadTimelineBlock.activity(
-        item,
-        exploration: exploration.hasContent ? exploration.build() : null,
-      ),
-    );
-    index = scanIndex;
+    blocks.add(ThreadTimelineBlock.activity(item));
+    index += 1;
   }
 
   return blocks;
@@ -193,6 +199,10 @@ class _ExplorationSummaryBuilder {
 bool _isExplorationItem(ThreadActivityItem item) {
   return item.presentation?.groupKind ==
       ThreadActivityPresentationGroupKind.exploration;
+}
+
+bool _canAttachExplorationToItem(ThreadActivityItem item) {
+  return item.type != ThreadActivityItemType.fileChange;
 }
 
 List<ThreadTimelineBlock> _bundleWorkBlocks(List<ThreadTimelineBlock> blocks) {
@@ -273,6 +283,5 @@ bool _isWorkLikeBlock(ThreadTimelineBlock block) {
     return block.exploration != null;
   }
 
-  return item.type == ThreadActivityItemType.terminalOutput ||
-      item.type == ThreadActivityItemType.fileChange;
+  return item.type == ThreadActivityItemType.terminalOutput;
 }

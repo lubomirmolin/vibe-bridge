@@ -24,7 +24,6 @@ class _PinnedTurnComposer extends StatelessWidget {
     required this.onReasoningChanged,
     required this.onAccessModeChanged,
     required this.onSubmitComposer,
-    required this.onInterruptActiveTurn,
   });
 
   final TextEditingController composerController;
@@ -49,7 +48,6 @@ class _PinnedTurnComposer extends StatelessWidget {
   final ValueChanged<String> onReasoningChanged;
   final ValueChanged<AccessMode> onAccessModeChanged;
   final Future<bool> Function(String rawInput) onSubmitComposer;
-  final Future<bool> Function() onInterruptActiveTurn;
 
   @override
   Widget build(BuildContext context) {
@@ -230,34 +228,19 @@ class _PinnedTurnComposer extends StatelessWidget {
                     final hasInput =
                         composerController.text.trim().isNotEmpty ||
                         attachedImages.isNotEmpty;
-                    final showStopAction =
-                        isTurnActive || isInterruptMutationInFlight;
-                    final canRunPrimaryAction = showStopAction
-                        ? (controlsEnabled &&
-                              isTurnActive &&
-                              !isInterruptMutationInFlight &&
-                              !isComposerMutationInFlight)
-                        : (controlsEnabled &&
-                              !isComposerMutationInFlight &&
-                              !isInterruptMutationInFlight);
+                    final canRunPrimaryAction =
+                        hasInput &&
+                        controlsEnabled &&
+                        !isTurnActive &&
+                        !isComposerMutationInFlight &&
+                        !isInterruptMutationInFlight;
 
                     return MagneticButton(
-                      key: Key(
-                        showStopAction
-                            ? 'turn-interrupt-button'
-                            : 'turn-composer-submit',
-                      ),
+                      key: const Key('turn-composer-submit'),
                       isCircle: true,
-                      variant: showStopAction
-                          ? MagneticButtonVariant.secondary
-                          : MagneticButtonVariant.primary,
+                      variant: MagneticButtonVariant.primary,
                       onClick: canRunPrimaryAction
                           ? () async {
-                              if (showStopAction) {
-                                await onInterruptActiveTurn();
-                                return;
-                              }
-
                               if (!hasInput) return;
 
                               final success = await onSubmitComposer(
@@ -281,20 +264,9 @@ class _PinnedTurnComposer extends StatelessWidget {
                                   color: AppTheme.background,
                                 ),
                               )
-                            : isInterruptMutationInFlight
-                            ? const SizedBox.square(
-                                key: ValueKey('interrupt-loading'),
-                                dimension: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: AppTheme.textMain,
-                                ),
-                              )
                             : PhosphorIcon(
-                                showStopAction
-                                    ? PhosphorIcons.stop()
-                                    : PhosphorIcons.arrowUp(),
-                                key: ValueKey(showStopAction ? 'stop' : 'send'),
+                                PhosphorIcons.arrowUp(),
+                                key: const ValueKey('send'),
                                 size: 24,
                               ),
                       ),

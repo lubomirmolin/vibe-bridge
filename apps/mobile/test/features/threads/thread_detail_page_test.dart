@@ -2144,7 +2144,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     );
   });
 
-  testWidgets('active composer primary button stops the active turn', (
+  testWidgets('running indicator cancel button stops the active turn', (
     tester,
   ) async {
     final detailApi = FakeThreadDetailBridgeApi(
@@ -2172,6 +2172,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       threadId: 'thread-123',
     );
 
+    expect(find.byKey(const Key('turn-composer-submit')), findsOneWidget);
     await tester.tap(find.byKey(const Key('turn-interrupt-button')));
     await tester.pumpAndSettle();
 
@@ -2263,7 +2264,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
   });
 
   testWidgets(
-    'active turn disables composer input while stop action is shown',
+    'active turn keeps send button visible and shows cancel in the running indicator',
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(
         detailScriptByThreadId: {
@@ -2286,8 +2287,84 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
 
       expect(input.enabled, isTrue);
       expect(find.byKey(const Key('turn-interrupt-button')), findsOneWidget);
+      expect(find.byKey(const Key('turn-composer-submit')), findsOneWidget);
+      expect(find.text('Thinking'), findsOneWidget);
     },
   );
+
+  testWidgets('running indicator reflects file reading activity', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-read',
+              kind: BridgeEventKind.commandDelta,
+              summary: 'Called exec_command',
+              payload: {'command': 'sed -n 1,120p lib/main.dart'},
+              occurredAt: '2026-03-18T10:06:00Z',
+              annotations: _explorationAnnotations(
+                explorationKind: ThreadTimelineExplorationKind.read,
+                entryLabel: 'Read lib/main.dart',
+              ),
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+
+    expect(
+      find.byKey(const Key('thread-running-indicator-card')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('thread-running-scramble')), findsOneWidget);
+    expect(find.text('Reading files'), findsOneWidget);
+  });
+
+  testWidgets('running indicator reflects file editing activity', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-edit',
+              kind: BridgeEventKind.fileChange,
+              summary: 'Edited file',
+              payload: {
+                'path': 'lib/main.dart',
+                'summary': 'Adjusted parser mapping',
+              },
+              occurredAt: '2026-03-18T10:06:00Z',
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+
+    expect(find.text('Editing files'), findsOneWidget);
+  });
 
   testWidgets(
     'bridge resolves git status and enables git mutations while showing thread context',
@@ -4066,6 +4143,16 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     throw StateError(
       'Unsupported interrupt-turn scripted result: $scriptedResult',
     );
+  }
+
+  @override
+  Future<TurnMutationResult> startCommitAction({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? model,
+    String? effort,
+  }) async {
+    throw UnimplementedError();
   }
 
   @override
