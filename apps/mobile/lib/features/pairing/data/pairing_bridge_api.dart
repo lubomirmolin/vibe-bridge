@@ -97,7 +97,7 @@ class HttpPairingBridgeApi implements PairingBridgeApi {
         return const PairingFinalizeResult.failure(
           code: 'bridge_response_invalid',
           message:
-              'Bridge returned an invalid trust response. Please regenerate pairing from your Mac.',
+              'Bridge returned an invalid trust response. Please regenerate pairing from the host bridge.',
         );
       }
     }
@@ -162,7 +162,7 @@ class HttpPairingBridgeApi implements PairingBridgeApi {
         return const PairingHandshakeResult.untrusted(
           code: 'bridge_response_invalid',
           message:
-              'Bridge returned an invalid trust response. Re-pair from your Mac.',
+              'Bridge returned an invalid trust response. Re-pair from the host bridge.',
         );
       }
     }

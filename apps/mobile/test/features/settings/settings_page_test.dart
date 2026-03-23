@@ -64,7 +64,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Paired Bridge'), findsOneWidget);
+      expect(find.text('Active Bridge'), findsOneWidget);
       expect(find.text('Codex Mobile Companion'), findsAtLeastNWidgets(1));
       expect(find.textContaining('Session: session-abc'), findsOneWidget);
       expect(

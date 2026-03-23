@@ -50,6 +50,10 @@ void main() {
       SecureValueKey.trustedBridgeIdentity.wireValue,
       'trusted_bridge_identity',
     );
+    expect(
+      SecureValueKey.savedBridgeRegistry.wireValue,
+      'saved_bridge_registry',
+    );
     expect(SecureValueKey.threadListCache.wireValue, 'thread_list_cache');
     expect(SecureValueKey.selectedThreadId.wireValue, 'selected_thread_id');
     expect(

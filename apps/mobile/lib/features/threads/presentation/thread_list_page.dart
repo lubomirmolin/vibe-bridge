@@ -702,7 +702,7 @@ class _ThreadListBody extends StatelessWidget {
               const SizedBox(height: 8),
               Text(
                 state.isEmptyState
-                    ? 'Start a turn on your Mac, then pull to refresh this list.'
+                    ? 'Start a turn on your connected host bridge, then pull to refresh this list.'
                     : 'Try a different search term or clear the filter.',
                 textAlign: TextAlign.center,
                 style: const TextStyle(color: AppTheme.textMuted),

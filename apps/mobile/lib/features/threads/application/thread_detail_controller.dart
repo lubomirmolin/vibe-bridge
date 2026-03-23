@@ -1176,7 +1176,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     state = state.copyWith(
       isOpenOnMacInFlight: false,
       openOnMacMessage: null,
-      openOnMacErrorMessage: 'Open-on-Mac is unavailable in this build.',
+      openOnMacErrorMessage: 'Open-on-host is unavailable in this build.',
       clearOpenOnMacMessage: true,
     );
     return false;

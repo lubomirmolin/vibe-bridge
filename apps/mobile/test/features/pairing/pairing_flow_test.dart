@@ -35,7 +35,8 @@ void main() {
       await tester.tap(find.text('Trust & Connect'));
       await _pumpUi(tester);
 
-      expect(find.text('Paired with\nOperator Workstation'), findsOneWidget);
+      expect(find.text('Connected to\nOperator Workstation'), findsOneWidget);
+      expect(find.text('Add Another Bridge'), findsOneWidget);
       expect(
         await store.readSecret(SecureValueKey.trustedBridgeIdentity),
         isNotNull,
@@ -54,7 +55,7 @@ void main() {
     await _submitPayload(tester, '{"broken":');
 
     expect(
-      find.text('This QR code is invalid. Please rescan from your Mac.'),
+      find.text('This QR code is invalid. Please rescan from the host bridge.'),
       findsOneWidget,
     );
     expect(find.text('Scan QR Code'), findsOneWidget);
@@ -147,16 +148,21 @@ void main() {
 
     expect(
       find.text(
-        'This pairing QR code was already used. Please rescan from your Mac.',
+        'This pairing QR code was already used. Please rescan from the host bridge.',
       ),
       findsOneWidget,
     );
   });
 
-  testWidgets('same phone cannot silently trust a second Mac without reset', (
+  testWidgets('same phone can add a second saved bridge and make it active', (
     tester,
   ) async {
-    await _pumpPairingFlow(tester, bridgeApi: FakePairingBridgeApi());
+    final store = InMemorySecureStore();
+    await _pumpPairingFlow(
+      tester,
+      store: store,
+      bridgeApi: FakePairingBridgeApi(),
+    );
 
     await _openScanner(tester);
     await _submitPayload(
@@ -176,11 +182,13 @@ void main() {
     await tester.tap(find.text('Trust & Connect'));
     await _pumpUi(tester);
 
+    expect(find.text('Connected to\nOperator Workstation'), findsOneWidget);
+    expect(find.byKey(const Key('add-another-bridge')), findsOneWidget);
+    expect(find.text('Other saved bridges'), findsOneWidget);
+    expect(find.byKey(const Key('activate-bridge-bridge-a1')), findsOneWidget);
     expect(
-      find.text(
-        'This phone is already paired with a different Mac. Reset trust before replacing it.',
-      ),
-      findsOneWidget,
+      await store.readSecret(SecureValueKey.savedBridgeRegistry),
+      isNotNull,
     );
   });
 
@@ -206,7 +214,7 @@ void main() {
         handshakeResult: const PairingHandshakeResult.untrusted(
           code: 'trust_revoked',
           message:
-              'Trust was revoked for this session. Re-pair from the Mac pairing QR.',
+              'Trust was revoked for this session. Re-pair from the host bridge pairing QR.',
         ),
       );
 
@@ -216,7 +224,7 @@ void main() {
       expect(find.text('Re-pair required'), findsOneWidget);
       expect(
         find.text(
-          'Trust was revoked for this session. Re-pair from the Mac pairing QR.',
+          'Trust was revoked for this session. Re-pair from the host bridge pairing QR.',
         ),
         findsOneWidget,
       );
@@ -299,7 +307,7 @@ void main() {
 
       await _pumpPairingFlow(tester, store: store, bridgeApi: bridgeApi);
 
-      expect(find.text('Paired with\nOperator Workstation'), findsOneWidget);
+      expect(find.text('Connected to\nOperator Workstation'), findsOneWidget);
       expect(find.text('Disconnected'), findsOneWidget);
       expect(
         find.text(
@@ -356,7 +364,7 @@ void main() {
       await tester.pump(const Duration(seconds: 3));
       await _pumpUi(tester);
 
-      expect(find.text('Paired with\nOperator Workstation'), findsOneWidget);
+      expect(find.text('Connected to\nOperator Workstation'), findsOneWidget);
       expect(find.text('Disconnected'), findsNothing);
       expect(bridgeApi.handshakeCalls, greaterThanOrEqualTo(2));
     },
@@ -407,7 +415,7 @@ void main() {
       await tester.pump(const Duration(seconds: 3));
       await _pumpUi(tester);
 
-      expect(find.text('Paired with\nOperator Workstation'), findsOneWidget);
+      expect(find.text('Connected to\nOperator Workstation'), findsOneWidget);
       expect(find.text('Disconnected'), findsNothing);
       expect(bridgeApi.handshakeCalls, greaterThanOrEqualTo(3));
     },
@@ -444,7 +452,7 @@ void main() {
         settingsBridgeApi: FakeSettingsBridgeApi(),
       );
 
-      expect(find.text('Paired with\nOperator Workstation'), findsOneWidget);
+      expect(find.text('Connected to\nOperator Workstation'), findsOneWidget);
 
       await _pairingController(tester).unpairFromMobileSettings();
       await _pumpUi(tester);
@@ -559,7 +567,7 @@ class FakePairingBridgeApi implements PairingBridgeApi {
       return const PairingFinalizeResult.failure(
         code: 'session_already_consumed',
         message:
-            'Pairing session was already consumed. Please rescan from your Mac.',
+            'Pairing session was already consumed. Please rescan from the host bridge.',
       );
     }
 

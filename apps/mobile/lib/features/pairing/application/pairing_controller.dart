@@ -42,6 +42,8 @@ class PairingState {
     required this.consumedSessionIds,
     required this.bridgeConnectionState,
     required this.rePairRequiredForSecurity,
+    required this.savedBridges,
+    required this.activeBridgeId,
     this.pendingPayload,
     this.trustedBridge,
     this.errorMessage,
@@ -55,7 +57,11 @@ class PairingState {
   final Set<String> consumedSessionIds;
   final BridgeConnectionState bridgeConnectionState;
   final bool rePairRequiredForSecurity;
+  final List<TrustedBridgeIdentity> savedBridges;
+  final String? activeBridgeId;
   final bool isPersistingTrust;
+
+  int get savedBridgeCount => savedBridges.length;
 
   bool get canRunMutatingActions =>
       step == PairingStep.paired &&
@@ -67,6 +73,8 @@ class PairingState {
       consumedSessionIds: <String>{},
       bridgeConnectionState: BridgeConnectionState.connected,
       rePairRequiredForSecurity: false,
+      savedBridges: <TrustedBridgeIdentity>[],
+      activeBridgeId: null,
     );
   }
 
@@ -81,6 +89,9 @@ class PairingState {
     Set<String>? consumedSessionIds,
     BridgeConnectionState? bridgeConnectionState,
     bool? rePairRequiredForSecurity,
+    List<TrustedBridgeIdentity>? savedBridges,
+    String? activeBridgeId,
+    bool clearActiveBridgeId = false,
     bool? isPersistingTrust,
   }) {
     return PairingState(
@@ -101,6 +112,12 @@ class PairingState {
           bridgeConnectionState ?? this.bridgeConnectionState,
       rePairRequiredForSecurity:
           rePairRequiredForSecurity ?? this.rePairRequiredForSecurity,
+      savedBridges: List<TrustedBridgeIdentity>.unmodifiable(
+        savedBridges ?? this.savedBridges,
+      ),
+      activeBridgeId: clearActiveBridgeId
+          ? null
+          : (activeBridgeId ?? this.activeBridgeId),
       isPersistingTrust: isPersistingTrust ?? this.isPersistingTrust,
     );
   }
@@ -129,6 +146,12 @@ class PairingController extends StateNotifier<PairingState> {
   bool _isDisposed = false;
 
   Future<void> _restoreTrustedBridge() async {
+    final savedBridgeRegistry = await _readSavedBridgeRegistry();
+    if (savedBridgeRegistry != null && savedBridgeRegistry.hasConnections) {
+      await _restoreSavedBridgeRegistry(savedBridgeRegistry);
+      return;
+    }
+
     final raw = await _secureStore.readSecret(
       SecureValueKey.trustedBridgeIdentity,
     );
@@ -153,10 +176,13 @@ class PairingController extends StateNotifier<PairingState> {
       }
 
       final trustedBridge = TrustedBridgeIdentity.fromJson(decoded);
-      await _restoreTrustedBridgeSession(
+      final migratedRegistry = _SavedBridgeRegistry.single(
         trustedBridge: trustedBridge,
-        sessionToken: sessionToken,
+        sessionToken: sessionToken.trim(),
+        selectedAtEpochSeconds: _nowUtc().millisecondsSinceEpoch ~/ 1000,
       );
+      await _writeSavedBridgeRegistry(migratedRegistry);
+      await _restoreSavedBridgeRegistry(migratedRegistry);
     } on FormatException {
       await _clearLocalTrust();
     }
@@ -215,15 +241,6 @@ class PairingController extends StateNotifier<PairingState> {
       return;
     }
 
-    if (state.trustedBridge != null &&
-        state.trustedBridge!.bridgeId != payload.bridgeId) {
-      state = state.copyWith(
-        errorMessage:
-            'This phone is already paired with a different Mac. Reset trust before replacing it.',
-      );
-      return;
-    }
-
     state = state.copyWith(isPersistingTrust: true, clearErrorMessage: true);
     final phoneId = await _readOrCreatePhoneId();
     final finalizeResult = await _bridgeApi.finalizeTrust(
@@ -253,14 +270,27 @@ class PairingController extends StateNotifier<PairingState> {
       sessionId: payload.sessionId,
       pairedAtEpochSeconds: pairedAtUtc.millisecondsSinceEpoch ~/ 1000,
     );
+    final selectedAtEpochSeconds = pairedAtUtc.millisecondsSinceEpoch ~/ 1000;
+    final previousBridgeId = state.trustedBridge?.bridgeId;
+    final registry =
+        (await _readSavedBridgeRegistry())?.upsert(
+          _SavedBridgeConnection(
+            trustedBridge: trust,
+            sessionToken: finalizeResult.sessionToken!,
+            lastSelectedAtEpochSeconds: selectedAtEpochSeconds,
+          ),
+          makeActive: true,
+        ) ??
+        _SavedBridgeRegistry.single(
+          trustedBridge: trust,
+          sessionToken: finalizeResult.sessionToken!,
+          selectedAtEpochSeconds: selectedAtEpochSeconds,
+        );
 
-    await _secureStore.writeSecret(
-      SecureValueKey.trustedBridgeIdentity,
-      jsonEncode(trust.toJson()),
-    );
-    await _secureStore.writeSecret(
-      SecureValueKey.sessionToken,
-      finalizeResult.sessionToken!,
+    await _writeSavedBridgeRegistry(
+      registry,
+      clearCachedThreadState:
+          previousBridgeId != null && previousBridgeId != trust.bridgeId,
     );
 
     final consumedSessionIds = Set<String>.from(state.consumedSessionIds)
@@ -269,6 +299,8 @@ class PairingController extends StateNotifier<PairingState> {
     state = state.copyWith(
       step: PairingStep.paired,
       trustedBridge: trust,
+      savedBridges: registry.orderedTrustedBridges,
+      activeBridgeId: registry.activeBridgeId,
       clearPendingPayload: true,
       clearErrorMessage: true,
       bridgeConnectionState: BridgeConnectionState.connected,
@@ -282,24 +314,8 @@ class PairingController extends StateNotifier<PairingState> {
   Future<void> retryTrustedBridgeConnection() async {
     _cancelReconnectTimer();
 
-    final trustedBridge = state.trustedBridge;
-    if (trustedBridge == null) {
-      return;
-    }
-
-    final sessionToken = await _secureStore.readSecret(
-      SecureValueKey.sessionToken,
-    );
-    if (sessionToken == null || sessionToken.trim().isEmpty) {
-      await _clearLocalTrust();
-      state = state.copyWith(
-        step: PairingStep.unpaired,
-        clearTrustedBridge: true,
-        clearPendingPayload: true,
-        bridgeConnectionState: BridgeConnectionState.connected,
-        rePairRequiredForSecurity: true,
-        errorMessage: 'Stored trust is incomplete. Re-pair from your Mac.',
-      );
+    final savedBridgeRegistry = await _readSavedBridgeRegistry();
+    if (savedBridgeRegistry == null || !savedBridgeRegistry.hasConnections) {
       return;
     }
 
@@ -308,21 +324,33 @@ class PairingController extends StateNotifier<PairingState> {
       clearErrorMessage: true,
     );
 
-    await _restoreTrustedBridgeSession(
-      trustedBridge: trustedBridge,
-      sessionToken: sessionToken,
-    );
+    await _restoreSavedBridgeRegistry(savedBridgeRegistry);
   }
 
-  Future<void> _restoreTrustedBridgeSession({
-    required TrustedBridgeIdentity trustedBridge,
-    required String sessionToken,
-  }) async {
+  Future<void> _restoreSavedBridgeRegistry(
+    _SavedBridgeRegistry savedBridgeRegistry,
+  ) async {
+    final activeConnection = savedBridgeRegistry.activeConnection;
+    if (activeConnection == null) {
+      await _clearLocalTrust(clearCachedThreadState: true);
+      state = state.copyWith(
+        step: PairingStep.unpaired,
+        clearTrustedBridge: true,
+        clearPendingPayload: true,
+        bridgeConnectionState: BridgeConnectionState.connected,
+        rePairRequiredForSecurity: false,
+        savedBridges: const <TrustedBridgeIdentity>[],
+        clearActiveBridgeId: true,
+      );
+      return;
+    }
+
+    final trustedBridge = activeConnection.trustedBridge;
     final phoneId = await _readOrCreatePhoneId();
     final handshake = await _bridgeApi.handshake(
       trustedBridge: trustedBridge,
       phoneId: phoneId,
-      sessionToken: sessionToken,
+      sessionToken: activeConnection.sessionToken,
     );
 
     if (handshake.isTrusted) {
@@ -330,17 +358,17 @@ class PairingController extends StateNotifier<PairingState> {
         trustedBridge,
         handshake,
       );
-      if (refreshedTrustedBridge != trustedBridge) {
-        await _secureStore.writeSecret(
-          SecureValueKey.trustedBridgeIdentity,
-          jsonEncode(refreshedTrustedBridge.toJson()),
-        );
-      }
+      final refreshedRegistry = savedBridgeRegistry.replace(
+        activeConnection.copyWith(trustedBridge: refreshedTrustedBridge),
+      );
+      await _writeSavedBridgeRegistry(refreshedRegistry);
 
       _cancelReconnectTimer();
       state = state.copyWith(
         step: PairingStep.paired,
         trustedBridge: refreshedTrustedBridge,
+        savedBridges: refreshedRegistry.orderedTrustedBridges,
+        activeBridgeId: refreshedRegistry.activeBridgeId,
         bridgeConnectionState: BridgeConnectionState.connected,
         rePairRequiredForSecurity: false,
         clearErrorMessage: true,
@@ -352,6 +380,8 @@ class PairingController extends StateNotifier<PairingState> {
       state = state.copyWith(
         step: PairingStep.paired,
         trustedBridge: trustedBridge,
+        savedBridges: savedBridgeRegistry.orderedTrustedBridges,
+        activeBridgeId: savedBridgeRegistry.activeBridgeId,
         bridgeConnectionState: BridgeConnectionState.disconnected,
         rePairRequiredForSecurity: false,
         errorMessage:
@@ -364,13 +394,34 @@ class PairingController extends StateNotifier<PairingState> {
 
     final requiresRePairForSecurity = handshake.requiresRePair;
     _cancelReconnectTimer();
-    await _clearLocalTrust();
+    final updatedRegistry = savedBridgeRegistry.remove(trustedBridge.bridgeId);
+    if (updatedRegistry.hasConnections) {
+      await _writeSavedBridgeRegistry(
+        updatedRegistry,
+        clearCachedThreadState: true,
+      );
+      state = state.copyWith(
+        step: PairingStep.paired,
+        trustedBridge: updatedRegistry.activeConnection?.trustedBridge,
+        savedBridges: updatedRegistry.orderedTrustedBridges,
+        activeBridgeId: updatedRegistry.activeBridgeId,
+        bridgeConnectionState: BridgeConnectionState.reconnecting,
+        rePairRequiredForSecurity: false,
+        clearErrorMessage: true,
+      );
+      await _restoreSavedBridgeRegistry(updatedRegistry);
+      return;
+    }
+
+    await _clearLocalTrust(clearCachedThreadState: true);
     state = state.copyWith(
       step: PairingStep.unpaired,
       clearTrustedBridge: true,
       clearPendingPayload: true,
       bridgeConnectionState: BridgeConnectionState.connected,
       rePairRequiredForSecurity: requiresRePairForSecurity,
+      savedBridges: const <TrustedBridgeIdentity>[],
+      clearActiveBridgeId: true,
       errorMessage: _resolveUntrustedHandshakeMessage(handshake),
     );
   }
@@ -382,7 +433,7 @@ class PairingController extends StateNotifier<PairingState> {
     }
 
     return handshake.message ??
-        'Stored trust is no longer accepted by the bridge. Re-pair from your Mac.';
+        'Stored trust is no longer accepted by the bridge. Re-pair from the host bridge.';
   }
 
   TrustedBridgeIdentity _refreshTrustedBridgeIdentity(
@@ -469,23 +520,19 @@ class PairingController extends StateNotifier<PairingState> {
       return;
     }
 
-    final trustedBridge = state.trustedBridge;
-    if (trustedBridge == null) {
-      return;
-    }
-
-    final sessionToken = await _secureStore.readSecret(
-      SecureValueKey.sessionToken,
-    );
-    if (sessionToken == null || sessionToken.trim().isEmpty) {
-      await _clearLocalTrust();
+    final savedBridgeRegistry = await _readSavedBridgeRegistry();
+    if (savedBridgeRegistry == null || !savedBridgeRegistry.hasConnections) {
+      await _clearLocalTrust(clearCachedThreadState: true);
       state = state.copyWith(
         step: PairingStep.unpaired,
         clearTrustedBridge: true,
         clearPendingPayload: true,
         bridgeConnectionState: BridgeConnectionState.connected,
         rePairRequiredForSecurity: true,
-        errorMessage: 'Stored trust is incomplete. Re-pair from your Mac.',
+        savedBridges: const <TrustedBridgeIdentity>[],
+        clearActiveBridgeId: true,
+        errorMessage:
+            'Stored trust is incomplete. Re-pair from the host bridge.',
       );
       return;
     }
@@ -496,10 +543,7 @@ class PairingController extends StateNotifier<PairingState> {
         bridgeConnectionState: BridgeConnectionState.reconnecting,
         clearErrorMessage: true,
       );
-      await _restoreTrustedBridgeSession(
-        trustedBridge: trustedBridge,
-        sessionToken: sessionToken,
-      );
+      await _restoreSavedBridgeRegistry(savedBridgeRegistry);
     } finally {
       _isReconnectInProgress = false;
     }
@@ -530,22 +574,71 @@ class PairingController extends StateNotifier<PairingState> {
       }
     }
 
-    await _clearLocalTrust(clearCachedThreadState: true);
+    final savedBridgeRegistry = await _readSavedBridgeRegistry();
+    if (trustedBridge == null ||
+        savedBridgeRegistry == null ||
+        !savedBridgeRegistry.hasConnections) {
+      await _clearLocalTrust(clearCachedThreadState: true);
+      state = state.copyWith(
+        step: PairingStep.unpaired,
+        clearTrustedBridge: true,
+        clearPendingPayload: true,
+        bridgeConnectionState: BridgeConnectionState.connected,
+        rePairRequiredForSecurity: false,
+        savedBridges: const <TrustedBridgeIdentity>[],
+        clearActiveBridgeId: true,
+        consumedSessionIds: const <String>{},
+        isPersistingTrust: false,
+        errorMessage:
+            warningMessage ??
+            'This device was unpaired. Scan a fresh pairing QR to reconnect.',
+      );
+      return;
+    }
+
+    final updatedRegistry = savedBridgeRegistry.remove(trustedBridge.bridgeId);
+    if (!updatedRegistry.hasConnections) {
+      await _clearLocalTrust(clearCachedThreadState: true);
+      state = state.copyWith(
+        step: PairingStep.unpaired,
+        clearTrustedBridge: true,
+        clearPendingPayload: true,
+        bridgeConnectionState: BridgeConnectionState.connected,
+        rePairRequiredForSecurity: false,
+        savedBridges: const <TrustedBridgeIdentity>[],
+        clearActiveBridgeId: true,
+        consumedSessionIds: const <String>{},
+        isPersistingTrust: false,
+        errorMessage:
+            warningMessage ??
+            'This device was unpaired. Scan a fresh pairing QR to reconnect.',
+      );
+      return;
+    }
+
+    await _writeSavedBridgeRegistry(
+      updatedRegistry,
+      clearCachedThreadState: true,
+    );
     state = state.copyWith(
-      step: PairingStep.unpaired,
-      clearTrustedBridge: true,
+      step: PairingStep.paired,
+      trustedBridge: updatedRegistry.activeConnection?.trustedBridge,
+      savedBridges: updatedRegistry.orderedTrustedBridges,
+      activeBridgeId: updatedRegistry.activeBridgeId,
       clearPendingPayload: true,
-      bridgeConnectionState: BridgeConnectionState.connected,
+      bridgeConnectionState: BridgeConnectionState.reconnecting,
       rePairRequiredForSecurity: false,
       consumedSessionIds: const <String>{},
       isPersistingTrust: false,
       errorMessage:
           warningMessage ??
-          'This phone was unpaired. Scan a fresh pairing QR to reconnect.',
+          'This device was removed. Reconnected to another saved bridge.',
     );
+    await _restoreSavedBridgeRegistry(updatedRegistry);
   }
 
   Future<void> _clearLocalTrust({bool clearCachedThreadState = false}) async {
+    await _secureStore.removeSecret(SecureValueKey.savedBridgeRegistry);
     await _secureStore.removeSecret(SecureValueKey.trustedBridgeIdentity);
     await _secureStore.removeSecret(SecureValueKey.sessionToken);
 
@@ -569,10 +662,307 @@ class PairingController extends StateNotifier<PairingState> {
     return generated;
   }
 
+  Future<void> activateSavedBridge(String bridgeId) async {
+    final savedBridgeRegistry = await _readSavedBridgeRegistry();
+    if (savedBridgeRegistry == null ||
+        !savedBridgeRegistry.hasBridge(bridgeId)) {
+      return;
+    }
+
+    final updatedRegistry = savedBridgeRegistry.setActive(
+      bridgeId,
+      selectedAtEpochSeconds: _nowUtc().millisecondsSinceEpoch ~/ 1000,
+    );
+    await _writeSavedBridgeRegistry(
+      updatedRegistry,
+      clearCachedThreadState: true,
+    );
+    _cancelReconnectTimer();
+    state = state.copyWith(
+      step: PairingStep.paired,
+      trustedBridge: updatedRegistry.activeConnection?.trustedBridge,
+      savedBridges: updatedRegistry.orderedTrustedBridges,
+      activeBridgeId: updatedRegistry.activeBridgeId,
+      bridgeConnectionState: BridgeConnectionState.reconnecting,
+      rePairRequiredForSecurity: false,
+      clearErrorMessage: true,
+    );
+    await _restoreSavedBridgeRegistry(updatedRegistry);
+  }
+
+  Future<_SavedBridgeRegistry?> _readSavedBridgeRegistry() async {
+    final raw = await _secureStore.readSecret(
+      SecureValueKey.savedBridgeRegistry,
+    );
+    if (raw == null || raw.trim().isEmpty) {
+      return null;
+    }
+
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Saved bridge registry must be an object.');
+      }
+      return _SavedBridgeRegistry.fromJson(decoded);
+    } on FormatException {
+      await _secureStore.removeSecret(SecureValueKey.savedBridgeRegistry);
+      return null;
+    }
+  }
+
+  Future<void> _writeSavedBridgeRegistry(
+    _SavedBridgeRegistry savedBridgeRegistry, {
+    bool clearCachedThreadState = false,
+  }) async {
+    if (savedBridgeRegistry.hasConnections) {
+      await _secureStore.writeSecret(
+        SecureValueKey.savedBridgeRegistry,
+        jsonEncode(savedBridgeRegistry.toJson()),
+      );
+    } else {
+      await _secureStore.removeSecret(SecureValueKey.savedBridgeRegistry);
+    }
+
+    final activeConnection = savedBridgeRegistry.activeConnection;
+    if (activeConnection == null) {
+      await _secureStore.removeSecret(SecureValueKey.trustedBridgeIdentity);
+      await _secureStore.removeSecret(SecureValueKey.sessionToken);
+    } else {
+      await _secureStore.writeSecret(
+        SecureValueKey.trustedBridgeIdentity,
+        jsonEncode(activeConnection.trustedBridge.toJson()),
+      );
+      await _secureStore.writeSecret(
+        SecureValueKey.sessionToken,
+        activeConnection.sessionToken,
+      );
+    }
+
+    if (clearCachedThreadState) {
+      await _secureStore.removeSecret(SecureValueKey.threadListCache);
+      await _secureStore.removeSecret(SecureValueKey.selectedThreadId);
+    }
+  }
+
   @override
   void dispose() {
     _isDisposed = true;
     _cancelReconnectTimer();
     super.dispose();
+  }
+}
+
+class _SavedBridgeConnection {
+  const _SavedBridgeConnection({
+    required this.trustedBridge,
+    required this.sessionToken,
+    required this.lastSelectedAtEpochSeconds,
+  });
+
+  final TrustedBridgeIdentity trustedBridge;
+  final String sessionToken;
+  final int lastSelectedAtEpochSeconds;
+
+  factory _SavedBridgeConnection.fromJson(Map<String, dynamic> json) {
+    return _SavedBridgeConnection(
+      trustedBridge: TrustedBridgeIdentity.fromJson(
+        json['bridge'] as Map<String, dynamic>? ?? const <String, dynamic>{},
+      ),
+      sessionToken: json['session_token'] as String? ?? '',
+      lastSelectedAtEpochSeconds:
+          json['last_selected_at_epoch_seconds'] as int? ??
+          json['paired_at_epoch_seconds'] as int? ??
+          0,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'bridge': trustedBridge.toJson(),
+      'session_token': sessionToken,
+      'last_selected_at_epoch_seconds': lastSelectedAtEpochSeconds,
+    };
+  }
+
+  _SavedBridgeConnection copyWith({
+    TrustedBridgeIdentity? trustedBridge,
+    String? sessionToken,
+    int? lastSelectedAtEpochSeconds,
+  }) {
+    return _SavedBridgeConnection(
+      trustedBridge: trustedBridge ?? this.trustedBridge,
+      sessionToken: sessionToken ?? this.sessionToken,
+      lastSelectedAtEpochSeconds:
+          lastSelectedAtEpochSeconds ?? this.lastSelectedAtEpochSeconds,
+    );
+  }
+}
+
+class _SavedBridgeRegistry {
+  const _SavedBridgeRegistry({
+    required this.connections,
+    required this.activeBridgeId,
+  });
+
+  final List<_SavedBridgeConnection> connections;
+  final String? activeBridgeId;
+
+  bool get hasConnections => connections.isNotEmpty;
+
+  _SavedBridgeConnection? get activeConnection {
+    final activeBridgeId = this.activeBridgeId;
+    if (activeBridgeId == null || activeBridgeId.trim().isEmpty) {
+      return connections.isEmpty ? null : connections.first;
+    }
+
+    for (final connection in connections) {
+      if (connection.trustedBridge.bridgeId == activeBridgeId) {
+        return connection;
+      }
+    }
+
+    return connections.isEmpty ? null : connections.first;
+  }
+
+  List<TrustedBridgeIdentity> get orderedTrustedBridges {
+    final orderedConnections = connections.toList(growable: true)
+      ..sort((left, right) {
+        final leftIsActive = left.trustedBridge.bridgeId == activeBridgeId;
+        final rightIsActive = right.trustedBridge.bridgeId == activeBridgeId;
+        if (leftIsActive != rightIsActive) {
+          return leftIsActive ? -1 : 1;
+        }
+        return right.lastSelectedAtEpochSeconds.compareTo(
+          left.lastSelectedAtEpochSeconds,
+        );
+      });
+
+    return orderedConnections
+        .map((connection) => connection.trustedBridge)
+        .toList(growable: false);
+  }
+
+  factory _SavedBridgeRegistry.fromJson(Map<String, dynamic> json) {
+    final rawConnections = json['bridges'];
+    if (rawConnections is! List) {
+      throw const FormatException(
+        'Saved bridge registry must contain bridges.',
+      );
+    }
+
+    final connections = rawConnections
+        .map((entry) {
+          if (entry is! Map<String, dynamic>) {
+            throw const FormatException(
+              'Saved bridge registry entry must be an object.',
+            );
+          }
+          return _SavedBridgeConnection.fromJson(entry);
+        })
+        .where((entry) => entry.sessionToken.trim().isNotEmpty)
+        .toList(growable: false);
+
+    return _SavedBridgeRegistry(
+      connections: connections,
+      activeBridgeId: json['active_bridge_id'] as String?,
+    );
+  }
+
+  factory _SavedBridgeRegistry.single({
+    required TrustedBridgeIdentity trustedBridge,
+    required String sessionToken,
+    required int selectedAtEpochSeconds,
+  }) {
+    return _SavedBridgeRegistry(
+      connections: <_SavedBridgeConnection>[
+        _SavedBridgeConnection(
+          trustedBridge: trustedBridge,
+          sessionToken: sessionToken,
+          lastSelectedAtEpochSeconds: selectedAtEpochSeconds,
+        ),
+      ],
+      activeBridgeId: trustedBridge.bridgeId,
+    );
+  }
+
+  bool hasBridge(String bridgeId) {
+    return connections.any((entry) => entry.trustedBridge.bridgeId == bridgeId);
+  }
+
+  _SavedBridgeRegistry upsert(
+    _SavedBridgeConnection connection, {
+    required bool makeActive,
+  }) {
+    final updatedConnections =
+        connections
+            .where(
+              (entry) =>
+                  entry.trustedBridge.bridgeId !=
+                  connection.trustedBridge.bridgeId,
+            )
+            .toList(growable: true)
+          ..add(connection);
+    return _SavedBridgeRegistry(
+      connections: updatedConnections,
+      activeBridgeId: makeActive
+          ? connection.trustedBridge.bridgeId
+          : activeBridgeId,
+    );
+  }
+
+  _SavedBridgeRegistry replace(_SavedBridgeConnection connection) {
+    return upsert(
+      connection,
+      makeActive: connection.trustedBridge.bridgeId == activeBridgeId,
+    );
+  }
+
+  _SavedBridgeRegistry setActive(
+    String bridgeId, {
+    required int selectedAtEpochSeconds,
+  }) {
+    final updatedConnections = connections
+        .map((entry) {
+          if (entry.trustedBridge.bridgeId != bridgeId) {
+            return entry;
+          }
+          return entry.copyWith(
+            lastSelectedAtEpochSeconds: selectedAtEpochSeconds,
+          );
+        })
+        .toList(growable: false);
+    return _SavedBridgeRegistry(
+      connections: updatedConnections,
+      activeBridgeId: bridgeId,
+    );
+  }
+
+  _SavedBridgeRegistry remove(String bridgeId) {
+    final updatedConnections = connections
+        .where((entry) => entry.trustedBridge.bridgeId != bridgeId)
+        .toList(growable: false);
+    String? nextActiveBridgeId;
+    if (updatedConnections.isNotEmpty) {
+      final orderedConnections = updatedConnections.toList(growable: true)
+        ..sort(
+          (left, right) => right.lastSelectedAtEpochSeconds.compareTo(
+            left.lastSelectedAtEpochSeconds,
+          ),
+        );
+      nextActiveBridgeId = orderedConnections.first.trustedBridge.bridgeId;
+    }
+    return _SavedBridgeRegistry(
+      connections: updatedConnections,
+      activeBridgeId: nextActiveBridgeId,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'active_bridge_id': activeBridgeId,
+      'bridges': connections
+          .map((connection) => connection.toJson())
+          .toList(growable: false),
+    };
   }
 }
