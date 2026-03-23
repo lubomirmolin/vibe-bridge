@@ -60,6 +60,29 @@ abstract interface class RuntimeBinaryResolver {
   String? resolveCodexBinaryPath();
 }
 
+class CodexCliStatus {
+  const CodexCliStatus({
+    required this.isReady,
+    required this.statusLabel,
+    required this.detail,
+    required this.nextStep,
+    this.binaryPath,
+    this.sourceLabel,
+  });
+
+  final bool isReady;
+  final String statusLabel;
+  final String detail;
+  final String nextStep;
+  final String? binaryPath;
+  final String? sourceLabel;
+}
+
+abstract interface class CodexCliChecker {
+  Future<CodexCliStatus> check();
+  Future<CodexCliStatus> savePreferredBinaryPath(String path);
+}
+
 class TailscaleCliStatus {
   const TailscaleCliStatus({
     required this.isInstalled,
@@ -84,6 +107,54 @@ abstract interface class TailscaleCliChecker {
 
 abstract interface class StateDirectoryProvider {
   Directory resolveStateDirectory();
+}
+
+class ShellSettingsStore {
+  ShellSettingsStore({StateDirectoryProvider? stateDirectoryProvider})
+    : _stateDirectoryProvider =
+          stateDirectoryProvider ?? XdgStateDirectoryProvider();
+
+  final StateDirectoryProvider _stateDirectoryProvider;
+
+  String? readPreferredCodexBinaryPathSync() {
+    final file = _settingsFile();
+    if (!file.existsSync()) {
+      return null;
+    }
+
+    try {
+      final payload =
+          jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      final path = (payload['preferred_codex_binary_path'] as String?)?.trim();
+      if (path == null || path.isEmpty) {
+        return null;
+      }
+      return path;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> savePreferredCodexBinaryPath(String path) async {
+    final trimmed = path.trim();
+    final file = _settingsFile();
+    await file.parent.create(recursive: true);
+    await file.writeAsString(
+      jsonEncode(<String, dynamic>{'preferred_codex_binary_path': trimmed}),
+    );
+  }
+
+  File _settingsFile() {
+    final directory = _stateDirectoryProvider.resolveStateDirectory();
+    return File('${directory.path}/linux-shell-settings.json');
+  }
+}
+
+class _BinaryMatch {
+  const _BinaryMatch({required this.path, required this.sourceLabel});
+
+  final String path;
+  final String sourceLabel;
 }
 
 class HttpBridgeHealthProbe implements BridgeHealthProbe {
@@ -195,13 +266,22 @@ class LinuxRuntimeBinaryResolver implements RuntimeBinaryResolver {
     Map<String, String>? environment,
     String? currentDirectory,
     String? executablePath,
+    ShellSettingsStore? settingsStore,
   }) : _environment = environment ?? Platform.environment,
        _currentDirectory = currentDirectory ?? Directory.current.path,
-       _executablePath = executablePath ?? Platform.resolvedExecutable;
+       _executablePath = executablePath ?? Platform.resolvedExecutable,
+       _settingsStore =
+           settingsStore ??
+           ShellSettingsStore(
+             stateDirectoryProvider: XdgStateDirectoryProvider(
+               environment: environment ?? Platform.environment,
+             ),
+           );
 
   final Map<String, String> _environment;
   final String _currentDirectory;
   final String _executablePath;
+  final ShellSettingsStore _settingsStore;
 
   @override
   String resolveBridgeBinaryPath() {
@@ -227,20 +307,12 @@ class LinuxRuntimeBinaryResolver implements RuntimeBinaryResolver {
 
   @override
   String? resolveCodexBinaryPath() {
-    final home = _environment['HOME']?.trim();
-    final candidates = <String>[
-      _environment['CODEX_MOBILE_COMPANION_CODEX_BINARY'] ?? '',
-      ..._pathExecutableCandidates('codex'),
-      if (home != null && home.isNotEmpty) ...[
-        '$home/.bun/bin/codex',
-        '$home/.cargo/bin/codex',
-        '$home/.local/bin/codex',
-      ],
-      '/usr/local/bin/codex',
-    ];
+    return _inspectCodexBinary()?.path;
+  }
 
-    for (final candidate in _deduplicate(candidates)) {
-      if (_isExecutable(candidate)) {
+  _BinaryMatch? _inspectCodexBinary() {
+    for (final candidate in _codexBinaryCandidates()) {
+      if (_isExecutable(candidate.path)) {
         return candidate;
       }
     }
@@ -316,6 +388,79 @@ class LinuxRuntimeBinaryResolver implements RuntimeBinaryResolver {
       return false;
     }
     return (file.statSync().mode & 0x49) != 0;
+  }
+
+  List<_BinaryMatch> _codexBinaryCandidates() {
+    final home = _environment['HOME']?.trim();
+    final preferredPath = _settingsStore.readPreferredCodexBinaryPathSync();
+
+    return _deduplicateMatches(<_BinaryMatch>[
+      if ((_environment['CODEX_MOBILE_COMPANION_CODEX_BINARY'] ?? '')
+          .trim()
+          .isNotEmpty)
+        _BinaryMatch(
+          path: _environment['CODEX_MOBILE_COMPANION_CODEX_BINARY']!.trim(),
+          sourceLabel: 'Environment Override',
+        ),
+      if (preferredPath != null && preferredPath.isNotEmpty)
+        _BinaryMatch(path: preferredPath, sourceLabel: 'Saved Path'),
+      ..._pathExecutableCandidates(
+        'codex',
+      ).map((path) => _BinaryMatch(path: path, sourceLabel: 'PATH')),
+      ..._nvmCodexCandidates(),
+      if (home != null && home.isNotEmpty) ...[
+        _BinaryMatch(path: '$home/.bun/bin/codex', sourceLabel: 'Bun'),
+        _BinaryMatch(path: '$home/.cargo/bin/codex', sourceLabel: 'Cargo Bin'),
+        _BinaryMatch(path: '$home/.local/bin/codex', sourceLabel: 'Local Bin'),
+      ],
+      const _BinaryMatch(
+        path: '/usr/local/bin/codex',
+        sourceLabel: 'System Install',
+      ),
+    ]);
+  }
+
+  List<_BinaryMatch> _nvmCodexCandidates() {
+    final home = _environment['HOME']?.trim();
+    if (home == null || home.isEmpty) {
+      return const [];
+    }
+
+    final versionsDir = Directory('$home/.nvm/versions/node');
+    if (!versionsDir.existsSync()) {
+      return const [];
+    }
+
+    final versionDirs =
+        versionsDir
+            .listSync(followLinks: false)
+            .whereType<Directory>()
+            .toList(growable: false)
+          ..sort((a, b) => b.path.compareTo(a.path));
+
+    return versionDirs
+        .map(
+          (directory) => _BinaryMatch(
+            path: '${directory.path}/bin/codex',
+            sourceLabel: 'NVM',
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  List<_BinaryMatch> _deduplicateMatches(List<_BinaryMatch> matches) {
+    final seen = <String>{};
+    final unique = <_BinaryMatch>[];
+    for (final candidate in matches) {
+      final trimmed = candidate.path.trim();
+      if (trimmed.isEmpty || !seen.add(trimmed)) {
+        continue;
+      }
+      unique.add(
+        _BinaryMatch(path: trimmed, sourceLabel: candidate.sourceLabel),
+      );
+    }
+    return unique;
   }
 }
 
@@ -442,6 +587,68 @@ class LinuxTailscaleCliChecker implements TailscaleCliChecker {
       return false;
     }
     return (file.statSync().mode & 0x49) != 0;
+  }
+}
+
+class LinuxCodexCliChecker implements CodexCliChecker {
+  LinuxCodexCliChecker({
+    Map<String, String>? environment,
+    ShellSettingsStore? settingsStore,
+  }) : _settingsStore =
+           settingsStore ??
+           ShellSettingsStore(
+             stateDirectoryProvider: XdgStateDirectoryProvider(
+               environment: environment ?? Platform.environment,
+             ),
+           ),
+       _binaryResolver = LinuxRuntimeBinaryResolver(
+         environment: environment,
+         settingsStore: settingsStore,
+       );
+
+  final ShellSettingsStore _settingsStore;
+  final LinuxRuntimeBinaryResolver _binaryResolver;
+
+  @override
+  Future<CodexCliStatus> check() async {
+    final match = _binaryResolver._inspectCodexBinary();
+    if (match == null) {
+      return const CodexCliStatus(
+        isReady: false,
+        statusLabel: 'Codex Not Found',
+        detail:
+            'Codex CLI is not available to the Linux shell yet. Choose the `codex` binary so the bridge can start the local runtime for threads and approvals.',
+        nextStep: 'Choose the codex binary',
+      );
+    }
+
+    return CodexCliStatus(
+      isReady: true,
+      statusLabel: 'Codex Ready',
+      detail:
+          'Codex CLI is available from ${match.sourceLabel.toLowerCase()}. The Linux shell can use it to start the local runtime.',
+      nextStep: '',
+      binaryPath: match.path,
+      sourceLabel: match.sourceLabel,
+    );
+  }
+
+  @override
+  Future<CodexCliStatus> savePreferredBinaryPath(String path) async {
+    final file = File(path.trim());
+    if (!file.existsSync()) {
+      throw const RuntimeLaunchFailedException(
+        'the selected Codex binary does not exist',
+      );
+    }
+    if ((file.statSync().mode & 0x49) == 0) {
+      throw const RuntimeLaunchFailedException(
+        'the selected Codex binary is not executable',
+      );
+    }
+
+    await _settingsStore.savePreferredCodexBinaryPath(file.path);
+    return check();
   }
 }
 
