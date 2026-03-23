@@ -68,6 +68,10 @@ void main() {
       expect(find.text('Codex Mobile Companion'), findsAtLeastNWidgets(1));
       expect(find.textContaining('Session: session-abc'), findsOneWidget);
       expect(
+        find.byKey(const Key('settings-add-another-bridge')),
+        findsOneWidget,
+      );
+      expect(
         find.byKey(const Key('desktop-integration-toggle')),
         findsOneWidget,
       );
@@ -84,6 +88,52 @@ void main() {
       expect(find.text('set_access_mode • allowed'), findsOneWidget);
     },
   );
+
+  testWidgets('settings add another bridge re-enters scanner mode', (
+    tester,
+  ) async {
+    final store = InMemorySecureStore();
+    await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
+{
+  "bridge_id": "bridge-a1",
+  "bridge_name": "Codex Mobile Companion",
+  "bridge_api_base_url": "https://bridge.ts.net",
+  "session_id": "session-abc",
+  "paired_at_epoch_seconds": 100
+}
+''');
+    await store.writeSecret(SecureValueKey.sessionToken, 'session-token');
+    await store.writeSecret(SecureValueKey.pairingPrivateKey, 'phone-a1');
+
+    final settingsApi = FakeSettingsBridgeApi(
+      accessMode: AccessMode.controlWithApprovals,
+      events: const <SecurityEventRecordDto>[],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          secureStoreProvider.overrideWithValue(store),
+          pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
+          settingsBridgeApiProvider.overrideWithValue(settingsApi),
+        ],
+        child: const MaterialApp(
+          home: SettingsPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('settings-add-another-bridge')));
+    await tester.pumpAndSettle();
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(SettingsPage)),
+    );
+    final pairingState = container.read(pairingControllerProvider);
+    expect(pairingState.step, PairingStep.scanning);
+    expect(pairingState.pendingPayload, isNull);
+  });
 
   testWidgets('security events render newest-first before truncation', (
     tester,

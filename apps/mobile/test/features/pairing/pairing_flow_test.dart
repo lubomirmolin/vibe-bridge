@@ -36,7 +36,7 @@ void main() {
       await _pumpUi(tester);
 
       expect(find.text('Connected to\nOperator Workstation'), findsOneWidget);
-      expect(find.text('Add Another Bridge'), findsOneWidget);
+      expect(find.byKey(const Key('top-right-add-bridge')), findsOneWidget);
       expect(
         await store.readSecret(SecureValueKey.trustedBridgeIdentity),
         isNotNull,
@@ -183,13 +183,50 @@ void main() {
     await _pumpUi(tester);
 
     expect(find.text('Connected to\nOperator Workstation'), findsOneWidget);
-    expect(find.byKey(const Key('add-another-bridge')), findsOneWidget);
+    expect(find.byKey(const Key('top-right-add-bridge')), findsOneWidget);
     expect(find.text('Other saved bridges'), findsOneWidget);
+    expect(find.byKey(const Key('swipe-switch-hint')), findsOneWidget);
     expect(find.byKey(const Key('activate-bridge-bridge-a1')), findsOneWidget);
     expect(
       await store.readSecret(SecureValueKey.savedBridgeRegistry),
       isNotNull,
     );
+  });
+
+  testWidgets('switch hint cycles the active saved bridge', (tester) async {
+    final store = InMemorySecureStore();
+    await _pumpPairingFlow(
+      tester,
+      store: store,
+      bridgeApi: FakePairingBridgeApi(),
+    );
+
+    await _openScanner(tester);
+    await _submitPayload(
+      tester,
+      _validPayloadJson(bridgeId: 'bridge-a1', sessionId: 'session-first'),
+    );
+
+    await tester.tap(find.text('Trust & Connect'));
+    await _pumpUi(tester);
+
+    await _openScannerFromController(tester);
+    await _submitPayload(
+      tester,
+      _validPayloadJson(bridgeId: 'bridge-b2', sessionId: 'session-second'),
+    );
+
+    await tester.tap(find.text('Trust & Connect'));
+    await _pumpUi(tester);
+
+    expect(find.byKey(const Key('activate-bridge-bridge-a1')), findsOneWidget);
+    expect(find.byKey(const Key('activate-bridge-bridge-b2')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('swipe-switch-hint')));
+    await _pumpUi(tester);
+
+    expect(find.byKey(const Key('activate-bridge-bridge-b2')), findsOneWidget);
+    expect(find.byKey(const Key('activate-bridge-bridge-a1')), findsNothing);
   });
 
   testWidgets(

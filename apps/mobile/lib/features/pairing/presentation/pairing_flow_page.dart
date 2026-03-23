@@ -82,8 +82,11 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
   late final MobileScannerController _cameraController;
   late final AnimationController _layoutTransitionController;
   late final AnimationController _flipRevealController;
+  late final AnimationController _swipeHintController;
   late final Animation<double> _flipRotation;
   late final Animation<double> _flipScale;
+  late final Animation<double> _swipeHintLift;
+  late final Animation<double> _swipeHintOpacity;
 
   final Set<String> _autoOpenedThreadSessionIds = <String>{};
   final GlobalKey _foregroundFrameKey = GlobalKey();
@@ -113,6 +116,10 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     );
+    _swipeHintController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
 
     // Smooth 3D flip during the first 35% of the timeline
     _flipRotation = Tween<double>(begin: 0.0, end: pi).animate(
@@ -129,6 +136,18 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
         curve: const Interval(0.30, 0.50, curve: Curves.easeInQuint),
       ),
     );
+    _swipeHintLift = Tween<double>(begin: 2.0, end: -4.0).animate(
+      CurvedAnimation(
+        parent: _swipeHintController,
+        curve: Curves.easeInOutCubic,
+      ),
+    );
+    _swipeHintOpacity = Tween<double>(begin: 0.5, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _swipeHintController,
+        curve: Curves.easeInOutCubic,
+      ),
+    );
 
     // Swap application state once the wipe has expanded enough to hide the
     // foreground transition under the expanding card.
@@ -142,6 +161,7 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
         }
       }
     });
+    _swipeHintController.repeat(reverse: true);
 
     _scheduleCameraMount();
   }
@@ -154,6 +174,7 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
     _cameraMountTimer?.cancel();
     _layoutTransitionController.dispose();
     _flipRevealController.dispose();
+    _swipeHintController.dispose();
     super.dispose();
   }
 
@@ -285,6 +306,26 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
     return Rect.fromCenter(center: center, width: side, height: side);
   }
 
+  void _activateNextSavedBridge(
+    PairingState pairingState,
+    PairingController pairingController,
+  ) {
+    final savedBridges = pairingState.savedBridges;
+    if (savedBridges.length < 2) {
+      return;
+    }
+
+    final activeBridgeId = pairingState.activeBridgeId;
+    final activeIndex = savedBridges.indexWhere(
+      (bridge) => bridge.bridgeId == activeBridgeId,
+    );
+    final nextIndex = activeIndex < 0
+        ? 0
+        : (activeIndex + 1) % savedBridges.length;
+    final nextBridge = savedBridges[nextIndex];
+    unawaited(pairingController.activateSavedBridge(nextBridge.bridgeId));
+  }
+
   @override
   Widget build(BuildContext context) {
     final pairingState = ref.watch(pairingControllerProvider);
@@ -340,6 +381,14 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
                             pairingController: pairingController,
                             titleSlotHeight: titleSlotHeight,
                             titleTravel: titleTravel,
+                          ),
+                        ),
+                        Positioned(
+                          top: 0,
+                          right: 0,
+                          child: _buildTopRightAction(
+                            pairingState,
+                            pairingController,
                           ),
                         ),
                       ],
@@ -639,6 +688,43 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
     return const SizedBox.shrink(key: ValueKey('title-none'));
   }
 
+  Widget _buildTopRightAction(
+    PairingState pairingState,
+    PairingController pairingController,
+  ) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 220),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, animation) {
+        return FadeTransition(
+          opacity: animation,
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.92, end: 1.0).animate(animation),
+            child: child,
+          ),
+        );
+      },
+      child: pairingState.step == PairingStep.paired
+          ? Container(
+              key: const ValueKey('top-right-action-add'),
+              decoration: LiquidStyles.liquidGlass.copyWith(
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: IconButton(
+                key: const Key('top-right-add-bridge'),
+                tooltip: 'Add another bridge',
+                onPressed: () => _openScanner(pairingController),
+                icon: PhosphorIcon(
+                  PhosphorIcons.plus(PhosphorIconsStyle.bold),
+                  size: 18,
+                ),
+              ),
+            )
+          : const SizedBox.shrink(key: ValueKey('top-right-action-none')),
+    );
+  }
+
   Widget _buildCenterCard(
     PairingState pairingState,
     PairingController pairingController, {
@@ -798,104 +884,101 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
         key: const ValueKey('card-paired'),
         padding: const EdgeInsets.all(24),
         decoration: LiquidStyles.liquidGlass,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    'Saved host bridges',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _IdentityRow(label: 'Bridge', value: activeBridge.bridgeName),
+              const Divider(color: Colors.white10, height: 24),
+              _IdentityRow(
+                label: 'Host URL',
+                value: activeBridge.bridgeApiBaseUrl,
+              ),
+              const Divider(color: Colors.white10, height: 24),
+              _IdentityRow(
+                label: 'Identity',
+                value: activeBridge.bridgeId,
+                valueColor: AppTheme.emerald,
+              ),
+              if (pairingState.savedBridgeCount > 1) ...[
+                const Divider(color: Colors.white10, height: 24),
                 Text(
-                  'Saved host bridges',
+                  'Other saved bridges',
                   style: Theme.of(
                     context,
                   ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
                 ),
-                const Spacer(),
-                TextButton(
-                  key: const Key('add-another-bridge'),
-                  onPressed: () => _openScanner(pairingController),
-                  child: const Text('Add Another Bridge'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _IdentityRow(label: 'Bridge', value: activeBridge.bridgeName),
-            const Divider(color: Colors.white10, height: 24),
-            _IdentityRow(
-              label: 'Host URL',
-              value: activeBridge.bridgeApiBaseUrl,
-            ),
-            const Divider(color: Colors.white10, height: 24),
-            _IdentityRow(
-              label: 'Identity',
-              value: activeBridge.bridgeId,
-              valueColor: AppTheme.emerald,
-            ),
-            if (pairingState.savedBridgeCount > 1) ...[
-              const Divider(color: Colors.white10, height: 24),
-              Text(
-                'Other saved bridges',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 12),
-              ...pairingState.savedBridges.map((bridge) {
-                final isActive = bridge.bridgeId == pairingState.activeBridgeId;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              bridge.bridgeName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: AppTheme.textMain,
-                                fontWeight: FontWeight.w600,
+                const SizedBox(height: 12),
+                ...pairingState.savedBridges.map((bridge) {
+                  final isActive =
+                      bridge.bridgeId == pairingState.activeBridgeId;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                bridge.bridgeName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: AppTheme.textMain,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              bridge.bridgeApiBaseUrl,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: AppTheme.textMuted,
-                                fontSize: 12,
+                              const SizedBox(height: 4),
+                              Text(
+                                bridge.bridgeApiBaseUrl,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: AppTheme.textMuted,
+                                  fontSize: 12,
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      if (isActive)
-                        const Text(
-                          'ACTIVE',
-                          style: TextStyle(
-                            color: AppTheme.emerald,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 1.1,
+                            ],
                           ),
-                        )
-                      else
-                        TextButton(
-                          key: Key('activate-bridge-${bridge.bridgeId}'),
-                          onPressed: () => pairingController
-                              .activateSavedBridge(bridge.bridgeId),
-                          child: const Text('Activate'),
                         ),
-                    ],
-                  ),
-                );
-              }),
+                        const SizedBox(width: 12),
+                        if (isActive)
+                          const Text(
+                            'ACTIVE',
+                            style: TextStyle(
+                              color: AppTheme.emerald,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 1.1,
+                            ),
+                          )
+                        else
+                          TextButton(
+                            key: Key('activate-bridge-${bridge.bridgeId}'),
+                            onPressed: () => pairingController
+                                .activateSavedBridge(bridge.bridgeId),
+                            child: const Text('Activate'),
+                          ),
+                      ],
+                    ),
+                  );
+                }),
+              ],
             ],
-          ],
+          ),
         ),
       );
     }
@@ -1049,6 +1132,55 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
               key: Key('open-device-settings'),
             ),
           ),
+          if (pairingState.savedBridgeCount > 1) ...[
+            const SizedBox(height: 12),
+            GestureDetector(
+              key: const Key('swipe-switch-hint'),
+              behavior: HitTestBehavior.opaque,
+              onTap: () =>
+                  _activateNextSavedBridge(pairingState, pairingController),
+              onVerticalDragEnd: (details) {
+                final velocity = details.primaryVelocity ?? 0;
+                if (velocity < -150) {
+                  _activateNextSavedBridge(pairingState, pairingController);
+                }
+              },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    AnimatedBuilder(
+                      animation: _swipeHintController,
+                      builder: (context, child) {
+                        return Opacity(
+                          opacity: _swipeHintOpacity.value,
+                          child: Transform.translate(
+                            offset: Offset(0, _swipeHintLift.value),
+                            child: child,
+                          ),
+                        );
+                      },
+                      child: PhosphorIcon(
+                        PhosphorIcons.caretUp(PhosphorIconsStyle.bold),
+                        size: 14,
+                        color: AppTheme.textSubtle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Swipe up to switch between devices',
+                      style: TextStyle(
+                        color: AppTheme.textSubtle,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ],
       ],
     );

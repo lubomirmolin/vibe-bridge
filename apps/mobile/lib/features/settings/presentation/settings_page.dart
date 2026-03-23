@@ -89,6 +89,14 @@ class SettingsPage extends ConsumerWidget {
                   _PairedBridgeCard(
                     trustedBridge: trustedBridge,
                     bridgeConnectionState: pairingState.bridgeConnectionState,
+                    onAddAnotherBridge: trustedBridge == null
+                        ? null
+                        : () {
+                            pairingController.openScanner();
+                            Navigator.of(
+                              context,
+                            ).popUntil((route) => route.isFirst);
+                          },
                   ),
                   const SizedBox(height: 16),
 
@@ -172,10 +180,12 @@ class _PairedBridgeCard extends StatelessWidget {
   const _PairedBridgeCard({
     required this.trustedBridge,
     required this.bridgeConnectionState,
+    required this.onAddAnotherBridge,
   });
 
   final TrustedBridgeIdentity? trustedBridge;
   final BridgeConnectionState bridgeConnectionState;
+  final VoidCallback? onAddAnotherBridge;
 
   @override
   Widget build(BuildContext context) {
@@ -257,6 +267,16 @@ class _PairedBridgeCard extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                key: const Key('settings-add-another-bridge'),
+                onPressed: onAddAnotherBridge,
+                icon: PhosphorIcon(PhosphorIcons.plus()),
+                label: const Text('Add Another Bridge'),
+              ),
             ),
           ],
         ],
