@@ -1,5 +1,5 @@
 {
-  "contract_version": "2026-03-22",
+  "contract_version": "2026-03-23",
   "event_id": "evt-1",
   "thread_id": "thread-123",
   "kind": "message_delta",

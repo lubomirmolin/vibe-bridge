@@ -58,6 +58,16 @@ class ThreadDraftCreatedTransition {
   final String? initialSelectedReasoningEffort;
 }
 
+class _SpeechUnavailableDialogContent {
+  const _SpeechUnavailableDialogContent({
+    required this.title,
+    required this.message,
+  });
+
+  final String title;
+  final String message;
+}
+
 class ThreadDetailPage extends ConsumerStatefulWidget {
   const ThreadDetailPage({
     super.key,
@@ -627,41 +637,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     }
 
     await _loadSpeechStatus();
-    switch (_speechModelStatus.state) {
-      case SpeechModelState.ready:
-        break;
-      case SpeechModelState.unsupported:
-        _setSpeechMessage(
-          _speechModelStatus.lastError ??
-              'Speech transcription isn’t available on this Mac yet.',
-          isError: true,
-        );
-        return;
-      case SpeechModelState.notInstalled:
-        _setSpeechMessage(
-          'Parakeet is not installed on the Mac yet. Download it from the desktop shell first.',
-          isError: true,
-        );
-        return;
-      case SpeechModelState.installing:
-        _setSpeechMessage(
-          'Parakeet is still downloading on the Mac. Wait for the install to finish.',
-          isError: true,
-        );
-        return;
-      case SpeechModelState.busy:
-        _setSpeechMessage(
-          'Another speech task is already running on the Mac.',
-          isError: true,
-        );
-        return;
-      case SpeechModelState.failed:
-        _setSpeechMessage(
-          _speechModelStatus.lastError ??
-              'Speech transcription is unavailable right now.',
-          isError: true,
-        );
-        return;
+    if (_speechModelStatus.state != SpeechModelState.ready) {
+      await _showSpeechUnavailableDialogForStatus(_speechModelStatus);
+      return;
     }
 
     final hasPermission = await _audioRecorder.hasPermission();
@@ -717,6 +695,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     _speechRecordingTimer?.cancel();
     _speechRecordingTimer = null;
     final previousRecordingPath = _speechRecordingPath;
+    _SpeechUnavailableDialogContent? pendingSpeechDialog;
     setState(() {
       _isSpeechRecording = false;
       _isSpeechTranscribing = true;
@@ -749,7 +728,17 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       );
       await _loadSpeechStatus();
     } on ThreadSpeechBridgeException catch (error) {
-      _setSpeechMessage(_speechErrorMessageFor(error), isError: true);
+      if (_shouldShowSpeechUnavailableDialogForError(error)) {
+        await _loadSpeechStatus();
+        pendingSpeechDialog =
+            _speechUnavailableDialogContentForStatus(_speechModelStatus) ??
+            _speechUnavailableDialogContentForError(error);
+        if (pendingSpeechDialog == null) {
+          _setSpeechMessage(_speechErrorMessageFor(error), isError: true);
+        }
+      } else {
+        _setSpeechMessage(_speechErrorMessageFor(error), isError: true);
+      }
     } on FileSystemException {
       _setSpeechMessage(
         'Couldn’t read the recording for transcription.',
@@ -765,6 +754,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
           _speechRecordingPath = null;
         });
       }
+    }
+
+    if (pendingSpeechDialog != null) {
+      await _showSpeechUnavailableDialog(pendingSpeechDialog!);
     }
   }
 
@@ -804,6 +797,137 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       _speechMessage = message;
       _speechMessageIsError = isError;
     });
+  }
+
+  Future<void> _showSpeechUnavailableDialogForStatus(
+    SpeechModelStatusDto status,
+  ) async {
+    final content = _speechUnavailableDialogContentForStatus(status);
+    if (content == null) {
+      return;
+    }
+
+    await _showSpeechUnavailableDialog(content);
+  }
+
+  Future<void> _showSpeechUnavailableDialog(
+    _SpeechUnavailableDialogContent content,
+  ) async {
+    if (!mounted) {
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          key: const Key('speech-unavailable-dialog'),
+          title: Text(content.title),
+          content: Text(content.message),
+          actions: [
+            TextButton(
+              key: const Key('speech-unavailable-dialog-dismiss'),
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Dismiss'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  _SpeechUnavailableDialogContent? _speechUnavailableDialogContentForStatus(
+    SpeechModelStatusDto status,
+  ) {
+    switch (status.state) {
+      case SpeechModelState.ready:
+        return null;
+      case SpeechModelState.notInstalled:
+        return const _SpeechUnavailableDialogContent(
+          title: 'Install Parakeet',
+          message:
+              'Parakeet is not installed on this Mac. Install it from the desktop macOS shell before using voice input.',
+        );
+      case SpeechModelState.unsupported:
+        return _SpeechUnavailableDialogContent(
+          title: 'Speech unavailable',
+          message:
+              status.lastError ??
+              'Speech transcription is unavailable on this Mac or in this build.',
+        );
+      case SpeechModelState.installing:
+        return const _SpeechUnavailableDialogContent(
+          title: 'Parakeet is installing',
+          message:
+              'Parakeet is still being installed on this Mac. Wait for the download to finish, then try again.',
+        );
+      case SpeechModelState.busy:
+        return const _SpeechUnavailableDialogContent(
+          title: 'Speech busy',
+          message:
+              'Another speech task is already running on this Mac. Wait for it to finish, then try again.',
+        );
+      case SpeechModelState.failed:
+        return _SpeechUnavailableDialogContent(
+          title: 'Speech unavailable',
+          message:
+              status.lastError ??
+              'Speech transcription is unavailable right now.',
+        );
+    }
+  }
+
+  _SpeechUnavailableDialogContent? _speechUnavailableDialogContentForError(
+    ThreadSpeechBridgeException error,
+  ) {
+    switch (error.code) {
+      case 'speech_not_installed':
+        return const _SpeechUnavailableDialogContent(
+          title: 'Install Parakeet',
+          message:
+              'Parakeet is not installed on this Mac. Install it from the desktop macOS shell before using voice input.',
+        );
+      case 'speech_unsupported':
+        return _SpeechUnavailableDialogContent(
+          title: 'Speech unavailable',
+          message:
+              error.message.isNotEmpty
+                  ? error.message
+                  : 'Speech transcription is unavailable on this Mac or in this build.',
+        );
+      case 'speech_busy':
+        return const _SpeechUnavailableDialogContent(
+          title: 'Speech busy',
+          message:
+              'Another speech task is already running on this Mac. Wait for it to finish, then try again.',
+        );
+      case 'speech_helper_unavailable':
+      case 'speech_transcription_failed':
+        return _SpeechUnavailableDialogContent(
+          title: 'Speech unavailable',
+          message:
+              error.message.isNotEmpty
+                  ? error.message
+                  : 'Speech transcription is unavailable right now.',
+        );
+      default:
+        return null;
+    }
+  }
+
+  bool _shouldShowSpeechUnavailableDialogForError(
+    ThreadSpeechBridgeException error,
+  ) {
+    switch (error.code) {
+      case 'speech_not_installed':
+      case 'speech_unsupported':
+      case 'speech_busy':
+      case 'speech_helper_unavailable':
+      case 'speech_transcription_failed':
+        return true;
+      default:
+        return false;
+    }
   }
 
   String _speechErrorMessageFor(ThreadSpeechBridgeException error) {

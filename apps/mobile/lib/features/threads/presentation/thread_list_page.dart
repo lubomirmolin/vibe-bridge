@@ -334,52 +334,55 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                 width: bodyWidth,
                 child: Row(
                   children: [
-                    AnimatedContainer(
+                    SizedBox(
                       key: const Key('thread-wide-left-pane'),
-                      duration: const Duration(milliseconds: 240),
-                      curve: Curves.easeInOutCubic,
                       width: _isWideThreadListHidden ? 0 : persistentPaneWidth,
-                      child: ClipRect(
-                        child: IgnorePointer(
-                          ignoring: _isWideThreadListHidden,
-                          child: DecoratedBox(
-                            decoration: const BoxDecoration(
-                              border: Border(
-                                right: BorderSide(color: Colors.white10),
+                      child: _isWideThreadListHidden
+                          ? const SizedBox.shrink()
+                          : ClipRect(
+                              child: IgnorePointer(
+                                ignoring: _isWideThreadListHidden,
+                                child: DecoratedBox(
+                                  decoration: const BoxDecoration(
+                                    border: Border(
+                                      right: BorderSide(color: Colors.white10),
+                                    ),
+                                  ),
+                                  child: _ThreadListSurface(
+                                    bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+                                    state: state,
+                                    controller: controller,
+                                    searchController: _searchController,
+                                    visibleThreadsPerGroup:
+                                        _defaultVisibleThreadsPerGroup,
+                                    isGroupCollapsed: (groupId) =>
+                                        _isGroupCollapsed(state, groupId),
+                                    isGroupThreadListExpanded: (groupId) =>
+                                        _isGroupThreadListExpanded(
+                                          state,
+                                          groupId,
+                                        ),
+                                    onToggleGroupCollapsed:
+                                        _toggleGroupCollapsed,
+                                    onToggleGroupThreadExpansion:
+                                        _toggleGroupThreadExpansion,
+                                    onOpenThread: (threadId) =>
+                                        _openThreadDetail(
+                                          controller,
+                                          threadId,
+                                          forceWideSelection: true,
+                                        ),
+                                    onCreateThread: state.isLoading
+                                        ? null
+                                        : () => _startNewThread(state),
+                                    selectedThreadId: selectedThreadId,
+                                  ),
+                                ),
                               ),
                             ),
-                            child: _ThreadListSurface(
-                              bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
-                              state: state,
-                              controller: controller,
-                              searchController: _searchController,
-                              visibleThreadsPerGroup:
-                                  _defaultVisibleThreadsPerGroup,
-                              isGroupCollapsed: (groupId) =>
-                                  _isGroupCollapsed(state, groupId),
-                              isGroupThreadListExpanded: (groupId) =>
-                                  _isGroupThreadListExpanded(state, groupId),
-                              onToggleGroupCollapsed: _toggleGroupCollapsed,
-                              onToggleGroupThreadExpansion:
-                                  _toggleGroupThreadExpansion,
-                              onOpenThread: (threadId) => _openThreadDetail(
-                                controller,
-                                threadId,
-                                forceWideSelection: true,
-                              ),
-                              onCreateThread: state.isLoading
-                                  ? null
-                                  : () => _startNewThread(state),
-                              selectedThreadId: selectedThreadId,
-                            ),
-                          ),
-                        ),
-                      ),
                     ),
-                    AnimatedContainer(
+                    SizedBox(
                       key: const Key('thread-wide-gap'),
-                      duration: const Duration(milliseconds: 240),
-                      curve: Curves.easeInOutCubic,
                       width: _isWideThreadListHidden ? 0 : paneGap,
                     ),
                     Expanded(

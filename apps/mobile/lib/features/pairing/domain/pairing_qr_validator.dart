@@ -44,7 +44,7 @@ PairingValidationResult validatePairingQrPayload(
       return PairingValidationResult.invalid(PairingValidationError.reused);
     }
 
-    if (!isPrivateBridgeApiBaseUrl(payload.bridgeApiBaseUrl)) {
+    if (payload.orderedReachableRoutes.isEmpty) {
       return PairingValidationResult.invalid(
         PairingValidationError.privateRouteRequired,
       );
@@ -65,6 +65,6 @@ String _messageFor(PairingValidationError error) {
     case PairingValidationError.reused:
       return 'This pairing QR code was already used. Please rescan from your Mac.';
     case PairingValidationError.privateRouteRequired:
-      return 'This QR does not use a private Tailscale bridge path. Please rescan from your Mac.';
+      return 'This QR does not advertise a supported Tailscale or local-network bridge route. Please rescan from your Mac.';
   }
 }

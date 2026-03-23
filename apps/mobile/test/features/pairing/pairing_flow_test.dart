@@ -569,6 +569,7 @@ class FakePairingBridgeApi implements PairingBridgeApi {
       bridgeId: payload.bridgeId,
       bridgeName: bridgeName,
       bridgeApiBaseUrl: payload.bridgeApiBaseUrl,
+      bridgeApiRoutes: payload.bridgeApiRoutes,
     );
   }
 

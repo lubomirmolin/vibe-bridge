@@ -118,6 +118,9 @@ final class PairingEntryViewModel: ObservableObject {
     @Published private(set) var speechDownloadProgress: UInt8?
     @Published private(set) var isInstallingSpeechModel = false
     @Published private(set) var isRemovingSpeechModel = false
+    @Published private(set) var localNetworkPairingEnabled = false
+    @Published private(set) var pairingRoutes: [BridgeAPIRouteDTO] = []
+    @Published private(set) var isUpdatingNetworkSettings = false
 
     @Published private(set) var isLoadingPairing = false
     @Published private(set) var isRefreshingRuntime = false
@@ -241,11 +244,13 @@ final class PairingEntryViewModel: ObservableObject {
             launchSnapshot = resolvedLaunchSnapshot
             supervisorStatusLabel = resolvedLaunchSnapshot.statusLabel
 
-            let health = try await bridgeClient.fetchHealth()
-            bridgeRuntimeLabel = "\(health.runtime.state) (\(health.runtime.mode))"
-            runtimeDetail = health.runtime.detail
+                let health = try await bridgeClient.fetchHealth()
+                bridgeRuntimeLabel = "\(health.runtime.state) (\(health.runtime.mode))"
+                runtimeDetail = health.runtime.detail
+                pairingRoutes = health.pairingRoute.routes
+                localNetworkPairingEnabled = health.networkSettings.localNetworkPairingEnabled
 
-            switch ShellStateResolver.resolveRuntimeHealth(health) {
+                switch ShellStateResolver.resolveRuntimeHealth(health) {
             case let .degraded(message):
                 applyDegradedState(message)
                 return
@@ -254,7 +259,11 @@ final class PairingEntryViewModel: ObservableObject {
                 let threadsResponse = try await bridgeClient.fetchThreads()
                 let runningCount = threadsResponse.threads.filter { $0.status == .running }.count
                 runningThreadCount = runningCount
-                applyHealthyState(trustStatus: trustStatus, runningThreadCount: runningCount)
+                applyHealthyState(
+                    trustStatus: trustStatus,
+                    runningThreadCount: runningCount,
+                    pairingRoute: health.pairingRoute
+                )
                 try? await refreshSpeechStatus()
 
                 if shellState == .unpaired {
@@ -287,7 +296,8 @@ final class PairingEntryViewModel: ObservableObject {
 
     private func applyHealthyState(
         trustStatus: BridgeTrustStatusDTO?,
-        runningThreadCount: Int
+        runningThreadCount: Int,
+        pairingRoute: BridgePairingRouteHealthDTO
     ) {
         shellState = ShellStateResolver.resolveShellState(
             trustStatus: trustStatus,
@@ -309,6 +319,7 @@ final class PairingEntryViewModel: ObservableObject {
         }
 
         errorMessage = nil
+        runtimeDetail = pairingRoute.message ?? runtimeDetail
 
         if shellState != .unpaired {
             pairingSession = nil
@@ -348,6 +359,7 @@ final class PairingEntryViewModel: ObservableObject {
         speechModelState = .unsupported
         speechModelDetail = "Speech status is unavailable while the bridge is degraded."
         speechDownloadProgress = nil
+        pairingRoutes = []
         pairingSession = nil
         qrImage = nil
         errorMessage = message
@@ -504,6 +516,30 @@ final class PairingEntryViewModel: ObservableObject {
             qrImage = nil
             errorMessage = "Failed to generate pairing QR from bridge data: \(error.localizedDescription)"
         }
+    }
+
+    func setLocalNetworkPairingEnabled(_ enabled: Bool) async {
+        guard !isUpdatingNetworkSettings else {
+            return
+        }
+
+        isUpdatingNetworkSettings = true
+        defer { isUpdatingNetworkSettings = false }
+
+        do {
+            let settings = try await bridgeClient.setLocalNetworkPairingEnabled(enabled)
+            localNetworkPairingEnabled = settings.localNetworkPairingEnabled
+            pairingRoutes = settings.routes
+            errorMessage = settings.message
+            await refreshRuntimeState()
+        } catch {
+            errorMessage = "Failed to update network pairing setting: \(error.localizedDescription)"
+        }
+    }
+
+    var routeSummaryLabel: String {
+        let reachableCount = pairingRoutes.filter(\.reachable).count
+        return "\(reachableCount)/\(pairingRoutes.count) reachable"
     }
 
     private var hasFreshPairingSession: Bool {

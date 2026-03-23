@@ -9,10 +9,15 @@ mod speech;
 mod state;
 
 use std::fs;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use axum::Router;
 use axum::serve;
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
+use tokio::time::{Duration, sleep};
 
 pub use config::BridgeConfig;
 use state::BridgeAppState;
@@ -49,7 +54,7 @@ pub async fn run_from_env() -> Result<(), String> {
     let state = BridgeAppState::from_config(config.clone()).await;
     state.start_notification_forwarder();
     state.start_summary_reconciler();
-    let app = api::router(state);
+    let app = api::router(state.clone());
 
     if let Err(error) = fs::create_dir_all(&config.state_directory) {
         return Err(format!(
@@ -68,10 +73,111 @@ pub async fn run_from_env() -> Result<(), String> {
             )
         })?;
 
+    let (lan_shutdown_tx, lan_shutdown_rx) = oneshot::channel();
+    let lan_manager = tokio::spawn(run_lan_listener_manager(
+        state,
+        app.clone(),
+        lan_shutdown_rx,
+    ));
+
     let result = serve(listener, app)
         .await
         .map_err(|error| format!("bridge server failed: {error}"));
 
+    let _ = lan_shutdown_tx.send(());
+    let _ = lan_manager.await;
     remove_pid_file(&config.state_directory);
     result
+}
+
+struct ManagedLanListener {
+    bind_addr: SocketAddr,
+    shutdown_tx: oneshot::Sender<()>,
+    handle: JoinHandle<Result<(), String>>,
+}
+
+async fn run_lan_listener_manager(
+    state: BridgeAppState,
+    app: Router,
+    mut shutdown_rx: oneshot::Receiver<()>,
+) {
+    let mut active_listener: Option<ManagedLanListener> = None;
+
+    loop {
+        if let Some(listener) = &active_listener
+            && listener.handle.is_finished()
+        {
+            let listener = active_listener
+                .take()
+                .expect("active listener should exist");
+            match listener.handle.await {
+                Ok(Ok(())) => {
+                    state.clear_lan_listener_runtime();
+                }
+                Ok(Err(error)) => state.record_lan_listener_error(error),
+                Err(error) => state.record_lan_listener_error(format!(
+                    "local network listener task failed: {error}"
+                )),
+            }
+        }
+
+        let desired_addr = state.desired_lan_listener_addr();
+        let active_addr = active_listener.as_ref().map(|listener| listener.bind_addr);
+
+        if desired_addr != active_addr {
+            if let Some(listener) = active_listener.take() {
+                let _ = listener.shutdown_tx.send(());
+                let _ = listener.handle.await;
+                state.clear_lan_listener_runtime();
+            }
+
+            if let Some(bind_addr) = desired_addr {
+                match start_lan_listener(bind_addr, app.clone()).await {
+                    Ok(listener) => {
+                        state.record_lan_listener_active(bind_addr);
+                        active_listener = Some(listener);
+                    }
+                    Err(error) => state.record_lan_listener_error(error),
+                }
+            } else {
+                state.clear_lan_listener_runtime();
+            }
+        }
+
+        tokio::select! {
+            _ = &mut shutdown_rx => {
+                if let Some(listener) = active_listener.take() {
+                    let _ = listener.shutdown_tx.send(());
+                    let _ = listener.handle.await;
+                }
+                state.clear_lan_listener_runtime();
+                break;
+            }
+            _ = sleep(Duration::from_secs(2)) => {}
+        }
+    }
+}
+
+async fn start_lan_listener(
+    bind_addr: SocketAddr,
+    app: Router,
+) -> Result<ManagedLanListener, String> {
+    let listener = TcpListener::bind(bind_addr).await.map_err(|error| {
+        format!("failed to bind local network listener on {bind_addr}: {error}")
+    })?;
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let handle = tokio::spawn(async move {
+        serve(listener, app)
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+            .map_err(|error| format!("local network listener failed on {bind_addr}: {error}"))
+    });
+
+    Ok(ManagedLanListener {
+        bind_addr,
+        shutdown_tx,
+        handle,
+    })
 }

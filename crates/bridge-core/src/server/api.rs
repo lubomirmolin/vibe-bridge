@@ -7,10 +7,10 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
 use shared_contracts::{
-    AccessMode, BootstrapDto, ModelCatalogDto, SecurityAuditEventDto,
-    SpeechModelMutationAcceptedDto, SpeechModelStatusDto, SpeechTranscriptionResultDto,
-    ThreadGitDiffDto, ThreadGitDiffMode, ThreadSnapshotDto, ThreadSummaryDto,
-    ThreadTimelinePageDto, TurnMutationAcceptedDto,
+    AccessMode, BootstrapDto, ModelCatalogDto, NetworkSettingsDto, PairingRouteInventoryDto,
+    SecurityAuditEventDto, SpeechModelMutationAcceptedDto, SpeechModelStatusDto,
+    SpeechTranscriptionResultDto, ThreadGitDiffDto, ThreadGitDiffMode, ThreadSnapshotDto,
+    ThreadSummaryDto, ThreadTimelinePageDto, TurnMutationAcceptedDto,
 };
 
 use crate::pairing::{
@@ -20,7 +20,6 @@ use crate::pairing::{
 use crate::policy::{PolicyAction, PolicyDecision};
 use crate::server::controls::{ApprovalRecordDto, ApprovalResolutionResponse};
 use crate::server::events::{EventSubscriptionQuery, stream_events};
-use crate::server::pairing_route::PairingRouteHealth;
 use crate::server::state::BridgeAppState;
 
 pub fn router(state: BridgeAppState) -> Router {
@@ -44,6 +43,10 @@ pub fn router(state: BridgeAppState) -> Router {
         .route("/pairing/trust/revoke", post(pairing_revoke))
         .route("/pairing/trust", get(pairing_trust))
         .route("/pairing/route", get(pairing_route))
+        .route(
+            "/settings/network",
+            get(get_network_settings).post(set_network_settings),
+        )
         .route(
             "/policy/access-mode",
             get(get_access_mode).post(set_access_mode),
@@ -309,6 +312,11 @@ struct AccessModeMutationQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct NetworkSettingsMutationQuery {
+    local_network_pairing_enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct ThreadHistoryQuery {
     before: Option<String>,
     limit: Option<usize>,
@@ -417,8 +425,29 @@ async fn pairing_trust(State(state): State<BridgeAppState>) -> Json<PairingTrust
     Json(state.trust_snapshot())
 }
 
-async fn pairing_route(State(state): State<BridgeAppState>) -> Json<PairingRouteHealth> {
+async fn pairing_route(State(state): State<BridgeAppState>) -> Json<PairingRouteInventoryDto> {
     Json(state.pairing_route_health())
+}
+
+async fn get_network_settings(State(state): State<BridgeAppState>) -> Json<NetworkSettingsDto> {
+    Json(state.network_settings())
+}
+
+async fn set_network_settings(
+    State(state): State<BridgeAppState>,
+    Query(query): Query<NetworkSettingsMutationQuery>,
+) -> Result<Json<NetworkSettingsDto>, (StatusCode, Json<ErrorEnvelope>)> {
+    state
+        .set_local_network_pairing_enabled(query.local_network_pairing_enabled)
+        .map(Json)
+        .map_err(|error| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "network_settings_update_failed",
+                "storage_error",
+                error,
+            )
+        })
 }
 
 async fn start_turn(
@@ -1987,7 +2016,7 @@ mod tests {
         let config = BridgeConfig {
             host: "127.0.0.1".to_string(),
             port: 3110,
-            state_directory: temp_state_directory,
+            state_directory: temp_state_directory.clone(),
             speech_helper_binary: None,
             pairing_route: PairingRouteState::new(
                 "https://bridge.ts.net".to_string(),
@@ -1995,6 +2024,7 @@ mod tests {
                 None,
                 3110,
                 false,
+                temp_state_directory,
             ),
             codex: BridgeCodexConfig::default(),
         };

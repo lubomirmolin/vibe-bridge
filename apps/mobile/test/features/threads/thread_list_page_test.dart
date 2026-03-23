@@ -108,7 +108,7 @@ void main() {
     expect(find.byKey(const Key('thread-draft-back-button')), findsNothing);
   });
 
-  testWidgets('wide layout can collapse the list and reopen it via drawer', (
+  testWidgets('wide layout can collapse the list and reopen it from detail', (
     tester,
   ) async {
     await _setDisplaySize(tester, const Size(1400, 900));
@@ -124,20 +124,28 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('thread-wide-collapse-button')));
+    await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('thread-wide-left-pane')), findsNothing);
+    await tester.tap(find.byKey(const Key('thread-detail-sidebar-toggle')));
+    await tester.pumpAndSettle();
+
     expect(
-      find.byKey(const Key('thread-wide-open-drawer-button')),
-      findsOneWidget,
+      tester.getSize(find.byKey(const Key('thread-wide-left-pane'))).width,
+      0,
     );
 
-    await tester.tap(find.byKey(const Key('thread-wide-open-drawer-button')));
+    await tester.tap(find.byKey(const Key('thread-detail-sidebar-toggle')));
     await tester.pumpAndSettle();
 
-    expect(find.byType(Drawer), findsOneWidget);
-    expect(find.text('Implement shared contracts'), findsOneWidget);
+    expect(
+      tester.getSize(find.byKey(const Key('thread-wide-left-pane'))).width,
+      greaterThan(0),
+    );
+    expect(
+      find.byKey(const Key('thread-summary-card-thread-123')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('narrow layout still pushes to the full-screen detail route', (

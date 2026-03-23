@@ -9,7 +9,7 @@ final class CodexMobileCompanionTests: XCTestCase {
     func testThreadSummaryDecodesSharedFixtureShape() throws {
         let json = """
         {
-          "contract_version": "2026-03-22",
+          "contract_version": "2026-03-23",
           "thread_id": "thread-123",
           "title": "Implement shared contracts",
           "status": "running",
@@ -57,19 +57,28 @@ final class CodexMobileCompanionTests: XCTestCase {
     func testPairingSessionResponseDecodesBridgeIdentityAndSession() throws {
         let json = """
         {
-          "contract_version": "2026-03-22",
+          "contract_version": "2026-03-23",
           "bridge_identity": {
             "bridge_id": "bridge-74dbf8ad31e2af1b",
             "display_name": "Codex Mobile Companion",
             "api_base_url": "http://127.0.0.1:3110"
           },
+          "bridge_api_routes": [
+            {
+              "id": "local_network",
+              "kind": "local_network",
+              "base_url": "http://192.168.1.10:3110",
+              "reachable": true,
+              "is_preferred": true
+            }
+          ],
           "pairing_session": {
             "session_id": "pairing-session-1",
             "pairing_token": "ptk-aabbccdd",
             "issued_at_epoch_seconds": 1,
             "expires_at_epoch_seconds": 301
           },
-          "qr_payload": "{\\"v\\":\\"2026-03-22\\",\\"b\\":\\"bridge-74dbf8ad31e2af1b\\",\\"u\\":\\"http://127.0.0.1:3110\\",\\"s\\":\\"pairing-session-1\\",\\"t\\":\\"ptk-aabbccdd\\"}"
+          "qr_payload": "{\\"v\\":\\"2026-03-23\\",\\"b\\":\\"bridge-74dbf8ad31e2af1b\\",\\"u\\":\\"http://192.168.1.10:3110\\",\\"bridge_api_routes\\":[{\\"id\\":\\"local_network\\",\\"kind\\":\\"local_network\\",\\"base_url\\":\\"http://192.168.1.10:3110\\",\\"reachable\\":true,\\"is_preferred\\":true}],\\"issued_at_epoch_seconds\\":1,\\"expires_at_epoch_seconds\\":301,\\"s\\":\\"pairing-session-1\\",\\"t\\":\\"ptk-aabbccdd\\"}"
         }
         """
 
@@ -82,6 +91,7 @@ final class CodexMobileCompanionTests: XCTestCase {
         XCTAssertEqual(decoded.bridgeIdentity.bridgeID, "bridge-74dbf8ad31e2af1b")
         XCTAssertEqual(decoded.pairingSession.sessionID, "pairing-session-1")
         XCTAssertEqual(decoded.bridgeIdentity.apiBaseURL, "http://127.0.0.1:3110")
+        XCTAssertEqual(decoded.bridgeAPIRoutes.first?.baseURL, "http://192.168.1.10:3110")
     }
 
     func testDesktopRuntimeSupervisorDefaultStateDirectoryUsesApplicationSupport() {
@@ -244,7 +254,7 @@ final class CodexMobileCompanionTests: XCTestCase {
     func testSpeechModelStatusDecodesSharedContractShape() throws {
         let json = """
         {
-          "contract_version": "2026-03-22",
+          "contract_version": "2026-03-23",
           "provider": "fluid_audio",
           "model_id": "parakeet-tdt-0.6b-v3-coreml",
           "state": "installing",
@@ -534,6 +544,13 @@ final class CodexMobileCompanionTests: XCTestCase {
             pairingRoute: BridgePairingRouteHealthDTO(
                 reachable: pairingRouteReachable,
                 advertisedBaseURL: pairingRouteReachable ? "https://bridge.ts.net" : nil,
+                routes: sampleRoutes(pairingRouteReachable: pairingRouteReachable),
+                message: pairingRouteMessage
+            ),
+            networkSettings: BridgeNetworkSettingsDTO(
+                contractVersion: SharedContract.version,
+                localNetworkPairingEnabled: false,
+                routes: sampleRoutes(pairingRouteReachable: pairingRouteReachable),
                 message: pairingRouteMessage
             ),
             trust: trustStatus,
@@ -581,6 +598,15 @@ final class CodexMobileCompanionTests: XCTestCase {
             displayName: "Codex Mobile Companion",
             apiBaseURL: "http://127.0.0.1:3110"
         ),
+        bridgeAPIRoutes: [
+            BridgeAPIRouteDTO(
+                id: "local_network",
+                kind: .localNetwork,
+                baseURL: "http://192.168.1.10:3110",
+                reachable: true,
+                isPreferred: true
+            )
+        ],
         pairingSession: PairingSessionDTO(
             sessionID: "pairing-session-42",
             pairingToken: "ptk-42",
@@ -594,6 +620,18 @@ final class CodexMobileCompanionTests: XCTestCase {
         contractVersion: SharedContract.version,
         revoked: true
     )
+
+    private static func sampleRoutes(pairingRouteReachable: Bool) -> [BridgeAPIRouteDTO] {
+        [
+            BridgeAPIRouteDTO(
+                id: "tailscale",
+                kind: .tailscale,
+                baseURL: "https://bridge.ts.net",
+                reachable: pairingRouteReachable,
+                isPreferred: pairingRouteReachable
+            )
+        ]
+    }
 
     @MainActor
     private func waitUntil(
@@ -621,6 +659,17 @@ private struct StubShellBridgeClient: ShellBridgeClient {
         healthResults: [Result<BridgeHealthResponseDTO, Error>],
         threadResults: [Result<ThreadListResponseDTO, Error>],
         pairingResults: [Result<PairingSessionResponseDTO, Error>],
+        networkSettingsResults: [Result<BridgeNetworkSettingsDTO, Error>] = [
+            .success(
+                BridgeNetworkSettingsDTO(
+                    contractVersion: SharedContract.version,
+                    localNetworkPairingEnabled: false,
+                    routes: [],
+                    message: nil
+                )
+            )
+        ],
+        networkSettingsMutationResults: [Result<BridgeNetworkSettingsDTO, Error>] = [],
         speechResults: [Result<SpeechModelStatusDTO, Error>] = [
             .success(
                 SpeechModelStatusDTO(
@@ -642,6 +691,8 @@ private struct StubShellBridgeClient: ShellBridgeClient {
             healthResults: healthResults,
             threadResults: threadResults,
             pairingResults: pairingResults,
+            networkSettingsResults: networkSettingsResults,
+            networkSettingsMutationResults: networkSettingsMutationResults,
             speechResults: speechResults,
             speechEnsureResults: speechEnsureResults,
             speechRemoveResults: speechRemoveResults,
@@ -659,6 +710,14 @@ private struct StubShellBridgeClient: ShellBridgeClient {
 
     func fetchPairingSession() async throws -> PairingSessionResponseDTO {
         try await store.nextPairing()
+    }
+
+    func fetchNetworkSettings() async throws -> BridgeNetworkSettingsDTO {
+        try await store.nextNetworkSettings()
+    }
+
+    func setLocalNetworkPairingEnabled(_ enabled: Bool) async throws -> BridgeNetworkSettingsDTO {
+        try await store.nextNetworkSettingsMutation(enabled: enabled)
     }
 
     func fetchSpeechModelStatus() async throws -> SpeechModelStatusDTO {
@@ -759,6 +818,8 @@ private actor StubShellBridgeResponseStore {
     private var healthResults: [Result<BridgeHealthResponseDTO, Error>]
     private var threadResults: [Result<ThreadListResponseDTO, Error>]
     private var pairingResults: [Result<PairingSessionResponseDTO, Error>]
+    private var networkSettingsResults: [Result<BridgeNetworkSettingsDTO, Error>]
+    private var networkSettingsMutationResults: [Result<BridgeNetworkSettingsDTO, Error>]
     private var speechResults: [Result<SpeechModelStatusDTO, Error>]
     private var speechEnsureResults: [Result<SpeechModelMutationAcceptedDTO, Error>]
     private var speechRemoveResults: [Result<SpeechModelMutationAcceptedDTO, Error>]
@@ -769,6 +830,8 @@ private actor StubShellBridgeResponseStore {
         healthResults: [Result<BridgeHealthResponseDTO, Error>],
         threadResults: [Result<ThreadListResponseDTO, Error>],
         pairingResults: [Result<PairingSessionResponseDTO, Error>],
+        networkSettingsResults: [Result<BridgeNetworkSettingsDTO, Error>],
+        networkSettingsMutationResults: [Result<BridgeNetworkSettingsDTO, Error>],
         speechResults: [Result<SpeechModelStatusDTO, Error>],
         speechEnsureResults: [Result<SpeechModelMutationAcceptedDTO, Error>],
         speechRemoveResults: [Result<SpeechModelMutationAcceptedDTO, Error>],
@@ -777,6 +840,8 @@ private actor StubShellBridgeResponseStore {
         self.healthResults = healthResults
         self.threadResults = threadResults
         self.pairingResults = pairingResults
+        self.networkSettingsResults = networkSettingsResults
+        self.networkSettingsMutationResults = networkSettingsMutationResults
         self.speechResults = speechResults
         self.speechEnsureResults = speechEnsureResults
         self.speechRemoveResults = speechRemoveResults
@@ -802,6 +867,32 @@ private actor StubShellBridgeResponseStore {
             throw StubError.missingPairingResult
         }
         return try pairingResults.removeFirst().get()
+    }
+
+    func nextNetworkSettings() throws -> BridgeNetworkSettingsDTO {
+        guard !networkSettingsResults.isEmpty else {
+            throw StubError.missingNetworkSettingsResult
+        }
+        if networkSettingsResults.count == 1 {
+            return try networkSettingsResults[0].get()
+        }
+        return try networkSettingsResults.removeFirst().get()
+    }
+
+    func nextNetworkSettingsMutation(enabled: Bool) throws -> BridgeNetworkSettingsDTO {
+        if !networkSettingsMutationResults.isEmpty {
+            if networkSettingsMutationResults.count == 1 {
+                return try networkSettingsMutationResults[0].get()
+            }
+            return try networkSettingsMutationResults.removeFirst().get()
+        }
+
+        return BridgeNetworkSettingsDTO(
+            contractVersion: SharedContract.version,
+            localNetworkPairingEnabled: enabled,
+            routes: [],
+            message: nil
+        )
     }
 
     func nextSpeechStatus() throws -> SpeechModelStatusDTO {
@@ -843,6 +934,7 @@ private enum StubError: LocalizedError {
     case missingHealthResult
     case missingThreadResult
     case missingPairingResult
+    case missingNetworkSettingsResult
     case missingSpeechStatusResult
     case missingSpeechEnsureResult
     case missingSpeechRemoveResult
@@ -860,6 +952,8 @@ private enum StubError: LocalizedError {
             return "missing stub thread result"
         case .missingPairingResult:
             return "missing stub pairing result"
+        case .missingNetworkSettingsResult:
+            return "missing stub network settings result"
         case .missingSpeechStatusResult:
             return "missing stub speech status result"
         case .missingSpeechEnsureResult:

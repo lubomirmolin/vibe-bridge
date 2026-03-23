@@ -7,6 +7,8 @@ protocol ShellBridgeClient {
     func ensureSpeechModel() async throws -> SpeechModelMutationAcceptedDTO
     func removeSpeechModel() async throws -> SpeechModelMutationAcceptedDTO
     func fetchPairingSession() async throws -> PairingSessionResponseDTO
+    func fetchNetworkSettings() async throws -> BridgeNetworkSettingsDTO
+    func setLocalNetworkPairingEnabled(_ enabled: Bool) async throws -> BridgeNetworkSettingsDTO
     func revokeTrust(phoneID: String?) async throws -> PairingRevokeResponseDTO
 }
 
@@ -20,6 +22,7 @@ struct BridgeShellAPIClient: ShellBridgeClient {
     func fetchHealth() async throws -> BridgeHealthResponseDTO {
         let bootstrap: BridgeBootstrapDTO = try await fetch(path: "/bootstrap", method: "GET")
         let pairingRoute: BridgePairingRouteHealthDTO = try await fetch(path: "/pairing/route", method: "GET")
+        let networkSettings: BridgeNetworkSettingsDTO = try await fetch(path: "/settings/network", method: "GET")
         let trust: BridgeTrustStatusDTO = try await fetch(path: "/pairing/trust", method: "GET")
         return BridgeHealthResponseDTO(
             status: bootstrap.bridge.status == "healthy" ? "ok" : "degraded",
@@ -31,6 +34,7 @@ struct BridgeShellAPIClient: ShellBridgeClient {
                 detail: bootstrap.codex.message ?? "Bridge is running."
             ),
             pairingRoute: pairingRoute,
+            networkSettings: networkSettings,
             trust: trust,
             api: BridgeAPISurfaceDTO(
                 endpoints: [
@@ -44,6 +48,8 @@ struct BridgeShellAPIClient: ShellBridgeClient {
                     "POST /pairing/finalize",
                     "POST /pairing/handshake",
                     "POST /pairing/trust/revoke",
+                    "GET /settings/network",
+                    "POST /settings/network",
                     "GET /threads",
                     "GET /threads/:thread_id/snapshot",
                     "GET /threads/:thread_id/history",
@@ -78,6 +84,29 @@ struct BridgeShellAPIClient: ShellBridgeClient {
 
     func fetchPairingSession() async throws -> PairingSessionResponseDTO {
         try await fetch(path: "/pairing/session", method: "GET")
+    }
+
+    func fetchNetworkSettings() async throws -> BridgeNetworkSettingsDTO {
+        try await fetch(path: "/settings/network", method: "GET")
+    }
+
+    func setLocalNetworkPairingEnabled(_ enabled: Bool) async throws -> BridgeNetworkSettingsDTO {
+        var components = URLComponents(
+            url: apiBaseURL.appending(path: "/settings/network"),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [
+            URLQueryItem(
+                name: "local_network_pairing_enabled",
+                value: enabled ? "true" : "false"
+            )
+        ]
+
+        guard let url = components?.url else {
+            throw BridgeShellAPIClientError.invalidResponse
+        }
+
+        return try await fetch(url: url, method: "POST")
     }
 
     func revokeTrust(phoneID: String?) async throws -> PairingRevokeResponseDTO {

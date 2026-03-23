@@ -6,6 +6,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use shared_contracts::{BridgeApiRouteDto, BridgeApiRouteKind};
 
 #[derive(Debug)]
 pub struct PairingSessionService {
@@ -47,6 +48,13 @@ impl PairingSessionService {
     }
 
     pub fn issue_session(&mut self) -> PairingSessionResponse {
+        self.issue_session_with_routes(self.default_bridge_api_routes())
+    }
+
+    pub fn issue_session_with_routes(
+        &mut self,
+        bridge_api_routes: Vec<BridgeApiRouteDto>,
+    ) -> PairingSessionResponse {
         let issued_at_epoch_seconds = unix_now_epoch_seconds();
         let expires_at_epoch_seconds = issued_at_epoch_seconds.saturating_add(300);
         let sequence = self.next_sequence;
@@ -63,9 +71,15 @@ impl PairingSessionService {
         let qr_payload = PairingQrPayload {
             contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
             bridge_id: self.bridge_id.clone(),
-            bridge_api_base_url: self.api_base_url.clone(),
+            bridge_api_base_url: preferred_bridge_api_base_url(
+                &bridge_api_routes,
+                &self.api_base_url,
+            ),
+            bridge_api_routes: bridge_api_routes.clone(),
             session_id: session_id.clone(),
             pairing_token: pairing_token.clone(),
+            issued_at_epoch_seconds,
+            expires_at_epoch_seconds,
         };
 
         self.sessions.insert(
@@ -88,11 +102,8 @@ impl PairingSessionService {
 
         PairingSessionResponse {
             contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
-            bridge_identity: PairingBridgeIdentity {
-                bridge_id: self.bridge_id.clone(),
-                display_name: self.bridge_name.clone(),
-                api_base_url: self.api_base_url.clone(),
-            },
+            bridge_identity: self.bridge_identity(&bridge_api_routes),
+            bridge_api_routes,
             pairing_session: PairingSession {
                 session_id,
                 pairing_token,
@@ -107,11 +118,19 @@ impl PairingSessionService {
         &mut self,
         request: PairingFinalizeRequest,
     ) -> Result<PairingFinalizeResponse, PairingFinalizeError> {
+        self.finalize_trust_with_routes(request, self.default_bridge_api_routes())
+    }
+
+    pub fn finalize_trust_with_routes(
+        &mut self,
+        request: PairingFinalizeRequest,
+        bridge_api_routes: Vec<BridgeApiRouteDto>,
+    ) -> Result<PairingFinalizeResponse, PairingFinalizeError> {
         if request.bridge_id != self.bridge_id {
             return Err(PairingFinalizeError::BridgeIdentityMismatch);
         }
 
-        if !is_private_bridge_api_base_url(&self.api_base_url) {
+        if bridge_api_routes.is_empty() {
             return Err(PairingFinalizeError::PrivateBridgePathRequired);
         }
 
@@ -174,11 +193,8 @@ impl PairingSessionService {
 
         Ok(PairingFinalizeResponse {
             contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
-            bridge_identity: PairingBridgeIdentity {
-                bridge_id: self.bridge_id.clone(),
-                display_name: self.bridge_name.clone(),
-                api_base_url: self.api_base_url.clone(),
-            },
+            bridge_identity: self.bridge_identity(&bridge_api_routes),
+            bridge_api_routes,
             trusted_phone: TrustedPhoneState {
                 phone_id: request.phone_id,
                 phone_name: request.phone_name,
@@ -192,6 +208,14 @@ impl PairingSessionService {
     pub fn handshake(
         &self,
         request: PairingHandshakeRequest,
+    ) -> Result<PairingHandshakeResponse, PairingHandshakeError> {
+        self.handshake_with_routes(request, self.default_bridge_api_routes())
+    }
+
+    pub fn handshake_with_routes(
+        &self,
+        request: PairingHandshakeRequest,
+        bridge_api_routes: Vec<BridgeApiRouteDto>,
     ) -> Result<PairingHandshakeResponse, PairingHandshakeError> {
         if request.bridge_id != self.bridge_id {
             return Err(PairingHandshakeError::BridgeIdentityMismatch);
@@ -225,11 +249,8 @@ impl PairingSessionService {
         Ok(PairingHandshakeResponse {
             contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
             bridge_id: self.bridge_id.clone(),
-            bridge_identity: PairingBridgeIdentity {
-                bridge_id: self.bridge_id.clone(),
-                display_name: self.bridge_name.clone(),
-                api_base_url: self.api_base_url.clone(),
-            },
+            bridge_identity: self.bridge_identity(&bridge_api_routes),
+            bridge_api_routes,
             phone_id: request.phone_id,
             session_id: active_session.session_id.clone(),
             status: "trusted".to_string(),
@@ -295,6 +316,27 @@ impl PairingSessionService {
             trusted_phone,
             active_session,
         }
+    }
+
+    fn bridge_identity(&self, bridge_api_routes: &[BridgeApiRouteDto]) -> PairingBridgeIdentity {
+        PairingBridgeIdentity {
+            bridge_id: self.bridge_id.clone(),
+            display_name: self.bridge_name.clone(),
+            api_base_url: preferred_bridge_api_base_url(bridge_api_routes, &self.api_base_url),
+        }
+    }
+
+    fn default_bridge_api_routes(&self) -> Vec<BridgeApiRouteDto> {
+        vec![BridgeApiRouteDto {
+            id: match bridge_api_route_kind_for_base_url(&self.api_base_url) {
+                BridgeApiRouteKind::Tailscale => "tailscale".to_string(),
+                BridgeApiRouteKind::LocalNetwork => "local_network".to_string(),
+            },
+            kind: bridge_api_route_kind_for_base_url(&self.api_base_url),
+            base_url: self.api_base_url.clone(),
+            reachable: true,
+            is_preferred: true,
+        }]
     }
 }
 
@@ -428,6 +470,7 @@ pub struct PairingRevokeResponse {
 pub struct PairingFinalizeResponse {
     pub contract_version: String,
     pub bridge_identity: PairingBridgeIdentity,
+    pub bridge_api_routes: Vec<BridgeApiRouteDto>,
     pub trusted_phone: TrustedPhoneState,
     pub session_token: String,
 }
@@ -437,6 +480,7 @@ pub struct PairingHandshakeResponse {
     pub contract_version: String,
     pub bridge_id: String,
     pub bridge_identity: PairingBridgeIdentity,
+    pub bridge_api_routes: Vec<BridgeApiRouteDto>,
     pub phone_id: String,
     pub session_id: String,
     pub status: String,
@@ -454,6 +498,7 @@ pub struct TrustedPhoneState {
 pub struct PairingSessionResponse {
     pub contract_version: String,
     pub bridge_identity: PairingBridgeIdentity,
+    pub bridge_api_routes: Vec<BridgeApiRouteDto>,
     pub pairing_session: PairingSession,
     pub qr_payload: String,
 }
@@ -501,10 +546,36 @@ struct PairingQrPayload {
     bridge_id: String,
     #[serde(rename = "u")]
     bridge_api_base_url: String,
+    #[serde(rename = "bridge_api_routes")]
+    bridge_api_routes: Vec<BridgeApiRouteDto>,
     #[serde(rename = "s")]
     session_id: String,
     #[serde(rename = "t")]
     pairing_token: String,
+    #[serde(rename = "issued_at_epoch_seconds")]
+    issued_at_epoch_seconds: u64,
+    #[serde(rename = "expires_at_epoch_seconds")]
+    expires_at_epoch_seconds: u64,
+}
+
+fn preferred_bridge_api_base_url(
+    bridge_api_routes: &[BridgeApiRouteDto],
+    fallback_api_base_url: &str,
+) -> String {
+    bridge_api_routes
+        .iter()
+        .find(|route| route.reachable && route.is_preferred)
+        .or_else(|| bridge_api_routes.iter().find(|route| route.reachable))
+        .map(|route| route.base_url.clone())
+        .unwrap_or_else(|| fallback_api_base_url.to_string())
+}
+
+fn bridge_api_route_kind_for_base_url(base_url: &str) -> BridgeApiRouteKind {
+    if is_private_bridge_api_base_url(base_url) {
+        BridgeApiRouteKind::Tailscale
+    } else {
+        BridgeApiRouteKind::LocalNetwork
+    }
 }
 
 fn resolve_bridge_name() -> String {

@@ -12,6 +12,7 @@ class PairingQrPayload {
     required this.bridgeId,
     this.bridgeName = _defaultBridgeDisplayName,
     required this.bridgeApiBaseUrl,
+    required this.bridgeApiRoutes,
     required this.sessionId,
     required this.pairingToken,
     this.issuedAtEpochSeconds,
@@ -22,10 +23,28 @@ class PairingQrPayload {
   final String bridgeId;
   final String bridgeName;
   final String bridgeApiBaseUrl;
+  final List<BridgeApiRoute> bridgeApiRoutes;
   final String sessionId;
   final String pairingToken;
   final int? issuedAtEpochSeconds;
   final int? expiresAtEpochSeconds;
+
+  List<BridgeApiRoute> get orderedReachableRoutes {
+    final candidates = bridgeApiRoutes
+        .where((route) => route.reachable)
+        .toList(growable: false);
+    if (candidates.isNotEmpty) {
+      final sorted = candidates.toList(growable: true)
+        ..sort(compareBridgeApiRoutes);
+      return List<BridgeApiRoute>.unmodifiable(sorted);
+    }
+
+    final fallbackRoute = bridgeApiRoutes.firstWhere(
+      (route) => route.baseUrl == bridgeApiBaseUrl,
+      orElse: () => BridgeApiRoute.legacy(baseUrl: bridgeApiBaseUrl),
+    );
+    return List<BridgeApiRoute>.unmodifiable(<BridgeApiRoute>[fallbackRoute]);
+  }
 
   DateTime? get issuedAtUtc {
     final issuedAtEpochSeconds = this.issuedAtEpochSeconds;
@@ -52,16 +71,22 @@ class PairingQrPayload {
   }
 
   factory PairingQrPayload.fromJson(Map<String, dynamic> json) {
+    final bridgeApiBaseUrl = _readRequiredStringAny(json, [
+      'bridge_api_base_url',
+      'u',
+    ]);
+    final bridgeApiRoutes = _readBridgeApiRoutes(
+      json,
+      fallbackBaseUrl: bridgeApiBaseUrl,
+    );
     final parsed = PairingQrPayload(
       contractVersion: _readRequiredStringAny(json, ['contract_version', 'v']),
       bridgeId: _readRequiredStringAny(json, ['bridge_id', 'b']),
       bridgeName:
           _readOptionalStringAny(json, ['bridge_name']) ??
           _defaultBridgeDisplayName,
-      bridgeApiBaseUrl: _readRequiredStringAny(json, [
-        'bridge_api_base_url',
-        'u',
-      ]),
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      bridgeApiRoutes: bridgeApiRoutes,
       sessionId: _readRequiredStringAny(json, ['session_id', 's']),
       pairingToken: _readRequiredStringAny(json, ['pairing_token', 't']),
       issuedAtEpochSeconds: _readOptionalIntAny(json, [
@@ -76,9 +101,8 @@ class PairingQrPayload {
       throw const FormatException('Unsupported pairing contract version.');
     }
 
-    final bridgeUri = Uri.tryParse(parsed.bridgeApiBaseUrl);
-    if (bridgeUri == null || !bridgeUri.hasScheme || bridgeUri.host.isEmpty) {
-      throw const FormatException('Invalid bridge_api_base_url.');
+    if (parsed.orderedReachableRoutes.isEmpty) {
+      throw const FormatException('Invalid bridge_api_routes.');
     }
 
     final issuedAtEpochSeconds = parsed.issuedAtEpochSeconds;
@@ -122,6 +146,7 @@ class TrustedBridgeIdentity {
     required this.bridgeId,
     required this.bridgeName,
     required this.bridgeApiBaseUrl,
+    required this.bridgeApiRoutes,
     required this.sessionId,
     required this.pairedAtEpochSeconds,
   });
@@ -129,8 +154,22 @@ class TrustedBridgeIdentity {
   final String bridgeId;
   final String bridgeName;
   final String bridgeApiBaseUrl;
+  final List<BridgeApiRoute> bridgeApiRoutes;
   final String sessionId;
   final int pairedAtEpochSeconds;
+
+  List<BridgeApiRoute> get orderedReachableRoutes {
+    final candidates = bridgeApiRoutes
+        .where((route) => route.reachable)
+        .toList(growable: false);
+    if (candidates.isEmpty) {
+      return <BridgeApiRoute>[BridgeApiRoute.legacy(baseUrl: bridgeApiBaseUrl)];
+    }
+
+    final sorted = candidates.toList(growable: true)
+      ..sort(compareBridgeApiRoutes);
+    return List<BridgeApiRoute>.unmodifiable(sorted);
+  }
 
   factory TrustedBridgeIdentity.fromPayload(
     PairingQrPayload payload, {
@@ -140,6 +179,7 @@ class TrustedBridgeIdentity {
       bridgeId: payload.bridgeId,
       bridgeName: payload.bridgeName,
       bridgeApiBaseUrl: payload.bridgeApiBaseUrl,
+      bridgeApiRoutes: payload.bridgeApiRoutes,
       sessionId: payload.sessionId,
       pairedAtEpochSeconds: pairedAtUtc.millisecondsSinceEpoch ~/ 1000,
     );
@@ -150,6 +190,10 @@ class TrustedBridgeIdentity {
       bridgeId: _readRequiredString(json, 'bridge_id'),
       bridgeName: _readRequiredString(json, 'bridge_name'),
       bridgeApiBaseUrl: _readRequiredString(json, 'bridge_api_base_url'),
+      bridgeApiRoutes: _readBridgeApiRoutes(
+        json,
+        fallbackBaseUrl: _readRequiredString(json, 'bridge_api_base_url'),
+      ),
       sessionId: _readRequiredString(json, 'session_id'),
       pairedAtEpochSeconds: _readRequiredInt(json, 'paired_at_epoch_seconds'),
     );
@@ -160,8 +204,75 @@ class TrustedBridgeIdentity {
       'bridge_id': bridgeId,
       'bridge_name': bridgeName,
       'bridge_api_base_url': bridgeApiBaseUrl,
+      'bridge_api_routes': bridgeApiRoutes
+          .map((route) => route.toJson())
+          .toList(growable: false),
       'session_id': sessionId,
       'paired_at_epoch_seconds': pairedAtEpochSeconds,
+    };
+  }
+}
+
+enum BridgeApiRouteKind { tailscale, localNetwork }
+
+class BridgeApiRoute {
+  const BridgeApiRoute({
+    required this.id,
+    required this.kind,
+    required this.baseUrl,
+    required this.reachable,
+    required this.isPreferred,
+  });
+
+  final String id;
+  final BridgeApiRouteKind kind;
+  final String baseUrl;
+  final bool reachable;
+  final bool isPreferred;
+
+  factory BridgeApiRoute.fromJson(Map<String, dynamic> json) {
+    final baseUrl = _readRequiredString(json, 'base_url');
+    final kind = _readBridgeApiRouteKind(
+      json['kind'] as String? ?? _inferBridgeApiRouteKindWire(baseUrl),
+      baseUrl,
+    );
+    if (!isSupportedBridgeApiRouteBaseUrl(baseUrl, kind: kind)) {
+      throw const FormatException('Invalid bridge API route.');
+    }
+
+    return BridgeApiRoute(
+      id: _readRequiredString(json, 'id'),
+      kind: kind,
+      baseUrl: baseUrl,
+      reachable: json['reachable'] as bool? ?? false,
+      isPreferred: json['is_preferred'] as bool? ?? false,
+    );
+  }
+
+  factory BridgeApiRoute.legacy({required String baseUrl}) {
+    final kind = _readBridgeApiRouteKind(
+      _inferBridgeApiRouteKindWire(baseUrl),
+      baseUrl,
+    );
+    return BridgeApiRoute(
+      id: kind == BridgeApiRouteKind.tailscale ? 'tailscale' : 'local_network',
+      kind: kind,
+      baseUrl: baseUrl,
+      reachable: true,
+      isPreferred: true,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'id': id,
+      'kind': switch (kind) {
+        BridgeApiRouteKind.tailscale => 'tailscale',
+        BridgeApiRouteKind.localNetwork => 'local_network',
+      },
+      'base_url': baseUrl,
+      'reachable': reachable,
+      'is_preferred': isPreferred,
     };
   }
 }
@@ -215,6 +326,92 @@ int? _readOptionalIntAny(Map<String, dynamic> json, List<String> keys) {
   return null;
 }
 
+List<BridgeApiRoute> _readBridgeApiRoutes(
+  Map<String, dynamic> json, {
+  required String fallbackBaseUrl,
+}) {
+  final rawRoutes = json['bridge_api_routes'];
+  if (rawRoutes is List<dynamic>) {
+    final parsed = rawRoutes
+        .map((entry) {
+          if (entry is! Map<String, dynamic>) {
+            throw const FormatException('Invalid bridge_api_routes entry.');
+          }
+          return BridgeApiRoute.fromJson(entry);
+        })
+        .toList(growable: false);
+    if (parsed.isEmpty) {
+      throw const FormatException('bridge_api_routes must not be empty.');
+    }
+    return parsed;
+  }
+
+  if (!isSupportedBridgeApiRouteBaseUrl(fallbackBaseUrl)) {
+    throw const FormatException('Invalid bridge_api_base_url.');
+  }
+
+  return <BridgeApiRoute>[BridgeApiRoute.legacy(baseUrl: fallbackBaseUrl)];
+}
+
+BridgeApiRouteKind _readBridgeApiRouteKind(String raw, String baseUrl) {
+  switch (raw.trim().toLowerCase()) {
+    case 'tailscale':
+      return BridgeApiRouteKind.tailscale;
+    case 'local_network':
+      return BridgeApiRouteKind.localNetwork;
+    default:
+      return _readBridgeApiRouteKind(
+        _inferBridgeApiRouteKindWire(baseUrl),
+        baseUrl,
+      );
+  }
+}
+
+String _inferBridgeApiRouteKindWire(String baseUrl) {
+  return isPrivateBridgeApiBaseUrl(baseUrl) ? 'tailscale' : 'local_network';
+}
+
+int compareBridgeApiRoutes(BridgeApiRoute left, BridgeApiRoute right) {
+  final leftScore = _bridgeApiRouteSortScore(left);
+  final rightScore = _bridgeApiRouteSortScore(right);
+  if (leftScore != rightScore) {
+    return rightScore.compareTo(leftScore);
+  }
+  return left.baseUrl.compareTo(right.baseUrl);
+}
+
+int _bridgeApiRouteSortScore(BridgeApiRoute route) {
+  if (route.isPreferred && route.reachable) {
+    return 4;
+  }
+  if (route.kind == BridgeApiRouteKind.tailscale && route.reachable) {
+    return 3;
+  }
+  if (route.kind == BridgeApiRouteKind.localNetwork && route.reachable) {
+    return 2;
+  }
+  if (route.isPreferred) {
+    return 1;
+  }
+  return 0;
+}
+
+bool isSupportedBridgeApiRouteBaseUrl(
+  String rawBaseUrl, {
+  BridgeApiRouteKind? kind,
+}) {
+  if (kind == BridgeApiRouteKind.localNetwork) {
+    return isLocalNetworkBridgeApiBaseUrl(rawBaseUrl);
+  }
+
+  if (kind == BridgeApiRouteKind.tailscale) {
+    return isPrivateBridgeApiBaseUrl(rawBaseUrl);
+  }
+
+  return isPrivateBridgeApiBaseUrl(rawBaseUrl) ||
+      isLocalNetworkBridgeApiBaseUrl(rawBaseUrl);
+}
+
 bool isPrivateBridgeApiBaseUrl(String rawBaseUrl) {
   final uri = Uri.tryParse(rawBaseUrl);
   if (uri == null || uri.scheme.toLowerCase() != 'https' || uri.host.isEmpty) {
@@ -249,4 +446,31 @@ bool isPrivateBridgeApiBaseUrl(String rawBaseUrl) {
   }
 
   return host.endsWith('.ts.net') || host.endsWith('.tailscale.net');
+}
+
+bool isLocalNetworkBridgeApiBaseUrl(String rawBaseUrl) {
+  final uri = Uri.tryParse(rawBaseUrl);
+  if (uri == null || uri.scheme.toLowerCase() != 'http' || uri.host.isEmpty) {
+    return false;
+  }
+
+  final parsedAddress = InternetAddress.tryParse(uri.host);
+  if (parsedAddress == null || parsedAddress.type != InternetAddressType.IPv4) {
+    return false;
+  }
+
+  if (parsedAddress.isLoopback) {
+    return false;
+  }
+
+  final octets = parsedAddress.rawAddress;
+  if (octets.length != 4) {
+    return false;
+  }
+
+  final first = octets[0];
+  final second = octets[1];
+  return first == 10 ||
+      (first == 172 && second >= 16 && second <= 31) ||
+      (first == 192 && second == 168);
 }
