@@ -616,7 +616,7 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
         children: [
           Text.rich(
             TextSpan(
-              text: 'Paired with\n',
+              text: 'Connected to\n',
               style: pairedTitleStyle,
               children: [
                 TextSpan(
@@ -627,9 +627,11 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
             ),
           ),
           const SizedBox(height: 12),
-          const Text(
-            'A trusted connection is established.',
-            style: TextStyle(color: AppTheme.textMuted, fontSize: 14),
+          Text(
+            pairingState.savedBridgeCount > 1
+                ? '${pairingState.savedBridgeCount} saved bridges available.'
+                : 'A trusted bridge connection is established.',
+            style: const TextStyle(color: AppTheme.textMuted, fontSize: 14),
           ),
         ],
       );
@@ -780,6 +782,118 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
                 value: payload.bridgeId,
                 valueColor: AppTheme.emerald,
               ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    if (displayStep == PairingStep.paired) {
+      final activeBridge = pairingState.trustedBridge;
+      if (activeBridge == null) {
+        return const SizedBox.shrink(key: ValueKey('card-paired-empty'));
+      }
+
+      return Container(
+        key: const ValueKey('card-paired'),
+        padding: const EdgeInsets.all(24),
+        decoration: LiquidStyles.liquidGlass,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  'Saved host bridges',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                ),
+                const Spacer(),
+                TextButton(
+                  key: const Key('add-another-bridge'),
+                  onPressed: () => _openScanner(pairingController),
+                  child: const Text('Add Another Bridge'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _IdentityRow(label: 'Bridge', value: activeBridge.bridgeName),
+            const Divider(color: Colors.white10, height: 24),
+            _IdentityRow(
+              label: 'Host URL',
+              value: activeBridge.bridgeApiBaseUrl,
+            ),
+            const Divider(color: Colors.white10, height: 24),
+            _IdentityRow(
+              label: 'Identity',
+              value: activeBridge.bridgeId,
+              valueColor: AppTheme.emerald,
+            ),
+            if (pairingState.savedBridgeCount > 1) ...[
+              const Divider(color: Colors.white10, height: 24),
+              Text(
+                'Other saved bridges',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 12),
+              ...pairingState.savedBridges.map((bridge) {
+                final isActive = bridge.bridgeId == pairingState.activeBridgeId;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              bridge.bridgeName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppTheme.textMain,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              bridge.bridgeApiBaseUrl,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppTheme.textMuted,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      if (isActive)
+                        const Text(
+                          'ACTIVE',
+                          style: TextStyle(
+                            color: AppTheme.emerald,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 1.1,
+                          ),
+                        )
+                      else
+                        TextButton(
+                          key: Key('activate-bridge-${bridge.bridgeId}'),
+                          onPressed: () => pairingController
+                              .activateSavedBridge(bridge.bridgeId),
+                          child: const Text('Activate'),
+                        ),
+                    ],
+                  ),
+                );
+              }),
             ],
           ],
         ),

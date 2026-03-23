@@ -398,7 +398,7 @@ class _PinnedTurnComposer extends StatelessWidget {
                 Align(
                   alignment: Alignment.centerLeft,
                   child: const Text(
-                    'Pair with a Mac to change access mode from here.',
+                    'Pair with a host bridge to change access mode from here.',
                     key: Key('turn-composer-access-mode-pairing-note'),
                     style: TextStyle(color: AppTheme.textSubtle, fontSize: 12),
                   ),
@@ -614,7 +614,7 @@ class _ComposerModelSheetState extends State<_ComposerModelSheet> {
                 _ComposerSheetSection(
                   title: 'Approval',
                   subtitle: widget.trustedBridge == null
-                      ? 'Pair with a Mac to change access mode.'
+                      ? 'Pair with a host bridge to change access mode.'
                       : null,
                   children: AccessMode.values
                       .map(

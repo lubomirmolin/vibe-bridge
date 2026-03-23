@@ -5,6 +5,7 @@ enum SecureValueKey {
   pairingPrivateKey,
   sessionToken,
   trustedBridgeIdentity,
+  savedBridgeRegistry,
   threadListCache,
   selectedThreadId,
   desktopIntegrationEnabled,
@@ -19,6 +20,8 @@ extension SecureValueKeyMetadata on SecureValueKey {
         return 'session_token';
       case SecureValueKey.trustedBridgeIdentity:
         return 'trusted_bridge_identity';
+      case SecureValueKey.savedBridgeRegistry:
+        return 'saved_bridge_registry';
       case SecureValueKey.threadListCache:
         return 'thread_list_cache';
       case SecureValueKey.selectedThreadId:

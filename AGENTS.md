@@ -5,18 +5,19 @@ Welcome! This document provides context, architectural rules, and guidelines for
 ## 1. Project Overview
 This repository contains a mobile companion app for local Codex sessions. It's a monorepo consisting of:
 - **`apps/mobile`**: Flutter mobile app targeting iOS and Android.
+- **`apps/linux-shell`**: Flutter Linux host shell.
 - **`apps/mac-shell`**: SwiftUI macOS companion shell.
 - **`crates/bridge-core`**: Rust bridge server.
 - **`crates/shared-contracts`**: Shared API contracts across the stack.
 
-The system connects a mobile app to a locally running Codex session on a Mac. 
+The system connects a mobile app to a locally running Codex session through a host bridge. First-party host shells currently target Linux and macOS.
 
 ## 2. Core Architectural Rules
 - **No Direct Codex Connection from Mobile**: The Flutter app must **NEVER** communicate directly with the `codex app-server`. It must always route through our custom `bridge-core`.
-- **Bridge Responsibilities**: The Mac bridge is the source of truth for pairing, trust state, application API exposition, and command approval gating. It securely wraps the local `codex app-server` JSON-RPC interface.
+- **Bridge Responsibilities**: The host bridge is the source of truth for pairing, trust state, application API exposition, and command approval gating. It securely wraps the local `codex app-server` JSON-RPC interface.
 - **Tailscale First**: Remote device-to-device connectivity is built on Tailscale. The bridge binds securely to localhost and is served to the tailnet via Tailscale Serve.
 - **Desktop UI Independence**: Do not attempt to automate or scrape the `Codex.app` Electron GUI. Rely on local SQLite/JSONL state under `~/.codex` and the `app-server` runtime protocol.
-- **QR Pairing Mechanism**: Trust between mobile and Mac is established via a QR-based pairing process generating persistent keys (e.g., Ed25519 identity).
+- **QR Pairing Mechanism**: Trust between mobile and a host bridge is established via a QR-based pairing process generating persistent keys (e.g., Ed25519 identity).
 
 ## 3. Tech Stack and Tooling
 - **Flutter / Dart** for the mobile app (`apps/mobile`).

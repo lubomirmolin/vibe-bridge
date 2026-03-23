@@ -199,7 +199,7 @@ class _PairedBridgeCard extends StatelessWidget {
               const SizedBox(width: 8),
               const Expanded(
                 child: Text(
-                  'Paired Bridge',
+                  'Active Bridge',
                   style: TextStyle(
                     color: AppTheme.textMain,
                     fontSize: 16,
@@ -225,7 +225,7 @@ class _PairedBridgeCard extends StatelessWidget {
 
           if (bridge == null)
             const Text(
-              'No trusted bridge is currently paired.',
+              'No trusted bridge is currently active.',
               style: TextStyle(color: AppTheme.textMuted),
             )
           else ...[
@@ -445,8 +445,8 @@ class _DesktopIntegrationCard extends StatelessWidget {
 
           _CustomSwitch(
             key: const Key('desktop-integration-toggle'),
-            title: 'Open on Mac',
-            subtitle: 'Show Open-on-Mac actions on thread details.',
+            title: 'Open on Host',
+            subtitle: 'Show open-on-host actions on thread details.',
             value: desktopIntegrationEnabled,
             onChanged: onToggleDesktopIntegration,
           ),
@@ -685,7 +685,7 @@ class _UnpairCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Unpair this phone from the current Mac. Requires fresh QR pairing before reconnecting.',
+            'Unpair this device from the current bridge. Requires fresh QR pairing before reconnecting.',
             style: TextStyle(color: AppTheme.rose, fontSize: 13),
           ),
           const SizedBox(height: 16),

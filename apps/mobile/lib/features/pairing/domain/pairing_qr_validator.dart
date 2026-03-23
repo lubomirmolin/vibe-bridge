@@ -59,12 +59,12 @@ PairingValidationResult validatePairingQrPayload(
 String _messageFor(PairingValidationError error) {
   switch (error) {
     case PairingValidationError.malformed:
-      return 'This QR code is invalid. Please rescan from your Mac.';
+      return 'This QR code is invalid. Please rescan from the host bridge.';
     case PairingValidationError.expired:
-      return 'This pairing QR code expired. Please rescan from your Mac.';
+      return 'This pairing QR code expired. Please rescan from the host bridge.';
     case PairingValidationError.reused:
-      return 'This pairing QR code was already used. Please rescan from your Mac.';
+      return 'This pairing QR code was already used. Please rescan from the host bridge.';
     case PairingValidationError.privateRouteRequired:
-      return 'This QR does not advertise a supported Tailscale or local-network bridge route. Please rescan from your Mac.';
+      return 'This QR does not advertise a supported Tailscale or local-network bridge route. Please rescan from the host bridge.';
   }
 }

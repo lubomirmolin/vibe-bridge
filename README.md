@@ -1,12 +1,12 @@
 # Codex Mobile Companion
 
-Mobile companion for local Codex sessions.
+Mobile companion for local Codex sessions routed through a host bridge.
 
 ## Workspace
 
 - `apps/mobile` — Flutter app for iOS and Android
 - `apps/linux-shell` — Flutter Linux host shell
-- `apps/mac-shell` — macOS companion shell
+- `apps/mac-shell` — macOS host shell
 - `crates/bridge-core` — Rust bridge server
 - `crates/shared-contracts` — shared API contracts
 

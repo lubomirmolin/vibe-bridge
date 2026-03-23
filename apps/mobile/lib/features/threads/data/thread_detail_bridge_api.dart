@@ -443,7 +443,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String threadId,
   }) async {
     throw const ThreadOpenOnMacBridgeException(
-      message: 'Open-on-Mac is unavailable in this build.',
+      message: 'Open-on-host is unavailable in this build.',
     );
   }
 

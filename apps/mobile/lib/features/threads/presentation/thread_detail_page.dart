@@ -756,8 +756,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       }
     }
 
-    if (pendingSpeechDialog != null) {
-      await _showSpeechUnavailableDialog(pendingSpeechDialog!);
+    final speechDialog = pendingSpeechDialog;
+    if (speechDialog != null) {
+      await _showSpeechUnavailableDialog(speechDialog);
     }
   }
 
@@ -846,26 +847,26 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         return const _SpeechUnavailableDialogContent(
           title: 'Install Parakeet',
           message:
-              'Parakeet is not installed on this Mac. Install it from the desktop macOS shell before using voice input.',
+              'Parakeet is not installed on this host yet. Install it from the desktop host shell before using voice input.',
         );
       case SpeechModelState.unsupported:
         return _SpeechUnavailableDialogContent(
           title: 'Speech unavailable',
           message:
               status.lastError ??
-              'Speech transcription is unavailable on this Mac or in this build.',
+              'Speech transcription is unavailable on this host or in this build.',
         );
       case SpeechModelState.installing:
         return const _SpeechUnavailableDialogContent(
           title: 'Parakeet is installing',
           message:
-              'Parakeet is still being installed on this Mac. Wait for the download to finish, then try again.',
+              'Parakeet is still being installed on this host. Wait for the download to finish, then try again.',
         );
       case SpeechModelState.busy:
         return const _SpeechUnavailableDialogContent(
           title: 'Speech busy',
           message:
-              'Another speech task is already running on this Mac. Wait for it to finish, then try again.',
+              'Another speech task is already running on this host. Wait for it to finish, then try again.',
         );
       case SpeechModelState.failed:
         return _SpeechUnavailableDialogContent(
@@ -885,30 +886,28 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         return const _SpeechUnavailableDialogContent(
           title: 'Install Parakeet',
           message:
-              'Parakeet is not installed on this Mac. Install it from the desktop macOS shell before using voice input.',
+              'Parakeet is not installed on this host yet. Install it from the desktop host shell before using voice input.',
         );
       case 'speech_unsupported':
         return _SpeechUnavailableDialogContent(
           title: 'Speech unavailable',
-          message:
-              error.message.isNotEmpty
-                  ? error.message
-                  : 'Speech transcription is unavailable on this Mac or in this build.',
+          message: error.message.isNotEmpty
+              ? error.message
+              : 'Speech transcription is unavailable on this host or in this build.',
         );
       case 'speech_busy':
         return const _SpeechUnavailableDialogContent(
           title: 'Speech busy',
           message:
-              'Another speech task is already running on this Mac. Wait for it to finish, then try again.',
+              'Another speech task is already running on this host. Wait for it to finish, then try again.',
         );
       case 'speech_helper_unavailable':
       case 'speech_transcription_failed':
         return _SpeechUnavailableDialogContent(
           title: 'Speech unavailable',
-          message:
-              error.message.isNotEmpty
-                  ? error.message
-                  : 'Speech transcription is unavailable right now.',
+          message: error.message.isNotEmpty
+              ? error.message
+              : 'Speech transcription is unavailable right now.',
         );
       default:
         return null;
@@ -932,18 +931,18 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
 
   String _speechErrorMessageFor(ThreadSpeechBridgeException error) {
     if (error.isConnectivityError) {
-      return 'Cannot reach the Mac bridge. Check your private route.';
+      return 'Cannot reach the host bridge. Check your private route.';
     }
 
     switch (error.code) {
       case 'speech_unsupported':
-        return 'Speech transcription isn’t available on this Mac yet.';
+        return 'Speech transcription isn’t available on this host yet.';
       case 'speech_not_installed':
-        return 'Parakeet is not installed on the Mac yet.';
+        return 'Parakeet is not installed on this host yet.';
       case 'speech_busy':
-        return 'Another speech task is already running on the Mac.';
+        return 'Another speech task is already running on this host.';
       case 'speech_helper_unavailable':
-        return 'The Mac speech helper is unavailable right now.';
+        return 'The host speech helper is unavailable right now.';
       case 'speech_invalid_audio':
         return 'That recording could not be processed as WAV audio.';
       default:

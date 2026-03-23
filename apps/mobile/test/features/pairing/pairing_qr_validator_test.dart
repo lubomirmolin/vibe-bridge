@@ -35,7 +35,7 @@ void main() {
 
     expect(result.isValid, isFalse);
     expect(result.error, PairingValidationError.malformed);
-    expect(result.message, contains('Please rescan from your Mac'));
+    expect(result.message, contains('Please rescan from the host bridge'));
   });
 
   test('rejects expired payload', () {

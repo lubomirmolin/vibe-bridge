@@ -270,7 +270,9 @@ void main() {
 
     expect(find.text('No threads yet'), findsOneWidget);
     expect(
-      find.text('Start a turn on your Mac, then pull to refresh this list.'),
+      find.text(
+        'Start a turn on your connected host bridge, then pull to refresh this list.',
+      ),
       findsOneWidget,
     );
   });

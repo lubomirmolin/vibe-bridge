@@ -22,6 +22,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
+import 'package:record/record.dart';
 
 void main() {
   testWidgets(
@@ -2646,7 +2647,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(find.text('Branch: release/2026'), findsOneWidget);
   });
 
-  testWidgets('open-on-Mac is surfaced as unavailable in this build', (
+  testWidgets('open-on-host is surfaced as unavailable in this build', (
     tester,
   ) async {
     final detailApi = FakeThreadDetailBridgeApi(
@@ -2669,12 +2670,12 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(detailApi.openOnMacCallsByThreadId['thread-123'], isNull);
     expect(find.byKey(const Key('open-on-mac-error-message')), findsOneWidget);
     expect(
-      find.text('Open-on-Mac is unavailable in this build.'),
+      find.text('Open-on-host is unavailable in this build.'),
       findsOneWidget,
     );
   });
 
-  testWidgets('desktop integration toggle updates open-on-Mac affordances', (
+  testWidgets('desktop integration toggle updates open-on-host affordances', (
     tester,
   ) async {
     final detailApi = FakeThreadDetailBridgeApi(
@@ -3700,6 +3701,210 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       findsOneWidget,
     );
   });
+
+  testWidgets(
+    'speech preflight shows a dialog when Parakeet is not installed',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+        speechStatusScript: [
+          const SpeechModelStatusDto(
+            contractVersion: contractVersion,
+            provider: 'fluid_audio',
+            modelId: 'parakeet-tdt-0.6b-v3-coreml',
+            state: SpeechModelState.notInstalled,
+          ),
+        ],
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+      );
+
+      await _focusComposer(tester);
+      await _pressSpeechToggle(tester);
+
+      expect(
+        find.byKey(const Key('speech-unavailable-dialog')),
+        findsOneWidget,
+      );
+      expect(find.text('Install Parakeet'), findsOneWidget);
+      expect(find.textContaining('desktop host shell'), findsOneWidget);
+      expect(detailApi.transcribeAudioCallCount, 0);
+      expect(find.byKey(const Key('speech-loading')), findsNothing);
+    },
+  );
+
+  testWidgets('speech preflight shows a dialog when speech is unsupported', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+      speechStatusScript: [
+        const SpeechModelStatusDto(
+          contractVersion: contractVersion,
+          provider: 'fluid_audio',
+          modelId: 'parakeet-tdt-0.6b-v3-coreml',
+          state: SpeechModelState.unsupported,
+          lastError:
+              'Speech transcription is only available from the desktop host runtime.',
+        ),
+      ],
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+
+    await _focusComposer(tester);
+    await _pressSpeechToggle(tester);
+
+    expect(find.byKey(const Key('speech-unavailable-dialog')), findsOneWidget);
+    expect(find.text('Speech unavailable'), findsOneWidget);
+    expect(
+      find.text(
+        'Speech transcription is only available from the desktop host runtime.',
+      ),
+      findsOneWidget,
+    );
+    expect(detailApi.transcribeAudioCallCount, 0);
+  });
+
+  testWidgets(
+    'speech transcription failure for missing Parakeet clears loading and shows a dialog',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+        speechStatusScript: [
+          const SpeechModelStatusDto(
+            contractVersion: contractVersion,
+            provider: 'fluid_audio',
+            modelId: 'parakeet-tdt-0.6b-v3-coreml',
+            state: SpeechModelState.ready,
+          ),
+          const SpeechModelStatusDto(
+            contractVersion: contractVersion,
+            provider: 'fluid_audio',
+            modelId: 'parakeet-tdt-0.6b-v3-coreml',
+            state: SpeechModelState.ready,
+          ),
+          const SpeechModelStatusDto(
+            contractVersion: contractVersion,
+            provider: 'fluid_audio',
+            modelId: 'parakeet-tdt-0.6b-v3-coreml',
+            state: SpeechModelState.notInstalled,
+          ),
+        ],
+        speechTranscriptionError: const ThreadSpeechBridgeException(
+          message: 'Parakeet is not installed on this host yet.',
+          code: 'speech_not_installed',
+        ),
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+        speechRecorder: _FakeAudioRecorder(),
+      );
+
+      await _focusComposer(tester);
+      await _pressSpeechToggle(tester);
+
+      expect(find.textContaining('Recording voice message'), findsOneWidget);
+
+      await _pressSpeechToggle(tester);
+
+      expect(detailApi.transcribeAudioCallCount, 1);
+      expect(find.byKey(const Key('speech-loading')), findsNothing);
+      expect(
+        find.byKey(const Key('speech-unavailable-dialog')),
+        findsOneWidget,
+      );
+      expect(find.text('Install Parakeet'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'speech helper failures clear loading and show the unavailable dialog',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+        speechStatusScript: [
+          const SpeechModelStatusDto(
+            contractVersion: contractVersion,
+            provider: 'fluid_audio',
+            modelId: 'parakeet-tdt-0.6b-v3-coreml',
+            state: SpeechModelState.ready,
+          ),
+          const SpeechModelStatusDto(
+            contractVersion: contractVersion,
+            provider: 'fluid_audio',
+            modelId: 'parakeet-tdt-0.6b-v3-coreml',
+            state: SpeechModelState.ready,
+          ),
+          const SpeechModelStatusDto(
+            contractVersion: contractVersion,
+            provider: 'fluid_audio',
+            modelId: 'parakeet-tdt-0.6b-v3-coreml',
+            state: SpeechModelState.failed,
+            lastError: 'The host speech helper is unavailable right now.',
+          ),
+        ],
+        speechTranscriptionError: const ThreadSpeechBridgeException(
+          message: 'The host speech helper is unavailable right now.',
+          code: 'speech_helper_unavailable',
+        ),
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+        speechRecorder: _FakeAudioRecorder(),
+      );
+
+      await _focusComposer(tester);
+      await _pressSpeechToggle(tester);
+      await _pressSpeechToggle(tester);
+
+      expect(detailApi.transcribeAudioCallCount, 1);
+      expect(find.byKey(const Key('speech-loading')), findsNothing);
+      expect(
+        find.byKey(const Key('speech-unavailable-dialog')),
+        findsOneWidget,
+      );
+      expect(find.text('Speech unavailable'), findsOneWidget);
+      expect(
+        find.text('The host speech helper is unavailable right now.'),
+        findsOneWidget,
+      );
+    },
+  );
 }
 
 Future<void> _pumpThreadListApp(
@@ -3751,6 +3956,7 @@ Future<void> _pumpThreadDetailApp(
   ApprovalBridgeApi? approvalApi,
   ThreadCacheRepository? cacheRepository,
   SettingsBridgeApi? settingsApi,
+  AudioRecorder? speechRecorder,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -3779,6 +3985,7 @@ Future<void> _pumpThreadDetailApp(
           bridgeApiBaseUrl: _bridgeApiBaseUrl,
           threadId: threadId,
           initialVisibleTimelineEntries: initialVisibleTimelineEntries,
+          speechRecorder: speechRecorder,
         ),
       ),
     ),
@@ -3839,6 +4046,20 @@ Future<void> _openGitSyncSheet(WidgetTester tester) async {
 
 Future<void> _openComposerModelSheet(WidgetTester tester) async {
   await tester.tap(find.byKey(const Key('turn-composer-model-button')));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _focusComposer(WidgetTester tester) async {
+  await tester.showKeyboard(find.byKey(const Key('turn-composer-input')));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _pressSpeechToggle(WidgetTester tester) async {
+  final button = tester.widget<MagneticButton>(
+    find.byKey(const Key('turn-composer-speech-toggle')).first,
+  );
+  button.onClick();
+  await tester.pump();
   await tester.pumpAndSettle();
 }
 
@@ -4170,7 +4391,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     Map<String, List<Object>>? pullScriptByThreadId,
     Map<String, List<Object>>? pushScriptByThreadId,
     Map<String, List<Object>>? openOnMacScriptByThreadId,
-    this.speechStatus,
+    List<Object>? speechStatusScript,
     this.speechTranscriptionResult,
     this.speechTranscriptionError,
     this.onGitApprovalRequired,
@@ -4187,7 +4408,8 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
        _branchSwitchScriptByThreadId = branchSwitchScriptByThreadId ?? {},
        _pullScriptByThreadId = pullScriptByThreadId ?? {},
        _pushScriptByThreadId = pushScriptByThreadId ?? {},
-       _openOnMacScriptByThreadId = openOnMacScriptByThreadId ?? {};
+       _openOnMacScriptByThreadId = openOnMacScriptByThreadId ?? {},
+       _speechStatusScript = speechStatusScript ?? <Object>[];
 
   final Map<String, List<Object>> _detailScriptByThreadId;
   final Map<String, List<Object>> _timelineScriptByThreadId;
@@ -4203,7 +4425,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   final Map<String, List<Object>> _pullScriptByThreadId;
   final Map<String, List<Object>> _pushScriptByThreadId;
   final Map<String, List<Object>> _openOnMacScriptByThreadId;
-  final SpeechModelStatusDto? speechStatus;
+  final List<Object> _speechStatusScript;
   final SpeechTranscriptionResultDto? speechTranscriptionResult;
   final ThreadSpeechBridgeException? speechTranscriptionError;
   final void Function(ApprovalRecordDto approval)? onGitApprovalRequired;
@@ -4239,13 +4461,30 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   Future<SpeechModelStatusDto> fetchSpeechStatus({
     required String bridgeApiBaseUrl,
   }) async {
-    return speechStatus ??
-        const SpeechModelStatusDto(
-          contractVersion: contractVersion,
-          provider: 'fluid_audio',
-          modelId: 'parakeet-tdt-0.6b-v3-coreml',
-          state: SpeechModelState.unsupported,
-        );
+    if (_speechStatusScript.isEmpty) {
+      return const SpeechModelStatusDto(
+        contractVersion: contractVersion,
+        provider: 'fluid_audio',
+        modelId: 'parakeet-tdt-0.6b-v3-coreml',
+        state: SpeechModelState.unsupported,
+      );
+    }
+
+    final scriptedResult = _speechStatusScript.first;
+    if (_speechStatusScript.length > 1) {
+      _speechStatusScript.removeAt(0);
+    }
+
+    if (scriptedResult is SpeechModelStatusDto) {
+      return scriptedResult;
+    }
+    if (scriptedResult is ThreadSpeechBridgeException) {
+      throw scriptedResult;
+    }
+
+    throw StateError(
+      'Unsupported speech-status scripted result: $scriptedResult',
+    );
   }
 
   @override
@@ -4719,7 +4958,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     }
     if (scriptedResult != null) {
       throw StateError(
-        'Unsupported open-on-Mac scripted result: $scriptedResult',
+        'Unsupported open-on-host scripted result: $scriptedResult',
       );
     }
 
@@ -4919,6 +5158,47 @@ class FakeThreadListBridgeApi implements ThreadListBridgeApi {
 
     throw StateError('Unsupported scripted result type: $scriptedResult');
   }
+}
+
+class _FakeAudioRecorder extends AudioRecorder {
+  _FakeAudioRecorder();
+
+  String? _recordingPath;
+
+  @override
+  Future<bool> hasPermission({bool request = true}) async => true;
+
+  @override
+  Future<void> start(RecordConfig config, {required String path}) async {
+    _recordingPath = path;
+    final file = File(path);
+    await file.parent.create(recursive: true);
+    await file.writeAsBytes(const <int>[
+      0x52,
+      0x49,
+      0x46,
+      0x46,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x57,
+      0x41,
+      0x56,
+      0x45,
+    ]);
+  }
+
+  @override
+  Future<String?> stop() async => _recordingPath;
+
+  @override
+  Stream<Amplitude> onAmplitudeChanged(Duration interval) {
+    return const Stream<Amplitude>.empty();
+  }
+
+  @override
+  Future<void> dispose() async {}
 }
 
 class MutableApprovalBridgeApi implements ApprovalBridgeApi {

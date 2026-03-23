@@ -150,7 +150,7 @@ class DeviceSettingsController extends StateNotifier<DeviceSettingsState> {
         sessionToken.trim().isEmpty) {
       state = state.copyWith(
         accessModeErrorMessage:
-            'Trusted session data is missing. Re-pair this phone from your Mac.',
+            'Trusted session data is missing. Re-pair this device from the host bridge.',
       );
       return false;
     }
