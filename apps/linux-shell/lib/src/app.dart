@@ -124,6 +124,7 @@ class _CodexLinuxShellAppState extends State<CodexLinuxShellApp>
         builder: (context, _) {
           return ShellView(
             state: _controller.state,
+            onCheckTailscale: _controller.checkTailscaleAvailability,
             onRefreshQr: _controller.refreshPairingSession,
             onRestartRuntime: _controller.restartLocalRuntime,
             onRevokeTrust: _controller.revokeTrustedPhoneFromDesktop,

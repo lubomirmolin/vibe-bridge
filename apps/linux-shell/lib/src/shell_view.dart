@@ -1,5 +1,6 @@
 import 'package:codex_linux_shell/src/shell_presentation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:codex_ui/codex_ui.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
@@ -8,12 +9,14 @@ class ShellView extends StatelessWidget {
   const ShellView({
     super.key,
     required this.state,
+    required this.onCheckTailscale,
     required this.onRefreshQr,
     required this.onRestartRuntime,
     required this.onRevokeTrust,
   });
 
   final ShellPresentationState state;
+  final Future<void> Function() onCheckTailscale;
   final Future<void> Function() onRefreshQr;
   final Future<void> Function() onRestartRuntime;
   final Future<void> Function() onRevokeTrust;
@@ -52,10 +55,16 @@ class ShellView extends StatelessWidget {
                                       Expanded(
                                         flex: 5,
                                         child: SingleChildScrollView(
-                                          child: _PairDeviceCard(
-                                            state: state,
-                                            onRefreshQr: onRefreshQr,
-                                          ),
+                                          child: state.requiresTailscaleSetup
+                                              ? _TailscaleRequiredCard(
+                                                  state: state,
+                                                  onCheckTailscale:
+                                                      onCheckTailscale,
+                                                )
+                                              : _PairDeviceCard(
+                                                  state: state,
+                                                  onRefreshQr: onRefreshQr,
+                                                ),
                                         ),
                                       ),
                                       const SizedBox(width: 24),
@@ -70,6 +79,8 @@ class ShellView extends StatelessWidget {
                                               const SizedBox(height: 24),
                                               _SystemActionsCard(
                                                 state: state,
+                                                onCheckTailscale:
+                                                    onCheckTailscale,
                                                 onRestartRuntime:
                                                     onRestartRuntime,
                                                 onRevokeTrust: onRevokeTrust,
@@ -89,15 +100,22 @@ class ShellView extends StatelessWidget {
                                   )
                                 : ListView(
                                     children: [
-                                      _PairDeviceCard(
-                                        state: state,
-                                        onRefreshQr: onRefreshQr,
-                                      ),
+                                      state.requiresTailscaleSetup
+                                          ? _TailscaleRequiredCard(
+                                              state: state,
+                                              onCheckTailscale:
+                                                  onCheckTailscale,
+                                            )
+                                          : _PairDeviceCard(
+                                              state: state,
+                                              onRefreshQr: onRefreshQr,
+                                            ),
                                       const SizedBox(height: 24),
                                       _ConnectionDetailsCard(state: state),
                                       const SizedBox(height: 24),
                                       _SystemActionsCard(
                                         state: state,
+                                        onCheckTailscale: onCheckTailscale,
                                         onRestartRuntime: onRestartRuntime,
                                         onRevokeTrust: onRevokeTrust,
                                       ),
@@ -147,6 +165,10 @@ class _Header extends StatelessWidget {
       case ShellRuntimeState.pairedActive:
         badgeColor = AppTheme.emerald;
         badgeText = 'Connected';
+        break;
+      case ShellRuntimeState.needsTailscale:
+        badgeColor = AppTheme.amber;
+        badgeText = 'Tailscale Required';
         break;
       case ShellRuntimeState.degraded:
         badgeColor = AppTheme.rose;
@@ -273,6 +295,7 @@ class _PairDeviceCard extends StatelessWidget {
           const SizedBox(height: 32),
           if (!isPaired && session != null) ...[
             Container(
+              key: const Key('pairing-qr'),
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
                 color: Colors.white,
@@ -387,6 +410,179 @@ class _PairDeviceCard extends StatelessWidget {
   }
 }
 
+class _TailscaleRequiredCard extends StatelessWidget {
+  const _TailscaleRequiredCard({
+    required this.state,
+    required this.onCheckTailscale,
+  });
+
+  final ShellPresentationState state;
+  final Future<void> Function() onCheckTailscale;
+
+  @override
+  Widget build(BuildContext context) {
+    final tailscale = state.tailscale;
+    return Container(
+      padding: const EdgeInsets.all(32),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceZinc900.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppTheme.amber.withValues(alpha: 0.1),
+              shape: BoxShape.circle,
+            ),
+            child: PhosphorIcon(
+              PhosphorIcons.cloudSlash(),
+              color: AppTheme.amber,
+              size: 28,
+            ),
+          ),
+          const SizedBox(height: 24),
+          const Text(
+            'Tailscale Required',
+            style: TextStyle(
+              color: AppTheme.textMain,
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            tailscale.detail,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 14,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 24),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Status',
+                  style: TextStyle(color: AppTheme.textSubtle, fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  tailscale.statusLabel,
+                  style: const TextStyle(
+                    color: AppTheme.textMain,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                if (tailscale.binaryPath != null) ...[
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Binary',
+                    style: TextStyle(color: AppTheme.textSubtle, fontSize: 12),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    tailscale.binaryPath!,
+                    style: AppTheme.monoTextStyle.copyWith(
+                      color: AppTheme.textMuted,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+                if (tailscale.installHint.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Next Step',
+                    style: TextStyle(color: AppTheme.textSubtle, fontSize: 12),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.05),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            tailscale.installHint,
+                            style: AppTheme.monoTextStyle.copyWith(
+                              color: AppTheme.textMain,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        TextButton.icon(
+                          onPressed: () async {
+                            await Clipboard.setData(
+                              ClipboardData(text: tailscale.installHint),
+                            );
+                          },
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppTheme.emerald,
+                            backgroundColor: AppTheme.emerald.withValues(
+                              alpha: 0.1,
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          icon: PhosphorIcon(
+                            PhosphorIcons.copy(),
+                            size: 16,
+                            color: AppTheme.emerald,
+                          ),
+                          label: const Text('Copy'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          SizedBox(
+            width: double.infinity,
+            child: MagneticButton(
+              variant: MagneticButtonVariant.primary,
+              onClick: state.isCheckingTailscale
+                  ? () {}
+                  : () => onCheckTailscale(),
+              child: Text(
+                state.isCheckingTailscale ? 'Checking...' : 'Check Again',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ConnectionDetailsCard extends StatelessWidget {
   const _ConnectionDetailsCard({required this.state});
 
@@ -418,6 +614,8 @@ class _ConnectionDetailsCard extends StatelessWidget {
           _DetailRow(label: 'Supervisor', value: state.supervisorStatusLabel),
           Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
           _DetailRow(label: 'Bridge', value: state.bridgeRuntimeLabel),
+          Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
+          _DetailRow(label: 'Tailscale', value: state.tailscale.statusLabel),
           Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
           _DetailRow(
             label: 'Active Threads',
@@ -481,11 +679,13 @@ class _DetailRow extends StatelessWidget {
 class _SystemActionsCard extends StatelessWidget {
   const _SystemActionsCard({
     required this.state,
+    required this.onCheckTailscale,
     required this.onRestartRuntime,
     required this.onRevokeTrust,
   });
 
   final ShellPresentationState state;
+  final Future<void> Function() onCheckTailscale;
   final Future<void> Function() onRestartRuntime;
   final Future<void> Function() onRevokeTrust;
 
@@ -512,6 +712,18 @@ class _SystemActionsCard extends StatelessWidget {
             ),
           ),
           Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
+          if (state.requiresTailscaleSetup) ...[
+            _ActionRow(
+              icon: PhosphorIcons.cloudCheck(),
+              iconColor: AppTheme.amber,
+              iconBg: AppTheme.amber.withValues(alpha: 0.1),
+              title: 'Check Tailscale',
+              subtitle: 'Re-scan for the CLI and current tailnet status',
+              buttonLabel: state.isCheckingTailscale ? 'Checking...' : 'Check',
+              onTap: state.isCheckingTailscale ? null : onCheckTailscale,
+            ),
+            Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
+          ],
           _ActionRow(
             icon: PhosphorIcons.arrowsClockwise(),
             iconColor: AppTheme.textMain,

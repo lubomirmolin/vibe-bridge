@@ -1,7 +1,9 @@
 import 'dart:math';
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 
 class AnimatedBridgeBackground extends StatefulWidget {
@@ -22,6 +24,11 @@ class _AnimatedBridgeBackgroundState extends State<AnimatedBridgeBackground>
   double _targetTiltX = 0;
   double _targetTiltY = 0;
 
+  bool get _supportsAccelerometerTilt =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
+
   @override
   void initState() {
     super.initState();
@@ -34,21 +41,27 @@ class _AnimatedBridgeBackgroundState extends State<AnimatedBridgeBackground>
     });
     _ticker.start();
 
-    _accelSubscription = accelerometerEventStream().listen((
-      AccelerometerEvent event,
-    ) {
-      // Calculate device pitch and roll in degrees
-      final pitchDeg = atan2(event.y, event.z) * 180 / pi;
-      final rollDeg = atan2(event.x, event.z) * 180 / pi;
+    if (_supportsAccelerometerTilt) {
+      try {
+        _accelSubscription = accelerometerEventStream().listen((
+          AccelerometerEvent event,
+        ) {
+          // Calculate device pitch and roll in degrees
+          final pitchDeg = atan2(event.y, event.z) * 180 / pi;
+          final rollDeg = atan2(event.x, event.z) * 180 / pi;
 
-      // Parallax mapped to match React's exact 'gamma/beta / 45' physics
-      // Neutral position is holding the phone comfortably at a 45 degree tilt.
-      final normalizedX = -(rollDeg / 45.0);
-      final normalizedY = ((pitchDeg - 45.0) / 45.0);
+          // Parallax mapped to match React's exact 'gamma/beta / 45' physics
+          // Neutral position is holding the phone comfortably at a 45 degree tilt.
+          final normalizedX = -(rollDeg / 45.0);
+          final normalizedY = ((pitchDeg - 45.0) / 45.0);
 
-      _targetTiltX = normalizedX.clamp(-1.0, 1.0) * 40.0;
-      _targetTiltY = normalizedY.clamp(-1.0, 1.0) * 40.0;
-    });
+          _targetTiltX = normalizedX.clamp(-1.0, 1.0) * 40.0;
+          _targetTiltY = normalizedY.clamp(-1.0, 1.0) * 40.0;
+        });
+      } on MissingPluginException {
+        // Fall back to the built-in drift animation on platforms without sensors.
+      }
+    }
   }
 
   @override

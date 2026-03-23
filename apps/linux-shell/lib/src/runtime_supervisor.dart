@@ -60,6 +60,28 @@ abstract interface class RuntimeBinaryResolver {
   String? resolveCodexBinaryPath();
 }
 
+class TailscaleCliStatus {
+  const TailscaleCliStatus({
+    required this.isInstalled,
+    required this.isAuthenticated,
+    required this.statusLabel,
+    required this.detail,
+    required this.installHint,
+    this.binaryPath,
+  });
+
+  final bool isInstalled;
+  final bool isAuthenticated;
+  final String statusLabel;
+  final String detail;
+  final String installHint;
+  final String? binaryPath;
+}
+
+abstract interface class TailscaleCliChecker {
+  Future<TailscaleCliStatus> check();
+}
+
 abstract interface class StateDirectoryProvider {
   Directory resolveStateDirectory();
 }
@@ -258,6 +280,132 @@ class LinuxRuntimeBinaryResolver implements RuntimeBinaryResolver {
           break;
         }
         current = parent;
+      }
+    }
+    return null;
+  }
+
+  List<String> _pathExecutableCandidates(String executable) {
+    final rawPath = _environment['PATH'] ?? '';
+    if (rawPath.isEmpty) {
+      return const [];
+    }
+    return rawPath
+        .split(':')
+        .where((segment) => segment.trim().isNotEmpty)
+        .map((segment) => '${segment.trim()}/$executable')
+        .toList(growable: false);
+  }
+
+  List<String> _deduplicate(List<String> candidates) {
+    final seen = <String>{};
+    final unique = <String>[];
+    for (final candidate in candidates) {
+      final trimmed = candidate.trim();
+      if (trimmed.isEmpty || !seen.add(trimmed)) {
+        continue;
+      }
+      unique.add(trimmed);
+    }
+    return unique;
+  }
+
+  bool _isExecutable(String path) {
+    final file = File(path);
+    if (!file.existsSync()) {
+      return false;
+    }
+    return (file.statSync().mode & 0x49) != 0;
+  }
+}
+
+class LinuxTailscaleCliChecker implements TailscaleCliChecker {
+  LinuxTailscaleCliChecker({Map<String, String>? environment})
+    : _environment = environment ?? Platform.environment;
+
+  static const _installHint =
+      'curl -fsSL https://tailscale.com/install.sh | sh';
+  final Map<String, String> _environment;
+
+  @override
+  Future<TailscaleCliStatus> check() async {
+    final binaryPath = _resolveBinaryPath();
+    if (binaryPath == null) {
+      return const TailscaleCliStatus(
+        isInstalled: false,
+        isAuthenticated: false,
+        statusLabel: 'Not Installed',
+        detail:
+            'Tailscale CLI was not found. Install it and then run `sudo tailscale up` to enable the private pairing route.',
+        installHint: _installHint,
+      );
+    }
+
+    try {
+      final result = await Process.run(binaryPath, const [
+        'status',
+        '--json',
+      ], environment: Map<String, String>.from(_environment));
+
+      if (result.exitCode != 0) {
+        final stderr = (result.stderr as String?)?.trim();
+        final summary = stderr == null || stderr.isEmpty
+            ? 'Run `sudo tailscale up` and make sure the daemon is active.'
+            : stderr;
+        return TailscaleCliStatus(
+          isInstalled: true,
+          isAuthenticated: false,
+          statusLabel: 'Installed, Not Connected',
+          detail: 'Tailscale CLI was found at $binaryPath. $summary',
+          installHint: 'sudo tailscale up',
+          binaryPath: binaryPath,
+        );
+      }
+
+      final payload =
+          jsonDecode(result.stdout as String) as Map<String, dynamic>;
+      final backendState =
+          (payload['BackendState'] as String?)?.trim() ?? 'Unknown';
+      final self = payload['Self'] as Map<String, dynamic>?;
+      final hostName = (self?['HostName'] as String?)?.trim();
+      final isAuthenticated = backendState.toLowerCase() == 'running';
+
+      return TailscaleCliStatus(
+        isInstalled: true,
+        isAuthenticated: isAuthenticated,
+        statusLabel: isAuthenticated ? 'Connected' : backendState,
+        detail: isAuthenticated
+            ? 'Tailscale is connected${hostName == null || hostName.isEmpty ? '' : ' as $hostName'}.'
+            : 'Tailscale CLI was found at $binaryPath, but the tailnet is not connected yet. Run `sudo tailscale up`.',
+        installHint: isAuthenticated ? '' : 'sudo tailscale up',
+        binaryPath: binaryPath,
+      );
+    } catch (error) {
+      return TailscaleCliStatus(
+        isInstalled: true,
+        isAuthenticated: false,
+        statusLabel: 'Installed',
+        detail:
+            'Tailscale CLI was found at $binaryPath, but status could not be checked: $error',
+        installHint: 'sudo tailscale up',
+        binaryPath: binaryPath,
+      );
+    }
+  }
+
+  String? _resolveBinaryPath() {
+    final home = _environment['HOME']?.trim();
+    final candidates = <String>[
+      _environment['CODEX_MOBILE_COMPANION_TAILSCALE_BIN'] ?? '',
+      ..._pathExecutableCandidates('tailscale'),
+      if (home != null && home.isNotEmpty) '$home/.local/bin/tailscale',
+      '/usr/bin/tailscale',
+      '/usr/local/bin/tailscale',
+    ];
+
+    for (final candidate in _deduplicate(candidates)) {
+      if (_isExecutable(candidate)) {
+        return candidate;
       }
     }
     return null;
