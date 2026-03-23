@@ -62,10 +62,7 @@ void main() {
         tester,
         find.byKey(const Key('approval-detail-id')),
       );
-      expect(
-        find.textContaining(queuedApproval.approvalId),
-        findsOneWidget,
-      );
+      expect(find.textContaining(queuedApproval.approvalId), findsOneWidget);
       expect(find.text('Branch switch'), findsOneWidget);
 
       final approveButtonFinder = find.byKey(
@@ -88,8 +85,7 @@ void main() {
       expect(
         finalApprovals
             .firstWhere(
-              (approval) =>
-                  approval.approvalId == queuedApproval.approvalId,
+              (approval) => approval.approvalId == queuedApproval.approvalId,
             )
             .status,
         ApprovalStatus.approved,
@@ -141,10 +137,7 @@ void main() {
         tester,
         find.byKey(const Key('approval-detail-id')),
       );
-      expect(
-        find.textContaining(queuedApproval.approvalId),
-        findsOneWidget,
-      );
+      expect(find.textContaining(queuedApproval.approvalId), findsOneWidget);
       expect(find.text('Git pull'), findsOneWidget);
 
       final rejectButtonFinder = find.byKey(
@@ -231,9 +224,7 @@ Future<void> _openApprovalDetail(
   WidgetTester tester, {
   required String approvalId,
 }) async {
-  final approvalsQueueButton = find.byKey(
-    const Key('open-approvals-queue'),
-  );
+  final approvalsQueueButton = find.byKey(const Key('open-approvals-queue'));
   await _pumpUntilFound(tester, approvalsQueueButton);
   await tester.tap(approvalsQueueButton);
   await _pumpForTransition(tester);

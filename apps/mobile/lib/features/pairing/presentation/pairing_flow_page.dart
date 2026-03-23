@@ -5,10 +5,8 @@ import 'dart:ui';
 import 'package:codex_mobile_companion/features/pairing/application/pairing_controller.dart';
 import 'package:codex_mobile_companion/features/settings/presentation/settings_page.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
-import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
-import 'package:codex_mobile_companion/foundation/theme/liquid_styles.dart';
-import 'package:codex_mobile_companion/shared/widgets/animated_bridge_background.dart';
-import 'package:codex_mobile_companion/shared/widgets/magnetic_button.dart';
+import 'package:codex_ui/codex_ui.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';

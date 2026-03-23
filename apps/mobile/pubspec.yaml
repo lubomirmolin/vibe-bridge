@@ -28,6 +28,8 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  codex_ui:
+    path: ../../packages/codex_ui
   flutter:
     sdk: flutter
   flutter_riverpod: ^2.6.1

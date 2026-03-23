@@ -2,7 +2,7 @@ import 'package:codex_mobile_companion/features/pairing/presentation/pairing_flo
 import 'package:codex_mobile_companion/foundation/navigation/app_navigator.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
+import 'package:codex_ui/codex_ui.dart';
 
 void main() {
   runApp(const ProviderScope(child: CodexMobileApp()));

@@ -1,5 +1,5 @@
 import 'package:codex_mobile_companion/features/threads/domain/parsed_command_output.dart';
-import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
+import 'package:codex_ui/codex_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:syntax_highlight/syntax_highlight.dart';

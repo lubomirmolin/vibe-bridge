@@ -28,6 +28,8 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  codex_ui:
+    path: ../../packages/codex_ui
   flutter:
     sdk: flutter
 
@@ -39,6 +41,7 @@ dependencies:
   tray_manager: ^0.5.2
   path_provider: ^2.1.5
   qr_flutter: ^4.1.0
+  phosphor_flutter: ^2.1.0
   google_fonts: ^8.0.2
 
 dev_dependencies:

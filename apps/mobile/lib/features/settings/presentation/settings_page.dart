@@ -5,8 +5,8 @@ import 'package:codex_mobile_companion/features/settings/application/device_sett
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
-import 'package:codex_mobile_companion/foundation/theme/liquid_styles.dart';
+import 'package:codex_ui/codex_ui.dart';
+
 import 'package:codex_mobile_companion/shared/widgets/badges.dart';
 import 'package:codex_mobile_companion/shared/widgets/connection_status_banner.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';

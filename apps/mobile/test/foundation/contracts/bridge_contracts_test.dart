@@ -108,11 +108,7 @@ void main() {
       () => accessModeFromWire('not_a_real_access_mode'),
       throwsA(
         isA<FormatException>()
-            .having(
-              (error) => error.message,
-              'message',
-              contains('AccessMode'),
-            )
+            .having((error) => error.message, 'message', contains('AccessMode'))
             .having(
               (error) => error.message,
               'message',

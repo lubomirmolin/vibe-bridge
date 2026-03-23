@@ -1,5 +1,5 @@
 import 'package:codex_linux_shell/src/contracts.dart';
-import 'package:codex_linux_shell/src/shell_controller.dart';
+import 'package:codex_linux_shell/src/shell_presentation.dart';
 import 'package:codex_linux_shell/src/shell_view.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

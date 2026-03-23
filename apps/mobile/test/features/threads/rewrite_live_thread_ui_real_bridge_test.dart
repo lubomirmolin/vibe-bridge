@@ -148,10 +148,6 @@ void main() {
 }
 
 class _PassthroughHttpOverrides extends HttpOverrides {
-  @override
-  HttpClient createHttpClient(SecurityContext? context) {
-    return super.createHttpClient(context);
-  }
 }
 
 String _resolveBridgeApiBaseUrl() {
