@@ -60,7 +60,7 @@ void main() {
     expect(result.error, PairingValidationError.reused);
   });
 
-  test('rejects payloads that are not private Tailscale bridge paths', () {
+  test('rejects payloads with unsupported bridge routes as malformed', () {
     final result = validatePairingQrPayload(
       _validPayload(bridgeApiBaseUrl: 'http://127.0.0.1:3110'),
       nowUtc: DateTime.fromMillisecondsSinceEpoch(150 * 1000, isUtc: true),
@@ -68,7 +68,7 @@ void main() {
     );
 
     expect(result.isValid, isFalse);
-    expect(result.error, PairingValidationError.privateRouteRequired);
+    expect(result.error, PairingValidationError.malformed);
   });
 }
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -31,80 +32,81 @@ class HttpPairingBridgeApi implements PairingBridgeApi {
     required String phoneId,
     required String phoneName,
   }) async {
-    try {
-      final uri = _buildPairingUri(
-        payload.bridgeApiBaseUrl,
-        '/pairing/finalize',
-        <String, String>{
-          'session_id': payload.sessionId,
-          'pairing_token': payload.pairingToken,
-          'phone_id': phoneId,
-          'phone_name': phoneName,
-          'bridge_id': payload.bridgeId,
-        },
-      );
-
-      final response = await _post(uri);
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final bridgeIdentity = _readRequiredObject(
-          response.jsonBody,
-          'bridge_identity',
-        );
-        final sessionToken = _readRequiredString(
-          response.jsonBody,
-          'session_token',
-        );
-        final bridgeId = _readRequiredString(bridgeIdentity, 'bridge_id');
-        final bridgeName = _readRequiredString(bridgeIdentity, 'display_name');
-        final bridgeApiBaseUrl = _readRequiredString(
-          bridgeIdentity,
-          'api_base_url',
+    for (final route in payload.orderedReachableRoutes) {
+      try {
+        final uri = _buildPairingUri(
+          route.baseUrl,
+          '/pairing/finalize',
+          <String, String>{
+            'session_id': payload.sessionId,
+            'pairing_token': payload.pairingToken,
+            'phone_id': phoneId,
+            'phone_name': phoneName,
+            'bridge_id': payload.bridgeId,
+          },
         );
 
-        if (bridgeId != payload.bridgeId) {
-          throw const FormatException(
-            'Bridge identity mismatch in finalize response.',
+        final response = await _post(uri);
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          final bridgeIdentity = _readRequiredObject(
+            response.jsonBody,
+            'bridge_identity',
+          );
+          final sessionToken = _readRequiredString(
+            response.jsonBody,
+            'session_token',
+          );
+          final bridgeId = _readRequiredString(bridgeIdentity, 'bridge_id');
+          final bridgeName = _readRequiredString(
+            bridgeIdentity,
+            'display_name',
+          );
+
+          if (bridgeId != payload.bridgeId) {
+            throw const FormatException(
+              'Bridge identity mismatch in finalize response.',
+            );
+          }
+
+          return PairingFinalizeResult.success(
+            sessionToken: sessionToken,
+            bridgeId: bridgeId,
+            bridgeName: bridgeName,
+            bridgeApiBaseUrl: route.baseUrl,
+            bridgeApiRoutes: _readBridgeApiRoutes(
+              response.jsonBody,
+              fallbackBaseUrl: route.baseUrl,
+            ),
           );
         }
 
-        return PairingFinalizeResult.success(
-          sessionToken: sessionToken,
-          bridgeId: bridgeId,
-          bridgeName: bridgeName,
-          bridgeApiBaseUrl: bridgeApiBaseUrl,
+        final code = _readOptionalString(response.jsonBody, 'code');
+        final message =
+            _readOptionalString(response.jsonBody, 'message') ??
+            'Could not complete trust confirmation. Please try again.';
+        return PairingFinalizeResult.failure(code: code, message: message);
+      } on SocketException {
+        continue;
+      } on HandshakeException {
+        continue;
+      } on HttpException {
+        continue;
+      } on TimeoutException {
+        continue;
+      } on FormatException {
+        return const PairingFinalizeResult.failure(
+          code: 'bridge_response_invalid',
+          message:
+              'Bridge returned an invalid trust response. Please regenerate pairing from your Mac.',
         );
       }
-
-      final code = _readOptionalString(response.jsonBody, 'code');
-      final message =
-          _readOptionalString(response.jsonBody, 'message') ??
-          'Could not complete trust confirmation. Please try again.';
-      return PairingFinalizeResult.failure(code: code, message: message);
-    } on SocketException {
-      return const PairingFinalizeResult.failure(
-        code: 'connectivity_unavailable',
-        message:
-            'Cannot reach the private bridge path right now. Check Tailscale connectivity and try again.',
-      );
-    } on HandshakeException {
-      return const PairingFinalizeResult.failure(
-        code: 'connectivity_unavailable',
-        message:
-            'Cannot reach the private bridge path right now. Check Tailscale connectivity and try again.',
-      );
-    } on HttpException {
-      return const PairingFinalizeResult.failure(
-        code: 'connectivity_unavailable',
-        message:
-            'Cannot reach the private bridge path right now. Check Tailscale connectivity and try again.',
-      );
-    } on FormatException {
-      return const PairingFinalizeResult.failure(
-        code: 'bridge_response_invalid',
-        message:
-            'Bridge returned an invalid trust response. Please regenerate pairing from your Mac.',
-      );
     }
+
+    return const PairingFinalizeResult.failure(
+      code: 'connectivity_unavailable',
+      message:
+          'Cannot reach the bridge over Tailscale or local network right now. Check connectivity and try again.',
+    );
   }
 
   @override
@@ -113,58 +115,62 @@ class HttpPairingBridgeApi implements PairingBridgeApi {
     required String phoneId,
     required String sessionToken,
   }) async {
-    try {
-      final uri = _buildPairingUri(
-        trustedBridge.bridgeApiBaseUrl,
-        '/pairing/handshake',
-        <String, String>{
-          'phone_id': phoneId,
-          'bridge_id': trustedBridge.bridgeId,
-          'session_token': sessionToken,
-        },
-      );
-
-      final response = await _post(uri);
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final bridgeIdentity = _readRequiredObject(
-          response.jsonBody,
-          'bridge_identity',
+    for (final route in trustedBridge.orderedReachableRoutes) {
+      try {
+        final uri = _buildPairingUri(
+          route.baseUrl,
+          '/pairing/handshake',
+          <String, String>{
+            'phone_id': phoneId,
+            'bridge_id': trustedBridge.bridgeId,
+            'session_token': sessionToken,
+          },
         );
-        return PairingHandshakeResult.trusted(
-          bridgeId: _readRequiredString(bridgeIdentity, 'bridge_id'),
-          bridgeName: _readRequiredString(bridgeIdentity, 'display_name'),
-          bridgeApiBaseUrl: _readRequiredString(bridgeIdentity, 'api_base_url'),
-          sessionId: _readRequiredString(response.jsonBody, 'session_id'),
+
+        final response = await _post(uri);
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          final bridgeIdentity = _readRequiredObject(
+            response.jsonBody,
+            'bridge_identity',
+          );
+          return PairingHandshakeResult.trusted(
+            bridgeId: _readRequiredString(bridgeIdentity, 'bridge_id'),
+            bridgeName: _readRequiredString(bridgeIdentity, 'display_name'),
+            bridgeApiBaseUrl: route.baseUrl,
+            bridgeApiRoutes: _readBridgeApiRoutes(
+              response.jsonBody,
+              fallbackBaseUrl: route.baseUrl,
+            ),
+            sessionId: _readRequiredString(response.jsonBody, 'session_id'),
+          );
+        }
+
+        final code = _readOptionalString(response.jsonBody, 'code');
+        final message =
+            _readOptionalString(response.jsonBody, 'message') ??
+            'Stored trust is no longer accepted by the bridge.';
+        return PairingHandshakeResult.untrusted(code: code, message: message);
+      } on SocketException {
+        continue;
+      } on HandshakeException {
+        continue;
+      } on HttpException {
+        continue;
+      } on TimeoutException {
+        continue;
+      } on FormatException {
+        return const PairingHandshakeResult.untrusted(
+          code: 'bridge_response_invalid',
+          message:
+              'Bridge returned an invalid trust response. Re-pair from your Mac.',
         );
       }
-
-      final code = _readOptionalString(response.jsonBody, 'code');
-      final message =
-          _readOptionalString(response.jsonBody, 'message') ??
-          'Stored trust is no longer accepted by the bridge.';
-      return PairingHandshakeResult.untrusted(code: code, message: message);
-    } on SocketException {
-      return const PairingHandshakeResult.connectivityUnavailable(
-        message:
-            'Private bridge path is currently unreachable. Reconnect to Tailscale and retry.',
-      );
-    } on HandshakeException {
-      return const PairingHandshakeResult.connectivityUnavailable(
-        message:
-            'Private bridge path is currently unreachable. Reconnect to Tailscale and retry.',
-      );
-    } on HttpException {
-      return const PairingHandshakeResult.connectivityUnavailable(
-        message:
-            'Private bridge path is currently unreachable. Reconnect to Tailscale and retry.',
-      );
-    } on FormatException {
-      return const PairingHandshakeResult.untrusted(
-        code: 'bridge_response_invalid',
-        message:
-            'Bridge returned an invalid trust response. Re-pair from your Mac.',
-      );
     }
+
+    return const PairingHandshakeResult.connectivityUnavailable(
+      message:
+          'Bridge routes are currently unreachable over Tailscale and local network. Reconnect and retry.',
+    );
   }
 
   @override
@@ -172,50 +178,50 @@ class HttpPairingBridgeApi implements PairingBridgeApi {
     required TrustedBridgeIdentity trustedBridge,
     required String? phoneId,
   }) async {
-    try {
-      final query = <String, String>{'actor': 'mobile-device'};
-      final normalizedPhoneId = phoneId?.trim();
-      if (normalizedPhoneId != null && normalizedPhoneId.isNotEmpty) {
-        query['phone_id'] = normalizedPhoneId;
-      }
-
-      final uri = _buildPairingUri(
-        trustedBridge.bridgeApiBaseUrl,
-        '/pairing/trust/revoke',
-        query,
-      );
-
-      final response = await _post(uri);
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        return const PairingRevokeResult.success();
-      }
-
-      return PairingRevokeResult.failure(
-        message:
-            _readOptionalString(response.jsonBody, 'message') ??
-            'Couldn’t revoke bridge trust from mobile right now.',
-      );
-    } on SocketException {
-      return const PairingRevokeResult.failure(
-        message:
-            'Could not reach the bridge to revoke trust. Local trust will still be cleared.',
-      );
-    } on HandshakeException {
-      return const PairingRevokeResult.failure(
-        message:
-            'Could not reach the bridge to revoke trust. Local trust will still be cleared.',
-      );
-    } on HttpException {
-      return const PairingRevokeResult.failure(
-        message:
-            'Could not reach the bridge to revoke trust. Local trust will still be cleared.',
-      );
-    } on FormatException {
-      return const PairingRevokeResult.failure(
-        message:
-            'Bridge returned an invalid unpair response. Local trust will still be cleared.',
-      );
+    final query = <String, String>{'actor': 'mobile-device'};
+    final normalizedPhoneId = phoneId?.trim();
+    if (normalizedPhoneId != null && normalizedPhoneId.isNotEmpty) {
+      query['phone_id'] = normalizedPhoneId;
     }
+
+    for (final route in trustedBridge.orderedReachableRoutes) {
+      try {
+        final uri = _buildPairingUri(
+          route.baseUrl,
+          '/pairing/trust/revoke',
+          query,
+        );
+
+        final response = await _post(uri);
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          return const PairingRevokeResult.success();
+        }
+
+        return PairingRevokeResult.failure(
+          message:
+              _readOptionalString(response.jsonBody, 'message') ??
+              'Couldn’t revoke bridge trust from mobile right now.',
+        );
+      } on SocketException {
+        continue;
+      } on HandshakeException {
+        continue;
+      } on HttpException {
+        continue;
+      } on TimeoutException {
+        continue;
+      } on FormatException {
+        return const PairingRevokeResult.failure(
+          message:
+              'Bridge returned an invalid unpair response. Local trust will still be cleared.',
+        );
+      }
+    }
+
+    return const PairingRevokeResult.failure(
+      message:
+          'Could not reach the bridge to revoke trust over Tailscale or local network. Local trust will still be cleared.',
+    );
   }
 
   Future<_HttpJsonResponse> _post(Uri uri) async {
@@ -240,6 +246,7 @@ class PairingFinalizeResult {
     this.bridgeId,
     this.bridgeName,
     this.bridgeApiBaseUrl,
+    this.bridgeApiRoutes,
     this.code,
     this.message,
   });
@@ -248,6 +255,7 @@ class PairingFinalizeResult {
   final String? bridgeId;
   final String? bridgeName;
   final String? bridgeApiBaseUrl;
+  final List<BridgeApiRoute>? bridgeApiRoutes;
   final String? code;
   final String? message;
 
@@ -255,7 +263,8 @@ class PairingFinalizeResult {
       sessionToken != null &&
       bridgeId != null &&
       bridgeName != null &&
-      bridgeApiBaseUrl != null;
+      bridgeApiBaseUrl != null &&
+      bridgeApiRoutes != null;
 
   bool get requiresRescan {
     return code == 'session_already_consumed' ||
@@ -269,6 +278,7 @@ class PairingFinalizeResult {
     required String bridgeId,
     required String bridgeName,
     required String bridgeApiBaseUrl,
+    required List<BridgeApiRoute> bridgeApiRoutes,
   }) = _PairingFinalizeSuccess;
 
   const factory PairingFinalizeResult.failure({
@@ -283,6 +293,7 @@ class _PairingFinalizeSuccess extends PairingFinalizeResult {
     required super.bridgeId,
     required super.bridgeName,
     required super.bridgeApiBaseUrl,
+    required super.bridgeApiRoutes,
   }) : super._();
 }
 
@@ -299,6 +310,7 @@ class PairingHandshakeResult {
     this.bridgeId,
     this.bridgeName,
     this.bridgeApiBaseUrl,
+    this.bridgeApiRoutes,
     this.sessionId,
     required this.connectivityUnavailable,
   });
@@ -309,6 +321,7 @@ class PairingHandshakeResult {
   final String? bridgeId;
   final String? bridgeName;
   final String? bridgeApiBaseUrl;
+  final List<BridgeApiRoute>? bridgeApiRoutes;
   final String? sessionId;
   final bool connectivityUnavailable;
 
@@ -327,6 +340,7 @@ class PairingHandshakeResult {
     String? bridgeId,
     String? bridgeName,
     String? bridgeApiBaseUrl,
+    List<BridgeApiRoute>? bridgeApiRoutes,
     String? sessionId,
   }) = _PairingHandshakeTrusted;
 
@@ -366,6 +380,7 @@ class _PairingHandshakeTrusted extends PairingHandshakeResult {
     super.bridgeId,
     super.bridgeName,
     super.bridgeApiBaseUrl,
+    super.bridgeApiRoutes,
     super.sessionId,
   }) : super._(isTrusted: true, connectivityUnavailable: false);
 }
@@ -442,4 +457,25 @@ class _HttpJsonResponse {
 
   final int statusCode;
   final Map<String, dynamic> jsonBody;
+}
+
+List<BridgeApiRoute> _readBridgeApiRoutes(
+  Map<String, dynamic> json, {
+  required String fallbackBaseUrl,
+}) {
+  final rawRoutes = json['bridge_api_routes'];
+  if (rawRoutes is List<dynamic>) {
+    return rawRoutes
+        .map((entry) {
+          if (entry is! Map<String, dynamic>) {
+            throw const FormatException(
+              'Invalid bridge_api_routes response entry.',
+            );
+          }
+          return BridgeApiRoute.fromJson(entry);
+        })
+        .toList(growable: false);
+  }
+
+  return <BridgeApiRoute>[BridgeApiRoute.legacy(baseUrl: fallbackBaseUrl)];
 }

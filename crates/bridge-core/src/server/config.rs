@@ -139,7 +139,7 @@ impl BridgeConfig {
         Ok(Self {
             host,
             port,
-            state_directory,
+            state_directory: state_directory.clone(),
             speech_helper_binary: std::env::var("CODEX_MOBILE_COMPANION_SPEECH_HELPER_BINARY")
                 .ok()
                 .map(PathBuf::from),
@@ -149,6 +149,7 @@ impl BridgeConfig {
                 pairing_route_contract.message,
                 port,
                 pairing_route_contract.requires_runtime_serve_check,
+                state_directory.clone(),
             ),
             codex: BridgeCodexConfig {
                 mode: codex_mode,

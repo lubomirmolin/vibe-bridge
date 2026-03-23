@@ -249,6 +249,7 @@ class PairingController extends StateNotifier<PairingState> {
       bridgeId: finalizeResult.bridgeId!,
       bridgeName: finalizeResult.bridgeName!,
       bridgeApiBaseUrl: finalizeResult.bridgeApiBaseUrl!,
+      bridgeApiRoutes: finalizeResult.bridgeApiRoutes!,
       sessionId: payload.sessionId,
       pairedAtEpochSeconds: pairedAtUtc.millisecondsSinceEpoch ~/ 1000,
     );
@@ -391,6 +392,7 @@ class PairingController extends StateNotifier<PairingState> {
     final bridgeId = handshake.bridgeId;
     final bridgeName = handshake.bridgeName;
     final bridgeApiBaseUrl = handshake.bridgeApiBaseUrl;
+    final bridgeApiRoutes = handshake.bridgeApiRoutes;
     final sessionId = handshake.sessionId;
 
     if (bridgeId == null ||
@@ -400,9 +402,16 @@ class PairingController extends StateNotifier<PairingState> {
       return trustedBridge;
     }
 
+    final resolvedBridgeApiRoutes =
+        bridgeApiRoutes ?? trustedBridge.bridgeApiRoutes;
+
     if (bridgeId == trustedBridge.bridgeId &&
         bridgeName == trustedBridge.bridgeName &&
         bridgeApiBaseUrl == trustedBridge.bridgeApiBaseUrl &&
+        _sameBridgeApiRoutes(
+          resolvedBridgeApiRoutes,
+          trustedBridge.bridgeApiRoutes,
+        ) &&
         sessionId == trustedBridge.sessionId) {
       return trustedBridge;
     }
@@ -411,9 +420,33 @@ class PairingController extends StateNotifier<PairingState> {
       bridgeId: bridgeId,
       bridgeName: bridgeName,
       bridgeApiBaseUrl: bridgeApiBaseUrl,
+      bridgeApiRoutes: resolvedBridgeApiRoutes,
       sessionId: sessionId,
       pairedAtEpochSeconds: trustedBridge.pairedAtEpochSeconds,
     );
+  }
+
+  bool _sameBridgeApiRoutes(
+    List<BridgeApiRoute> left,
+    List<BridgeApiRoute> right,
+  ) {
+    if (left.length != right.length) {
+      return false;
+    }
+
+    for (var index = 0; index < left.length; index += 1) {
+      final leftRoute = left[index];
+      final rightRoute = right[index];
+      if (leftRoute.id != rightRoute.id ||
+          leftRoute.kind != rightRoute.kind ||
+          leftRoute.baseUrl != rightRoute.baseUrl ||
+          leftRoute.reachable != rightRoute.reachable ||
+          leftRoute.isPreferred != rightRoute.isPreferred) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   void _scheduleReconnect() {

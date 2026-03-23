@@ -1,8 +1,10 @@
-const String contractVersion = '2026-03-22';
+const String contractVersion = '2026-03-23';
 
 enum ThreadStatus { idle, running, completed, interrupted, failed }
 
 enum AccessMode { readOnly, controlWithApprovals, fullControl }
+
+enum BridgeApiRouteKind { tailscale, localNetwork }
 
 enum ApprovalStatus { pending, approved, rejected }
 
@@ -41,6 +43,139 @@ enum GitDiffChangeType {
 enum ThreadTimelineGroupKind { exploration }
 
 enum ThreadTimelineExplorationKind { read, search }
+
+BridgeApiRouteKind bridgeApiRouteKindFromWire(String wireValue) {
+  switch (wireValue) {
+    case 'tailscale':
+      return BridgeApiRouteKind.tailscale;
+    case 'local_network':
+      return BridgeApiRouteKind.localNetwork;
+    default:
+      throw FormatException(
+        'Unknown BridgeApiRouteKind wire value "$wireValue".',
+      );
+  }
+}
+
+extension BridgeApiRouteKindWire on BridgeApiRouteKind {
+  String get wireValue {
+    switch (this) {
+      case BridgeApiRouteKind.tailscale:
+        return 'tailscale';
+      case BridgeApiRouteKind.localNetwork:
+        return 'local_network';
+    }
+  }
+}
+
+class BridgeApiRouteDto {
+  const BridgeApiRouteDto({
+    required this.id,
+    required this.kind,
+    required this.baseUrl,
+    required this.reachable,
+    required this.isPreferred,
+  });
+
+  final String id;
+  final BridgeApiRouteKind kind;
+  final String baseUrl;
+  final bool reachable;
+  final bool isPreferred;
+
+  factory BridgeApiRouteDto.fromJson(Map<String, dynamic> json) {
+    return BridgeApiRouteDto(
+      id: json['id'] as String,
+      kind: bridgeApiRouteKindFromWire(json['kind'] as String),
+      baseUrl: json['base_url'] as String,
+      reachable: json['reachable'] as bool? ?? false,
+      isPreferred: json['is_preferred'] as bool? ?? false,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'id': id,
+      'kind': kind.wireValue,
+      'base_url': baseUrl,
+      'reachable': reachable,
+      'is_preferred': isPreferred,
+    };
+  }
+}
+
+class PairingRouteInventoryDto {
+  const PairingRouteInventoryDto({
+    required this.reachable,
+    required this.routes,
+    this.advertisedBaseUrl,
+    this.message,
+  });
+
+  final bool reachable;
+  final String? advertisedBaseUrl;
+  final List<BridgeApiRouteDto> routes;
+  final String? message;
+
+  factory PairingRouteInventoryDto.fromJson(Map<String, dynamic> json) {
+    final routes = json['routes'];
+    if (routes is! List<dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "routes" in pairing route response.',
+      );
+    }
+    return PairingRouteInventoryDto(
+      reachable: json['reachable'] as bool? ?? false,
+      advertisedBaseUrl: json['advertised_base_url'] as String?,
+      routes: routes
+          .map((entry) {
+            if (entry is! Map<String, dynamic>) {
+              throw const FormatException('Invalid bridge route entry.');
+            }
+            return BridgeApiRouteDto.fromJson(entry);
+          })
+          .toList(growable: false),
+      message: json['message'] as String?,
+    );
+  }
+}
+
+class NetworkSettingsDto {
+  const NetworkSettingsDto({
+    required this.contractVersion,
+    required this.localNetworkPairingEnabled,
+    required this.routes,
+    this.message,
+  });
+
+  final String contractVersion;
+  final bool localNetworkPairingEnabled;
+  final List<BridgeApiRouteDto> routes;
+  final String? message;
+
+  factory NetworkSettingsDto.fromJson(Map<String, dynamic> json) {
+    final routes = json['routes'];
+    if (routes is! List<dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "routes" in network settings response.',
+      );
+    }
+    return NetworkSettingsDto(
+      contractVersion: json['contract_version'] as String,
+      localNetworkPairingEnabled:
+          json['local_network_pairing_enabled'] as bool? ?? false,
+      routes: routes
+          .map((entry) {
+            if (entry is! Map<String, dynamic>) {
+              throw const FormatException('Invalid bridge route entry.');
+            }
+            return BridgeApiRouteDto.fromJson(entry);
+          })
+          .toList(growable: false),
+      message: json['message'] as String?,
+    );
+  }
+}
 
 extension ThreadStatusWire on ThreadStatus {
   String get wireValue {

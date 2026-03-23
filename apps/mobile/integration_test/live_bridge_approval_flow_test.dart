@@ -316,6 +316,9 @@ Future<void> _seedTrustedBridge({
     bridgeId: trustedSession.bridgeId,
     bridgeName: trustedSession.bridgeName,
     bridgeApiBaseUrl: bridgeApiBaseUrl,
+    bridgeApiRoutes: <BridgeApiRoute>[
+      BridgeApiRoute.legacy(baseUrl: bridgeApiBaseUrl),
+    ],
     sessionId: trustedSession.sessionId,
     pairedAtEpochSeconds: DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000,
   );

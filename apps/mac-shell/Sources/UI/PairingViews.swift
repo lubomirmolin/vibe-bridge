@@ -52,6 +52,7 @@ struct PairingEntryView: View {
             ScrollView {
                 VStack(spacing: 24) {
                     statusCard
+                    networkCard
                     speechCard
                     qrSection
 
@@ -69,6 +70,7 @@ struct PairingEntryView: View {
                     || viewModel.isRefreshingRuntime
                     || viewModel.isRevokingTrust
                     || viewModel.isRestartingRuntime
+                    || viewModel.isUpdatingNetworkSettings
                 {
                     ProgressView()
                         .controlSize(.small)
@@ -331,6 +333,102 @@ struct PairingEntryView: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
         )
+    }
+
+    private var networkCard: some View {
+        VStack(spacing: 0) {
+            statusRow(
+                icon: "point.3.connected.trianglepath.dotted",
+                iconColor: .secondary,
+                label: "Pairing Routes",
+                value: viewModel.routeSummaryLabel
+            )
+            Divider().padding(.leading, 44)
+            HStack(spacing: 12) {
+                Image(systemName: "network")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Enable Local Network Pairing")
+                        .font(.body)
+                    Text(
+                        "Advertise an HTTP LAN route alongside Tailscale on trusted private networks."
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { viewModel.localNetworkPairingEnabled },
+                        set: { enabled in
+                            Task { await viewModel.setLocalNetworkPairingEnabled(enabled) }
+                        }
+                    )
+                )
+                .labelsHidden()
+                .disabled(viewModel.isUpdatingNetworkSettings || viewModel.isRefreshingRuntime)
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+
+            if !viewModel.pairingRoutes.isEmpty {
+                Divider().padding(.leading, 44)
+                VStack(spacing: 0) {
+                    ForEach(Array(viewModel.pairingRoutes.enumerated()), id: \.offset) { _, route in
+                        HStack(spacing: 12) {
+                            Image(systemName: route.kind == .tailscale ? "lock.shield" : "wifi")
+                                .font(.system(size: 16))
+                                .foregroundStyle(route.reachable ? .green : .secondary)
+                                .frame(width: 20)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(route.kind == .tailscale ? "Tailscale" : "Local Network")
+                                    .font(.body)
+                                Text(route.baseURL)
+                                    .font(.footnote.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+
+                            Spacer()
+
+                            Text(routeBadge(route))
+                                .font(.caption.monospaced())
+                                .foregroundStyle(route.reachable ? .green : .secondary)
+                        }
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 16)
+
+                        if route.id != viewModel.pairingRoutes.last?.id {
+                            Divider().padding(.leading, 44)
+                        }
+                    }
+                }
+            }
+        }
+        .background(Color(NSColor.controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+        )
+    }
+
+    private func routeBadge(_ route: BridgeAPIRouteDTO) -> String {
+        if route.isPreferred && route.reachable {
+            return "primary"
+        }
+        if route.reachable {
+            return "reachable"
+        }
+        return "offline"
     }
 
     @ViewBuilder

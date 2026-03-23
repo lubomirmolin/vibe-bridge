@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -9,9 +10,10 @@ use serde_json::{Value, json};
 use shared_contracts::{
     AccessMode, BootstrapDto, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION,
     GitDiffChangeTypeDto, GitDiffFileSummaryDto, GitStatusDto as SharedGitStatusDto,
-    ModelCatalogDto, ModelOptionDto, SecurityAuditEventDto, ServiceHealthDto, ServiceHealthStatus,
-    ThreadGitDiffDto, ThreadGitDiffMode, ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto,
-    ThreadTimelineEntryDto, ThreadTimelinePageDto, TrustStateDto, TurnMutationAcceptedDto,
+    ModelCatalogDto, ModelOptionDto, NetworkSettingsDto, PairingRouteInventoryDto,
+    SecurityAuditEventDto, ServiceHealthDto, ServiceHealthStatus, ThreadGitDiffDto,
+    ThreadGitDiffMode, ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto, ThreadTimelineEntryDto,
+    ThreadTimelinePageDto, TrustStateDto, TurnMutationAcceptedDto,
 };
 use tokio::sync::RwLock;
 use tokio::time::{Duration, sleep};
@@ -30,7 +32,7 @@ use crate::server::controls::{
 };
 use crate::server::events::EventHub;
 use crate::server::gateway::CodexGateway;
-use crate::server::pairing_route::{PairingRouteHealth, PairingRouteState};
+use crate::server::pairing_route::PairingRouteState;
 use crate::server::projection::ProjectionStore;
 use crate::server::speech::{SpeechError, SpeechService};
 use crate::thread_api::{GitStatusResponse, MutationResultResponse, RepositoryContextDto};
@@ -214,8 +216,39 @@ impl BridgeAppState {
         state
     }
 
-    pub fn pairing_route_health(&self) -> PairingRouteHealth {
+    pub fn pairing_route_health(&self) -> PairingRouteInventoryDto {
         self.inner.pairing_route.health()
+    }
+
+    pub fn network_settings(&self) -> NetworkSettingsDto {
+        self.inner.pairing_route.network_settings()
+    }
+
+    pub fn set_local_network_pairing_enabled(
+        &self,
+        enabled: bool,
+    ) -> Result<NetworkSettingsDto, String> {
+        self.inner
+            .pairing_route
+            .set_local_network_pairing_enabled(enabled)
+    }
+
+    pub fn desired_lan_listener_addr(&self) -> Option<SocketAddr> {
+        self.inner.pairing_route.desired_lan_listener_addr()
+    }
+
+    pub fn record_lan_listener_active(&self, bind_addr: SocketAddr) {
+        self.inner
+            .pairing_route
+            .record_lan_listener_active(bind_addr);
+    }
+
+    pub fn record_lan_listener_error(&self, error: impl Into<String>) {
+        self.inner.pairing_route.record_lan_listener_error(error);
+    }
+
+    pub fn clear_lan_listener_runtime(&self) {
+        self.inner.pairing_route.clear_lan_listener_runtime();
     }
 
     pub fn trust_snapshot(&self) -> PairingTrustSnapshot {
@@ -231,7 +264,7 @@ impl BridgeAppState {
             .pairing_sessions
             .lock()
             .expect("pairing sessions lock should not be poisoned")
-            .issue_session()
+            .issue_session_with_routes(self.inner.pairing_route.pairing_routes())
     }
 
     pub fn finalize_trust(
@@ -242,7 +275,7 @@ impl BridgeAppState {
             .pairing_sessions
             .lock()
             .expect("pairing sessions lock should not be poisoned")
-            .finalize_trust(request)
+            .finalize_trust_with_routes(request, self.inner.pairing_route.pairing_routes())
     }
 
     pub fn handshake(
@@ -253,7 +286,7 @@ impl BridgeAppState {
             .pairing_sessions
             .lock()
             .expect("pairing sessions lock should not be poisoned")
-            .handshake(request)
+            .handshake_with_routes(request, self.inner.pairing_route.pairing_routes())
     }
 
     pub fn authorize_trusted_session(

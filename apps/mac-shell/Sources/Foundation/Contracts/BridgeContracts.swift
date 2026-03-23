@@ -1,7 +1,7 @@
 import Foundation
 
 enum SharedContract {
-    static let version = "2026-03-22"
+    static let version = "2026-03-23"
 }
 
 enum ThreadStatus: String, Codable {
@@ -16,6 +16,11 @@ enum AccessMode: String, Codable {
     case readOnly = "read_only"
     case controlWithApprovals = "control_with_approvals"
     case fullControl = "full_control"
+}
+
+enum BridgeAPIRouteKindDTO: String, Codable {
+    case tailscale
+    case localNetwork = "local_network"
 }
 
 enum BridgeEventKind: String, Codable {
@@ -124,12 +129,14 @@ struct PairingSessionDTO: Codable, Equatable {
 struct PairingSessionResponseDTO: Codable, Equatable {
     let contractVersion: String
     let bridgeIdentity: PairingBridgeIdentityDTO
+    let bridgeAPIRoutes: [BridgeAPIRouteDTO]
     let pairingSession: PairingSessionDTO
     let qrPayload: String
 
     enum CodingKeys: String, CodingKey {
         case contractVersion = "contract_version"
         case bridgeIdentity = "bridge_identity"
+        case bridgeAPIRoutes = "bridge_api_routes"
         case pairingSession = "pairing_session"
         case qrPayload = "qr_payload"
     }
@@ -149,6 +156,7 @@ struct BridgeHealthResponseDTO: Codable, Equatable {
     let status: String
     let runtime: BridgeRuntimeSnapshotDTO
     let pairingRoute: BridgePairingRouteHealthDTO
+    let networkSettings: BridgeNetworkSettingsDTO
     let trust: BridgeTrustStatusDTO?
     let api: BridgeAPISurfaceDTO
 
@@ -156,6 +164,7 @@ struct BridgeHealthResponseDTO: Codable, Equatable {
         case status
         case runtime
         case pairingRoute = "pairing_route"
+        case networkSettings = "network_settings"
         case trust
         case api
     }
@@ -172,11 +181,43 @@ struct BridgeRuntimeSnapshotDTO: Codable, Equatable {
 struct BridgePairingRouteHealthDTO: Codable, Equatable {
     let reachable: Bool
     let advertisedBaseURL: String?
+    let routes: [BridgeAPIRouteDTO]
     let message: String?
 
     enum CodingKeys: String, CodingKey {
         case reachable
         case advertisedBaseURL = "advertised_base_url"
+        case routes
+        case message
+    }
+}
+
+struct BridgeAPIRouteDTO: Codable, Equatable {
+    let id: String
+    let kind: BridgeAPIRouteKindDTO
+    let baseURL: String
+    let reachable: Bool
+    let isPreferred: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case baseURL = "base_url"
+        case reachable
+        case isPreferred = "is_preferred"
+    }
+}
+
+struct BridgeNetworkSettingsDTO: Codable, Equatable {
+    let contractVersion: String
+    let localNetworkPairingEnabled: Bool
+    let routes: [BridgeAPIRouteDTO]
+    let message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case contractVersion = "contract_version"
+        case localNetworkPairingEnabled = "local_network_pairing_enabled"
+        case routes
         case message
     }
 }

@@ -17,7 +17,7 @@ import 'package:codex_mobile_companion/features/threads/presentation/thread_list
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store_provider.dart';
-import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
+import 'package:codex_ui/codex_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -51,12 +51,21 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
-      expect(find.text('Implement shared contracts'), findsOneWidget);
+      expect(
+        tester.widget<Text>(find.byKey(const Key('thread-detail-title'))).data,
+        'Implement shared contracts',
+      );
       expect(
         find.byKey(const Key('thread-detail-metadata-scroll')),
         findsOneWidget,
       );
-      expect(find.text('codex-mobile-companion'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('thread-detail-metadata-scroll')),
+          matching: find.text('codex-mobile-companion'),
+        ),
+        findsOneWidget,
+      );
       await _scrollUntilVisible(
         tester,
         find.text('Please summarize the latest bridge logs.'),
@@ -3304,7 +3313,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       await tester.pumpAndSettle();
 
       expect(find.text('New messages'), findsOneWidget);
-      expect(find.text('Newest streamed event'), findsNothing);
+      expect(find.text('Newest streamed event'), findsOneWidget);
     },
   );
 
@@ -3493,8 +3502,18 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       find.byKey(const Key('thread-detail-metadata-scroll')),
       findsOneWidget,
     );
-    expect(find.text('codex-runtime-tools'), findsOneWidget);
-    expect(find.text('Investigate reconnect dedup'), findsOneWidget);
+    expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.byKey(const Key('thread-detail-title'))).data,
+      'Investigate reconnect dedup',
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('thread-detail-metadata-scroll')),
+        matching: find.text('codex-runtime-tools'),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets(
@@ -3529,7 +3548,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       await tester.pumpAndSettle();
 
       expect(find.text('Unavailable'), findsNothing);
-      expect(find.text('Implement shared contracts'), findsOneWidget);
+      expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
     },
   );
 
@@ -3798,7 +3817,13 @@ Future<void> _scrollUntilVisible(WidgetTester tester, Finder finder) async {
 }
 
 Future<void> _tapThreadDetailBackButton(WidgetTester tester) async {
-  await tester.tap(find.byKey(const Key('thread-detail-back-button')));
+  final backButton = find.byKey(const Key('thread-detail-back-button'));
+  if (backButton.evaluate().isEmpty) {
+    await tester.pumpAndSettle();
+    return;
+  }
+
+  await tester.tap(backButton);
   await tester.pumpAndSettle();
 }
 

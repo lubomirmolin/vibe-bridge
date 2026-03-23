@@ -307,7 +307,7 @@ void main() {
       await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
       await tester.pumpAndSettle();
 
-      expect(find.text('Implement shared contracts'), findsOneWidget);
+      expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
       await tester.scrollUntilVisible(
         find.text('Pending Approvals'),
         300,
@@ -539,7 +539,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
     await tester.pumpAndSettle();
-    expect(find.text('Implement shared contracts'), findsOneWidget);
+    expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
     final initialFetchApprovalsCallCount = approvalApi.fetchApprovalsCallCount;
     expect(initialFetchApprovalsCallCount, greaterThan(0));
     await tester.pump(const Duration(milliseconds: 100));
@@ -568,7 +568,7 @@ void main() {
       approvalApi.fetchApprovalsCallCount,
       greaterThan(initialFetchApprovalsCallCount),
     );
-    expect(find.text('Implement shared contracts'), findsOneWidget);
+    expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
     expect(find.text('Timeline'), findsOneWidget);
   });
 
@@ -597,7 +597,7 @@ void main() {
     await tester.tap(find.text('Open originating thread'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Implement shared contracts'), findsOneWidget);
+    expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
     expect(find.text('Timeline'), findsOneWidget);
   });
 }

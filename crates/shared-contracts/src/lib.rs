@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const CONTRACT_VERSION: &str = "2026-03-22";
+pub const CONTRACT_VERSION: &str = "2026-03-23";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -18,6 +18,43 @@ pub enum AccessMode {
     ReadOnly,
     ControlWithApprovals,
     FullControl,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BridgeApiRouteKind {
+    Tailscale,
+    LocalNetwork,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BridgeApiRouteDto {
+    pub id: String,
+    pub kind: BridgeApiRouteKind,
+    pub base_url: String,
+    pub reachable: bool,
+    pub is_preferred: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PairingRouteInventoryDto {
+    pub reachable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advertised_base_url: Option<String>,
+    #[serde(default)]
+    pub routes: Vec<BridgeApiRouteDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkSettingsDto {
+    pub contract_version: String,
+    pub local_network_pairing_enabled: bool,
+    #[serde(default)]
+    pub routes: Vec<BridgeApiRouteDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
