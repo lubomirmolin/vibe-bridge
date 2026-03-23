@@ -10,15 +10,18 @@ class ShellController extends ChangeNotifier {
   ShellController({
     ShellBridgeClient? bridgeClient,
     RuntimeSupervisor? runtimeSupervisor,
+    TailscaleCliChecker? tailscaleCliChecker,
     Duration degradedPollInterval = const Duration(seconds: 2),
     Duration healthyPollInterval = const Duration(seconds: 5),
   }) : _bridgeClient = bridgeClient ?? BridgeShellApiClient(),
        _runtimeSupervisor = runtimeSupervisor ?? RuntimeSupervisor(),
+       _tailscaleCliChecker = tailscaleCliChecker ?? LinuxTailscaleCliChecker(),
        _degradedPollInterval = degradedPollInterval,
        _healthyPollInterval = healthyPollInterval;
 
   final ShellBridgeClient _bridgeClient;
   final RuntimeSupervisor _runtimeSupervisor;
+  final TailscaleCliChecker _tailscaleCliChecker;
   final Duration _degradedPollInterval;
   final Duration _healthyPollInterval;
 
@@ -42,6 +45,35 @@ class ShellController extends ChangeNotifier {
     _emit(_state.copyWith(trayAvailable: available, trayStatusDetail: detail));
   }
 
+  Future<void> checkTailscaleAvailability() async {
+    if (_state.isCheckingTailscale || _disposed) {
+      return;
+    }
+
+    _emit(_state.copyWith(isCheckingTailscale: true));
+    try {
+      final tailscale = await _readTailscalePresentation();
+      _emit(
+        _state.copyWith(
+          tailscale: tailscale,
+          runtimeDetail: tailscale.detail,
+          clearErrorMessage: true,
+        ),
+      );
+
+      if (tailscale.isInstalled && tailscale.isAuthenticated) {
+        await refreshRuntimeState();
+      } else {
+        _applyTailscaleRequiredState(
+          message: tailscale.detail,
+          tailscale: tailscale,
+        );
+      }
+    } finally {
+      _emit(_state.copyWith(isCheckingTailscale: false));
+    }
+  }
+
   Future<void> refreshRuntimeState() async {
     if (_state.isRefreshingRuntime || _disposed) {
       return;
@@ -55,11 +87,22 @@ class ShellController extends ChangeNotifier {
 
       final health = await _bridgeClient.fetchHealth();
       if (!_isHealthy(health)) {
+        final pairingMessage =
+            health.pairingRoute.message ??
+            'Private pairing route is unavailable.';
+        if (!health.pairingRoute.reachable &&
+            _looksLikeTailscaleProblem(pairingMessage)) {
+          final tailscale = await _readTailscalePresentation();
+          _applyTailscaleRequiredState(
+            message: pairingMessage,
+            tailscale: tailscale,
+          );
+          return;
+        }
         _applyDegradedState(
           health.pairingRoute.reachable
               ? health.runtime.detail
-              : health.pairingRoute.message ??
-                    'Private pairing route is unavailable.',
+              : pairingMessage,
         );
         return;
       }
@@ -224,6 +267,23 @@ class ShellController extends ChangeNotifier {
         health.runtime.state != 'degraded';
   }
 
+  bool _looksLikeTailscaleProblem(String message) {
+    final normalized = message.toLowerCase();
+    return normalized.contains('tailscale');
+  }
+
+  Future<TailscalePresentation> _readTailscalePresentation() async {
+    final status = await _tailscaleCliChecker.check();
+    return TailscalePresentation(
+      statusLabel: status.statusLabel,
+      detail: status.detail,
+      installHint: status.installHint,
+      isInstalled: status.isInstalled,
+      isAuthenticated: status.isAuthenticated,
+      binaryPath: status.binaryPath,
+    );
+  }
+
   void _applyHealthyState({
     required BridgeTrustStatusDto? trustStatus,
     required int runningThreadCount,
@@ -250,6 +310,13 @@ class ShellController extends ChangeNotifier {
         runningThreadCount: runningThreadCount,
         runtimeDetail: runtimeDetail,
         speechPanel: _speechPanelFor(speechStatus),
+        tailscale: _state.tailscale.copyWith(
+          statusLabel: 'Connected',
+          detail: 'Tailscale route is available for private pairing.',
+          isInstalled: true,
+          isAuthenticated: true,
+          installHint: '',
+        ),
         clearErrorMessage: true,
         clearPairingSession: shellState != ShellRuntimeState.unpaired,
       ),
@@ -299,6 +366,34 @@ class ShellController extends ChangeNotifier {
         ),
         clearPairingSession: true,
         errorMessage: message,
+      ),
+    );
+  }
+
+  void _applyTailscaleRequiredState({
+    required String message,
+    required TailscalePresentation tailscale,
+  }) {
+    _trustedPhoneId = null;
+    _emit(
+      _state.copyWith(
+        shellState: ShellRuntimeState.needsTailscale,
+        bridgeRuntimeLabel: 'Tailscale required',
+        pairedDeviceLabel: tailscale.isInstalled
+            ? 'Awaiting tailnet connection'
+            : 'Tailscale not installed',
+        activeSessionLabel: 'Unavailable',
+        runningThreadCount: 0,
+        runtimeDetail: message,
+        tailscale: tailscale,
+        speechPanel: const SpeechPanelPresentation(
+          stateLabel: 'Unsupported',
+          detail:
+              'Speech transcription is not available from the Linux shell yet.',
+          isReadOnly: true,
+        ),
+        clearPairingSession: true,
+        clearErrorMessage: true,
       ),
     );
   }

@@ -5,7 +5,52 @@ enum ShellRuntimeState {
   unpaired,
   pairedIdle,
   pairedActive,
+  needsTailscale,
   degraded,
+}
+
+class TailscalePresentation {
+  const TailscalePresentation({
+    required this.statusLabel,
+    required this.detail,
+    required this.installHint,
+    required this.isInstalled,
+    required this.isAuthenticated,
+    this.binaryPath,
+  });
+
+  const TailscalePresentation.initial()
+    : statusLabel = 'Unchecked',
+      detail = 'Tailscale status has not been checked yet.',
+      installHint = 'curl -fsSL https://tailscale.com/install.sh | sh',
+      isInstalled = false,
+      isAuthenticated = false,
+      binaryPath = null;
+
+  final String statusLabel;
+  final String detail;
+  final String installHint;
+  final bool isInstalled;
+  final bool isAuthenticated;
+  final String? binaryPath;
+
+  TailscalePresentation copyWith({
+    String? statusLabel,
+    String? detail,
+    String? installHint,
+    bool? isInstalled,
+    bool? isAuthenticated,
+    String? binaryPath,
+  }) {
+    return TailscalePresentation(
+      statusLabel: statusLabel ?? this.statusLabel,
+      detail: detail ?? this.detail,
+      installHint: installHint ?? this.installHint,
+      isInstalled: isInstalled ?? this.isInstalled,
+      isAuthenticated: isAuthenticated ?? this.isAuthenticated,
+      binaryPath: binaryPath ?? this.binaryPath,
+    );
+  }
 }
 
 class SpeechPanelPresentation {
@@ -46,8 +91,10 @@ class ShellPresentationState {
     required this.isRefreshingRuntime,
     required this.isRestartingRuntime,
     required this.isRevokingTrust,
+    required this.isCheckingTailscale,
     required this.trayAvailable,
     required this.trayStatusDetail,
+    required this.tailscale,
     required this.pairingSession,
     required this.errorMessage,
   });
@@ -71,8 +118,10 @@ class ShellPresentationState {
       isRefreshingRuntime: false,
       isRestartingRuntime: false,
       isRevokingTrust: false,
+      isCheckingTailscale: false,
       trayAvailable: false,
       trayStatusDetail: 'System tray not initialized yet.',
+      tailscale: TailscalePresentation.initial(),
       pairingSession: null,
       errorMessage: null,
     );
@@ -90,12 +139,16 @@ class ShellPresentationState {
   final bool isRefreshingRuntime;
   final bool isRestartingRuntime;
   final bool isRevokingTrust;
+  final bool isCheckingTailscale;
   final bool trayAvailable;
   final String trayStatusDetail;
+  final TailscalePresentation tailscale;
   final PairingSessionResponseDto? pairingSession;
   final String? errorMessage;
 
   bool get shouldShowPairingQr => shellState == ShellRuntimeState.unpaired;
+  bool get requiresTailscaleSetup =>
+      shellState == ShellRuntimeState.needsTailscale;
   bool get canRevokeTrust =>
       shellState == ShellRuntimeState.pairedIdle ||
       shellState == ShellRuntimeState.pairedActive;
@@ -113,8 +166,10 @@ class ShellPresentationState {
     bool? isRefreshingRuntime,
     bool? isRestartingRuntime,
     bool? isRevokingTrust,
+    bool? isCheckingTailscale,
     bool? trayAvailable,
     String? trayStatusDetail,
+    TailscalePresentation? tailscale,
     PairingSessionResponseDto? pairingSession,
     bool clearPairingSession = false,
     String? errorMessage,
@@ -134,8 +189,10 @@ class ShellPresentationState {
       isRefreshingRuntime: isRefreshingRuntime ?? this.isRefreshingRuntime,
       isRestartingRuntime: isRestartingRuntime ?? this.isRestartingRuntime,
       isRevokingTrust: isRevokingTrust ?? this.isRevokingTrust,
+      isCheckingTailscale: isCheckingTailscale ?? this.isCheckingTailscale,
       trayAvailable: trayAvailable ?? this.trayAvailable,
       trayStatusDetail: trayStatusDetail ?? this.trayStatusDetail,
+      tailscale: tailscale ?? this.tailscale,
       pairingSession: clearPairingSession
           ? null
           : pairingSession ?? this.pairingSession,

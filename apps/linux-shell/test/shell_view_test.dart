@@ -16,8 +16,8 @@ void main() {
       _state(shellState: ShellRuntimeState.starting),
     );
 
-    expect(find.text('Starting Up'), findsOneWidget);
-    expect(find.text('Starting'), findsWidgets);
+    expect(find.text('Starting Bridge'), findsOneWidget);
+    expect(find.text('Codex Bridge'), findsOneWidget);
   });
 
   testWidgets('renders unpaired state with qr payload', (tester) async {
@@ -44,10 +44,7 @@ void main() {
     );
 
     expect(find.byKey(const Key('pairing-qr')), findsOneWidget);
-    expect(
-      find.text('Scan this QR from the mobile app to trust the Linux host.'),
-      findsOneWidget,
-    );
+    expect(find.text('Pair Device'), findsOneWidget);
   });
 
   testWidgets('renders paired idle state', (tester) async {
@@ -56,8 +53,8 @@ void main() {
       _state(shellState: ShellRuntimeState.pairedIdle),
     );
 
-    expect(find.text('Host Paired'), findsOneWidget);
-    expect(find.text('Paired (Idle)'), findsWidgets);
+    expect(find.text('Device Paired'), findsOneWidget);
+    expect(find.text('Connected'), findsWidgets);
   });
 
   testWidgets('renders paired active state', (tester) async {
@@ -66,8 +63,8 @@ void main() {
       _state(shellState: ShellRuntimeState.pairedActive, runningThreadCount: 3),
     );
 
-    expect(find.text('Paired (Active)'), findsWidgets);
-    expect(find.text('3'), findsOneWidget);
+    expect(find.text('Connected'), findsWidgets);
+    expect(find.text('3 sessions'), findsOneWidget);
   });
 
   testWidgets('renders degraded state', (tester) async {
@@ -77,20 +74,31 @@ void main() {
     );
 
     expect(find.text('Bridge Degraded'), findsOneWidget);
-    expect(find.text('Degraded'), findsWidgets);
+    expect(find.text('Connection Details'), findsOneWidget);
   });
 
-  testWidgets('renders speech unsupported as read only', (tester) async {
-    await _pumpShellView(tester, _state());
-
-    expect(find.text('Linux Speech'), findsOneWidget);
-    expect(find.text('READ ONLY'), findsOneWidget);
-    expect(
-      find.text(
-        'Speech transcription is not available from the Linux shell yet.',
+  testWidgets('renders tailscale required prompt', (tester) async {
+    await _pumpShellView(
+      tester,
+      _state(
+        shellState: ShellRuntimeState.needsTailscale,
+        tailscale: const TailscalePresentation(
+          statusLabel: 'Not Installed',
+          detail:
+              'Tailscale CLI was not found. Install it and then run `sudo tailscale up` to enable the private pairing route.',
+          installHint: 'curl -fsSL https://tailscale.com/install.sh | sh',
+          isInstalled: false,
+          isAuthenticated: false,
+        ),
       ),
+    );
+
+    expect(find.text('Tailscale Required'), findsWidgets);
+    expect(
+      find.text('curl -fsSL https://tailscale.com/install.sh | sh'),
       findsOneWidget,
     );
+    expect(find.text('Check Again'), findsWidgets);
   });
 }
 
@@ -98,6 +106,7 @@ Widget _wrap(ShellPresentationState state) {
   return MaterialApp(
     home: ShellView(
       state: state,
+      onCheckTailscale: () async {},
       onRefreshQr: () async {},
       onRestartRuntime: () async {},
       onRevokeTrust: () async {},
@@ -120,19 +129,41 @@ ShellPresentationState _state({
   ShellRuntimeState shellState = ShellRuntimeState.unpaired,
   int runningThreadCount = 0,
   PairingSessionResponseDto? pairingSession,
+  TailscalePresentation? tailscale,
 }) {
   return ShellPresentationState.initial().copyWith(
     shellState: shellState,
     supervisorStatusLabel: 'Managed locally',
     bridgeRuntimeLabel: 'managed (auto)',
-    pairedDeviceLabel: shellState == ShellRuntimeState.unpaired
-        ? 'Not paired'
-        : 'Pixel 9 (phone-1)',
-    activeSessionLabel: shellState == ShellRuntimeState.unpaired
-        ? 'No active session'
-        : 'session-1',
+    pairedDeviceLabel: switch (shellState) {
+      ShellRuntimeState.unpaired => 'Not paired',
+      ShellRuntimeState.needsTailscale => 'Tailscale not installed',
+      ShellRuntimeState.degraded => 'Unavailable',
+      _ => 'Pixel 9 (phone-1)',
+    },
+    activeSessionLabel: switch (shellState) {
+      ShellRuntimeState.unpaired => 'No active session',
+      ShellRuntimeState.needsTailscale => 'Unavailable',
+      ShellRuntimeState.degraded => 'Unavailable',
+      _ => 'session-1',
+    },
     runningThreadCount: runningThreadCount,
-    runtimeDetail: 'Bridge runtime healthy.',
+    runtimeDetail: switch (shellState) {
+      ShellRuntimeState.starting => 'Preparing bridge runtime.',
+      ShellRuntimeState.degraded => 'Bridge unreachable.',
+      ShellRuntimeState.needsTailscale =>
+        'Private pairing route is unavailable until Tailscale is installed.',
+      _ => 'Bridge runtime healthy.',
+    },
+    tailscale:
+        tailscale ??
+        const TailscalePresentation(
+          statusLabel: 'Connected',
+          detail: 'Tailscale route is available for private pairing.',
+          installHint: '',
+          isInstalled: true,
+          isAuthenticated: true,
+        ),
     trayAvailable: true,
     trayStatusDetail: 'Tray integration is active.',
     pairingSession: pairingSession,

@@ -8,7 +8,14 @@ void main() {
   runApp(const CodexLinuxShellPreviewApp());
 }
 
-enum PreviewScenario { starting, unpaired, pairedIdle, pairedActive, degraded }
+enum PreviewScenario {
+  starting,
+  unpaired,
+  pairedIdle,
+  pairedActive,
+  needsTailscale,
+  degraded,
+}
 
 class CodexLinuxShellPreviewApp extends StatelessWidget {
   const CodexLinuxShellPreviewApp({super.key});
@@ -40,6 +47,7 @@ class _PreviewHomeState extends State<_PreviewHome> {
       children: [
         ShellView(
           state: _stateFor(_scenario),
+          onCheckTailscale: () async {},
           onRefreshQr: () async {},
           onRestartRuntime: () async {},
           onRevokeTrust: () async {},
@@ -136,6 +144,7 @@ String _scenarioLabel(PreviewScenario scenario) {
     PreviewScenario.unpaired => 'Unpaired',
     PreviewScenario.pairedIdle => 'Paired (Idle)',
     PreviewScenario.pairedActive => 'Paired (Active)',
+    PreviewScenario.needsTailscale => 'Needs Tailscale',
     PreviewScenario.degraded => 'Degraded',
   };
 }
@@ -146,6 +155,7 @@ ShellPresentationState _stateFor(PreviewScenario scenario) {
     PreviewScenario.unpaired => ShellRuntimeState.unpaired,
     PreviewScenario.pairedIdle => ShellRuntimeState.pairedIdle,
     PreviewScenario.pairedActive => ShellRuntimeState.pairedActive,
+    PreviewScenario.needsTailscale => ShellRuntimeState.needsTailscale,
     PreviewScenario.degraded => ShellRuntimeState.degraded,
   };
 
@@ -156,16 +166,19 @@ ShellPresentationState _stateFor(PreviewScenario scenario) {
       PreviewScenario.unpaired => 'Managed locally',
       PreviewScenario.pairedIdle => 'Attached to local bridge',
       PreviewScenario.pairedActive => 'Managed locally',
+      PreviewScenario.needsTailscale => 'Waiting for pairing route',
       PreviewScenario.degraded => 'Bridge unreachable',
     },
     bridgeRuntimeLabel: switch (scenario) {
       PreviewScenario.starting => 'Starting',
+      PreviewScenario.needsTailscale => 'Tailscale required',
       PreviewScenario.degraded => 'Unavailable',
       _ => 'managed (auto)',
     },
     pairedDeviceLabel: switch (scenario) {
       PreviewScenario.unpaired => 'Not paired',
       PreviewScenario.starting => 'Awaiting handshake',
+      PreviewScenario.needsTailscale => 'Tailscale not installed',
       _ => 'Pixel 9 Pro (phone-1)',
     },
     activeSessionLabel: switch (scenario) {
@@ -186,9 +199,27 @@ ShellPresentationState _stateFor(PreviewScenario scenario) {
         'Bridge runtime healthy. Host paired and ready for mobile control.',
       PreviewScenario.pairedActive =>
         'Bridge runtime healthy. A paired phone currently has an active session.',
+      PreviewScenario.needsTailscale =>
+        'Private pairing route is unavailable until Tailscale is installed and connected.',
       PreviewScenario.degraded =>
         'Bridge supervision is retrying because the local runtime is unavailable.',
     },
+    tailscale: scenario == PreviewScenario.needsTailscale
+        ? const TailscalePresentation(
+            statusLabel: 'Not Installed',
+            detail:
+                'Tailscale CLI was not found. Install it and then run `sudo tailscale up` to enable the private pairing route.',
+            installHint: 'curl -fsSL https://tailscale.com/install.sh | sh',
+            isInstalled: false,
+            isAuthenticated: false,
+          )
+        : const TailscalePresentation(
+            statusLabel: 'Connected',
+            detail: 'Tailscale route is available for private pairing.',
+            installHint: '',
+            isInstalled: true,
+            isAuthenticated: true,
+          ),
     trayAvailable: true,
     trayStatusDetail:
         'Preview tray detail only. No real tray integration here.',
