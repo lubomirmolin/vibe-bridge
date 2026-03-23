@@ -104,6 +104,28 @@ struct PairingEntryView: View {
             }
             .padding(16)
             .background(Color(NSColor.windowBackgroundColor))
+
+            Divider()
+
+            HStack(spacing: 12) {
+                Spacer()
+
+                Button {
+                    NSApplication.shared.terminate(nil)
+                } label: {
+                    Text("Quit")
+                }
+
+                Button(role: .destructive) {
+                    viewModel.stopBridgeExplicitly()
+                    NSApplication.shared.terminate(nil)
+                } label: {
+                    Text("Quit + Stop Bridge")
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 12)
+            .background(Color(NSColor.windowBackgroundColor))
         }
         .frame(
             minWidth: PairingEntryLayout.panelMinWidth,

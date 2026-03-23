@@ -266,7 +266,7 @@ void main() {
       await secureStore.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
 {
   "bridge_id": "bridge-a1",
-  "bridge_name": "Codex Mobile Companion",
+  "bridge_name": "Operator Workstation",
   "bridge_api_base_url": "https://bridge.ts.net",
   "session_id": "session-reconnect",
   "paired_at_epoch_seconds": 100
@@ -322,7 +322,7 @@ void main() {
       await secureStore.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
 {
   "bridge_id": "bridge-a1",
-  "bridge_name": "Codex Mobile Companion",
+  "bridge_name": "Operator Workstation",
   "bridge_api_base_url": "https://bridge.ts.net",
   "session_id": "session-reconnect",
   "paired_at_epoch_seconds": 100
@@ -766,7 +766,7 @@ void main() {
       await secureStore.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
 {
   "bridge_id": "bridge-a1",
-  "bridge_name": "Codex Mobile Companion",
+  "bridge_name": "Operator Workstation",
   "bridge_api_base_url": "https://bridge.ts.net",
   "session_id": "session-reconnect",
   "paired_at_epoch_seconds": 100
@@ -899,7 +899,7 @@ void main() {
       await tester.pump(const Duration(seconds: 3));
       await tester.pumpAndSettle();
 
-      expect(find.text('Paired with\nMac'), findsOneWidget);
+      expect(find.text('Paired with\nOperator Workstation'), findsOneWidget);
       expect(pairingBridgeApi.handshakeCalls, greaterThanOrEqualTo(2));
 
       await tester.tap(find.text('Open sessions'));
@@ -1158,7 +1158,7 @@ String _validPairingPayloadJson({
 {
   "contract_version": "2026-03-17",
   "bridge_id": "$bridgeId",
-  "bridge_name": "Codex Mobile Companion",
+  "bridge_name": "Operator Workstation",
   "bridge_api_base_url": "https://bridge.ts.net",
   "session_id": "$sessionId",
   "pairing_token": "ptk-abc",
@@ -1335,11 +1335,13 @@ ApprovalRecordDto _pendingApprovalRecord({required String threadId}) {
 
 class FakePairingBridgeApi implements PairingBridgeApi {
   FakePairingBridgeApi({
+    this.bridgeName = 'Operator Workstation',
     this.handshakeResult = const PairingHandshakeResult.trusted(),
     List<PairingHandshakeResult>? handshakeScript,
     this.revokeResult = const PairingRevokeResult.success(),
   }) : _handshakeScript = handshakeScript;
 
+  final String bridgeName;
   final PairingHandshakeResult handshakeResult;
   final List<PairingHandshakeResult>? _handshakeScript;
   final PairingRevokeResult revokeResult;
@@ -1354,7 +1356,7 @@ class FakePairingBridgeApi implements PairingBridgeApi {
     return PairingFinalizeResult.success(
       sessionToken: 'session-token',
       bridgeId: payload.bridgeId,
-      bridgeName: payload.bridgeName,
+      bridgeName: bridgeName,
       bridgeApiBaseUrl: payload.bridgeApiBaseUrl,
     );
   }

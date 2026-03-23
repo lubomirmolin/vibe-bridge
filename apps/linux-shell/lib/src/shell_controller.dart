@@ -44,6 +44,11 @@ class ShellController extends ChangeNotifier {
     await _runtimeSupervisor.shutdownBridgeIfManaged();
   }
 
+  Future<void> stopBridgeExplicitly() async {
+    _disposed = true;
+    await _runtimeSupervisor.stopManagedBridge();
+  }
+
   void setTrayAvailability({required bool available, required String detail}) {
     _emit(_state.copyWith(trayAvailable: available, trayStatusDetail: detail));
   }

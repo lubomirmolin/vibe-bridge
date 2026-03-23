@@ -22,6 +22,7 @@ void main() {
         processLauncher: processLauncher,
         binaryResolver: binaryResolver,
         stateDirectoryProvider: stateDirectoryProvider,
+        portProcessInspector: FakePortProcessInspector(),
         processEnvironment: const {'HOME': '/tmp/test-home'},
       );
     });
@@ -54,6 +55,10 @@ void main() {
           '/usr/local/bin/codex',
         ]),
       );
+      expect(
+        processLauncher.calls.single.environment['PATH'],
+        '/usr/local/bin',
+      );
     });
 
     test('attaches cleanly when bridge is already healthy', () async {
@@ -81,7 +86,18 @@ void main() {
       expect(processLauncher.calls, isEmpty);
     });
 
-    test('shutdown stops only managed child processes', () async {
+    test('stopManagedBridge stops managed child processes', () async {
+      healthProbe.reachable = false;
+      final process = FakeManagedProcessHandle(pid: 7, running: true);
+      processLauncher.nextProcess = process;
+      await supervisor.prepareBridgeForConnection();
+
+      await supervisor.stopManagedBridge();
+
+      expect(process.killSignals, contains(ProcessSignal.sigterm));
+    });
+
+    test('shutdownBridgeIfManaged detaches without killing', () async {
       healthProbe.reachable = false;
       final process = FakeManagedProcessHandle(pid: 7, running: true);
       processLauncher.nextProcess = process;
@@ -89,7 +105,7 @@ void main() {
 
       await supervisor.shutdownBridgeIfManaged();
 
-      expect(process.killSignals, contains(ProcessSignal.sigterm));
+      expect(process.killSignals, isEmpty);
     });
 
     test('shutdown after external attach does not kill anything', () async {
@@ -152,6 +168,36 @@ void main() {
       expect(status.binaryPath, binary.path);
       expect(status.sourceLabel, 'Saved Path');
     });
+
+    test(
+      'codex checker validates nvm wrapper binaries via adjusted path',
+      () async {
+        final home = Directory.systemTemp.createTempSync('linux-shell-home-');
+        addTearDown(() {
+          if (home.existsSync()) {
+            home.deleteSync(recursive: true);
+          }
+        });
+        final binDir = Directory('${home.path}/.nvm/versions/node/v24.14.0/bin')
+          ..createSync(recursive: true);
+        final nodeBinary = File('${binDir.path}/node')
+          ..writeAsStringSync('#!/bin/sh\nexit 0\n');
+        final codexBinary = File('${binDir.path}/codex')
+          ..writeAsStringSync('#!/usr/bin/env node\n');
+        Process.runSync('chmod', <String>['755', nodeBinary.path]);
+        Process.runSync('chmod', <String>['755', codexBinary.path]);
+
+        final checker = LinuxCodexCliChecker(
+          environment: <String, String>{'HOME': home.path, 'PATH': '/usr/bin'},
+        );
+
+        final status = await checker.check();
+
+        expect(status.isReady, isTrue);
+        expect(status.binaryPath, codexBinary.path);
+        expect(status.sourceLabel, 'NVM');
+      },
+    );
   });
 }
 
@@ -257,4 +303,11 @@ class _FixedStateDirectoryProvider implements StateDirectoryProvider {
 
   @override
   Directory resolveStateDirectory() => directory;
+}
+
+class FakePortProcessInspector implements PortProcessInspector {
+  BridgePortProcess? nextListener;
+
+  @override
+  BridgePortProcess? listenerOnPort(int port) => nextListener;
 }

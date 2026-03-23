@@ -302,7 +302,7 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
         fit: StackFit.expand,
         children: [
           (widget.enableAnimatedBackground ?? widget.enableCameraPreview)
-              ? const AnimatedBridgeBackground()
+              ? const AnimatedBridgeBackground(sceneScale: 1.08)
               : const ColoredBox(color: AppTheme.background),
 
           SafeArea(
@@ -605,18 +605,28 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
         ],
       );
     } else if (displayStep == PairingStep.paired) {
+      final pairedTitleStyle = Theme.of(context).textTheme.displayLarge
+          ?.copyWith(fontWeight: FontWeight.w500, height: 1.0);
+      final pairedBridgeNameStyle = Theme.of(context).textTheme.headlineSmall
+          ?.copyWith(fontWeight: FontWeight.w500, height: 1.05);
+
       return Column(
         key: const ValueKey('title-paired'),
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Paired with\nMac',
-            style: Theme.of(context).textTheme.displayLarge?.copyWith(
-              fontWeight: FontWeight.w500,
-              height: 1.1,
+          Text.rich(
+            TextSpan(
+              text: 'Paired with\n',
+              style: pairedTitleStyle,
+              children: [
+                TextSpan(
+                  text: pairingState.trustedBridge?.bridgeName ?? '',
+                  style: pairedBridgeNameStyle,
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           const Text(
             'A trusted connection is established.',
             style: TextStyle(color: AppTheme.textMuted, fontSize: 14),

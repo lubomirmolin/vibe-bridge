@@ -144,6 +144,20 @@ pub fn read_git_state(workspace: &str, thread_id: &str) -> Result<ResolvedGitSta
     })
 }
 
+pub fn read_git_state_for_status(
+    workspace: &str,
+    thread_id: &str,
+) -> Result<ResolvedGitState, String> {
+    match read_git_state(workspace, thread_id) {
+        Ok(state) => Ok(state),
+        Err(error) if is_not_git_repository_error(&error) => {
+            let workspace = normalize_workspace(workspace)?;
+            Ok(non_repository_git_state(workspace, thread_id))
+        }
+        Err(error) => Err(error),
+    }
+}
+
 pub fn execute_branch_switch(
     workspace: &str,
     thread_id: &str,
@@ -388,6 +402,44 @@ fn parse_repository_name_from_remote(remote_url: &str) -> Option<String> {
     (!repository.is_empty()).then(|| repository.to_string())
 }
 
+fn non_repository_git_state(workspace: &Path, thread_id: &str) -> ResolvedGitState {
+    let repository_context = RepositoryContextDto {
+        workspace: workspace.to_string_lossy().to_string(),
+        repository: "unknown-repository".to_string(),
+        branch: "unknown".to_string(),
+        remote: "local".to_string(),
+    };
+    let status = crate::thread_api::GitStatusDto {
+        dirty: false,
+        ahead_by: 0,
+        behind_by: 0,
+    };
+
+    ResolvedGitState {
+        snapshot_status: GitStatusDto {
+            workspace: repository_context.workspace.clone(),
+            repository: repository_context.repository.clone(),
+            branch: repository_context.branch.clone(),
+            remote: None,
+            dirty: false,
+            ahead_by: 0,
+            behind_by: 0,
+        },
+        response: GitStatusResponse {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread_id: thread_id.to_string(),
+            repository: repository_context,
+            status,
+        },
+        branch: "unknown".to_string(),
+        remote_name: None,
+    }
+}
+
+fn is_not_git_repository_error(error: &str) -> bool {
+    error.contains("not a git repository")
+}
+
 fn run_git<I, S>(workspace: &Path, args: I) -> Result<String, String>
 where
     I: IntoIterator<Item = S>,
@@ -432,7 +484,7 @@ mod tests {
 
     use shared_contracts::ThreadStatus;
 
-    use super::{execute_branch_switch, read_git_state};
+    use super::{execute_branch_switch, read_git_state, read_git_state_for_status};
 
     #[test]
     fn read_git_state_rejects_non_repo_workspace() {
@@ -441,6 +493,22 @@ mod tests {
             .expect_err("non-repo workspace should fail");
 
         assert!(error.contains("not a git repository"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn read_git_state_for_status_returns_placeholder_for_non_repo_workspace() {
+        let dir = unique_temp_dir("non-repo-status");
+        let state = read_git_state_for_status(dir.to_string_lossy().as_ref(), "thread-1")
+            .expect("non-repo workspace should degrade into unavailable git status");
+
+        assert_eq!(state.response.repository.workspace, dir.to_string_lossy());
+        assert_eq!(state.response.repository.repository, "unknown-repository");
+        assert_eq!(state.response.repository.branch, "unknown");
+        assert_eq!(state.response.repository.remote, "local");
+        assert!(!state.response.status.dirty);
+        assert_eq!(state.response.status.ahead_by, 0);
+        assert_eq!(state.response.status.behind_by, 0);
         let _ = fs::remove_dir_all(dir);
     }
 

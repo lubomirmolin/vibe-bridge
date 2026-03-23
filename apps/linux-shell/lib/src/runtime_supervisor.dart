@@ -261,6 +261,100 @@ class XdgStateDirectoryProvider implements StateDirectoryProvider {
   }
 }
 
+class BridgePortProcess {
+  const BridgePortProcess({
+    required this.pid,
+    required this.parentPid,
+    required this.command,
+  });
+
+  final int pid;
+  final int? parentPid;
+  final String command;
+
+  bool isManagedBridge({required String bridgeBinaryPath}) {
+    return command.startsWith(bridgeBinaryPath);
+  }
+
+  bool isManagedBridgeOwnedBy({
+    required String bridgeBinaryPath,
+    required int ownerPid,
+  }) {
+    return isManagedBridge(bridgeBinaryPath: bridgeBinaryPath) &&
+        parentPid == ownerPid;
+  }
+}
+
+abstract interface class PortProcessInspector {
+  BridgePortProcess? listenerOnPort(int port);
+}
+
+class LsofPortProcessInspector implements PortProcessInspector {
+  const LsofPortProcessInspector();
+
+  @override
+  BridgePortProcess? listenerOnPort(int port) {
+    final pidString = _runCommand('/usr/sbin/lsof', [
+      '-t',
+      '-nP',
+      '-iTCP:$port',
+      '-sTCP:LISTEN',
+    ]);
+    if (pidString == null) {
+      return null;
+    }
+
+    final lines = pidString.split('\n');
+    final trimmedPid = lines.first.trim();
+    final pid = int.tryParse(trimmedPid);
+    if (pid == null) {
+      return null;
+    }
+
+    final command = _runCommand('/bin/ps', [
+      '-p',
+      trimmedPid,
+      '-o',
+      'command=',
+    ]);
+    if (command == null || command.trim().isEmpty) {
+      return null;
+    }
+
+    final parentPidStr = _runCommand('/bin/ps', [
+      '-p',
+      trimmedPid,
+      '-o',
+      'ppid=',
+    ]);
+    final parentPid = parentPidStr == null
+        ? null
+        : int.tryParse(parentPidStr.trim());
+
+    return BridgePortProcess(
+      pid: pid,
+      parentPid: parentPid,
+      command: command.trim(),
+    );
+  }
+
+  String? _runCommand(String executable, List<String> arguments) {
+    try {
+      final result = Process.runSync(executable, arguments);
+      if (result.exitCode != 0) {
+        return null;
+      }
+      final output = result.stdout as String?;
+      if (output == null || output.isEmpty) {
+        return null;
+      }
+      return output;
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
 class LinuxRuntimeBinaryResolver implements RuntimeBinaryResolver {
   LinuxRuntimeBinaryResolver({
     Map<String, String>? environment,
@@ -604,10 +698,12 @@ class LinuxCodexCliChecker implements CodexCliChecker {
        _binaryResolver = LinuxRuntimeBinaryResolver(
          environment: environment,
          settingsStore: settingsStore,
-       );
+       ),
+       _environment = environment ?? Platform.environment;
 
   final ShellSettingsStore _settingsStore;
   final LinuxRuntimeBinaryResolver _binaryResolver;
+  final Map<String, String> _environment;
 
   @override
   Future<CodexCliStatus> check() async {
@@ -619,6 +715,20 @@ class LinuxCodexCliChecker implements CodexCliChecker {
         detail:
             'Codex CLI is not available to the Linux shell yet. Choose the `codex` binary so the bridge can start the local runtime for threads and approvals.',
         nextStep: 'Choose the codex binary',
+      );
+    }
+
+    final launchResult = await _probeCodexLaunch(match.path);
+    if (!launchResult.isReady) {
+      return CodexCliStatus(
+        isReady: false,
+        statusLabel: 'Codex Needs Runtime Support',
+        detail:
+            'Codex CLI was found at ${match.path}, but it could not start yet. ${launchResult.detail}',
+        nextStep:
+            'Use a system install, or keep this binary selected and let the shell relaunch it.',
+        binaryPath: match.path,
+        sourceLabel: match.sourceLabel,
       );
     }
 
@@ -650,6 +760,58 @@ class LinuxCodexCliChecker implements CodexCliChecker {
     await _settingsStore.savePreferredCodexBinaryPath(file.path);
     return check();
   }
+
+  Future<({bool isReady, String detail})> _probeCodexLaunch(String path) async {
+    try {
+      final result = await Process.run(
+        path,
+        const <String>['--version'],
+        environment: buildCodexProcessEnvironment(
+          _environment,
+          codexBinaryPath: path,
+        ),
+      );
+      if (result.exitCode == 0) {
+        return (isReady: true, detail: '');
+      }
+      final stderr = (result.stderr as String?)?.trim();
+      final stdout = (result.stdout as String?)?.trim();
+      return (
+        isReady: false,
+        detail: stderr?.isNotEmpty == true
+            ? stderr!
+            : stdout?.isNotEmpty == true
+            ? stdout!
+            : 'The process exited with code ${result.exitCode}.',
+      );
+    } catch (error) {
+      return (isReady: false, detail: '$error');
+    }
+  }
+}
+
+Map<String, String> buildCodexProcessEnvironment(
+  Map<String, String> baseEnvironment, {
+  required String? codexBinaryPath,
+}) {
+  final environment = Map<String, String>.from(baseEnvironment);
+  if (codexBinaryPath == null || codexBinaryPath.trim().isEmpty) {
+    return environment;
+  }
+
+  final codexDir = File(codexBinaryPath).parent.path;
+  final existingPath = environment['PATH'] ?? '';
+  final segments = existingPath
+      .split(':')
+      .where((segment) => segment.trim().isNotEmpty)
+      .toList(growable: true);
+
+  if (!segments.contains(codexDir)) {
+    segments.insert(0, codexDir);
+  }
+
+  environment['PATH'] = segments.join(':');
+  return environment;
 }
 
 class RuntimeSupervisor {
@@ -658,6 +820,7 @@ class RuntimeSupervisor {
     ProcessLauncher? processLauncher,
     RuntimeBinaryResolver? binaryResolver,
     StateDirectoryProvider? stateDirectoryProvider,
+    PortProcessInspector? portProcessInspector,
     Map<String, String>? processEnvironment,
     this.bridgeHost = '127.0.0.1',
     this.bridgePort = 3110,
@@ -667,12 +830,15 @@ class RuntimeSupervisor {
        _binaryResolver = binaryResolver ?? LinuxRuntimeBinaryResolver(),
        _stateDirectoryProvider =
            stateDirectoryProvider ?? XdgStateDirectoryProvider(),
+       _portProcessInspector =
+           portProcessInspector ?? const LsofPortProcessInspector(),
        _processEnvironment = processEnvironment ?? Platform.environment;
 
   final BridgeHealthProbe _healthProbe;
   final ProcessLauncher _processLauncher;
   final RuntimeBinaryResolver _binaryResolver;
   final StateDirectoryProvider _stateDirectoryProvider;
+  final PortProcessInspector _portProcessInspector;
   final Map<String, String> _processEnvironment;
   final String bridgeHost;
   final int bridgePort;
@@ -702,6 +868,31 @@ class RuntimeSupervisor {
 
       if (managedProcess != null && !managedProcess.isRunning) {
         _managedProcess = null;
+      }
+
+      // Check if a bridge process we started is still running (detected via lsof).
+      final bridgeBinaryPath = _tryResolveBridgeBinaryPath();
+      if (bridgeBinaryPath != null) {
+        final listener = _portProcessInspector.listenerOnPort(bridgePort);
+        if (listener != null &&
+            listener.isManagedBridgeOwnedBy(
+              bridgeBinaryPath: bridgeBinaryPath,
+              ownerPid: pid,
+            )) {
+          return RuntimeLaunchSnapshot(
+            statusLabel: 'Managed locally',
+            detail:
+                'Linux shell found an existing bridge helper (pid ${listener.pid}).',
+            isLaunching: false,
+          );
+        }
+
+        // A matching bridge binary is running but not owned by us — kill and restart.
+        if (listener != null &&
+            listener.isManagedBridge(bridgeBinaryPath: bridgeBinaryPath)) {
+          _killProcess(listener.pid);
+          return _startBridgeProcess();
+        }
       }
 
       return RuntimeLaunchSnapshot(
@@ -741,17 +932,32 @@ class RuntimeSupervisor {
       port: bridgePort,
     );
     if (_managedProcess == null && reachable) {
-      throw const RuntimeLaunchFailedException(
-        'linux shell cannot restart the bridge because it is attached to an external process '
-        'on 127.0.0.1:3110',
-      );
+      final bridgeBinaryPath = _tryResolveBridgeBinaryPath();
+      final listener = bridgeBinaryPath != null
+          ? _portProcessInspector.listenerOnPort(bridgePort)
+          : null;
+
+      if (listener != null &&
+          bridgeBinaryPath != null &&
+          listener.isManagedBridge(bridgeBinaryPath: bridgeBinaryPath)) {
+        _killProcess(listener.pid);
+      } else {
+        throw const RuntimeLaunchFailedException(
+          'linux shell cannot restart the bridge because it is attached to an external process '
+          'on 127.0.0.1:3110',
+        );
+      }
     }
 
-    await shutdownBridgeIfManaged();
+    await stopManagedBridge();
     return _startBridgeProcess();
   }
 
   Future<void> shutdownBridgeIfManaged() async {
+    _managedProcess = null;
+  }
+
+  Future<void> stopManagedBridge() async {
     final managedProcess = _managedProcess;
     if (managedProcess == null) {
       return;
@@ -798,7 +1004,10 @@ class RuntimeSupervisor {
     final process = await _processLauncher.start(
       executable: bridgeBinaryPath,
       arguments: arguments,
-      environment: Map<String, String>.from(_processEnvironment),
+      environment: buildCodexProcessEnvironment(
+        _processEnvironment,
+        codexBinaryPath: codexBinaryPath,
+      ),
       workingDirectory: stateDirectory.path,
     );
 
@@ -838,5 +1047,21 @@ class RuntimeSupervisor {
         debugPrint('bridge-server $entry');
       }).asFuture<void>(),
     );
+  }
+
+  String? _tryResolveBridgeBinaryPath() {
+    try {
+      return _binaryResolver.resolveBridgeBinaryPath();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _killProcess(int processPid) {
+    try {
+      Process.runSync('kill', ['-TERM', '$processPid']);
+    } catch (_) {
+      // Ignore — the process may have already exited.
+    }
   }
 }

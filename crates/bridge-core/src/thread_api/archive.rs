@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -589,21 +590,32 @@ pub(super) fn load_thread_snapshot_from_codex_archive_for_ids(
 ) -> Result<ThreadSnapshot, String> {
     let session_index_path = codex_home.join("session_index.jsonl");
     let sessions_root = codex_home.join("sessions");
-    let raw_index = fs::read_to_string(&session_index_path).map_err(|error| {
-        format!(
-            "failed to read session index at {}: {error}",
-            session_index_path.display()
-        )
-    })?;
+    let raw_index = match fs::read_to_string(&session_index_path) {
+        Ok(raw_index) => Some(raw_index),
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(format!(
+                "failed to read session index at {}: {error}",
+                session_index_path.display()
+            ));
+        }
+    };
 
     let mut entries = raw_index
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| {
-            serde_json::from_str::<SessionIndexEntry>(line)
-                .map_err(|error| format!("failed to parse session index entry as JSON: {error}"))
+        .as_deref()
+        .map(|raw_index| {
+            raw_index
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| {
+                    serde_json::from_str::<SessionIndexEntry>(line).map_err(|error| {
+                        format!("failed to parse session index entry as JSON: {error}")
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .transpose()?
+        .unwrap_or_default();
 
     entries.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
     if let Some(requested_ids) = requested_ids {
@@ -629,6 +641,10 @@ pub(super) fn load_thread_snapshot_from_codex_archive_for_ids(
             entries.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
         }
     } else {
+        if entries.is_empty() {
+            entries = discover_all_session_entries(&sessions_root)?;
+            entries.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        }
         entries.truncate(CodexRpcClient::MAX_THREADS_TO_FETCH);
     }
 
@@ -653,6 +669,18 @@ pub(super) fn load_thread_snapshot_from_codex_archive_for_ids(
     Ok((thread_records, timeline_by_thread_id))
 }
 
+fn discover_all_session_entries(sessions_root: &Path) -> Result<Vec<SessionIndexEntry>, String> {
+    let mut discovered_paths = Vec::new();
+    visit_all_session_paths(sessions_root, &mut discovered_paths)?;
+
+    let mut entries = discovered_paths
+        .into_iter()
+        .filter_map(|path| synthetic_session_index_entry_for_archive(&path))
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    Ok(entries)
+}
+
 fn synthetic_session_index_entry_for_path(session_id: &str, path: &Path) -> SessionIndexEntry {
     let updated_at = session_meta_timestamp_from_archive(path).unwrap_or_else(|| {
         archive_path_modified_at(path).unwrap_or_else(|| "1970-01-01T00:00:00.000Z".to_string())
@@ -662,6 +690,33 @@ fn synthetic_session_index_entry_for_path(session_id: &str, path: &Path) -> Sess
         thread_name: "Untitled thread".to_string(),
         updated_at,
     }
+}
+
+fn synthetic_session_index_entry_for_archive(path: &Path) -> Option<SessionIndexEntry> {
+    let session_id = session_id_from_archive(path)?;
+    Some(synthetic_session_index_entry_for_path(&session_id, path))
+}
+
+fn session_id_from_archive(path: &Path) -> Option<String> {
+    let raw = fs::read_to_string(path).ok()?;
+    for line in raw.lines().filter(|line| !line.trim().is_empty()) {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) != Some("session_meta") {
+            continue;
+        }
+
+        if let Some(session_id) = value
+            .get("payload")
+            .and_then(|payload| payload.get("id"))
+            .and_then(Value::as_str)
+            .filter(|session_id| !session_id.trim().is_empty())
+        {
+            return Some(session_id.to_string());
+        }
+    }
+    None
 }
 
 fn session_meta_timestamp_from_archive(path: &Path) -> Option<String> {
@@ -757,6 +812,42 @@ fn visit_session_tree(
 
         if discovered.len() == requested_ids.len() {
             break;
+        }
+    }
+
+    Ok(())
+}
+
+fn visit_all_session_paths(directory: &Path, discovered: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            return Err(format!(
+                "failed to enumerate session archive at {}: {error}",
+                directory.display()
+            ));
+        }
+    };
+
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "failed to inspect session archive entry under {}: {error}",
+                directory.display()
+            )
+        })?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            visit_all_session_paths(&path, discovered)?;
+            continue;
+        }
+
+        let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if file_name.ends_with(".jsonl") {
+            discovered.push(path);
         }
     }
 

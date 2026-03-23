@@ -15,7 +15,7 @@ use crate::codex_runtime::CodexRuntimeMode;
 use crate::codex_transport::CodexJsonTransport;
 use crate::server::config::BridgeCodexConfig;
 use crate::thread_api::{
-    CodexNotificationNormalizer, CodexNotificationStream,
+    CodexNotificationNormalizer, CodexNotificationStream, ThreadApiService,
     load_archive_timeline_entries_for_session_path, load_archive_timeline_entries_for_thread,
 };
 
@@ -134,7 +134,7 @@ impl CodexGateway {
         let config = self.config.clone();
         tokio::task::spawn_blocking(move || {
             let mut transport = connect_transport(&config)?;
-            let summaries = fetch_thread_summaries(&mut transport)?;
+            let summaries = fetch_thread_summaries(&mut transport, &config)?;
             let models = fetch_model_catalog(&mut transport);
             Ok(GatewayBootstrap {
                 summaries,
@@ -514,6 +514,24 @@ fn prune_reserved_transports(reserved: &mut HashMap<String, ReservedTransport>) 
 
 fn fetch_thread_summaries(
     transport: &mut CodexJsonTransport,
+    config: &BridgeCodexConfig,
+) -> Result<Vec<ThreadSummaryDto>, String> {
+    match fetch_live_thread_summaries(transport) {
+        Ok(summaries) if !summaries.is_empty() => Ok(summaries),
+        Ok(_) => fetch_thread_summaries_from_archive(config),
+        Err(live_error) => {
+            let fallback = fetch_thread_summaries_from_archive(config)?;
+            if fallback.is_empty() {
+                Err(live_error)
+            } else {
+                Ok(fallback)
+            }
+        }
+    }
+}
+
+fn fetch_live_thread_summaries(
+    transport: &mut CodexJsonTransport,
 ) -> Result<Vec<ThreadSummaryDto>, String> {
     let mut summaries = Vec::new();
     let mut cursor: Option<String> = None;
@@ -549,6 +567,20 @@ fn fetch_thread_summaries(
     }
 
     Ok(summaries)
+}
+
+fn fetch_thread_summaries_from_archive(
+    config: &BridgeCodexConfig,
+) -> Result<Vec<ThreadSummaryDto>, String> {
+    let endpoint = match config.mode {
+        CodexRuntimeMode::Spawn => None,
+        _ => config.endpoint.as_deref(),
+    };
+    Ok(
+        ThreadApiService::from_codex_app_server(&config.command, &config.args, endpoint)?
+            .list_response()
+            .threads,
+    )
 }
 
 fn fetch_model_catalog(transport: &mut CodexJsonTransport) -> Vec<ModelOptionDto> {
@@ -1471,13 +1503,14 @@ fn extract_file_name_from_command(command: &str) -> Option<String> {
 mod tests {
     use super::{
         CodexGateway, build_turn_start_input, derive_repository_name_from_cwd,
-        normalize_codex_item_payload, parse_model_options, parse_repository_name_from_origin,
-        prefer_archive_timeline_when_rpc_lacks_tool_events,
+        fetch_thread_summaries_from_archive, normalize_codex_item_payload, parse_model_options,
+        parse_repository_name_from_origin, prefer_archive_timeline_when_rpc_lacks_tool_events,
     };
     use crate::codex_runtime::CodexRuntimeMode;
     use crate::server::config::BridgeCodexConfig;
     use serde_json::json;
     use shared_contracts::{BridgeEventKind, ThreadTimelineEntryDto};
+    use std::fs;
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
@@ -1622,6 +1655,50 @@ mod tests {
 
         assert_eq!(selected.len(), 2);
         assert_eq!(selected[1].kind, BridgeEventKind::CommandDelta);
+    }
+
+    #[test]
+    fn archive_fallback_surfaces_threads_when_live_list_is_empty() {
+        let codex_home =
+            std::env::temp_dir().join(format!("gateway-archive-fallback-{}", std::process::id()));
+        let sessions_directory = codex_home.join("sessions/2026/03/23");
+        fs::create_dir_all(&sessions_directory).expect("test sessions directory should exist");
+        fs::write(
+            sessions_directory.join("rollout-2026-03-23T18-04-18-thread-archive-no-index.jsonl"),
+            concat!(
+                r#"{"timestamp":"2026-03-23T18:04:20.876Z","type":"session_meta","payload":{"id":"thread-archive-no-index","timestamp":"2026-03-23T18:04:18.254Z","cwd":"/home/lubo/codex-mobile-companion/apps/linux-shell","source":"cli","git":{"branch":"main","repository_url":"git@github.com:openai/codex-mobile-companion.git"}}}"#,
+                "\n",
+                r#"{"timestamp":"2026-03-23T18:04:21.018Z","type":"event_msg","payload":{"type":"user_message","message":"hello"}}"#,
+                "\n"
+            ),
+        )
+        .expect("session log should be writable");
+
+        let previous_codex_home = std::env::var_os("CODEX_HOME");
+        unsafe {
+            std::env::set_var("CODEX_HOME", &codex_home);
+        }
+
+        let summaries = fetch_thread_summaries_from_archive(&BridgeCodexConfig {
+            mode: CodexRuntimeMode::Spawn,
+            endpoint: None,
+            command: "definitely-missing-codex".to_string(),
+            args: vec!["app-server".to_string()],
+        })
+        .expect("archive fallback should load thread summaries");
+
+        unsafe {
+            if let Some(previous_codex_home) = previous_codex_home {
+                std::env::set_var("CODEX_HOME", previous_codex_home);
+            } else {
+                std::env::remove_var("CODEX_HOME");
+            }
+        }
+        let _ = fs::remove_dir_all(&codex_home);
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].thread_id, "thread-archive-no-index");
+        assert_eq!(summaries[0].repository, "codex-mobile-companion");
     }
 
     #[test]

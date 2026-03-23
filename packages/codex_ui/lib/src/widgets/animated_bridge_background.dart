@@ -7,7 +7,9 @@ import 'package:flutter/services.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 
 class AnimatedBridgeBackground extends StatefulWidget {
-  const AnimatedBridgeBackground({super.key});
+  const AnimatedBridgeBackground({super.key, this.sceneScale = 1.2});
+
+  final double sceneScale;
 
   @override
   State<AnimatedBridgeBackground> createState() =>
@@ -101,14 +103,20 @@ class _AnimatedBridgeBackgroundState extends State<AnimatedBridgeBackground>
                     child: Opacity(
                       opacity: 0.4,
                       child: CustomPaint(
-                        painter: _BridgePainter(time: timeValue),
+                        painter: _BridgePainter(
+                          time: timeValue,
+                          sceneScale: widget.sceneScale,
+                        ),
                       ),
                     ),
                   ),
                   Transform.translate(
                     offset: Offset(_tiltX * 2.5, _tiltY * 2.5),
                     child: CustomPaint(
-                      painter: _ForegroundParticlesPainter(time: timeValue),
+                      painter: _ForegroundParticlesPainter(
+                        time: timeValue,
+                        sceneScale: widget.sceneScale,
+                      ),
                     ),
                   ),
                 ],
@@ -177,7 +185,9 @@ class _StarsPainter extends CustomPainter {
 
 class _BridgePainter extends CustomPainter {
   final double time;
-  _BridgePainter({required this.time});
+  final double sceneScale;
+
+  _BridgePainter({required this.time, required this.sceneScale});
 
   double _getCableY(double x) {
     if (x < 300) {
@@ -196,7 +206,7 @@ class _BridgePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     // Map the 0-1000 coordinate system from the React SVG to the physical size
     // and preserve aspect ratio by scaling and translating
-    final scale = max(size.width / 1000, size.height / 1000) * 1.2;
+    final scale = max(size.width / 1000, size.height / 1000) * sceneScale;
     final dx = (size.width - 1000 * scale) / 2;
     final dy = (size.height - 1000 * scale) / 2;
 
@@ -391,17 +401,19 @@ class _BridgePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _BridgePainter oldDelegate) {
-    return oldDelegate.time != time;
+    return oldDelegate.time != time || oldDelegate.sceneScale != sceneScale;
   }
 }
 
 class _ForegroundParticlesPainter extends CustomPainter {
   final double time;
-  _ForegroundParticlesPainter({required this.time});
+  final double sceneScale;
+
+  _ForegroundParticlesPainter({required this.time, required this.sceneScale});
 
   @override
   void paint(Canvas canvas, Size size) {
-    final scale = max(size.width / 1000, size.height / 1000) * 1.2;
+    final scale = max(size.width / 1000, size.height / 1000) * sceneScale;
     final dx = (size.width - 1000 * scale) / 2;
     final dy = (size.height - 1000 * scale) / 2;
 
@@ -438,6 +450,6 @@ class _ForegroundParticlesPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ForegroundParticlesPainter oldDelegate) {
-    return oldDelegate.time != time;
+    return oldDelegate.time != time || oldDelegate.sceneScale != sceneScale;
   }
 }

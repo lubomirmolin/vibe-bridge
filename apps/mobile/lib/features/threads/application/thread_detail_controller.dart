@@ -1326,14 +1326,21 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
         return;
       }
+      final isNonRepositoryContext = _isNonRepositoryGitStatusError(
+        error.message,
+      );
       state = state.copyWith(
         clearGitStatus: state.gitStatus == null,
         isGitStatusLoading: false,
-        gitErrorMessage: showLoading ? error.message : null,
-        clearGitErrorMessage: !showLoading,
+        gitErrorMessage: showLoading && !isNonRepositoryContext
+            ? error.message
+            : null,
+        clearGitErrorMessage: !showLoading || isNonRepositoryContext,
         clearGitMutationMessage: true,
         clearGitControlsUnavailableReason: false,
-        gitControlsUnavailableReason: error.message,
+        gitControlsUnavailableReason: isNonRepositoryContext
+            ? 'Git controls are unavailable for this thread.'
+            : error.message,
       );
     } catch (_) {
       if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
@@ -1763,4 +1770,8 @@ bool _isRepositoryContextResolvable(RepositoryContextDto context) {
   }
 
   return true;
+}
+
+bool _isNonRepositoryGitStatusError(String message) {
+  return message.toLowerCase().contains('not a git repository');
 }

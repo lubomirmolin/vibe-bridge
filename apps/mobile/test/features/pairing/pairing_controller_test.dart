@@ -63,6 +63,63 @@ void main() {
       );
     },
   );
+
+  test(
+    'trusted handshake refreshes stored bridge identity when machine name changes',
+    () async {
+      final store = InMemorySecureStore();
+      await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
+{
+  "bridge_id": "bridge-a1",
+  "bridge_name": "Codex Mobile Companion",
+  "bridge_api_base_url": "https://bridge.ts.net",
+  "session_id": "session-1",
+  "paired_at_epoch_seconds": 100
+}
+''');
+      await store.writeSecret(SecureValueKey.sessionToken, 'session-token-a1');
+      await store.writeSecret(SecureValueKey.pairingPrivateKey, 'phone-a1');
+
+      final controller = PairingController(
+        secureStore: store,
+        bridgeApi: const FakePairingBridgeApi(
+          bridgeName: 'Operator Workstation',
+          bridgeApiBaseUrl: 'https://mac.taild54ede.ts.net',
+          handshakeResult: PairingHandshakeResult.trusted(
+            bridgeId: 'bridge-a1',
+            bridgeName: 'Operator Workstation',
+            bridgeApiBaseUrl: 'https://mac.taild54ede.ts.net',
+            sessionId: 'session-1',
+          ),
+        ),
+        phoneDisplayName: 'Test Phone',
+        nowUtc: () => DateTime.utc(2026, 3, 19, 9, 0),
+      );
+      addTearDown(controller.dispose);
+
+      await _flushAsync();
+
+      expect(controller.state.step, PairingStep.paired);
+      expect(
+        controller.state.trustedBridge?.bridgeName,
+        'Operator Workstation',
+      );
+      expect(
+        controller.state.trustedBridge?.bridgeApiBaseUrl,
+        'https://mac.taild54ede.ts.net',
+      );
+
+      final storedTrust = await store.readSecret(
+        SecureValueKey.trustedBridgeIdentity,
+      );
+      final decodedTrust = jsonDecode(storedTrust!) as Map<String, dynamic>;
+      expect(decodedTrust['bridge_name'], 'Operator Workstation');
+      expect(
+        decodedTrust['bridge_api_base_url'],
+        'https://mac.taild54ede.ts.net',
+      );
+    },
+  );
 }
 
 String _compactPayload() {
@@ -81,10 +138,17 @@ class FakePairingBridgeApi implements PairingBridgeApi {
   const FakePairingBridgeApi({
     required this.bridgeName,
     required this.bridgeApiBaseUrl,
+    this.handshakeResult = const PairingHandshakeResult.trusted(
+      bridgeId: 'bridge-a1',
+      bridgeName: 'Operator Workstation',
+      bridgeApiBaseUrl: 'https://mac.taild54ede.ts.net',
+      sessionId: 'session-1',
+    ),
   });
 
   final String bridgeName;
   final String bridgeApiBaseUrl;
+  final PairingHandshakeResult handshakeResult;
 
   @override
   Future<PairingFinalizeResult> finalizeTrust({
@@ -106,7 +170,7 @@ class FakePairingBridgeApi implements PairingBridgeApi {
     required String phoneId,
     required String sessionToken,
   }) async {
-    return const PairingHandshakeResult.trusted();
+    return handshakeResult;
   }
 
   @override
@@ -116,4 +180,9 @@ class FakePairingBridgeApi implements PairingBridgeApi {
   }) async {
     return const PairingRevokeResult.success();
   }
+}
+
+Future<void> _flushAsync() async {
+  await Future<void>.delayed(Duration.zero);
+  await Future<void>.delayed(Duration.zero);
 }

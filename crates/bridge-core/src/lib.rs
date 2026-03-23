@@ -3509,9 +3509,10 @@ mod tests {
 
         let body = parse_json_body(&response);
         assert_eq!(body["contract_version"], shared_contracts::CONTRACT_VERSION);
-        assert_eq!(
-            body["bridge_identity"]["display_name"],
-            "Codex Mobile Companion"
+        assert!(
+            body["bridge_identity"]["display_name"]
+                .as_str()
+                .is_some_and(|value| !value.trim().is_empty())
         );
         assert_eq!(
             body["bridge_identity"]["api_base_url"],
@@ -3633,6 +3634,48 @@ mod tests {
         let handshake = route_request(&handshake_path, &app);
         assert!(handshake.starts_with("HTTP/1.1 403 Forbidden"));
         assert!(handshake.contains("\"code\":\"bridge_identity_mismatch\""));
+    }
+
+    #[test]
+    fn pairing_handshake_returns_bridge_identity_on_success() {
+        let app = test_application();
+
+        let session = parse_json_body(&route_request("POST /pairing/session HTTP/1.1", &app));
+        let session_id = session["pairing_session"]["session_id"]
+            .as_str()
+            .expect("session id should be present");
+        let pairing_token = session["pairing_session"]["pairing_token"]
+            .as_str()
+            .expect("pairing token should be present");
+        let bridge_id = session["bridge_identity"]["bridge_id"]
+            .as_str()
+            .expect("bridge id should be present");
+
+        let finalize_path = format!(
+            "POST /pairing/finalize?session_id={session_id}&pairing_token={pairing_token}&phone_id=phone-1&phone_name=iPhone&bridge_id={bridge_id} HTTP/1.1"
+        );
+        let finalize_response = route_request(&finalize_path, &app);
+        assert!(finalize_response.starts_with("HTTP/1.1 200 OK"));
+
+        let finalized = parse_json_body(&finalize_response);
+        let session_token = finalized["session_token"]
+            .as_str()
+            .expect("session token should be present");
+
+        let handshake_path = format!(
+            "POST /pairing/handshake?phone_id=phone-1&bridge_id={bridge_id}&session_token={session_token} HTTP/1.1"
+        );
+        let handshake_response = route_request(&handshake_path, &app);
+        assert!(handshake_response.starts_with("HTTP/1.1 200 OK"));
+
+        let handshake = parse_json_body(&handshake_response);
+        assert_eq!(handshake["status"], "trusted");
+        assert_eq!(handshake["bridge_identity"]["bridge_id"], bridge_id);
+        assert!(
+            handshake["bridge_identity"]["display_name"]
+                .as_str()
+                .is_some_and(|value| !value.trim().is_empty())
+        );
     }
 
     #[test]
