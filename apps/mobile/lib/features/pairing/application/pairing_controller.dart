@@ -325,10 +325,21 @@ class PairingController extends StateNotifier<PairingState> {
     );
 
     if (handshake.isTrusted) {
+      final refreshedTrustedBridge = _refreshTrustedBridgeIdentity(
+        trustedBridge,
+        handshake,
+      );
+      if (refreshedTrustedBridge != trustedBridge) {
+        await _secureStore.writeSecret(
+          SecureValueKey.trustedBridgeIdentity,
+          jsonEncode(refreshedTrustedBridge.toJson()),
+        );
+      }
+
       _cancelReconnectTimer();
       state = state.copyWith(
         step: PairingStep.paired,
-        trustedBridge: trustedBridge,
+        trustedBridge: refreshedTrustedBridge,
         bridgeConnectionState: BridgeConnectionState.connected,
         rePairRequiredForSecurity: false,
         clearErrorMessage: true,
@@ -371,6 +382,38 @@ class PairingController extends StateNotifier<PairingState> {
 
     return handshake.message ??
         'Stored trust is no longer accepted by the bridge. Re-pair from your Mac.';
+  }
+
+  TrustedBridgeIdentity _refreshTrustedBridgeIdentity(
+    TrustedBridgeIdentity trustedBridge,
+    PairingHandshakeResult handshake,
+  ) {
+    final bridgeId = handshake.bridgeId;
+    final bridgeName = handshake.bridgeName;
+    final bridgeApiBaseUrl = handshake.bridgeApiBaseUrl;
+    final sessionId = handshake.sessionId;
+
+    if (bridgeId == null ||
+        bridgeName == null ||
+        bridgeApiBaseUrl == null ||
+        sessionId == null) {
+      return trustedBridge;
+    }
+
+    if (bridgeId == trustedBridge.bridgeId &&
+        bridgeName == trustedBridge.bridgeName &&
+        bridgeApiBaseUrl == trustedBridge.bridgeApiBaseUrl &&
+        sessionId == trustedBridge.sessionId) {
+      return trustedBridge;
+    }
+
+    return TrustedBridgeIdentity(
+      bridgeId: bridgeId,
+      bridgeName: bridgeName,
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      sessionId: sessionId,
+      pairedAtEpochSeconds: trustedBridge.pairedAtEpochSeconds,
+    );
   }
 
   void _scheduleReconnect() {

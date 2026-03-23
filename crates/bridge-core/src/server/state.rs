@@ -26,7 +26,7 @@ use crate::server::config::{BridgeCodexConfig, BridgeConfig};
 use crate::server::controls::{
     ApprovalGateResponse, ApprovalRecordDto, ApprovalResolutionResponse, ApprovalStatus,
     ExecutedGitMutation, PendingApprovalAction, execute_branch_switch, execute_pull, execute_push,
-    read_git_state,
+    read_git_state, read_git_state_for_status,
 };
 use crate::server::events::EventHub;
 use crate::server::gateway::CodexGateway;
@@ -384,7 +384,7 @@ impl BridgeAppState {
 
     pub async fn git_status(&self, thread_id: &str) -> Result<GitStatusResponse, String> {
         let snapshot = self.ensure_snapshot(thread_id).await?;
-        let git_state = read_git_state(&snapshot.thread.workspace, thread_id)?;
+        let git_state = read_git_state_for_status(&snapshot.thread.workspace, thread_id)?;
         self.projections()
             .update_git_state(
                 thread_id,

@@ -45,6 +45,41 @@ fn archived_codex_sessions_load_as_thread_fallback() {
 }
 
 #[test]
+fn archived_codex_sessions_load_without_session_index() {
+    let codex_home = unique_test_codex_home();
+    let sessions_directory = codex_home.join("sessions/2026/03/23");
+    fs::create_dir_all(&sessions_directory).expect("test sessions directory should exist");
+    fs::write(
+        sessions_directory.join("rollout-2026-03-23T18-04-18-thread-archive-no-index.jsonl"),
+        concat!(
+            r#"{"timestamp":"2026-03-23T18:04:20.876Z","type":"session_meta","payload":{"id":"thread-archive-no-index","timestamp":"2026-03-23T18:04:18.254Z","cwd":"/home/lubo/codex-mobile-companion/apps/linux-shell","source":"cli","git":{"branch":"main","repository_url":"git@github.com:openai/codex-mobile-companion.git"}}}"#,
+            "\n",
+            r#"{"timestamp":"2026-03-23T18:04:21.018Z","type":"event_msg","payload":{"type":"user_message","message":"hello"}}"#,
+            "\n"
+        ),
+    )
+    .expect("session log should be writable");
+
+    let (threads, timeline) = super::load_thread_snapshot_from_codex_archive(&codex_home)
+        .expect("archive fallback should load without session index");
+
+    assert_eq!(threads.len(), 1);
+    assert_eq!(threads[0].id, "thread-archive-no-index");
+    assert_eq!(
+        threads[0].workspace_path,
+        "/home/lubo/codex-mobile-companion/apps/linux-shell"
+    );
+    assert_eq!(threads[0].repository_name, "codex-mobile-companion");
+    assert_eq!(threads[0].branch_name, "main");
+    assert!(
+        timeline.contains_key("thread-archive-no-index"),
+        "timeline should exist for discovered archive thread"
+    );
+
+    let _ = fs::remove_dir_all(codex_home);
+}
+
+#[test]
 fn archived_custom_tool_file_changes_map_to_file_change_events() {
     let codex_home = unique_test_codex_home();
     let workspace_directory = codex_home.join("workspace");

@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -33,7 +34,7 @@ impl PairingSessionService {
 
         Self {
             bridge_id,
-            bridge_name: "Codex Mobile Companion".to_string(),
+            bridge_name: resolve_bridge_name(),
             api_base_url: pairing_base_url.into(),
             next_sequence,
             sessions: HashMap::new(),
@@ -224,6 +225,11 @@ impl PairingSessionService {
         Ok(PairingHandshakeResponse {
             contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
             bridge_id: self.bridge_id.clone(),
+            bridge_identity: PairingBridgeIdentity {
+                bridge_id: self.bridge_id.clone(),
+                display_name: self.bridge_name.clone(),
+                api_base_url: self.api_base_url.clone(),
+            },
             phone_id: request.phone_id,
             session_id: active_session.session_id.clone(),
             status: "trusted".to_string(),
@@ -430,6 +436,7 @@ pub struct PairingFinalizeResponse {
 pub struct PairingHandshakeResponse {
     pub contract_version: String,
     pub bridge_id: String,
+    pub bridge_identity: PairingBridgeIdentity,
     pub phone_id: String,
     pub session_id: String,
     pub status: String,
@@ -498,6 +505,52 @@ struct PairingQrPayload {
     session_id: String,
     #[serde(rename = "t")]
     pairing_token: String,
+}
+
+fn resolve_bridge_name() -> String {
+    resolve_bridge_name_with(|| {
+        let output = Command::new("hostname").output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+
+        String::from_utf8(output.stdout).ok()
+    })
+}
+
+fn resolve_bridge_name_with<F>(read_hostname: F) -> String
+where
+    F: FnOnce() -> Option<String>,
+{
+    normalize_bridge_name(read_hostname())
+        .or_else(|| platform_bridge_name_fallback().map(str::to_string))
+        .unwrap_or_else(|| "Codex Mobile Companion".to_string())
+}
+
+fn normalize_bridge_name(raw_hostname: Option<String>) -> Option<String> {
+    raw_hostname.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn platform_bridge_name_fallback() -> Option<&'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        return Some("Mac");
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return Some("Linux");
+    }
+
+    #[allow(unreachable_code)]
+    None
 }
 
 #[derive(Debug)]
@@ -697,7 +750,7 @@ mod tests {
     use super::{
         PairingFinalizeError, PairingFinalizeRequest, PairingHandshakeError,
         PairingHandshakeRequest, PairingRevokeRequest, PairingSessionService,
-        is_private_bridge_api_base_url,
+        is_private_bridge_api_base_url, platform_bridge_name_fallback, resolve_bridge_name_with,
     };
 
     #[test]
@@ -773,8 +826,33 @@ mod tests {
             .expect("reconnect handshake should succeed after restart");
 
         assert_eq!(handshake.status, "trusted");
+        assert_eq!(
+            handshake.bridge_identity.display_name,
+            restarted.bridge_name.as_str()
+        );
+        assert_eq!(
+            handshake.bridge_identity.api_base_url,
+            "https://bridge.ts.net"
+        );
 
         let _ = std::fs::remove_dir_all(test_dir);
+    }
+
+    #[test]
+    fn bridge_name_resolution_prefers_trimmed_hostname_and_falls_back() {
+        assert_eq!(
+            resolve_bridge_name_with(|| Some("  Operator Workstation \n".to_string())),
+            "Operator Workstation"
+        );
+
+        let expected = platform_bridge_name_fallback()
+            .unwrap_or("Codex Mobile Companion")
+            .to_string();
+        assert_eq!(
+            resolve_bridge_name_with(|| Some("   ".to_string())),
+            expected
+        );
+        assert_eq!(resolve_bridge_name_with(|| None), expected);
     }
 
     #[test]

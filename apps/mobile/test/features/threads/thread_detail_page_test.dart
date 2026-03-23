@@ -2962,6 +2962,59 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(pushButton.onPressed, isNull);
   });
 
+  testWidgets(
+    'raw non-repository git status errors are downgraded into unavailable controls',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-no-repo': [
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-no-repo',
+              title: 'Thread without git context',
+              status: ThreadStatus.idle,
+              workspace: '/workspace/non-repo',
+              repository: 'workspace',
+              branch: 'unknown',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:00:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Idle',
+            ),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-no-repo': [<ThreadTimelineEntryDto>[]],
+        },
+        gitStatusScriptByThreadId: {
+          'thread-no-repo': [
+            const ThreadGitBridgeException(
+              message:
+                  'fatal: not a git repository (or any of the parent directories): .git',
+            ),
+          ],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-no-repo',
+      );
+
+      expect(
+        find.byKey(const Key('git-controls-unavailable-message')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Git controls are unavailable for this thread.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('fatal: not a git repository'), findsNothing);
+    },
+  );
+
   testWidgets('switching threads retargets git actions to new context', (
     tester,
   ) async {

@@ -1385,6 +1385,11 @@ mod tests {
             .await
             .expect("body should read");
         let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert!(
+            decoded["bridge_identity"]["display_name"]
+                .as_str()
+                .is_some_and(|value| !value.trim().is_empty())
+        );
         assert_eq!(
             decoded["bridge_identity"]["api_base_url"],
             "https://bridge.ts.net"
@@ -1423,6 +1428,20 @@ mod tests {
             .expect("request should succeed");
 
         assert_eq!(response.status(), 200);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert_eq!(decoded["status"], "trusted");
+        assert_eq!(
+            decoded["bridge_identity"]["bridge_id"],
+            issued.bridge_identity.bridge_id
+        );
+        assert!(
+            decoded["bridge_identity"]["display_name"]
+                .as_str()
+                .is_some_and(|value| !value.trim().is_empty())
+        );
     }
 
     #[tokio::test]
@@ -1544,6 +1563,41 @@ mod tests {
         assert_eq!(decoded["status"]["dirty"], true);
         assert_eq!(decoded["status"]["ahead_by"], 1);
         assert_eq!(decoded["status"]["behind_by"], 1);
+    }
+
+    #[tokio::test]
+    async fn git_status_route_degrades_non_repo_workspace_into_unavailable_context() {
+        let workspace = unique_temp_dir("status-non-repo");
+        let state = test_state();
+        prime_thread(&state, "thread-123", &workspace, AccessMode::FullControl).await;
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/threads/thread-123/git/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), 200);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert_eq!(
+            decoded["repository"]["workspace"].as_str(),
+            Some(workspace.to_string_lossy().as_ref())
+        );
+        assert_eq!(decoded["repository"]["repository"], "unknown-repository");
+        assert_eq!(decoded["repository"]["branch"], "unknown");
+        assert_eq!(decoded["repository"]["remote"], "local");
+        assert_eq!(decoded["status"]["dirty"], false);
+        assert_eq!(decoded["status"]["ahead_by"], 0);
+        assert_eq!(decoded["status"]["behind_by"], 0);
+        let _ = fs::remove_dir_all(workspace);
     }
 
     #[tokio::test]

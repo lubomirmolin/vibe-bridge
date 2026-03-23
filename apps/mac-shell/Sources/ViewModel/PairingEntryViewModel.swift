@@ -177,7 +177,9 @@ final class PairingEntryViewModel: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.stopRuntimeSupervision()
+                self?.supervisionTask?.cancel()
+                self?.supervisionTask = nil
+                self?.runtimeSupervisor.shutdownBridgeIfManaged()
             }
         }
 
@@ -192,7 +194,6 @@ final class PairingEntryViewModel: ObservableObject {
         }
         supervisionTask?.cancel()
         supervisionTask = nil
-        runtimeSupervisor.shutdownBridgeIfManaged()
     }
 
     func startRuntimeSupervision() {
@@ -218,6 +219,12 @@ final class PairingEntryViewModel: ObservableObject {
         supervisionTask?.cancel()
         supervisionTask = nil
         runtimeSupervisor.shutdownBridgeIfManaged()
+    }
+
+    func stopBridgeExplicitly() {
+        supervisionTask?.cancel()
+        supervisionTask = nil
+        runtimeSupervisor.stopManagedBridge()
     }
 
     func refreshRuntimeState() async {

@@ -685,6 +685,7 @@ private struct StubShellBridgeClient: ShellBridgeClient {
 private final class StubDesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
     private let store: StubDesktopRuntimeSupervisorStore
     private(set) var shutdownBridgeCallCount = 0
+    private(set) var stopBridgeCallCount = 0
 
     init(
         prepareResults: [Result<DesktopRuntimeLaunchSnapshot, Error>] = [
@@ -714,6 +715,10 @@ private final class StubDesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient
 
     func shutdownBridgeIfManaged() {
         shutdownBridgeCallCount += 1
+    }
+
+    func stopManagedBridge() {
+        stopBridgeCallCount += 1
     }
 }
 

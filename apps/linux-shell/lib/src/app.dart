@@ -58,7 +58,12 @@ class _CodexLinuxShellAppState extends State<CodexLinuxShellApp>
             MenuItem(
               key: 'quit_app',
               label: 'Quit',
-              onClick: (_) => unawaited(_shutdownApp()),
+              onClick: (_) => unawaited(_shutdownApp(keepBridge: true)),
+            ),
+            MenuItem(
+              key: 'quit_stop_bridge',
+              label: 'Quit + Stop Bridge',
+              onClick: (_) => unawaited(_shutdownApp(keepBridge: false)),
             ),
           ],
         ),
@@ -83,7 +88,7 @@ class _CodexLinuxShellAppState extends State<CodexLinuxShellApp>
     await windowManager.focus();
   }
 
-  Future<void> _shutdownApp() async {
+  Future<void> _shutdownApp({required bool keepBridge}) async {
     if (_isQuitting) {
       return;
     }
@@ -93,7 +98,11 @@ class _CodexLinuxShellAppState extends State<CodexLinuxShellApp>
     } catch (_) {
       // Ignore tray teardown failures during quit.
     }
-    await _controller.shutdown();
+    if (keepBridge) {
+      await _controller.shutdown();
+    } else {
+      await _controller.stopBridgeExplicitly();
+    }
     await windowManager.destroy();
   }
 
@@ -114,7 +123,7 @@ class _CodexLinuxShellAppState extends State<CodexLinuxShellApp>
       unawaited(windowManager.hide());
       return;
     }
-    unawaited(_shutdownApp());
+    unawaited(_shutdownApp(keepBridge: true));
   }
 
   @override

@@ -126,7 +126,16 @@ class HttpPairingBridgeApi implements PairingBridgeApi {
 
       final response = await _post(uri);
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        return const PairingHandshakeResult.trusted();
+        final bridgeIdentity = _readRequiredObject(
+          response.jsonBody,
+          'bridge_identity',
+        );
+        return PairingHandshakeResult.trusted(
+          bridgeId: _readRequiredString(bridgeIdentity, 'bridge_id'),
+          bridgeName: _readRequiredString(bridgeIdentity, 'display_name'),
+          bridgeApiBaseUrl: _readRequiredString(bridgeIdentity, 'api_base_url'),
+          sessionId: _readRequiredString(response.jsonBody, 'session_id'),
+        );
       }
 
       final code = _readOptionalString(response.jsonBody, 'code');
@@ -148,6 +157,12 @@ class HttpPairingBridgeApi implements PairingBridgeApi {
       return const PairingHandshakeResult.connectivityUnavailable(
         message:
             'Private bridge path is currently unreachable. Reconnect to Tailscale and retry.',
+      );
+    } on FormatException {
+      return const PairingHandshakeResult.untrusted(
+        code: 'bridge_response_invalid',
+        message:
+            'Bridge returned an invalid trust response. Re-pair from your Mac.',
       );
     }
   }
@@ -281,12 +296,20 @@ class PairingHandshakeResult {
     required this.isTrusted,
     this.code,
     this.message,
+    this.bridgeId,
+    this.bridgeName,
+    this.bridgeApiBaseUrl,
+    this.sessionId,
     required this.connectivityUnavailable,
   });
 
   final bool isTrusted;
   final String? code;
   final String? message;
+  final String? bridgeId;
+  final String? bridgeName;
+  final String? bridgeApiBaseUrl;
+  final String? sessionId;
   final bool connectivityUnavailable;
 
   bool get requiresRePair {
@@ -300,7 +323,12 @@ class PairingHandshakeResult {
         code == 'trusted_phone_mismatch';
   }
 
-  const factory PairingHandshakeResult.trusted() = _PairingHandshakeTrusted;
+  const factory PairingHandshakeResult.trusted({
+    String? bridgeId,
+    String? bridgeName,
+    String? bridgeApiBaseUrl,
+    String? sessionId,
+  }) = _PairingHandshakeTrusted;
 
   const factory PairingHandshakeResult.untrusted({
     required String? code,
@@ -334,8 +362,12 @@ class _PairingRevokeFailure extends PairingRevokeResult {
 }
 
 class _PairingHandshakeTrusted extends PairingHandshakeResult {
-  const _PairingHandshakeTrusted()
-    : super._(isTrusted: true, connectivityUnavailable: false);
+  const _PairingHandshakeTrusted({
+    super.bridgeId,
+    super.bridgeName,
+    super.bridgeApiBaseUrl,
+    super.sessionId,
+  }) : super._(isTrusted: true, connectivityUnavailable: false);
 }
 
 class _PairingHandshakeUntrusted extends PairingHandshakeResult {
