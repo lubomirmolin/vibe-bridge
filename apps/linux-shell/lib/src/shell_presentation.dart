@@ -53,6 +53,53 @@ class TailscalePresentation {
   }
 }
 
+class CodexPresentation {
+  const CodexPresentation({
+    required this.statusLabel,
+    required this.detail,
+    required this.nextStep,
+    required this.isReady,
+    this.binaryPath,
+    this.sourceLabel,
+  });
+
+  const CodexPresentation.initial()
+    : statusLabel = 'Unchecked',
+      detail =
+          'Codex CLI status has not been checked yet. The shell can still pair a phone, but threads and approvals need a local Codex runtime.',
+      nextStep = 'Check for Codex CLI',
+      isReady = false,
+      binaryPath = null,
+      sourceLabel = null;
+
+  final String statusLabel;
+  final String detail;
+  final String nextStep;
+  final bool isReady;
+  final String? binaryPath;
+  final String? sourceLabel;
+
+  bool get requiresSetup => !isReady;
+
+  CodexPresentation copyWith({
+    String? statusLabel,
+    String? detail,
+    String? nextStep,
+    bool? isReady,
+    String? binaryPath,
+    String? sourceLabel,
+  }) {
+    return CodexPresentation(
+      statusLabel: statusLabel ?? this.statusLabel,
+      detail: detail ?? this.detail,
+      nextStep: nextStep ?? this.nextStep,
+      isReady: isReady ?? this.isReady,
+      binaryPath: binaryPath ?? this.binaryPath,
+      sourceLabel: sourceLabel ?? this.sourceLabel,
+    );
+  }
+}
+
 class SpeechPanelPresentation {
   const SpeechPanelPresentation({
     required this.stateLabel,
@@ -92,9 +139,12 @@ class ShellPresentationState {
     required this.isRestartingRuntime,
     required this.isRevokingTrust,
     required this.isCheckingTailscale,
+    required this.isCheckingCodex,
+    required this.isSavingCodexPath,
     required this.trayAvailable,
     required this.trayStatusDetail,
     required this.tailscale,
+    required this.codex,
     required this.pairingSession,
     required this.errorMessage,
   });
@@ -119,9 +169,12 @@ class ShellPresentationState {
       isRestartingRuntime: false,
       isRevokingTrust: false,
       isCheckingTailscale: false,
+      isCheckingCodex: false,
+      isSavingCodexPath: false,
       trayAvailable: false,
       trayStatusDetail: 'System tray not initialized yet.',
       tailscale: TailscalePresentation.initial(),
+      codex: CodexPresentation.initial(),
       pairingSession: null,
       errorMessage: null,
     );
@@ -140,15 +193,19 @@ class ShellPresentationState {
   final bool isRestartingRuntime;
   final bool isRevokingTrust;
   final bool isCheckingTailscale;
+  final bool isCheckingCodex;
+  final bool isSavingCodexPath;
   final bool trayAvailable;
   final String trayStatusDetail;
   final TailscalePresentation tailscale;
+  final CodexPresentation codex;
   final PairingSessionResponseDto? pairingSession;
   final String? errorMessage;
 
   bool get shouldShowPairingQr => shellState == ShellRuntimeState.unpaired;
   bool get requiresTailscaleSetup =>
       shellState == ShellRuntimeState.needsTailscale;
+  bool get requiresCodexSetup => codex.requiresSetup;
   bool get canRevokeTrust =>
       shellState == ShellRuntimeState.pairedIdle ||
       shellState == ShellRuntimeState.pairedActive;
@@ -167,9 +224,12 @@ class ShellPresentationState {
     bool? isRestartingRuntime,
     bool? isRevokingTrust,
     bool? isCheckingTailscale,
+    bool? isCheckingCodex,
+    bool? isSavingCodexPath,
     bool? trayAvailable,
     String? trayStatusDetail,
     TailscalePresentation? tailscale,
+    CodexPresentation? codex,
     PairingSessionResponseDto? pairingSession,
     bool clearPairingSession = false,
     String? errorMessage,
@@ -190,9 +250,12 @@ class ShellPresentationState {
       isRestartingRuntime: isRestartingRuntime ?? this.isRestartingRuntime,
       isRevokingTrust: isRevokingTrust ?? this.isRevokingTrust,
       isCheckingTailscale: isCheckingTailscale ?? this.isCheckingTailscale,
+      isCheckingCodex: isCheckingCodex ?? this.isCheckingCodex,
+      isSavingCodexPath: isSavingCodexPath ?? this.isSavingCodexPath,
       trayAvailable: trayAvailable ?? this.trayAvailable,
       trayStatusDetail: trayStatusDetail ?? this.trayStatusDetail,
       tailscale: tailscale ?? this.tailscale,
+      codex: codex ?? this.codex,
       pairingSession: clearPairingSession
           ? null
           : pairingSession ?? this.pairingSession,

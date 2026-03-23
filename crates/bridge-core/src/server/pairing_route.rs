@@ -58,9 +58,23 @@ impl PairingRouteState {
     }
 
     pub fn health(&self) -> PairingRouteHealth {
-        if self.reachable && self.requires_runtime_serve_check {
-            let verified_base_url = discover_verified_tailscale_pairing_base_url(self.bridge_port);
-            if verified_base_url.as_deref() != Some(self.pairing_base_url.as_str()) {
+        self.health_with(discover_verified_tailscale_pairing_base_url)
+    }
+
+    fn health_with<F>(&self, discover_route: F) -> PairingRouteHealth
+    where
+        F: FnOnce(u16) -> Option<String>,
+    {
+        if self.requires_runtime_serve_check {
+            if let Some(pairing_base_url) = discover_route(self.bridge_port) {
+                return PairingRouteHealth {
+                    reachable: true,
+                    advertised_base_url: Some(pairing_base_url),
+                    message: None,
+                };
+            }
+
+            if self.reachable {
                 return PairingRouteHealth {
                     reachable: false,
                     advertised_base_url: None,
@@ -331,4 +345,29 @@ fn proxy_targets_bridge_loopback(raw: &str, port: u16) -> bool {
     normalized == format!("http://127.0.0.1:{port}")
         || normalized == format!("http://localhost:{port}")
         || normalized == format!("http://[::1]:{port}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PairingRouteState;
+
+    #[test]
+    fn health_recovers_when_verified_route_appears_after_startup() {
+        let state = PairingRouteState::new(
+            "https://bridge.ts.net".to_string(),
+            false,
+            Some("stale startup error".to_string()),
+            3110,
+            true,
+        );
+
+        let health = state.health_with(|_port| Some("https://lubo.taild54ede.ts.net".to_string()));
+
+        assert!(health.reachable);
+        assert_eq!(
+            health.advertised_base_url.as_deref(),
+            Some("https://lubo.taild54ede.ts.net")
+        );
+        assert_eq!(health.message, None);
+    }
 }

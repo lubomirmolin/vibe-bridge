@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:codex_linux_shell/src/shell_controller.dart';
 import 'package:codex_linux_shell/src/shell_view.dart';
 import 'package:flutter/material.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:codex_ui/codex_ui.dart';
@@ -96,6 +97,14 @@ class _CodexLinuxShellAppState extends State<CodexLinuxShellApp>
     await windowManager.destroy();
   }
 
+  Future<void> _chooseCodexBinary() async {
+    final file = await openFile(confirmButtonText: 'Use Codex Binary');
+    if (file == null) {
+      return;
+    }
+    await _controller.savePreferredCodexBinaryPath(file.path);
+  }
+
   @override
   void onWindowClose() {
     if (_isQuitting) {
@@ -125,6 +134,8 @@ class _CodexLinuxShellAppState extends State<CodexLinuxShellApp>
           return ShellView(
             state: _controller.state,
             onCheckTailscale: _controller.checkTailscaleAvailability,
+            onCheckCodex: _controller.checkCodexAvailability,
+            onChooseCodexBinary: _chooseCodexBinary,
             onRefreshQr: _controller.refreshPairingSession,
             onRestartRuntime: _controller.restartLocalRuntime,
             onRevokeTrust: _controller.revokeTrustedPhoneFromDesktop,

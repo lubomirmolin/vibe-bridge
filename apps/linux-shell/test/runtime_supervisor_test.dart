@@ -100,6 +100,58 @@ void main() {
 
       expect(processLauncher.calls, isEmpty);
     });
+
+    test('codex resolver discovers nvm installs automatically', () async {
+      final home = Directory.systemTemp.createTempSync('linux-shell-home-');
+      addTearDown(() {
+        if (home.existsSync()) {
+          home.deleteSync(recursive: true);
+        }
+      });
+      final binary = File('${home.path}/.nvm/versions/node/v24.14.0/bin/codex')
+        ..createSync(recursive: true);
+      binary.writeAsStringSync('#!/bin/sh\n');
+      Process.runSync('chmod', <String>['755', binary.path]);
+
+      final resolver = LinuxRuntimeBinaryResolver(
+        environment: <String, String>{'HOME': home.path, 'PATH': '/usr/bin'},
+      );
+
+      expect(
+        resolver.resolveCodexBinaryPath(),
+        '${home.path}/.nvm/versions/node/v24.14.0/bin/codex',
+      );
+    });
+
+    test('codex checker prefers a saved binary path', () async {
+      final home = Directory.systemTemp.createTempSync('linux-shell-home-');
+      addTearDown(() {
+        if (home.existsSync()) {
+          home.deleteSync(recursive: true);
+        }
+      });
+      final stateDirectoryProvider = _FixedStateDirectoryProvider(
+        Directory('${home.path}/state')..createSync(recursive: true),
+      );
+      final settingsStore = ShellSettingsStore(
+        stateDirectoryProvider: stateDirectoryProvider,
+      );
+      final binary = File('${home.path}/custom/codex')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('#!/bin/sh\n');
+      Process.runSync('chmod', <String>['755', binary.path]);
+
+      final checker = LinuxCodexCliChecker(
+        environment: <String, String>{'HOME': home.path, 'PATH': '/usr/bin'},
+        settingsStore: settingsStore,
+      );
+
+      final status = await checker.savePreferredBinaryPath(binary.path);
+
+      expect(status.isReady, isTrue);
+      expect(status.binaryPath, binary.path);
+      expect(status.sourceLabel, 'Saved Path');
+    });
   });
 }
 
@@ -191,6 +243,15 @@ class FakeBinaryResolver implements RuntimeBinaryResolver {
 class FakeStateDirectoryProvider implements StateDirectoryProvider {
   FakeStateDirectoryProvider()
     : directory = Directory.systemTemp.createTempSync('linux-shell-test-');
+
+  final Directory directory;
+
+  @override
+  Directory resolveStateDirectory() => directory;
+}
+
+class _FixedStateDirectoryProvider implements StateDirectoryProvider {
+  _FixedStateDirectoryProvider(this.directory);
 
   final Directory directory;
 

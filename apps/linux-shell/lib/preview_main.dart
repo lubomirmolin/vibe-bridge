@@ -14,6 +14,7 @@ enum PreviewScenario {
   pairedIdle,
   pairedActive,
   needsTailscale,
+  needsCodex,
   degraded,
 }
 
@@ -48,6 +49,8 @@ class _PreviewHomeState extends State<_PreviewHome> {
         ShellView(
           state: _stateFor(_scenario),
           onCheckTailscale: () async {},
+          onCheckCodex: () async {},
+          onChooseCodexBinary: () async {},
           onRefreshQr: () async {},
           onRestartRuntime: () async {},
           onRevokeTrust: () async {},
@@ -145,6 +148,7 @@ String _scenarioLabel(PreviewScenario scenario) {
     PreviewScenario.pairedIdle => 'Paired (Idle)',
     PreviewScenario.pairedActive => 'Paired (Active)',
     PreviewScenario.needsTailscale => 'Needs Tailscale',
+    PreviewScenario.needsCodex => 'Needs Codex',
     PreviewScenario.degraded => 'Degraded',
   };
 }
@@ -156,6 +160,7 @@ ShellPresentationState _stateFor(PreviewScenario scenario) {
     PreviewScenario.pairedIdle => ShellRuntimeState.pairedIdle,
     PreviewScenario.pairedActive => ShellRuntimeState.pairedActive,
     PreviewScenario.needsTailscale => ShellRuntimeState.needsTailscale,
+    PreviewScenario.needsCodex => ShellRuntimeState.unpaired,
     PreviewScenario.degraded => ShellRuntimeState.degraded,
   };
 
@@ -167,18 +172,21 @@ ShellPresentationState _stateFor(PreviewScenario scenario) {
       PreviewScenario.pairedIdle => 'Attached to local bridge',
       PreviewScenario.pairedActive => 'Managed locally',
       PreviewScenario.needsTailscale => 'Waiting for pairing route',
+      PreviewScenario.needsCodex => 'Managed locally',
       PreviewScenario.degraded => 'Bridge unreachable',
     },
     bridgeRuntimeLabel: switch (scenario) {
       PreviewScenario.starting => 'Starting',
       PreviewScenario.needsTailscale => 'Tailscale required',
       PreviewScenario.degraded => 'Unavailable',
+      PreviewScenario.needsCodex => 'degraded (auto)',
       _ => 'managed (auto)',
     },
     pairedDeviceLabel: switch (scenario) {
       PreviewScenario.unpaired => 'Not paired',
       PreviewScenario.starting => 'Awaiting handshake',
       PreviewScenario.needsTailscale => 'Tailscale not installed',
+      PreviewScenario.needsCodex => 'Not paired',
       _ => 'Pixel 9 Pro (phone-1)',
     },
     activeSessionLabel: switch (scenario) {
@@ -201,6 +209,8 @@ ShellPresentationState _stateFor(PreviewScenario scenario) {
         'Bridge runtime healthy. A paired phone currently has an active session.',
       PreviewScenario.needsTailscale =>
         'Private pairing route is unavailable until Tailscale is installed and connected.',
+      PreviewScenario.needsCodex =>
+        'Codex CLI is not available to the Linux shell yet. Choose the `codex` binary so the bridge can start the local runtime for threads and approvals.',
       PreviewScenario.degraded =>
         'Bridge supervision is retrying because the local runtime is unavailable.',
     },
@@ -220,10 +230,29 @@ ShellPresentationState _stateFor(PreviewScenario scenario) {
             isInstalled: true,
             isAuthenticated: true,
           ),
+    codex: scenario == PreviewScenario.needsCodex
+        ? const CodexPresentation(
+            statusLabel: 'Codex Not Found',
+            detail:
+                'Codex CLI is not available to the Linux shell yet. Choose the `codex` binary so the bridge can start the local runtime for threads and approvals.',
+            nextStep: 'Choose the codex binary',
+            isReady: false,
+          )
+        : const CodexPresentation(
+            statusLabel: 'Codex Ready',
+            detail:
+                'Codex CLI is available from NVM. The Linux shell can use it to start the local runtime.',
+            nextStep: '',
+            isReady: true,
+            binaryPath: '/home/lubo/.nvm/versions/node/v24.14.0/bin/codex',
+            sourceLabel: 'NVM',
+          ),
     trayAvailable: true,
     trayStatusDetail:
         'Preview tray detail only. No real tray integration here.',
-    pairingSession: scenario == PreviewScenario.unpaired
+    pairingSession:
+        scenario == PreviewScenario.unpaired ||
+            scenario == PreviewScenario.needsCodex
         ? PairingSessionResponseDto(
             contractVersion: SharedContract.version,
             bridgeIdentity: const PairingBridgeIdentityDto(

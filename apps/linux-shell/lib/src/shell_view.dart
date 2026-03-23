@@ -10,6 +10,8 @@ class ShellView extends StatelessWidget {
     super.key,
     required this.state,
     required this.onCheckTailscale,
+    required this.onCheckCodex,
+    required this.onChooseCodexBinary,
     required this.onRefreshQr,
     required this.onRestartRuntime,
     required this.onRevokeTrust,
@@ -17,6 +19,8 @@ class ShellView extends StatelessWidget {
 
   final ShellPresentationState state;
   final Future<void> Function() onCheckTailscale;
+  final Future<void> Function() onCheckCodex;
+  final Future<void> Function() onChooseCodexBinary;
   final Future<void> Function() onRefreshQr;
   final Future<void> Function() onRestartRuntime;
   final Future<void> Function() onRevokeTrust;
@@ -73,6 +77,15 @@ class ShellView extends StatelessWidget {
                                         child: SingleChildScrollView(
                                           child: Column(
                                             children: [
+                                              if (state.requiresCodexSetup) ...[
+                                                _CodexRequiredCard(
+                                                  state: state,
+                                                  onCheckCodex: onCheckCodex,
+                                                  onChooseCodexBinary:
+                                                      onChooseCodexBinary,
+                                                ),
+                                                const SizedBox(height: 24),
+                                              ],
                                               _ConnectionDetailsCard(
                                                 state: state,
                                               ),
@@ -110,6 +123,15 @@ class ShellView extends StatelessWidget {
                                               state: state,
                                               onRefreshQr: onRefreshQr,
                                             ),
+                                      if (state.requiresCodexSetup) ...[
+                                        const SizedBox(height: 24),
+                                        _CodexRequiredCard(
+                                          state: state,
+                                          onCheckCodex: onCheckCodex,
+                                          onChooseCodexBinary:
+                                              onChooseCodexBinary,
+                                        ),
+                                      ],
                                       const SizedBox(height: 24),
                                       _ConnectionDetailsCard(state: state),
                                       const SizedBox(height: 24),
@@ -583,6 +605,198 @@ class _TailscaleRequiredCard extends StatelessWidget {
   }
 }
 
+class _CodexRequiredCard extends StatelessWidget {
+  const _CodexRequiredCard({
+    required this.state,
+    required this.onCheckCodex,
+    required this.onChooseCodexBinary,
+  });
+
+  final ShellPresentationState state;
+  final Future<void> Function() onCheckCodex;
+  final Future<void> Function() onChooseCodexBinary;
+
+  @override
+  Widget build(BuildContext context) {
+    final codex = state.codex;
+
+    return Container(
+      padding: const EdgeInsets.all(28),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceZinc900.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: AppTheme.amber.withValues(alpha: 0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppTheme.amber.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: PhosphorIcon(
+                  PhosphorIcons.terminalWindow(),
+                  color: AppTheme.amber,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 18),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Codex CLI Needed',
+                      style: TextStyle(
+                        color: AppTheme.textMain,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Pairing can continue, but threads, approvals, and live Codex status need a local Codex CLI on this Linux host.',
+                      style: TextStyle(
+                        color: AppTheme.textMuted,
+                        fontSize: 14,
+                        height: 1.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 22),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Status',
+                  style: TextStyle(color: AppTheme.textSubtle, fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  codex.statusLabel,
+                  style: const TextStyle(
+                    color: AppTheme.textMain,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  codex.detail,
+                  style: const TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 13,
+                    height: 1.5,
+                  ),
+                ),
+                if (codex.sourceLabel != null) ...[
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Source',
+                    style: TextStyle(color: AppTheme.textSubtle, fontSize: 12),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    codex.sourceLabel!,
+                    style: const TextStyle(
+                      color: AppTheme.textMain,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+                if (codex.binaryPath != null) ...[
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Binary',
+                    style: TextStyle(color: AppTheme.textSubtle, fontSize: 12),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.05),
+                      ),
+                    ),
+                    child: Text(
+                      codex.binaryPath!,
+                      style: AppTheme.monoTextStyle.copyWith(
+                        color: AppTheme.textMain,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                const Text(
+                  'Next Step',
+                  style: TextStyle(color: AppTheme.textSubtle, fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  codex.nextStep,
+                  style: const TextStyle(
+                    color: AppTheme.textMain,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: MagneticButton(
+                  variant: MagneticButtonVariant.primary,
+                  onClick: state.isSavingCodexPath
+                      ? () {}
+                      : () => onChooseCodexBinary(),
+                  child: Text(
+                    state.isSavingCodexPath ? 'Saving...' : 'Choose Binary',
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: TextButton(
+                  onPressed: state.isCheckingCodex ? null : onCheckCodex,
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.textMuted,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  child: Text(
+                    state.isCheckingCodex ? 'Checking...' : 'Check Again',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ConnectionDetailsCard extends StatelessWidget {
   const _ConnectionDetailsCard({required this.state});
 
@@ -616,6 +830,8 @@ class _ConnectionDetailsCard extends StatelessWidget {
           _DetailRow(label: 'Bridge', value: state.bridgeRuntimeLabel),
           Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
           _DetailRow(label: 'Tailscale', value: state.tailscale.statusLabel),
+          Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
+          _DetailRow(label: 'Codex', value: state.codex.statusLabel),
           Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
           _DetailRow(
             label: 'Active Threads',

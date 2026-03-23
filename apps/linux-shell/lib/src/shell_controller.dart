@@ -11,17 +11,20 @@ class ShellController extends ChangeNotifier {
     ShellBridgeClient? bridgeClient,
     RuntimeSupervisor? runtimeSupervisor,
     TailscaleCliChecker? tailscaleCliChecker,
+    CodexCliChecker? codexCliChecker,
     Duration degradedPollInterval = const Duration(seconds: 2),
     Duration healthyPollInterval = const Duration(seconds: 5),
   }) : _bridgeClient = bridgeClient ?? BridgeShellApiClient(),
        _runtimeSupervisor = runtimeSupervisor ?? RuntimeSupervisor(),
        _tailscaleCliChecker = tailscaleCliChecker ?? LinuxTailscaleCliChecker(),
+       _codexCliChecker = codexCliChecker ?? LinuxCodexCliChecker(),
        _degradedPollInterval = degradedPollInterval,
        _healthyPollInterval = healthyPollInterval;
 
   final ShellBridgeClient _bridgeClient;
   final RuntimeSupervisor _runtimeSupervisor;
   final TailscaleCliChecker _tailscaleCliChecker;
+  final CodexCliChecker _codexCliChecker;
   final Duration _degradedPollInterval;
   final Duration _healthyPollInterval;
 
@@ -74,6 +77,62 @@ class ShellController extends ChangeNotifier {
     }
   }
 
+  Future<void> checkCodexAvailability() async {
+    if (_state.isCheckingCodex || _disposed) {
+      return;
+    }
+
+    _emit(_state.copyWith(isCheckingCodex: true));
+    try {
+      final codex = await _readCodexPresentation();
+      _emit(
+        _state.copyWith(
+          codex: codex,
+          runtimeDetail: codex.detail,
+          clearErrorMessage: codex.requiresSetup,
+        ),
+      );
+      if (codex.isReady) {
+        await refreshRuntimeState();
+      }
+    } finally {
+      _emit(_state.copyWith(isCheckingCodex: false));
+    }
+  }
+
+  Future<void> savePreferredCodexBinaryPath(String path) async {
+    if (_state.isSavingCodexPath || _disposed) {
+      return;
+    }
+
+    _emit(_state.copyWith(isSavingCodexPath: true));
+    try {
+      final codex = await _codexCliChecker.savePreferredBinaryPath(path);
+      _emit(
+        _state.copyWith(
+          codex: _toCodexPresentation(codex),
+          runtimeDetail:
+              'Saved the selected Codex binary. Restarting the local runtime to apply it.',
+          clearErrorMessage: true,
+        ),
+      );
+
+      if (_runtimeSupervisor.managesProcess) {
+        await restartLocalRuntime();
+      } else {
+        await refreshRuntimeState();
+      }
+    } catch (error) {
+      _emit(
+        _state.copyWith(
+          errorMessage: 'Could not use the selected Codex binary: $error',
+        ),
+      );
+    } finally {
+      _emit(_state.copyWith(isSavingCodexPath: false));
+    }
+  }
+
   Future<void> refreshRuntimeState() async {
     if (_state.isRefreshingRuntime || _disposed) {
       return;
@@ -86,7 +145,8 @@ class ShellController extends ChangeNotifier {
       _emit(_state.copyWith(supervisorStatusLabel: launchSnapshot.statusLabel));
 
       final health = await _bridgeClient.fetchHealth();
-      if (!_isHealthy(health)) {
+      final codex = await _readCodexPresentation();
+      if (!_isShellOperational(health)) {
         final pairingMessage =
             health.pairingRoute.message ??
             'Private pairing route is unavailable.';
@@ -103,6 +163,7 @@ class ShellController extends ChangeNotifier {
           health.pairingRoute.reachable
               ? health.runtime.detail
               : pairingMessage,
+          codex: codex,
         );
         return;
       }
@@ -116,8 +177,14 @@ class ShellController extends ChangeNotifier {
         trustStatus: health.trust,
         runningThreadCount: runningCount,
         bridgeRuntimeLabel: '${health.runtime.state} (${health.runtime.mode})',
-        runtimeDetail: health.runtime.detail,
+        runtimeDetail: health.runtime.state == 'degraded' && codex.requiresSetup
+            ? codex.detail
+            : health.runtime.detail,
         speechStatus: speechStatus,
+        runtimeIssue: health.runtime.state == 'degraded' && !codex.requiresSetup
+            ? health.runtime.detail
+            : null,
+        codex: codex,
       );
 
       if (_state.shellState == ShellRuntimeState.unpaired) {
@@ -261,10 +328,8 @@ class ShellController extends ChangeNotifier {
     }
   }
 
-  bool _isHealthy(BridgeHealthResponseDto health) {
-    return health.status == 'ok' &&
-        health.pairingRoute.reachable &&
-        health.runtime.state != 'degraded';
+  bool _isShellOperational(BridgeHealthResponseDto health) {
+    return health.status == 'ok' && health.pairingRoute.reachable;
   }
 
   bool _looksLikeTailscaleProblem(String message) {
@@ -284,12 +349,30 @@ class ShellController extends ChangeNotifier {
     );
   }
 
+  Future<CodexPresentation> _readCodexPresentation() async {
+    final status = await _codexCliChecker.check();
+    return _toCodexPresentation(status);
+  }
+
+  CodexPresentation _toCodexPresentation(CodexCliStatus status) {
+    return CodexPresentation(
+      statusLabel: status.statusLabel,
+      detail: status.detail,
+      nextStep: status.nextStep,
+      isReady: status.isReady,
+      binaryPath: status.binaryPath,
+      sourceLabel: status.sourceLabel,
+    );
+  }
+
   void _applyHealthyState({
     required BridgeTrustStatusDto? trustStatus,
     required int runningThreadCount,
     required String bridgeRuntimeLabel,
     required String runtimeDetail,
     required SpeechModelStatusDto? speechStatus,
+    required CodexPresentation codex,
+    String? runtimeIssue,
   }) {
     final shellState = trustStatus?.trustedPhone == null
         ? ShellRuntimeState.unpaired
@@ -310,6 +393,7 @@ class ShellController extends ChangeNotifier {
         runningThreadCount: runningThreadCount,
         runtimeDetail: runtimeDetail,
         speechPanel: _speechPanelFor(speechStatus),
+        codex: codex,
         tailscale: _state.tailscale.copyWith(
           statusLabel: 'Connected',
           detail: 'Tailscale route is available for private pairing.',
@@ -317,7 +401,8 @@ class ShellController extends ChangeNotifier {
           isAuthenticated: true,
           installHint: '',
         ),
-        clearErrorMessage: true,
+        errorMessage: runtimeIssue,
+        clearErrorMessage: runtimeIssue == null,
         clearPairingSession: shellState != ShellRuntimeState.unpaired,
       ),
     );
@@ -348,7 +433,7 @@ class ShellController extends ChangeNotifier {
     );
   }
 
-  void _applyDegradedState(String message) {
+  void _applyDegradedState(String message, {CodexPresentation? codex}) {
     _trustedPhoneId = null;
     _emit(
       _state.copyWith(
@@ -364,6 +449,7 @@ class ShellController extends ChangeNotifier {
               'Speech transcription is not available from the Linux shell yet.',
           isReadOnly: true,
         ),
+        codex: codex ?? _state.codex,
         clearPairingSession: true,
         errorMessage: message,
       ),

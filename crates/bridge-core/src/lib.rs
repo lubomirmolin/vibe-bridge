@@ -83,9 +83,23 @@ struct PairingRouteState {
 
 impl PairingRouteState {
     fn health(&self) -> PairingRouteHealth {
-        if self.reachable && self.requires_runtime_serve_check {
-            let verified_base_url = discover_verified_tailscale_pairing_base_url(self.bridge_port);
-            if verified_base_url.as_deref() != Some(self.pairing_base_url.as_str()) {
+        self.health_with(discover_verified_tailscale_pairing_base_url)
+    }
+
+    fn health_with<F>(&self, discover_route: F) -> PairingRouteHealth
+    where
+        F: FnOnce(u16) -> Option<String>,
+    {
+        if self.requires_runtime_serve_check {
+            if let Some(pairing_base_url) = discover_route(self.bridge_port) {
+                return PairingRouteHealth {
+                    reachable: true,
+                    advertised_base_url: Some(pairing_base_url),
+                    message: None,
+                };
+            }
+
+            if self.reachable {
                 return PairingRouteHealth {
                     reachable: false,
                     advertised_base_url: None,
@@ -2927,6 +2941,26 @@ mod tests {
                 "Private pairing route is unavailable: `tailscale serve --bg 3110` ran, but no verified mapping to localhost:3110 was found in `tailscale serve status --json`."
             )
         );
+    }
+
+    #[test]
+    fn pairing_route_health_recovers_when_verified_mapping_appears_later() {
+        let state = PairingRouteState {
+            pairing_base_url: "https://bridge.ts.net".to_string(),
+            reachable: false,
+            message: Some("stale startup error".to_string()),
+            bridge_port: 3110,
+            requires_runtime_serve_check: true,
+        };
+
+        let health = state.health_with(|_port| Some("https://lubo.taild54ede.ts.net".to_string()));
+
+        assert!(health.reachable);
+        assert_eq!(
+            health.advertised_base_url.as_deref(),
+            Some("https://lubo.taild54ede.ts.net")
+        );
+        assert_eq!(health.message, None);
     }
 
     #[test]

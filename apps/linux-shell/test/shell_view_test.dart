@@ -100,6 +100,43 @@ void main() {
     );
     expect(find.text('Check Again'), findsWidgets);
   });
+
+  testWidgets('renders codex setup prompt without hiding pairing flow', (
+    tester,
+  ) async {
+    await _pumpShellView(
+      tester,
+      _state(
+        shellState: ShellRuntimeState.unpaired,
+        pairingSession: PairingSessionResponseDto(
+          contractVersion: SharedContract.version,
+          bridgeIdentity: const PairingBridgeIdentityDto(
+            bridgeId: 'bridge-1',
+            displayName: 'Codex Host',
+            apiBaseUrl: 'http://127.0.0.1:3110',
+          ),
+          pairingSession: const PairingSessionDto(
+            sessionId: 'session-1',
+            pairingToken: 'token',
+            issuedAtEpochSeconds: 100,
+            expiresAtEpochSeconds: 200,
+          ),
+          qrPayload: 'codex://pair?session=session-1',
+        ),
+        codex: const CodexPresentation(
+          statusLabel: 'Codex Not Found',
+          detail:
+              'Codex CLI is not available to the Linux shell yet. Choose the `codex` binary so the bridge can start the local runtime for threads and approvals.',
+          nextStep: 'Choose the codex binary',
+          isReady: false,
+        ),
+      ),
+    );
+
+    expect(find.text('Codex CLI Needed'), findsOneWidget);
+    expect(find.text('Choose Binary'), findsOneWidget);
+    expect(find.byKey(const Key('pairing-qr')), findsOneWidget);
+  });
 }
 
 Widget _wrap(ShellPresentationState state) {
@@ -107,6 +144,8 @@ Widget _wrap(ShellPresentationState state) {
     home: ShellView(
       state: state,
       onCheckTailscale: () async {},
+      onCheckCodex: () async {},
+      onChooseCodexBinary: () async {},
       onRefreshQr: () async {},
       onRestartRuntime: () async {},
       onRevokeTrust: () async {},
@@ -130,6 +169,7 @@ ShellPresentationState _state({
   int runningThreadCount = 0,
   PairingSessionResponseDto? pairingSession,
   TailscalePresentation? tailscale,
+  CodexPresentation? codex,
 }) {
   return ShellPresentationState.initial().copyWith(
     shellState: shellState,
@@ -163,6 +203,17 @@ ShellPresentationState _state({
           installHint: '',
           isInstalled: true,
           isAuthenticated: true,
+        ),
+    codex:
+        codex ??
+        const CodexPresentation(
+          statusLabel: 'Codex Ready',
+          detail:
+              'Codex CLI is available from NVM. The Linux shell can use it to start the local runtime.',
+          nextStep: '',
+          isReady: true,
+          binaryPath: '/home/lubo/.nvm/versions/node/v24.14.0/bin/codex',
+          sourceLabel: 'NVM',
         ),
     trayAvailable: true,
     trayStatusDetail: 'Tray integration is active.',
