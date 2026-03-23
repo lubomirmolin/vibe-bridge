@@ -74,6 +74,10 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
     this.onBack,
     this.onDraftThreadCreated,
     this.onOpenDiff,
+    this.onToggleSidebar,
+    this.isSidebarVisible,
+    this.onToggleDiff,
+    this.isDiffVisible,
   }) : draftWorkspacePath = null,
        draftWorkspaceLabel = null;
 
@@ -89,6 +93,10 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
     this.onBack,
     this.onDraftThreadCreated,
     this.onOpenDiff,
+    this.onToggleSidebar,
+    this.isSidebarVisible,
+    this.onToggleDiff,
+    this.isDiffVisible,
   }) : threadId = null,
        initialComposerInput = null,
        initialAttachedImages = const <XFile>[],
@@ -108,6 +116,10 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
   final VoidCallback? onBack;
   final ValueChanged<ThreadDraftCreatedTransition>? onDraftThreadCreated;
   final VoidCallback? onOpenDiff;
+  final VoidCallback? onToggleSidebar;
+  final bool? isSidebarVisible;
+  final VoidCallback? onToggleDiff;
+  final bool? isDiffVisible;
 
   bool get isDraft => threadId == null;
   final String bridgeApiBaseUrl;
@@ -119,6 +131,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
 
 class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   static const double _historyPrefetchTriggerOffset = 160;
+  static const double _sessionContentMaxWidth = 1280;
 
   late final TextEditingController _composerController;
   late final FocusNode _composerFocusNode;
@@ -148,6 +161,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   String? _speechRecordingPath;
   Timer? _speechRecordingTimer;
   int _speechDurationSeconds = 0;
+  ThreadDraftCreatedTransition? _localDraftTransition;
   bool _didInitialScrollToBottom = false;
   bool _isComposerFocused = false;
   bool _canLoadEarlierHistory = false;
@@ -162,6 +176,20 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   double _lastScrollOffset = 0;
   double _scrollOffsetOnDirectionChange = 0;
   bool _isScrollingDown = false;
+
+  bool get _isDraftMode =>
+      widget.threadId == null && _localDraftTransition == null;
+
+  String? get _effectiveThreadId =>
+      widget.threadId ?? _localDraftTransition?.threadId;
+
+  String? get _effectiveInitialComposerInput =>
+      _localDraftTransition?.initialComposerInput ??
+      widget.initialComposerInput;
+
+  List<XFile> get _effectiveInitialAttachedImages =>
+      _localDraftTransition?.initialAttachedImages ??
+      widget.initialAttachedImages;
 
   @override
   void initState() {
@@ -186,7 +214,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     _composerFocusNode.addListener(_handleComposerFocusChange);
     _timelineScrollController.addListener(_onScroll);
     _setComposerSelectionsFromCatalog(_availableModelOptions);
-    _attachedImages = List<XFile>.unmodifiable(widget.initialAttachedImages);
+    _attachedImages = List<XFile>.unmodifiable(_effectiveInitialAttachedImages);
     unawaited(_loadComposerModelCatalog());
     unawaited(_loadSpeechStatus());
   }
@@ -234,14 +262,14 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   }
 
   Future<void> _openDiffView() async {
-    if (widget.isDraft) {
+    if (_isDraftMode) {
       return;
     }
     if (widget.onOpenDiff != null) {
       widget.onOpenDiff!.call();
       return;
     }
-    final threadId = widget.threadId;
+    final threadId = _effectiveThreadId;
     if (threadId == null || !mounted) {
       return;
     }
@@ -253,6 +281,15 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         ),
       ),
     );
+  }
+
+  void _toggleDiffView() {
+    final onToggleDiff = widget.onToggleDiff;
+    if (onToggleDiff != null) {
+      onToggleDiff();
+      return;
+    }
+    unawaited(_openDiffView());
   }
 
   void _setComposerSelectionsFromCatalog(List<ModelOptionDto> modelOptions) {
@@ -466,6 +503,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   void didUpdateWidget(covariant ThreadDetailPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.threadId != widget.threadId) {
+      _localDraftTransition = null;
       _didInitialScrollToBottom = false;
       _didSubmitInitialComposerInput = false;
       _timelineExpansionState.clear();
@@ -481,7 +519,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       oldWidget.initialAttachedImages,
       widget.initialAttachedImages,
     )) {
-      _attachedImages = List<XFile>.unmodifiable(widget.initialAttachedImages);
+      _attachedImages = List<XFile>.unmodifiable(
+        _effectiveInitialAttachedImages,
+      );
       if (widget.initialAttachedImages.isNotEmpty) {
         _didSubmitInitialComposerInput = false;
       }
@@ -807,6 +847,8 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     BuildContext context, {
     required _ResolvedGitControls gitControls,
     required Future<bool> Function(String rawBranch) onSwitchBranch,
+    required bool canStartCommit,
+    required Future<bool> Function() onStartCommitAction,
   }) {
     return showModalBottomSheet<void>(
       context: context,
@@ -816,6 +858,8 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         gitControls: gitControls,
         gitBranchController: _gitBranchController,
         onSwitchBranch: onSwitchBranch,
+        canStartCommit: canStartCommit,
+        onStartCommitAction: onStartCommitAction,
       ),
     );
   }
@@ -891,21 +935,17 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         return true;
       }
 
-      unawaited(
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute<void>(
-            builder: (context) => ThreadDetailPage(
-              bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
-              threadId: transition.threadId,
-              initialComposerInput: transition.initialComposerInput,
-              initialAttachedImages: transition.initialAttachedImages,
-              initialSelectedModel: transition.initialSelectedModel,
-              initialSelectedReasoningEffort:
-                  transition.initialSelectedReasoningEffort,
-            ),
-          ),
-        ),
-      );
+      setState(() {
+        _localDraftTransition = transition;
+        _isDraftThreadCreationInFlight = false;
+        _draftThreadErrorMessage = null;
+        _didInitialScrollToBottom = false;
+        _didSubmitInitialComposerInput = false;
+        _timelineExpansionState.clear();
+        _attachedImages = List<XFile>.unmodifiable(
+          transition.initialAttachedImages,
+        );
+      });
       return true;
     } on ThreadCreateBridgeException catch (error) {
       if (!mounted) {
@@ -1059,7 +1099,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       );
     }
 
-    if (widget.isDraft) {
+    if (_isDraftMode) {
       final effectiveAccessMode =
           runtimeAccessMode ?? AccessMode.controlWithApprovals;
       final isReadOnlyMode = effectiveAccessMode == AccessMode.readOnly;
@@ -1163,7 +1203,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
 
     final args = ThreadDetailControllerArgs(
       bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
-      threadId: widget.threadId!,
+      threadId: _effectiveThreadId!,
       initialVisibleTimelineEntries: widget.initialVisibleTimelineEntries,
     );
     final state = ref.watch(threadDetailControllerProvider(args));
@@ -1215,7 +1255,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         state.hasThread &&
         !state.isTurnActive &&
         !state.isComposerMutationInFlight) {
-      final initialComposerInput = widget.initialComposerInput?.trim();
+      final initialComposerInput = _effectiveInitialComposerInput?.trim();
       if ((initialComposerInput != null && initialComposerInput.isNotEmpty) ||
           _attachedImages.isNotEmpty) {
         _didSubmitInitialComposerInput = true;
@@ -1230,7 +1270,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       }
     }
 
-    final threadApprovals = approvalsState.forThread(widget.threadId!);
+    final threadApprovals = approvalsState.forThread(_effectiveThreadId!);
     final effectiveAccessMode =
         runtimeAccessMode ??
         state.thread?.accessMode ??
@@ -1263,6 +1303,16 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
           await approvalsController.loadApprovals(showLoading: false);
           return accepted;
         },
+        canStartCommit:
+            state.canRunMutatingActions &&
+            !state.isComposerMutationInFlight &&
+            !state.isTurnActive,
+        onStartCommitAction: () {
+          return controller.submitCommitAction(
+            model: _selectedModel,
+            reasoningEffort: _selectedReasoningEffortWireValue(),
+          );
+        },
       );
     }
 
@@ -1281,13 +1331,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
           await approvalsController.loadApprovals(showLoading: false);
           return accepted;
         },
-      );
-    }
-
-    Future<void> startCommitAction() async {
-      await controller.submitCommitAction(
-        model: _selectedModel,
-        reasoningEffort: _selectedReasoningEffortWireValue(),
       );
     }
 
@@ -1341,11 +1384,14 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                         widget.onBack ?? () => Navigator.of(context).pop(),
                     onOpenGitBranchSheet: openGitBranchSheet,
                     onOpenGitSyncSheet: openGitSyncSheet,
-                    onStartCommitAction: startCommitAction,
                     onOpenOnMac: controller.openOnMac,
                     onOpenDiff: _openDiffView,
+                    onToggleSidebar: widget.onToggleSidebar,
+                    onToggleDiff: _toggleDiffView,
                     isHeaderCollapsed: _isHeaderCollapsed,
                     showBackButton: widget.showBackButton,
+                    isSidebarVisible: widget.isSidebarVisible ?? true,
+                    isDiffVisible: widget.isDiffVisible ?? false,
                   ),
                 ),
                 if (state.thread != null)

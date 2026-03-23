@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Codex Mobile Companion
+Comment=Linux host shell for the Codex Mobile Companion bridge runtime
+Exec=codex_linux_shell
+Icon=codex-mobile-companion
+Terminal=false
+Categories=Development;
+StartupNotify=true

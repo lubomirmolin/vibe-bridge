@@ -169,8 +169,7 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
     });
   }
 
-  void _syncLayoutTransition(bool isUnpaired) {
-    final shouldUseCompactLayout = !isUnpaired;
+  void _syncLayoutTransition(bool shouldUseCompactLayout) {
     if (_isCompactLayout == shouldUseCompactLayout) return;
 
     _isCompactLayout = shouldUseCompactLayout;
@@ -294,8 +293,10 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
     final pairingController = ref.read(pairingControllerProvider.notifier);
     _maybeAutoOpenThreadList(pairingState);
 
-    final bool isUnpaired = pairingState.step == PairingStep.unpaired;
-    _syncLayoutTransition(isUnpaired);
+    final bool shouldUseCompactLayout =
+        pairingState.step == PairingStep.scanning ||
+        pairingState.step == PairingStep.review;
+    _syncLayoutTransition(shouldUseCompactLayout);
 
     return Scaffold(
       backgroundColor: AppTheme.background,
@@ -608,15 +609,19 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
     } else if (displayStep == PairingStep.paired) {
       return Column(
         key: const ValueKey('title-paired'),
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Paired with ${pairingState.trustedBridge?.bridgeName ?? ''}',
-            style: Theme.of(context).textTheme.headlineMedium,
+            'Paired with\nMac',
+            style: Theme.of(context).textTheme.displayLarge?.copyWith(
+              fontWeight: FontWeight.w500,
+              height: 1.1,
+            ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 16),
           const Text(
             'A trusted connection is established.',
-            style: TextStyle(color: AppTheme.textMuted),
+            style: TextStyle(color: AppTheme.textMuted, fontSize: 14),
           ),
         ],
       );

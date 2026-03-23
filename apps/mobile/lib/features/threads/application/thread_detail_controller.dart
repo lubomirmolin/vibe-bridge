@@ -384,7 +384,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         thread: scopedDetail,
         items: items,
         liveConnectionState: LiveConnectionState.connected,
-        isLoading: false,
+        isLoading: true,
         isUnavailable: false,
         clearErrorMessage: true,
         clearStreamErrorMessage: true,
@@ -407,6 +407,14 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       );
       await refreshGitStatus(showLoading: false);
       await _startLiveSubscription();
+      if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
+        return;
+      }
+      state = state.copyWith(
+        isLoading: false,
+        liveConnectionState: LiveConnectionState.connected,
+        clearStreamErrorMessage: true,
+      );
     } on ThreadDetailBridgeException catch (error) {
       if (_isDisposed) {
         return;

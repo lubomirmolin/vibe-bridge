@@ -3,7 +3,6 @@ import 'package:codex_mobile_companion/features/threads/domain/parsed_command_ou
 import 'package:codex_mobile_companion/features/threads/presentation/thread_diff_viewer.dart';
 import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
-import 'package:codex_mobile_companion/foundation/layout/adaptive_layout.dart';
 import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
 import 'package:codex_mobile_companion/shared/widgets/connection_status_banner.dart';
 import 'package:flutter/material.dart';
@@ -69,21 +68,8 @@ class ThreadGitDiffPane extends ConsumerWidget {
         ),
       ).notifier,
     );
-    final layout = AdaptiveLayoutInfo.fromMediaQuery(MediaQuery.of(context));
     final diff = state.diff;
-    final selectedFile = state.selectedFile;
     final files = state.parsedFiles;
-    GitDiffFileSummaryDto? selectedSummary;
-    if (diff != null) {
-      for (final file in diff.files) {
-        if (file.path == state.selectedFilePath) {
-          selectedSummary = file;
-          break;
-        }
-      }
-    }
-    final isWideInnerLayout =
-        layout.windowSize.width >= 1100 && layout.isWideLayout;
 
     return DecoratedBox(
       decoration: const BoxDecoration(color: AppTheme.background),
@@ -115,51 +101,11 @@ class ThreadGitDiffPane extends ConsumerWidget {
                     errorMessage: state.errorMessage,
                   )
                 : Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                    child: isWideInnerLayout
-                        ? Row(
-                            children: [
-                              SizedBox(
-                                width: 280,
-                                child: _ChangedFilesList(
-                                  selectedFilePath: state.selectedFilePath,
-                                  files: diff?.files ?? const [],
-                                  onSelect: controller.selectFile,
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              Expanded(
-                                child: _DiffPreviewCard(
-                                  selectedFilePath: selectedFile?.path,
-                                  document: state.document,
-                                  selectedSummary: selectedSummary,
-                                  errorMessage: state.errorMessage,
-                                ),
-                              ),
-                            ],
-                          )
-                        : Column(
-                            children: [
-                              SizedBox(
-                                height: 172,
-                                child: _ChangedFilesList(
-                                  selectedFilePath: state.selectedFilePath,
-                                  files: diff?.files ?? const [],
-                                  onSelect: controller.selectFile,
-                                  horizontal: true,
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                              Expanded(
-                                child: _DiffPreviewCard(
-                                  selectedFilePath: selectedFile?.path,
-                                  document: state.document,
-                                  selectedSummary: selectedSummary,
-                                  errorMessage: state.errorMessage,
-                                ),
-                              ),
-                            ],
-                          ),
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+                    child: _DiffDocumentView(
+                      document: state.document!,
+                      errorMessage: state.errorMessage,
+                    ),
                   ),
           ),
         ],
@@ -328,197 +274,30 @@ class _ModeChip extends StatelessWidget {
   }
 }
 
-class _ChangedFilesList extends StatelessWidget {
-  const _ChangedFilesList({
-    required this.selectedFilePath,
-    required this.files,
-    required this.onSelect,
-    this.horizontal = false,
-  });
+class _DiffDocumentView extends StatelessWidget {
+  const _DiffDocumentView({required this.document, required this.errorMessage});
 
-  final String? selectedFilePath;
-  final List<GitDiffFileSummaryDto> files;
-  final ValueChanged<String> onSelect;
-  final bool horizontal;
-
-  @override
-  Widget build(BuildContext context) {
-    final child = horizontal
-        ? ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: files.length,
-            separatorBuilder: (context, index) => const SizedBox(width: 12),
-            itemBuilder: (context, index) => SizedBox(
-              width: 260,
-              child: _ChangedFileTile(
-                file: files[index],
-                selected: files[index].path == selectedFilePath,
-                onTap: () => onSelect(files[index].path),
-              ),
-            ),
-          )
-        : ListView.separated(
-            itemCount: files.length,
-            separatorBuilder: (context, index) => const SizedBox(height: 8),
-            itemBuilder: (context, index) => _ChangedFileTile(
-              file: files[index],
-              selected: files[index].path == selectedFilePath,
-              onTap: () => onSelect(files[index].path),
-            ),
-          );
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceZinc900.withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-      ),
-      child: child,
-    );
-  }
-}
-
-class _ChangedFileTile extends StatelessWidget {
-  const _ChangedFileTile({
-    required this.file,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final GitDiffFileSummaryDto file;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: selected
-              ? AppTheme.emerald.withValues(alpha: 0.1)
-              : Colors.white.withValues(alpha: 0.03),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: selected
-                ? AppTheme.emerald.withValues(alpha: 0.28)
-                : Colors.white.withValues(alpha: 0.05),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              file.path,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: GoogleFonts.jetBrainsMono(
-                color: AppTheme.textMain,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                Text(
-                  '+${file.additions}',
-                  style: GoogleFonts.jetBrainsMono(
-                    color: AppTheme.emerald,
-                    fontSize: 11,
-                  ),
-                ),
-                Text(
-                  '-${file.deletions}',
-                  style: GoogleFonts.jetBrainsMono(
-                    color: AppTheme.rose,
-                    fontSize: 11,
-                  ),
-                ),
-                Text(
-                  _changeTypeLabel(file.changeType),
-                  style: GoogleFonts.jetBrainsMono(
-                    color: AppTheme.textSubtle,
-                    fontSize: 10.5,
-                  ),
-                ),
-                if (file.isBinary)
-                  Text(
-                    'Binary',
-                    style: GoogleFonts.jetBrainsMono(
-                      color: AppTheme.amber,
-                      fontSize: 10.5,
-                    ),
-                  ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _DiffPreviewCard extends StatelessWidget {
-  const _DiffPreviewCard({
-    required this.selectedFilePath,
-    required this.document,
-    required this.selectedSummary,
-    required this.errorMessage,
-  });
-
-  final String? selectedFilePath;
-  final ParsedDiffDocument? document;
-  final GitDiffFileSummaryDto? selectedSummary;
+  final ParsedDiffDocument document;
   final String? errorMessage;
 
   @override
   Widget build(BuildContext context) {
-    final selectedFilePath = this.selectedFilePath;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceZinc900.withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-      ),
-      child: document == null || selectedFilePath == null
-          ? Center(
-              child: Text(
-                selectedSummary?.isBinary == true
-                    ? 'Binary diff preview is unavailable for this file.'
-                    : 'No diff preview is available.',
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: AppTheme.textMuted),
-              ),
-            )
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (errorMessage != null) ...[
-                  _InlineDiffNotice(
-                    color: AppTheme.amber,
-                    message: errorMessage!,
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                Expanded(
-                  child: SingleChildScrollView(
-                    child: ThreadDiffViewer(
-                      document: document!,
-                      fileFilter: selectedFilePath,
-                    ),
-                  ),
-                ),
-              ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (errorMessage != null) ...[
+          _InlineDiffNotice(color: AppTheme.amber, message: errorMessage!),
+          const SizedBox(height: 12),
+        ],
+        Expanded(
+          child: Scrollbar(
+            thumbVisibility: true,
+            child: SingleChildScrollView(
+              child: ThreadDiffViewer(document: document),
             ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -639,26 +418,5 @@ String _connectionDetail(LiveConnectionState state) {
       return 'Reconnecting diff updates.';
     case LiveConnectionState.disconnected:
       return 'Live diff updates are offline.';
-  }
-}
-
-String _changeTypeLabel(GitDiffChangeType changeType) {
-  switch (changeType) {
-    case GitDiffChangeType.added:
-      return 'Added';
-    case GitDiffChangeType.modified:
-      return 'Modified';
-    case GitDiffChangeType.deleted:
-      return 'Deleted';
-    case GitDiffChangeType.renamed:
-      return 'Renamed';
-    case GitDiffChangeType.copied:
-      return 'Copied';
-    case GitDiffChangeType.typeChanged:
-      return 'Type changed';
-    case GitDiffChangeType.unmerged:
-      return 'Unmerged';
-    case GitDiffChangeType.unknown:
-      return 'Unknown';
   }
 }

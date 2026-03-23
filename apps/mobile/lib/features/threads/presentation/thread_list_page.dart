@@ -36,7 +36,6 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
 
   late final TextEditingController _searchController;
   late final ProviderSubscription<ThreadListState> _threadListSubscription;
-  final GlobalKey<ScaffoldState> _wideScaffoldKey = GlobalKey<ScaffoldState>();
   final Set<String> _collapsedGroupIds = <String>{};
   final Set<String> _expandedThreadGroupIds = <String>{};
   bool _didRestoreInitialSelectedThread = false;
@@ -281,7 +280,6 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
     final selectedThreadId =
         _wideSelection?.threadId ?? state.selectedThreadId?.trim();
     return Scaffold(
-      key: _wideScaffoldKey,
       backgroundColor: AppTheme.background,
       drawerEdgeDragWidth: 24,
       drawer: Drawer(
@@ -334,116 +332,90 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
               alignment: Alignment.topCenter,
               child: SizedBox(
                 width: bodyWidth,
-                child: Stack(
+                child: Row(
                   children: [
-                    Row(
-                      children: [
-                        if (!_isWideThreadListHidden)
-                          SizedBox(
-                            key: const Key('thread-wide-left-pane'),
-                            width: persistentPaneWidth,
-                            child: DecoratedBox(
-                              decoration: const BoxDecoration(
-                                border: Border(
-                                  right: BorderSide(color: Colors.white10),
-                                ),
+                    AnimatedContainer(
+                      key: const Key('thread-wide-left-pane'),
+                      duration: const Duration(milliseconds: 240),
+                      curve: Curves.easeInOutCubic,
+                      width: _isWideThreadListHidden ? 0 : persistentPaneWidth,
+                      child: ClipRect(
+                        child: IgnorePointer(
+                          ignoring: _isWideThreadListHidden,
+                          child: DecoratedBox(
+                            decoration: const BoxDecoration(
+                              border: Border(
+                                right: BorderSide(color: Colors.white10),
                               ),
-                              child:
-                                  _isWideDiffPaneVisible &&
-                                      selectedThreadId != null &&
-                                      selectedThreadId.isNotEmpty
-                                  ? ThreadGitDiffPane(
-                                      bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
-                                      threadId: selectedThreadId,
-                                      onClose: () {
-                                        setState(() {
-                                          _isWideDiffPaneVisible = false;
-                                        });
-                                      },
-                                    )
-                                  : _ThreadListSurface(
-                                      bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
-                                      state: state,
-                                      controller: controller,
-                                      searchController: _searchController,
-                                      visibleThreadsPerGroup:
-                                          _defaultVisibleThreadsPerGroup,
-                                      isGroupCollapsed: (groupId) =>
-                                          _isGroupCollapsed(state, groupId),
-                                      isGroupThreadListExpanded: (groupId) =>
-                                          _isGroupThreadListExpanded(
-                                            state,
-                                            groupId,
-                                          ),
-                                      onToggleGroupCollapsed:
-                                          _toggleGroupCollapsed,
-                                      onToggleGroupThreadExpansion:
-                                          _toggleGroupThreadExpansion,
-                                      onOpenThread: (threadId) =>
-                                          _openThreadDetail(
-                                            controller,
-                                            threadId,
-                                            forceWideSelection: true,
-                                          ),
-                                      onCreateThread: state.isLoading
-                                          ? null
-                                          : () => _startNewThread(state),
-                                      onCollapseList: () {
-                                        setState(() {
-                                          _isWideThreadListHidden = true;
-                                        });
-                                      },
-                                      selectedThreadId: selectedThreadId,
-                                    ),
                             ),
-                          ),
-                        if (!_isWideThreadListHidden)
-                          SizedBox(
-                            key: const Key('thread-wide-gap'),
-                            width: paneGap,
-                          ),
-                        Expanded(
-                          child: _WideThreadDetailPane(
-                            bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
-                            selection: _wideSelection,
-                            selectedThreadId: selectedThreadId,
-                            onOpenDiff: () {
-                              setState(() {
-                                _isWideDiffPaneVisible = true;
-                                _isWideThreadListHidden = false;
-                              });
-                            },
-                            onDraftCreated: (transition) {
-                              setState(() {
-                                _wideSelection =
-                                    _WideThreadWorkspaceSelection.createdThread(
-                                      transition,
-                                    );
-                              });
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (_isWideThreadListHidden)
-                      Positioned(
-                        top: 12,
-                        left: 12,
-                        child: IconButton.filledTonal(
-                          key: const Key('thread-wide-open-drawer-button'),
-                          style: IconButton.styleFrom(
-                            backgroundColor: AppTheme.surfaceZinc900,
-                            foregroundColor: AppTheme.textMain,
-                          ),
-                          onPressed: () {
-                            _wideScaffoldKey.currentState?.openDrawer();
-                          },
-                          icon: PhosphorIcon(
-                            PhosphorIcons.sidebarSimple(),
-                            size: 18,
+                            child: _ThreadListSurface(
+                              bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+                              state: state,
+                              controller: controller,
+                              searchController: _searchController,
+                              visibleThreadsPerGroup:
+                                  _defaultVisibleThreadsPerGroup,
+                              isGroupCollapsed: (groupId) =>
+                                  _isGroupCollapsed(state, groupId),
+                              isGroupThreadListExpanded: (groupId) =>
+                                  _isGroupThreadListExpanded(state, groupId),
+                              onToggleGroupCollapsed: _toggleGroupCollapsed,
+                              onToggleGroupThreadExpansion:
+                                  _toggleGroupThreadExpansion,
+                              onOpenThread: (threadId) => _openThreadDetail(
+                                controller,
+                                threadId,
+                                forceWideSelection: true,
+                              ),
+                              onCreateThread: state.isLoading
+                                  ? null
+                                  : () => _startNewThread(state),
+                              selectedThreadId: selectedThreadId,
+                            ),
                           ),
                         ),
                       ),
+                    ),
+                    AnimatedContainer(
+                      key: const Key('thread-wide-gap'),
+                      duration: const Duration(milliseconds: 240),
+                      curve: Curves.easeInOutCubic,
+                      width: _isWideThreadListHidden ? 0 : paneGap,
+                    ),
+                    Expanded(
+                      child: _WideThreadWorkspacePane(
+                        bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+                        selection: _wideSelection,
+                        selectedThreadId: selectedThreadId,
+                        onOpenDiff: () {
+                          setState(() {
+                            _isWideDiffPaneVisible = !_isWideDiffPaneVisible;
+                            _isWideThreadListHidden = _isWideDiffPaneVisible;
+                          });
+                        },
+                        onToggleSidebar: () {
+                          setState(() {
+                            if (_isWideDiffPaneVisible) {
+                              _isWideDiffPaneVisible = false;
+                              _isWideThreadListHidden = false;
+                            } else {
+                              _isWideThreadListHidden =
+                                  !_isWideThreadListHidden;
+                            }
+                          });
+                        },
+                        isSidebarVisible: !_isWideThreadListHidden,
+                        isDiffVisible: _isWideDiffPaneVisible,
+                        onDraftCreated: (transition) {
+                          setState(() {
+                            _wideSelection =
+                                _WideThreadWorkspaceSelection.createdThread(
+                                  transition,
+                                );
+                          });
+                        },
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -469,7 +441,6 @@ class _ThreadListSurface extends StatelessWidget {
     required this.onOpenThread,
     required this.onCreateThread,
     this.onBack,
-    this.onCollapseList,
     this.selectedThreadId,
   });
 
@@ -485,7 +456,6 @@ class _ThreadListSurface extends StatelessWidget {
   final ValueChanged<String> onOpenThread;
   final VoidCallback? onCreateThread;
   final VoidCallback? onBack;
-  final VoidCallback? onCollapseList;
   final String? selectedThreadId;
 
   bool get _isWidePane => onBack == null;
@@ -505,16 +475,6 @@ class _ThreadListSurface extends StatelessWidget {
                   icon: PhosphorIcon(
                     PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
                     size: 20,
-                    color: AppTheme.textMuted,
-                  ),
-                ),
-              if (onCollapseList != null)
-                IconButton(
-                  key: const Key('thread-wide-collapse-button'),
-                  onPressed: onCollapseList,
-                  icon: PhosphorIcon(
-                    PhosphorIcons.sidebarSimple(),
-                    size: 18,
                     color: AppTheme.textMuted,
                   ),
                 ),
@@ -780,12 +740,15 @@ class _ThreadListBody extends StatelessWidget {
   }
 }
 
-class _WideThreadDetailPane extends StatelessWidget {
-  const _WideThreadDetailPane({
+class _WideThreadWorkspacePane extends StatelessWidget {
+  const _WideThreadWorkspacePane({
     required this.bridgeApiBaseUrl,
     required this.selection,
     required this.selectedThreadId,
     required this.onOpenDiff,
+    required this.onToggleSidebar,
+    required this.isSidebarVisible,
+    required this.isDiffVisible,
     required this.onDraftCreated,
   });
 
@@ -793,6 +756,83 @@ class _WideThreadDetailPane extends StatelessWidget {
   final _WideThreadWorkspaceSelection? selection;
   final String? selectedThreadId;
   final VoidCallback onOpenDiff;
+  final VoidCallback onToggleSidebar;
+  final bool isSidebarVisible;
+  final bool isDiffVisible;
+  final ValueChanged<ThreadDraftCreatedTransition> onDraftCreated;
+
+  @override
+  Widget build(BuildContext context) {
+    final availableWidth = MediaQuery.of(context).size.width;
+    final diffPaneWidth = math.min(
+      math.max(availableWidth * 0.34, 360.0),
+      560.0,
+    );
+
+    return Row(
+      children: [
+        Expanded(
+          child: _WideThreadDetailPane(
+            bridgeApiBaseUrl: bridgeApiBaseUrl,
+            selection: selection,
+            selectedThreadId: selectedThreadId,
+            onOpenDiff: onOpenDiff,
+            onToggleSidebar: onToggleSidebar,
+            isSidebarVisible: isSidebarVisible,
+            isDiffVisible: isDiffVisible,
+            onDraftCreated: onDraftCreated,
+          ),
+        ),
+        AnimatedContainer(
+          key: const Key('thread-wide-right-diff-pane'),
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeInOutCubic,
+          width: isDiffVisible && (selectedThreadId?.isNotEmpty ?? false)
+              ? diffPaneWidth
+              : 0,
+          child: ClipRect(
+            child: IgnorePointer(
+              ignoring: !isDiffVisible,
+              child: DecoratedBox(
+                decoration: const BoxDecoration(
+                  border: Border(left: BorderSide(color: Colors.white10)),
+                ),
+                child: (selectedThreadId?.isNotEmpty ?? false)
+                    ? ThreadGitDiffPane(
+                        key: ValueKey('thread-wide-diff-$selectedThreadId'),
+                        bridgeApiBaseUrl: bridgeApiBaseUrl,
+                        threadId: selectedThreadId!,
+                        onClose: onOpenDiff,
+                      )
+                    : const SizedBox.shrink(),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _WideThreadDetailPane extends StatelessWidget {
+  const _WideThreadDetailPane({
+    required this.bridgeApiBaseUrl,
+    required this.selection,
+    required this.selectedThreadId,
+    required this.onOpenDiff,
+    required this.onToggleSidebar,
+    required this.isSidebarVisible,
+    required this.isDiffVisible,
+    required this.onDraftCreated,
+  });
+
+  final String bridgeApiBaseUrl;
+  final _WideThreadWorkspaceSelection? selection;
+  final String? selectedThreadId;
+  final VoidCallback onOpenDiff;
+  final VoidCallback onToggleSidebar;
+  final bool isSidebarVisible;
+  final bool isDiffVisible;
   final ValueChanged<ThreadDraftCreatedTransition> onDraftCreated;
 
   @override
@@ -807,6 +847,8 @@ class _WideThreadDetailPane extends StatelessWidget {
         showBackButton: false,
         embedInScaffold: false,
         onDraftThreadCreated: onDraftCreated,
+        onToggleSidebar: onToggleSidebar,
+        isSidebarVisible: isSidebarVisible,
       );
     }
 
@@ -826,6 +868,10 @@ class _WideThreadDetailPane extends StatelessWidget {
         showBackButton: false,
         embedInScaffold: false,
         onOpenDiff: onOpenDiff,
+        onToggleSidebar: onToggleSidebar,
+        isSidebarVisible: isSidebarVisible,
+        onToggleDiff: onOpenDiff,
+        isDiffVisible: isDiffVisible,
       );
     }
 
@@ -1203,18 +1249,29 @@ class _ThreadSummaryCard extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      const SizedBox(width: 16),
-                      PhosphorIcon(
-                        PhosphorIcons.clock(),
-                        size: 14,
-                        color: AppTheme.textSubtle,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        _formatDate(DateTime.parse(thread.updatedAt)),
-                        style: GoogleFonts.jetBrainsMono(
-                          color: AppTheme.textSubtle,
-                          fontSize: 11,
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            PhosphorIcon(
+                              PhosphorIcons.clock(),
+                              size: 14,
+                              color: AppTheme.textSubtle,
+                            ),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                _formatDate(DateTime.parse(thread.updatedAt)),
+                                style: GoogleFonts.jetBrainsMono(
+                                  color: AppTheme.textSubtle,
+                                  fontSize: 11,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],

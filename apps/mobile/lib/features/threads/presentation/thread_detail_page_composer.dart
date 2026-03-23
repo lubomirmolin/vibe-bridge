@@ -88,335 +88,352 @@ class _PinnedTurnComposer extends StatelessWidget {
     return Padding(
       key: const Key('pinned-turn-composer'),
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (attachedImages.isNotEmpty) ...[
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: attachedImages
-                    .map(
-                      (image) => _ComposerImagePreview(
-                        image: image,
-                        onRemove: () => onRemoveImage(image),
-                      ),
-                    )
-                    .toList(growable: false),
-              ),
-            ),
-            const SizedBox(height: 10),
-          ],
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            maxWidth: _ThreadDetailPageState._sessionContentMaxWidth,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 220),
-                switchInCurve: Curves.easeOutCubic,
-                switchOutCurve: Curves.easeInCubic,
-                transitionBuilder: (child, animation) {
-                  return FadeTransition(
-                    opacity: animation,
-                    child: SizeTransition(
-                      axis: Axis.horizontal,
-                      axisAlignment: -1,
-                      sizeFactor: animation,
-                      child: child,
-                    ),
-                  );
-                },
-                child: isComposerFocused || isSpeechRecording
-                    ? const SizedBox(
-                        key: ValueKey('composer-leading-actions-hidden'),
-                      )
-                    : Padding(
-                        key: const ValueKey('composer-leading-actions-visible'),
-                        padding: const EdgeInsets.only(right: 8),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _ComposerUtilityButton(
-                              key: const Key('turn-composer-attach-button'),
-                              icon: PhosphorIcons.plus(),
-                              tooltip: 'Attach images',
-                              onPressed: canEditPinnedControls
-                                  ? () async {
-                                      await onPickImages();
-                                    }
-                                  : null,
-                            ),
-                            const SizedBox(width: 8),
-                            _ComposerUtilityButton(
-                              key: const Key('turn-composer-model-button'),
-                              icon: PhosphorIcons.slidersHorizontal(),
-                              tooltip: 'Composer settings',
-                              onPressed: canEditPinnedControls
-                                  ? () {
-                                      composerFocusNode.unfocus();
-                                      showModalBottomSheet<void>(
-                                        context: context,
-                                        backgroundColor: Colors.transparent,
-                                        isScrollControlled: true,
-                                        builder: (context) =>
-                                            _ComposerModelSheet(
-                                              modelOptions: modelOptions,
-                                              reasoningOptions:
-                                                  reasoningOptions,
-                                              initialModel: selectedModel,
-                                              initialReasoning:
-                                                  selectedReasoning,
-                                              selectedAccessMode: accessMode,
-                                              trustedBridge: trustedBridge,
-                                              isAccessModeUpdating:
-                                                  isAccessModeUpdating,
-                                              onModelChanged: onModelChanged,
-                                              onReasoningChanged:
-                                                  onReasoningChanged,
-                                              onAccessModeChanged:
-                                                  onAccessModeChanged,
-                                            ),
-                                      );
-                                    }
-                                  : null,
-                            ),
-                          ],
-                        ),
-                      ),
-              ),
-              Expanded(
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 220),
-                  curve: Curves.easeOutCubic,
-                  decoration: BoxDecoration(
-                    color: AppTheme.surfaceZinc800.withValues(
-                      alpha: isComposerFocused ? 0.98 : 0.9,
-                    ),
-                    borderRadius: BorderRadius.circular(26),
-                    border: Border.all(
-                      color: Colors.white.withValues(
-                        alpha: isComposerFocused ? 0.14 : 0.07,
-                      ),
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(
-                          alpha: isComposerFocused ? 0.18 : 0.12,
-                        ),
-                        blurRadius: isComposerFocused ? 18 : 12,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    switchInCurve: Curves.easeOutCubic,
-                    switchOutCurve: Curves.easeInCubic,
-                    child: isSpeechRecording
-                        ? _RecordingStatusInline(
-                            key: const ValueKey('recording-inline-status'),
-                            durationSeconds: speechDurationSeconds,
-                            amplitudeStream: speechAmplitudeStream,
-                          )
-                        : TextField(
-                            key: const Key('turn-composer-input'),
-                            controller: composerController,
-                            focusNode: composerFocusNode,
-                            enabled: composerEnabled,
-                            minLines: 1,
-                            maxLines: 4,
-                            keyboardType: TextInputType.multiline,
-                            textInputAction: TextInputAction.newline,
-                            onTapOutside: (_) => composerFocusNode.unfocus(),
-                            style: const TextStyle(
-                              color: AppTheme.textMain,
-                              fontSize: 15,
-                            ),
-                            decoration: InputDecoration(
-                              hintText: isSpeechTranscribing
-                                  ? 'Transcribing voice message…'
-                                  : isTurnActive
-                                  ? 'Turn in progress. Interrupt to send a new prompt.'
-                                  : 'Message Codex...',
-                              hintStyle: const TextStyle(
-                                color: AppTheme.textSubtle,
-                              ),
-                              border: InputBorder.none,
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 18,
-                                vertical: 16,
-                              ),
-                            ),
+              if (attachedImages.isNotEmpty) ...[
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: attachedImages
+                        .map(
+                          (image) => _ComposerImagePreview(
+                            image: image,
+                            onRemove: () => onRemoveImage(image),
                           ),
+                        )
+                        .toList(growable: false),
                   ),
                 ),
-              ),
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 220),
-                switchInCurve: Curves.easeOutCubic,
-                switchOutCurve: Curves.easeInCubic,
-                transitionBuilder: (child, animation) {
-                  return FadeTransition(
-                    opacity: animation,
-                    child: SizeTransition(
-                      axis: Axis.horizontal,
-                      axisAlignment: -1,
-                      sizeFactor: animation,
-                      child: child,
-                    ),
-                  );
-                },
-                child:
-                    (!isComposerFocused &&
-                        !isSpeechRecording &&
-                        !isSpeechTranscribing)
-                    ? const SizedBox(key: ValueKey('composer-speech-hidden'))
-                    : Padding(
-                        key: const ValueKey('composer-speech-visible'),
-                        padding: const EdgeInsets.only(left: 10),
-                        child: SizedBox(
-                          width: 56,
-                          height: 56,
-                          child: MagneticButton(
-                            key: const Key('turn-composer-speech-toggle'),
-                            isCircle: true,
-                            variant: MagneticButtonVariant.secondary,
-                            onClick:
-                                (controlsEnabled &&
-                                    !isTurnActive &&
-                                    !isComposerMutationInFlight &&
-                                    !isInterruptMutationInFlight &&
-                                    !isSpeechTranscribing)
-                                ? () async {
-                                    await onToggleSpeechInput();
-                                  }
-                                : () {},
-                            child: AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 180),
-                              child: isSpeechTranscribing
-                                  ? const SizedBox.square(
-                                      key: ValueKey('speech-loading'),
-                                      dimension: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: AppTheme.textMain,
-                                      ),
-                                    )
-                                  : PhosphorIcon(
-                                      key: ValueKey<bool>(isSpeechRecording),
-                                      isSpeechRecording
-                                          ? PhosphorIcons.x()
-                                          : PhosphorIcons.microphone(),
-                                      size: 24,
-                                      color: isSpeechRecording
-                                          ? AppTheme.emerald
-                                          : null,
-                                    ),
+                const SizedBox(height: 10),
+              ],
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 220),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, animation) {
+                      return FadeTransition(
+                        opacity: animation,
+                        child: SizeTransition(
+                          axis: Axis.horizontal,
+                          axisAlignment: -1,
+                          sizeFactor: animation,
+                          child: child,
+                        ),
+                      );
+                    },
+                    child: isComposerFocused || isSpeechRecording
+                        ? const SizedBox(
+                            key: ValueKey('composer-leading-actions-hidden'),
+                          )
+                        : Padding(
+                            key: const ValueKey(
+                              'composer-leading-actions-visible',
+                            ),
+                            padding: const EdgeInsets.only(right: 8),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _ComposerUtilityButton(
+                                  key: const Key('turn-composer-attach-button'),
+                                  icon: PhosphorIcons.plus(),
+                                  tooltip: 'Attach images',
+                                  onPressed: canEditPinnedControls
+                                      ? () async {
+                                          await onPickImages();
+                                        }
+                                      : null,
+                                ),
+                                const SizedBox(width: 8),
+                                _ComposerUtilityButton(
+                                  key: const Key('turn-composer-model-button'),
+                                  icon: PhosphorIcons.slidersHorizontal(),
+                                  tooltip: 'Composer settings',
+                                  onPressed: canEditPinnedControls
+                                      ? () {
+                                          composerFocusNode.unfocus();
+                                          showModalBottomSheet<void>(
+                                            context: context,
+                                            backgroundColor: Colors.transparent,
+                                            isScrollControlled: true,
+                                            builder: (context) =>
+                                                _ComposerModelSheet(
+                                                  modelOptions: modelOptions,
+                                                  reasoningOptions:
+                                                      reasoningOptions,
+                                                  initialModel: selectedModel,
+                                                  initialReasoning:
+                                                      selectedReasoning,
+                                                  selectedAccessMode:
+                                                      accessMode,
+                                                  trustedBridge: trustedBridge,
+                                                  isAccessModeUpdating:
+                                                      isAccessModeUpdating,
+                                                  onModelChanged:
+                                                      onModelChanged,
+                                                  onReasoningChanged:
+                                                      onReasoningChanged,
+                                                  onAccessModeChanged:
+                                                      onAccessModeChanged,
+                                                ),
+                                          );
+                                        }
+                                      : null,
+                                ),
+                              ],
                             ),
                           ),
+                  ),
+                  Expanded(
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      decoration: BoxDecoration(
+                        color: AppTheme.surfaceZinc800.withValues(
+                          alpha: isComposerFocused ? 0.98 : 0.9,
                         ),
+                        borderRadius: BorderRadius.circular(26),
+                        border: Border.all(
+                          color: Colors.white.withValues(
+                            alpha: isComposerFocused ? 0.14 : 0.07,
+                          ),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(
+                              alpha: isComposerFocused ? 0.18 : 0.12,
+                            ),
+                            blurRadius: isComposerFocused ? 18 : 12,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
                       ),
-              ),
-              const SizedBox(width: 10),
-              SizedBox(
-                width: 56,
-                height: 56,
-                child: ListenableBuilder(
-                  listenable: composerController,
-                  builder: (context, _) {
-                    final hasInput =
-                        composerController.text.trim().isNotEmpty ||
-                        attachedImages.isNotEmpty;
-                    final canRunPrimaryAction =
-                        hasInput &&
-                        controlsEnabled &&
-                        !isTurnActive &&
-                        !isComposerMutationInFlight &&
-                        !isInterruptMutationInFlight &&
-                        !isSpeechRecording &&
-                        !isSpeechTranscribing;
-
-                    return MagneticButton(
-                      key: const Key('turn-composer-submit'),
-                      isCircle: true,
-                      variant: MagneticButtonVariant.primary,
-                      onClick: canRunPrimaryAction
-                          ? () async {
-                              if (!hasInput) return;
-
-                              final success = await onSubmitComposer(
-                                composerController.text,
-                              );
-                              if (success) {
-                                composerController.clear();
-                              }
-                            }
-                          : () {},
                       child: AnimatedSwitcher(
                         duration: const Duration(milliseconds: 180),
                         switchInCurve: Curves.easeOutCubic,
                         switchOutCurve: Curves.easeInCubic,
-                        child: isComposerMutationInFlight
-                            ? const SizedBox.square(
-                                key: ValueKey('composer-loading'),
-                                dimension: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: AppTheme.background,
-                                ),
+                        child: isSpeechRecording
+                            ? _RecordingStatusInline(
+                                key: const ValueKey('recording-inline-status'),
+                                durationSeconds: speechDurationSeconds,
+                                amplitudeStream: speechAmplitudeStream,
                               )
-                            : PhosphorIcon(
-                                PhosphorIcons.arrowUp(),
-                                key: const ValueKey('send'),
-                                size: 24,
+                            : TextField(
+                                key: const Key('turn-composer-input'),
+                                controller: composerController,
+                                focusNode: composerFocusNode,
+                                enabled: composerEnabled,
+                                minLines: 1,
+                                maxLines: 4,
+                                keyboardType: TextInputType.multiline,
+                                textInputAction: TextInputAction.newline,
+                                onTapOutside: (_) =>
+                                    composerFocusNode.unfocus(),
+                                style: const TextStyle(
+                                  color: AppTheme.textMain,
+                                  fontSize: 15,
+                                ),
+                                decoration: InputDecoration(
+                                  hintText: isSpeechTranscribing
+                                      ? 'Transcribing voice message…'
+                                      : isTurnActive
+                                      ? 'Turn in progress. Interrupt to send a new prompt.'
+                                      : 'Message Codex...',
+                                  hintStyle: const TextStyle(
+                                    color: AppTheme.textSubtle,
+                                  ),
+                                  border: InputBorder.none,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 18,
+                                    vertical: 16,
+                                  ),
+                                ),
                               ),
                       ),
-                    );
-                  },
-                ),
+                    ),
+                  ),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 220),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, animation) {
+                      return FadeTransition(
+                        opacity: animation,
+                        child: SizeTransition(
+                          axis: Axis.horizontal,
+                          axisAlignment: -1,
+                          sizeFactor: animation,
+                          child: child,
+                        ),
+                      );
+                    },
+                    child:
+                        (!isComposerFocused &&
+                            !isSpeechRecording &&
+                            !isSpeechTranscribing)
+                        ? const SizedBox(
+                            key: ValueKey('composer-speech-hidden'),
+                          )
+                        : Padding(
+                            key: const ValueKey('composer-speech-visible'),
+                            padding: const EdgeInsets.only(left: 10),
+                            child: SizedBox(
+                              width: 56,
+                              height: 56,
+                              child: MagneticButton(
+                                key: const Key('turn-composer-speech-toggle'),
+                                isCircle: true,
+                                variant: MagneticButtonVariant.secondary,
+                                onClick:
+                                    (controlsEnabled &&
+                                        !isTurnActive &&
+                                        !isComposerMutationInFlight &&
+                                        !isInterruptMutationInFlight &&
+                                        !isSpeechTranscribing)
+                                    ? () async {
+                                        await onToggleSpeechInput();
+                                      }
+                                    : () {},
+                                child: AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 180),
+                                  child: isSpeechTranscribing
+                                      ? const SizedBox.square(
+                                          key: ValueKey('speech-loading'),
+                                          dimension: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: AppTheme.textMain,
+                                          ),
+                                        )
+                                      : PhosphorIcon(
+                                          key: ValueKey<bool>(
+                                            isSpeechRecording,
+                                          ),
+                                          isSpeechRecording
+                                              ? PhosphorIcons.x()
+                                              : PhosphorIcons.microphone(),
+                                          size: 24,
+                                          color: isSpeechRecording
+                                              ? AppTheme.emerald
+                                              : null,
+                                        ),
+                                ),
+                              ),
+                            ),
+                          ),
+                  ),
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    width: 56,
+                    height: 56,
+                    child: ListenableBuilder(
+                      listenable: composerController,
+                      builder: (context, _) {
+                        final hasInput =
+                            composerController.text.trim().isNotEmpty ||
+                            attachedImages.isNotEmpty;
+                        final canRunPrimaryAction =
+                            hasInput &&
+                            controlsEnabled &&
+                            !isTurnActive &&
+                            !isComposerMutationInFlight &&
+                            !isInterruptMutationInFlight &&
+                            !isSpeechRecording &&
+                            !isSpeechTranscribing;
+
+                        return MagneticButton(
+                          key: const Key('turn-composer-submit'),
+                          isCircle: true,
+                          variant: MagneticButtonVariant.primary,
+                          onClick: canRunPrimaryAction
+                              ? () async {
+                                  if (!hasInput) return;
+
+                                  final success = await onSubmitComposer(
+                                    composerController.text,
+                                  );
+                                  if (success) {
+                                    composerController.clear();
+                                  }
+                                }
+                              : () {},
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 180),
+                            switchInCurve: Curves.easeOutCubic,
+                            switchOutCurve: Curves.easeInCubic,
+                            child: isComposerMutationInFlight
+                                ? const SizedBox.square(
+                                    key: ValueKey('composer-loading'),
+                                    dimension: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: AppTheme.background,
+                                    ),
+                                  )
+                                : PhosphorIcon(
+                                    PhosphorIcons.arrowUp(),
+                                    key: const ValueKey('send'),
+                                    size: 24,
+                                  ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ),
+              if (trustedBridge == null) ...[
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: const Text(
+                    'Pair with a Mac to change access mode from here.',
+                    key: Key('turn-composer-access-mode-pairing-note'),
+                    style: TextStyle(color: AppTheme.textSubtle, fontSize: 12),
+                  ),
+                ),
+              ],
+              if (accessModeErrorMessage != null) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    accessModeErrorMessage!,
+                    key: const Key('turn-composer-access-mode-error'),
+                    style: const TextStyle(color: AppTheme.rose, fontSize: 12),
+                  ),
+                ),
+              ],
+              if (speechMessage != null) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    speechMessage!,
+                    key: const Key('turn-composer-speech-message'),
+                    style: TextStyle(
+                      color: speechMessageIsError
+                          ? AppTheme.rose
+                          : AppTheme.textSubtle,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
-          if (trustedBridge == null) ...[
-            const SizedBox(height: 10),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: const Text(
-                'Pair with a Mac to change access mode from here.',
-                key: Key('turn-composer-access-mode-pairing-note'),
-                style: TextStyle(color: AppTheme.textSubtle, fontSize: 12),
-              ),
-            ),
-          ],
-          if (accessModeErrorMessage != null) ...[
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                accessModeErrorMessage!,
-                key: const Key('turn-composer-access-mode-error'),
-                style: const TextStyle(color: AppTheme.rose, fontSize: 12),
-              ),
-            ),
-          ],
-          if (speechMessage != null) ...[
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                speechMessage!,
-                key: const Key('turn-composer-speech-message'),
-                style: TextStyle(
-                  color: speechMessageIsError
-                      ? AppTheme.rose
-                      : AppTheme.textSubtle,
-                  fontSize: 12,
-                ),
-              ),
-            ),
-          ],
-        ],
+        ),
       ),
     );
   }

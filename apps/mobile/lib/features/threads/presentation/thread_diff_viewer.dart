@@ -146,27 +146,20 @@ class _ThreadDiffFileSection extends StatelessWidget {
         .toList(growable: false);
     final gutterWidth = _gutterWidthForLines(visibleLines);
 
-    return Container(
+    return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.25),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+        border: Border(
+          top: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
+          bottom: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.03),
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(10),
-                topRight: Radius.circular(10),
-              ),
-            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(2, 12, 2, 10),
             child: Wrap(
-              spacing: 8,
+              spacing: 10,
               runSpacing: 8,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
@@ -194,25 +187,12 @@ class _ThreadDiffFileSection extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppTheme.surfaceZinc800.withValues(alpha: 0.8),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.08),
-                    ),
-                  ),
-                  child: Text(
-                    changeLabel,
-                    style: GoogleFonts.jetBrainsMono(
-                      color: AppTheme.textSubtle,
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w600,
-                    ),
+                Text(
+                  changeLabel,
+                  style: GoogleFonts.jetBrainsMono(
+                    color: AppTheme.textSubtle,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ],
@@ -221,23 +201,25 @@ class _ThreadDiffFileSection extends StatelessWidget {
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: visibleLines
-                    .map(
-                      (line) => _ThreadDiffLineRow(
-                        line: line,
-                        language: language,
-                        highlighterSet: highlighterSet,
-                        displayLineNumber: _displayLineNumber(
-                          line,
-                          file.changeType,
+              padding: const EdgeInsets.only(bottom: 14),
+              child: IntrinsicWidth(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: visibleLines
+                      .map(
+                        (line) => _ThreadDiffLineRow(
+                          line: line,
+                          language: language,
+                          highlighterSet: highlighterSet,
+                          displayLineNumber: _displayLineNumber(
+                            line,
+                            file.changeType,
+                          ),
+                          gutterWidth: gutterWidth,
                         ),
-                        gutterWidth: gutterWidth,
-                      ),
-                    )
-                    .toList(growable: false),
+                      )
+                      .toList(growable: false),
+                ),
               ),
             ),
           ),

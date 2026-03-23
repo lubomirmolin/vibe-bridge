@@ -1228,6 +1228,7 @@ fn route_request(request_line: &str, app: &BridgeApplication) -> String {
     }
 
     let (path, query) = split_target(target);
+    eprintln!("debug route_request method={method} target={target} path={path}");
 
     match (method, path) {
         ("GET", "/health") => {

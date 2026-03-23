@@ -899,7 +899,7 @@ void main() {
       await tester.pump(const Duration(seconds: 3));
       await tester.pumpAndSettle();
 
-      expect(find.text('Paired with Codex Mobile Companion'), findsOneWidget);
+      expect(find.text('Paired with\nMac'), findsOneWidget);
       expect(pairingBridgeApi.handshakeCalls, greaterThanOrEqualTo(2));
 
       await tester.tap(find.text('Open sessions'));
