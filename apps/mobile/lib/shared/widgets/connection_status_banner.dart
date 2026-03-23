@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
-import 'package:codex_mobile_companion/foundation/theme/liquid_styles.dart';
+import 'package:codex_ui/codex_ui.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:google_fonts/google_fonts.dart';

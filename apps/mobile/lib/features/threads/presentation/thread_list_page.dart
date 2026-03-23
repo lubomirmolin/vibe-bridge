@@ -8,7 +8,7 @@ import 'package:codex_mobile_companion/features/threads/presentation/thread_git_
 import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/layout/adaptive_layout.dart';
-import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
+import 'package:codex_ui/codex_ui.dart';
 import 'package:codex_mobile_companion/shared/widgets/badges.dart';
 import 'package:codex_mobile_companion/shared/widgets/connection_status_banner.dart';
 import 'package:flutter/material.dart';

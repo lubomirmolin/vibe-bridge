@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
@@ -99,10 +98,6 @@ void main() {
 }
 
 class _PassthroughHttpOverrides extends HttpOverrides {
-  @override
-  HttpClient createHttpClient(SecurityContext? context) {
-    return super.createHttpClient(context);
-  }
 }
 
 String _resolveBridgeApiBaseUrl() {

@@ -18,11 +18,11 @@ import 'package:codex_mobile_companion/features/threads/domain/thread_timeline_b
 import 'package:codex_mobile_companion/features/threads/presentation/thread_git_diff_page.dart';
 import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
-import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
-import 'package:codex_mobile_companion/foundation/theme/liquid_styles.dart';
+import 'package:codex_ui/codex_ui.dart';
+
 import 'package:codex_mobile_companion/shared/widgets/badges.dart';
 import 'package:codex_mobile_companion/shared/widgets/connection_status_banner.dart';
-import 'package:codex_mobile_companion/shared/widgets/magnetic_button.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';

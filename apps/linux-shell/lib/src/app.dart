@@ -3,9 +3,9 @@ import 'dart:async';
 import 'package:codex_linux_shell/src/shell_controller.dart';
 import 'package:codex_linux_shell/src/shell_view.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:codex_ui/codex_ui.dart';
 
 class CodexLinuxShellApp extends StatefulWidget {
   const CodexLinuxShellApp({super.key});
@@ -40,7 +40,6 @@ class _CodexLinuxShellAppState extends State<CodexLinuxShellApp>
     await windowManager.setPreventClose(true);
     try {
       await trayManager.setIcon('assets/tray/codex_tray_icon.xpm');
-      await trayManager.setToolTip('Codex Mobile Companion');
       await trayManager.setContextMenu(
         Menu(
           items: [
@@ -116,49 +115,10 @@ class _CodexLinuxShellAppState extends State<CodexLinuxShellApp>
 
   @override
   Widget build(BuildContext context) {
-    final baseTheme = ThemeData.dark(useMaterial3: true);
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Codex Mobile Companion',
-      theme: baseTheme.copyWith(
-        scaffoldBackgroundColor: const Color(0xFF09111A),
-        textTheme: GoogleFonts.spaceGroteskTextTheme(
-          baseTheme.textTheme,
-        ).apply(bodyColor: Colors.white, displayColor: Colors.white),
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF19C7B5),
-          secondary: Color(0xFF0D8DA4),
-          surface: Color(0xFF0D1823),
-        ),
-        filledButtonTheme: FilledButtonThemeData(
-          style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFF19C7B5),
-            foregroundColor: const Color(0xFF031014),
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            textStyle: GoogleFonts.ibmPlexMono(
-              fontSize: 12.5,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-        outlinedButtonTheme: OutlinedButtonThemeData(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: Colors.white,
-            side: const BorderSide(color: Color(0xFF284256)),
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            textStyle: GoogleFonts.ibmPlexMono(
-              fontSize: 12.5,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      ),
+      theme: AppTheme.darkTheme,
       home: AnimatedBuilder(
         animation: _controller,
         builder: (context, _) {

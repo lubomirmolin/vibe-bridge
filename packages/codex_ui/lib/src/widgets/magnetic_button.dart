@@ -1,6 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
+import '../theme/app_theme.dart';
 
 enum MagneticButtonVariant { primary, secondary, danger }
 
@@ -32,7 +32,7 @@ class _MagneticButtonState extends State<MagneticButton> {
   void _updateOffset(Offset localPosition, Size size) {
     final centerX = size.width / 2;
     final centerY = size.height / 2;
-    
+
     setState(() {
       _dragOffset = Offset(
         (localPosition.dx - centerX) * 0.2,
@@ -68,18 +68,29 @@ class _MagneticButtonState extends State<MagneticButton> {
       case MagneticButtonVariant.secondary:
         blurSigma = 16.0;
         shadows = const [
-          BoxShadow(color: Colors.black45, offset: Offset(0, 6), blurRadius: 12),
+          BoxShadow(
+            color: Colors.black45,
+            offset: Offset(0, 6),
+            blurRadius: 12,
+          ),
         ];
         decoration = BoxDecoration(
-          color: isActive ? Colors.white.withValues(alpha: 0.15) : Colors.white.withValues(alpha: 0.05),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.2), width: 1),
+          color: isActive
+              ? Colors.white.withValues(alpha: 0.15)
+              : Colors.white.withValues(alpha: 0.05),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.2),
+            width: 1,
+          ),
           borderRadius: BorderRadius.circular(9999),
         );
         textColor = AppTheme.textMain;
         break;
       case MagneticButtonVariant.danger:
         decoration = BoxDecoration(
-          color: isActive ? AppTheme.rose.withValues(alpha: 0.2) : AppTheme.rose.withValues(alpha: 0.1),
+          color: isActive
+              ? AppTheme.rose.withValues(alpha: 0.2)
+              : AppTheme.rose.withValues(alpha: 0.1),
           border: Border.all(color: AppTheme.rose.withValues(alpha: 0.2)),
           borderRadius: BorderRadius.circular(9999),
         );
@@ -141,14 +152,16 @@ class _MagneticButtonState extends State<MagneticButton> {
           behavior: HitTestBehavior.opaque,
           onTap: widget.onClick,
           child: TweenAnimationBuilder<Offset>(
-            duration: isActive ? const Duration(milliseconds: 50) : const Duration(milliseconds: 600),
+            duration: isActive
+                ? const Duration(milliseconds: 50)
+                : const Duration(milliseconds: 600),
             curve: isActive ? Curves.easeOut : Curves.elasticOut,
-            tween: Tween<Offset>(begin: Offset.zero, end: isActive ? _dragOffset : Offset.zero),
+            tween: Tween<Offset>(
+              begin: Offset.zero,
+              end: isActive ? _dragOffset : Offset.zero,
+            ),
             builder: (context, offset, child) {
-              return Transform.translate(
-                offset: offset,
-                child: child,
-              );
+              return Transform.translate(offset: offset, child: child);
             },
             child: AnimatedScale(
               duration: const Duration(milliseconds: 150),

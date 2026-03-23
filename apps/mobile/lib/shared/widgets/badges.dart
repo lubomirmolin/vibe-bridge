@@ -1,4 +1,4 @@
-import 'package:codex_mobile_companion/foundation/theme/app_theme.dart';
+import 'package:codex_ui/codex_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -56,10 +56,7 @@ class StatusBadge extends StatelessWidget {
           Container(
             width: 6,
             height: 6,
-            decoration: BoxDecoration(
-              color: textColor,
-              shape: BoxShape.circle,
-            ),
+            decoration: BoxDecoration(color: textColor, shape: BoxShape.circle),
           ),
           const SizedBox(width: 6),
           Text(
