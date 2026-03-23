@@ -142,6 +142,9 @@ class ThreadDiffController extends StateNotifier<ThreadDiffState> {
     state = state.copyWith(
       mode: mode,
       isLoading: true,
+      clearDiff: true,
+      clearDocument: true,
+      clearSelectedFilePath: true,
       clearErrorMessage: true,
     );
     await _load();
@@ -189,7 +192,9 @@ class ThreadDiffController extends StateNotifier<ThreadDiffState> {
       state = state.copyWith(
         diff: diff,
         document: document,
+        clearDocument: document == null,
         selectedFilePath: selectedFilePath,
+        clearSelectedFilePath: selectedFilePath == null,
         isLoading: false,
         isRefreshing: false,
         clearErrorMessage: true,

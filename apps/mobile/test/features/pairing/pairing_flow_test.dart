@@ -35,7 +35,7 @@ void main() {
       await tester.tap(find.text('Trust & Connect'));
       await _pumpUi(tester);
 
-      expect(find.text('Paired with Codex Mobile Companion'), findsOneWidget);
+      expect(find.text('Paired with\nMac'), findsOneWidget);
       expect(
         await store.readSecret(SecureValueKey.trustedBridgeIdentity),
         isNotNull,
@@ -299,7 +299,7 @@ void main() {
 
       await _pumpPairingFlow(tester, store: store, bridgeApi: bridgeApi);
 
-      expect(find.text('Paired with Codex Mobile Companion'), findsOneWidget);
+      expect(find.text('Paired with\nMac'), findsOneWidget);
       expect(find.text('Disconnected'), findsOneWidget);
       expect(
         find.text(
@@ -356,7 +356,7 @@ void main() {
       await tester.pump(const Duration(seconds: 3));
       await _pumpUi(tester);
 
-      expect(find.text('Paired with Codex Mobile Companion'), findsOneWidget);
+      expect(find.text('Paired with\nMac'), findsOneWidget);
       expect(find.text('Disconnected'), findsNothing);
       expect(bridgeApi.handshakeCalls, greaterThanOrEqualTo(2));
     },
@@ -407,7 +407,7 @@ void main() {
       await tester.pump(const Duration(seconds: 3));
       await _pumpUi(tester);
 
-      expect(find.text('Paired with Codex Mobile Companion'), findsOneWidget);
+      expect(find.text('Paired with\nMac'), findsOneWidget);
       expect(find.text('Disconnected'), findsNothing);
       expect(bridgeApi.handshakeCalls, greaterThanOrEqualTo(3));
     },
@@ -444,7 +444,7 @@ void main() {
         settingsBridgeApi: FakeSettingsBridgeApi(),
       );
 
-      expect(find.text('Paired with Codex Mobile Companion'), findsOneWidget);
+      expect(find.text('Paired with\nMac'), findsOneWidget);
 
       await _pairingController(tester).unpairFromMobileSettings();
       await _pumpUi(tester);

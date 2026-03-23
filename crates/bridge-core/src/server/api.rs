@@ -9,7 +9,8 @@ use serde_json::json;
 use shared_contracts::{
     AccessMode, BootstrapDto, ModelCatalogDto, SecurityAuditEventDto,
     SpeechModelMutationAcceptedDto, SpeechModelStatusDto, SpeechTranscriptionResultDto,
-    ThreadSnapshotDto, ThreadSummaryDto, ThreadTimelinePageDto, TurnMutationAcceptedDto,
+    ThreadGitDiffDto, ThreadGitDiffMode, ThreadSnapshotDto, ThreadSummaryDto,
+    ThreadTimelinePageDto, TurnMutationAcceptedDto,
 };
 
 use crate::pairing::{
@@ -51,6 +52,7 @@ pub fn router(state: BridgeAppState) -> Router {
         .route("/threads/:thread_id/snapshot", get(thread_snapshot))
         .route("/threads/:thread_id/history", get(thread_history))
         .route("/threads/:thread_id/git/status", get(thread_git_status))
+        .route("/threads/:thread_id/git/diff", get(thread_git_diff))
         .route(
             "/threads/:thread_id/git/branch-switch",
             post(thread_git_branch_switch),
@@ -323,6 +325,12 @@ struct GitRemoteRequest {
     remote: Option<String>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct ThreadGitDiffQueryParams {
+    mode: Option<String>,
+    path: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct StartTurnRequest {
     prompt: String,
@@ -518,6 +526,39 @@ async fn thread_git_status(
         .await
         .map(Json)
         .map_err(|error| git_error_response(&thread_id, error, "git_status_unavailable"))
+}
+
+async fn thread_git_diff(
+    State(state): State<BridgeAppState>,
+    Path(thread_id): Path<String>,
+    Query(query): Query<ThreadGitDiffQueryParams>,
+) -> Result<Json<ThreadGitDiffDto>, (StatusCode, Json<ErrorEnvelope>)> {
+    let Some(raw_mode) = query.mode.as_deref() else {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "git_diff_unavailable",
+            "missing_required_query_param",
+            "missing_required_query_param: mode",
+        ));
+    };
+    let mode = match raw_mode.trim() {
+        "workspace" => ThreadGitDiffMode::Workspace,
+        "latest_thread_change" => ThreadGitDiffMode::LatestThreadChange,
+        _ => {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "git_diff_unavailable",
+                "invalid_git_diff_mode",
+                "invalid_git_diff_mode",
+            ));
+        }
+    };
+
+    state
+        .git_diff(&thread_id, mode, query.path.as_deref())
+        .await
+        .map(Json)
+        .map_err(|error| git_diff_error_response(&thread_id, error))
 }
 
 async fn thread_git_branch_switch(
@@ -982,6 +1023,24 @@ fn git_error_response(
         StatusCode::BAD_REQUEST,
         error_name,
         "git_operation_failed",
+        format!("{thread_id}: {message}"),
+    )
+}
+
+fn git_diff_error_response(thread_id: &str, message: String) -> (StatusCode, Json<ErrorEnvelope>) {
+    if message.contains("thread ") && message.contains(" not found") {
+        return error_response(
+            StatusCode::NOT_FOUND,
+            "git_diff_unavailable",
+            "thread_not_found",
+            message,
+        );
+    }
+
+    error_response(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "git_diff_unavailable",
+        "git_diff_unavailable",
         format!("{thread_id}: {message}"),
     )
 }
@@ -1485,6 +1544,103 @@ mod tests {
         assert_eq!(decoded["status"]["dirty"], true);
         assert_eq!(decoded["status"]["ahead_by"], 1);
         assert_eq!(decoded["status"]["behind_by"], 1);
+    }
+
+    #[tokio::test]
+    async fn git_diff_route_returns_workspace_diff() {
+        let sandbox = GitRepoSandbox::new("diff-live");
+        fs::write(sandbox.repo_dir.join("dirty.txt"), "dirty change\n")
+            .expect("dirty file should write");
+
+        let state = test_state();
+        prime_thread(
+            &state,
+            "thread-123",
+            &sandbox.repo_dir,
+            AccessMode::FullControl,
+        )
+        .await;
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/threads/thread-123/git/diff?mode=workspace")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), 200);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert_eq!(decoded["mode"], "workspace");
+        assert!(
+            decoded["unified_diff"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("dirty.txt")
+        );
+        assert_eq!(decoded["files"][0]["path"], "dirty.txt");
+    }
+
+    #[tokio::test]
+    async fn git_diff_route_returns_latest_thread_change_diff() {
+        let state = test_state();
+        let sandbox = GitRepoSandbox::new("diff-latest");
+        prime_thread(
+            &state,
+            "019d174b-f678-7762-af1b-7c1f1910a056",
+            &sandbox.repo_dir,
+            AccessMode::FullControl,
+        )
+        .await;
+        let mut snapshot = state
+            .projections()
+            .snapshot("019d174b-f678-7762-af1b-7c1f1910a056")
+            .await
+            .expect("snapshot should exist");
+        snapshot.entries = vec![shared_contracts::ThreadTimelineEntryDto {
+            event_id: "evt-diff".to_string(),
+            kind: shared_contracts::BridgeEventKind::FileChange,
+            occurred_at: "2026-03-21T09:01:00Z".to_string(),
+            summary: "diff".to_string(),
+            payload: json!({
+                "resolved_unified_diff": "diff --git a/lib/main.dart b/lib/main.dart\n--- a/lib/main.dart\n+++ b/lib/main.dart\n@@ -1 +1 @@\n-old\n+new"
+            }),
+            annotations: None,
+        }];
+        state.projections().put_snapshot(snapshot.clone()).await;
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(
+                        "/threads/019d174b-f678-7762-af1b-7c1f1910a056/git/diff?mode=latest_thread_change",
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), 200);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert_eq!(decoded["mode"], "latest_thread_change");
+        assert!(
+            decoded["unified_diff"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("lib/main.dart")
+        );
+        assert_eq!(decoded["files"][0]["path"], "lib/main.dart");
     }
 
     #[tokio::test]

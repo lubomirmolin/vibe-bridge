@@ -101,6 +101,11 @@ impl ThreadApiService {
             return Ok(());
         }
 
+        let thread_was_cached = self
+            .thread_records
+            .iter()
+            .any(|thread| thread.id == thread_id);
+
         let (thread_records, timeline_by_thread_id) = load_thread_snapshot_for_id(
             &sync_config.codex_command,
             &sync_config.codex_args,
@@ -133,6 +138,15 @@ impl ThreadApiService {
                 .insert(thread_id.to_string(), timeline);
         } else {
             self.timeline_by_thread_id.remove(thread_id);
+        }
+
+        if thread_was_cached
+            && !self
+                .thread_records
+                .iter()
+                .any(|thread| thread.id == thread_id)
+        {
+            self.sync_from_upstream()?;
         }
 
         self.refresh_thread_sync_receipt(thread_id);
@@ -1028,11 +1042,11 @@ fn resolve_latest_thread_change_diff(
         else {
             continue;
         };
-        if !diff.contains("diff --git ") {
+        let summaries = parse_git_diff_file_summaries(diff);
+        if summaries.is_empty() {
             continue;
         }
         if let Some(path) = normalized_path {
-            let summaries = parse_git_diff_file_summaries(diff);
             if summaries.iter().all(|file| file.path != path) {
                 continue;
             }

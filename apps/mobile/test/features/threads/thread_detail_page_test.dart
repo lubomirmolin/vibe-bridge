@@ -206,7 +206,7 @@ void main() {
         detailApi.startTurnPromptsByThreadId['thread-new'],
         equals(<String>['Plan the release']),
       );
-      expect(find.text('Fresh session'), findsOneWidget);
+      expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
     },
   );
 
@@ -277,8 +277,10 @@ void main() {
       await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
       await tester.pumpAndSettle();
 
-      expect(find.text('New Thread'), findsOneWidget);
-      expect(find.text('Implement shared contracts'), findsNothing);
+      expect(
+        tester.widget<Text>(find.byKey(const Key('thread-detail-title'))).data,
+        'New Thread',
+      );
 
       liveStream.emit(
         BridgeEventEnvelope<Map<String, dynamic>>(
@@ -297,8 +299,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 750));
       await tester.pumpAndSettle();
 
-      expect(find.text('Implement shared contracts'), findsOneWidget);
-      expect(find.text('New Thread'), findsNothing);
+      expect(
+        tester.widget<Text>(find.byKey(const Key('thread-detail-title'))).data,
+        'Implement shared contracts',
+      );
     },
   );
 
@@ -368,7 +372,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect(find.text('Fresh session'), findsOneWidget);
+      expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
       expect(detailApi.createThreadCallCount, 1);
       expect(
         detailApi.startTurnPromptsByThreadId['thread-new'],
@@ -2789,6 +2793,56 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(find.text('Enter a branch name.'), findsOneWidget);
   });
 
+  testWidgets('branch sheet owns the commit action in session detail', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [
+          const ThreadDetailDto(
+            contractVersion: contractVersion,
+            threadId: 'thread-123',
+            title: 'Implement shared contracts',
+            status: ThreadStatus.idle,
+            workspace: '/workspace/codex-mobile-companion',
+            repository: 'codex-mobile-companion',
+            branch: 'master',
+            createdAt: '2026-03-18T09:45:00Z',
+            updatedAt: '2026-03-18T10:00:00Z',
+            source: 'cli',
+            accessMode: AccessMode.fullControl,
+            lastTurnSummary: 'Idle',
+          ),
+        ],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+      settingsApi: FakeSettingsBridgeApi(accessMode: AccessMode.fullControl),
+    );
+
+    expect(find.byKey(const Key('git-header-commit-button')), findsNothing);
+
+    await _openGitBranchSheet(tester);
+    expect(find.byKey(const Key('git-branch-commit-button')), findsOneWidget);
+    final commitButton = tester.widget<FilledButton>(
+      find.byKey(const Key('git-branch-commit-button')),
+    );
+    expect(commitButton.onPressed, isNotNull);
+
+    await tester.tap(find.byKey(const Key('git-branch-commit-button')));
+    await tester.pumpAndSettle();
+
+    expect(detailApi.startCommitCallsByThreadId['thread-123'], 1);
+    expect(find.byKey(const Key('git-branch-commit-button')), findsNothing);
+  });
+
   testWidgets('approval-required git pull surfaces the bridge message', (
     tester,
   ) async {
@@ -4032,6 +4086,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     Map<String, List<Object>>? startTurnScriptByThreadId,
     Map<String, List<Object>>? steerTurnScriptByThreadId,
     Map<String, List<Object>>? interruptTurnScriptByThreadId,
+    Map<String, List<Object>>? startCommitScriptByThreadId,
     Map<String, List<Object>>? gitStatusScriptByThreadId,
     Map<String, List<Object>>? branchSwitchScriptByThreadId,
     Map<String, List<Object>>? pullScriptByThreadId,
@@ -4049,6 +4104,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
        _startTurnScriptByThreadId = startTurnScriptByThreadId ?? {},
        _steerTurnScriptByThreadId = steerTurnScriptByThreadId ?? {},
        _interruptTurnScriptByThreadId = interruptTurnScriptByThreadId ?? {},
+       _startCommitScriptByThreadId = startCommitScriptByThreadId ?? {},
        _gitStatusScriptByThreadId = gitStatusScriptByThreadId ?? {},
        _branchSwitchScriptByThreadId = branchSwitchScriptByThreadId ?? {},
        _pullScriptByThreadId = pullScriptByThreadId ?? {},
@@ -4063,6 +4119,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   final Map<String, List<Object>> _startTurnScriptByThreadId;
   final Map<String, List<Object>> _steerTurnScriptByThreadId;
   final Map<String, List<Object>> _interruptTurnScriptByThreadId;
+  final Map<String, List<Object>> _startCommitScriptByThreadId;
   final Map<String, List<Object>> _gitStatusScriptByThreadId;
   final Map<String, List<Object>> _branchSwitchScriptByThreadId;
   final Map<String, List<Object>> _pullScriptByThreadId;
@@ -4085,6 +4142,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   final Map<String, List<String>> steerTurnInstructionsByThreadId =
       <String, List<String>>{};
   final Map<String, int> interruptTurnCallsByThreadId = <String, int>{};
+  final Map<String, int> startCommitCallsByThreadId = <String, int>{};
   final Map<String, int> gitStatusFetchCountByThreadId = <String, int>{};
   final Map<String, List<String>> branchSwitchRequestsByThreadId =
       <String, List<String>>{};
@@ -4362,7 +4420,34 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     String? model,
     String? effort,
   }) async {
-    throw UnimplementedError();
+    startCommitCallsByThreadId.update(
+      threadId,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+
+    final scriptedResult = _nextOptionalResult(
+      _startCommitScriptByThreadId,
+      threadId,
+    );
+    if (scriptedResult is TurnMutationResult) {
+      return scriptedResult;
+    }
+    if (scriptedResult is ThreadTurnBridgeException) {
+      throw scriptedResult;
+    }
+    if (scriptedResult != null) {
+      throw StateError(
+        'Unsupported start-commit scripted result: $scriptedResult',
+      );
+    }
+
+    return _turnMutationResult(
+      threadId: threadId,
+      operation: 'commit',
+      status: ThreadStatus.running,
+      message: 'Commit started and streaming is active',
+    );
   }
 
   @override

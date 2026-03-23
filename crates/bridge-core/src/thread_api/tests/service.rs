@@ -1043,3 +1043,83 @@ fn git_diff_response_returns_none_for_non_repo_workspace() {
     assert!(diff.is_none());
     fs::remove_dir_all(&temp_dir).expect("temp dir should be removable");
 }
+
+#[test]
+fn sync_thread_from_upstream_falls_back_to_full_sync_when_single_thread_load_is_empty() {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be valid")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!(
+        "thread-sync-full-fallback-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+
+    let script_path = temp_dir.join("fake-codex.sh");
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+if [ "$1" = "app-server" ]; then
+  shift
+fi
+while IFS= read -r line; do
+  id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"id":%s,"result":{}}\n' "$id"
+      ;;
+    *'"method":"thread/list"'*)
+      printf '{"id":%s,"result":{"data":[{"id":"thread-123","name":"Thread from list","preview":"preview","status":{"type":"idle"},"cwd":"/workspace/repo","gitInfo":{"branch":"main","originUrl":"git@github.com:example/repo.git"},"createdAt":1710000000,"updatedAt":1710000300,"source":"cli","turns":[]}],"nextCursor":null}}\n' "$id"
+      ;;
+    *'"method":"thread/read"'*)
+      printf '{"id":%s,"error":{"message":"thread not found"}}\n' "$id"
+      ;;
+    *'"method":"thread/resume"'*)
+      printf '{"id":%s,"error":{"message":"thread not found"}}\n' "$id"
+      ;;
+    *)
+      printf '{"id":%s,"result":{}}\n' "$id"
+      ;;
+  esac
+done
+"#,
+    )
+    .expect("fake codex script should be written");
+    fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))
+        .expect("fake codex script should be executable");
+
+    let previous_codex_home = std::env::var_os("CODEX_HOME");
+    unsafe {
+        std::env::set_var("CODEX_HOME", &temp_dir);
+    }
+
+    let mut service =
+        ThreadApiService::from_codex_app_server(script_path.to_string_lossy().as_ref(), &[], None)
+            .expect("service should load from thread/list");
+    assert!(service.detail_response("thread-123").is_some());
+
+    service
+        .sync_thread_from_upstream("thread-123")
+        .expect("single-thread sync should fall back to full sync");
+
+    let detail = service
+        .detail_response("thread-123")
+        .expect("thread should remain available after fallback");
+    assert_eq!(detail.thread.title, "Thread from list");
+    assert_eq!(detail.thread.workspace, "/workspace/repo");
+
+    match previous_codex_home {
+        Some(value) => unsafe {
+            std::env::set_var("CODEX_HOME", value);
+        },
+        None => unsafe {
+            std::env::remove_var("CODEX_HOME");
+        },
+    }
+    fs::remove_dir_all(&temp_dir).expect("temp dir should be removable");
+}

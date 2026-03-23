@@ -10,11 +10,14 @@ class _ThreadDetailHeader extends StatelessWidget {
     required this.onBackWhenUnavailable,
     required this.onOpenGitBranchSheet,
     required this.onOpenGitSyncSheet,
-    required this.onStartCommitAction,
     required this.onOpenOnMac,
     required this.onOpenDiff,
+    required this.onToggleSidebar,
+    required this.onToggleDiff,
     required this.isHeaderCollapsed,
     required this.showBackButton,
+    required this.isSidebarVisible,
+    required this.isDiffVisible,
   });
 
   final ThreadDetailState state;
@@ -25,11 +28,14 @@ class _ThreadDetailHeader extends StatelessWidget {
   final VoidCallback onBackWhenUnavailable;
   final Future<void> Function() onOpenGitBranchSheet;
   final Future<void> Function() onOpenGitSyncSheet;
-  final Future<void> Function() onStartCommitAction;
   final Future<void> Function() onOpenOnMac;
   final Future<void> Function() onOpenDiff;
+  final VoidCallback? onToggleSidebar;
+  final VoidCallback? onToggleDiff;
   final ValueListenable<bool> isHeaderCollapsed;
   final bool showBackButton;
+  final bool isSidebarVisible;
+  final bool isDiffVisible;
 
   @override
   Widget build(BuildContext context) {
@@ -41,6 +47,10 @@ class _ThreadDetailHeader extends StatelessWidget {
             ? _threadDetailConnectionBannerDetail(state)
             : null,
         showBackButton: showBackButton,
+        onToggleSidebar: onToggleSidebar,
+        isSidebarVisible: isSidebarVisible,
+        onToggleDiff: onToggleDiff,
+        isDiffVisible: isDiffVisible,
       );
     }
 
@@ -52,13 +62,16 @@ class _ThreadDetailHeader extends StatelessWidget {
       onBack: onBackWhenLoaded,
       onOpenGitBranchSheet: onOpenGitBranchSheet,
       onOpenGitSyncSheet: onOpenGitSyncSheet,
-      onStartCommitAction: onStartCommitAction,
       onOpenOnMac: onOpenOnMac,
       onOpenDiff: onOpenDiff,
+      onToggleSidebar: onToggleSidebar,
+      onToggleDiff: onToggleDiff,
       isHeaderCollapsed: isHeaderCollapsed,
       connectionState: state.liveConnectionState,
       connectionDetail: _threadDetailConnectionBannerDetail(state),
       showBackButton: showBackButton,
+      isSidebarVisible: isSidebarVisible,
+      isDiffVisible: isDiffVisible,
     );
   }
 }
@@ -72,13 +85,16 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
     required this.onBack,
     required this.onOpenGitBranchSheet,
     required this.onOpenGitSyncSheet,
-    required this.onStartCommitAction,
     required this.onOpenOnMac,
     required this.onOpenDiff,
+    required this.onToggleSidebar,
+    required this.onToggleDiff,
     required this.isHeaderCollapsed,
     required this.connectionState,
     required this.connectionDetail,
     required this.showBackButton,
+    required this.isSidebarVisible,
+    required this.isDiffVisible,
   });
 
   final ThreadDetailState state;
@@ -88,21 +104,22 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
   final VoidCallback onBack;
   final Future<void> Function() onOpenGitBranchSheet;
   final Future<void> Function() onOpenGitSyncSheet;
-  final Future<void> Function() onStartCommitAction;
   final Future<void> Function() onOpenOnMac;
   final Future<void> Function() onOpenDiff;
+  final VoidCallback? onToggleSidebar;
+  final VoidCallback? onToggleDiff;
   final ValueListenable<bool> isHeaderCollapsed;
   final LiveConnectionState connectionState;
   final String? connectionDetail;
   final bool showBackButton;
+  final bool isSidebarVisible;
+  final bool isDiffVisible;
 
   @override
   Widget build(BuildContext context) {
     final thread = state.thread!;
-    final canStartCommit =
-        state.canRunMutatingActions &&
-        !state.isComposerMutationInFlight &&
-        !state.isTurnActive;
+    final showSidebarToggle = onToggleSidebar != null;
+    final leadingInset = showBackButton || showSidebarToggle ? 36.0 : 16.0;
 
     return Container(
       padding: const EdgeInsets.only(top: 0, right: 16, bottom: 8),
@@ -110,321 +127,273 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
         color: AppTheme.background,
         border: Border(bottom: BorderSide(color: Colors.white10)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            maxWidth: _ThreadDetailPageState._sessionContentMaxWidth,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (showBackButton)
-                IconButton(
-                  key: const Key('thread-detail-back-button'),
-                  onPressed: onBack,
-                  icon: PhosphorIcon(
-                    PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
-                    size: 20,
-                    color: AppTheme.textMuted,
+              Row(
+                children: [
+                  if (showBackButton)
+                    IconButton(
+                      key: const Key('thread-detail-back-button'),
+                      onPressed: onBack,
+                      icon: PhosphorIcon(
+                        PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
+                        size: 20,
+                        color: AppTheme.textMuted,
+                      ),
+                    )
+                  else if (showSidebarToggle)
+                    IconButton(
+                      key: const Key('thread-detail-sidebar-toggle'),
+                      onPressed: onToggleSidebar,
+                      icon: PhosphorIcon(
+                        PhosphorIcons.sidebarSimple(
+                          isSidebarVisible
+                              ? PhosphorIconsStyle.fill
+                              : PhosphorIconsStyle.regular,
+                        ),
+                        size: 20,
+                        color: AppTheme.textMuted,
+                      ),
+                    )
+                  else
+                    const SizedBox(width: 16),
+                  Expanded(
+                    child: Text(
+                      thread.title,
+                      key: const Key('thread-detail-title'),
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: -0.5,
+                        fontSize: 18,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                )
-              else
-                const SizedBox(width: 16),
-              Expanded(
-                child: Text(
-                  thread.title,
-                  key: const Key('thread-detail-title'),
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: -0.5,
-                    fontSize: 18,
+                  if (onToggleDiff != null)
+                    IconButton(
+                      key: const Key('thread-detail-diff-toggle'),
+                      onPressed: onToggleDiff,
+                      icon: PhosphorIcon(
+                        PhosphorIcons.gitDiff(
+                          isDiffVisible
+                              ? PhosphorIconsStyle.fill
+                              : PhosphorIconsStyle.regular,
+                        ),
+                        size: 20,
+                        color: isDiffVisible
+                            ? AppTheme.emerald
+                            : AppTheme.textMuted,
+                      ),
+                    ),
+                ],
+              ),
+              Padding(
+                padding: EdgeInsets.only(left: leadingInset),
+                child: SingleChildScrollView(
+                  key: const Key('thread-detail-metadata-scroll'),
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      PhosphorIcon(
+                        PhosphorIcons.folderSimple(),
+                        size: 14,
+                        color: AppTheme.textSubtle,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        thread.repository,
+                        style: GoogleFonts.jetBrainsMono(
+                          color: AppTheme.textSubtle,
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        '•',
+                        style: TextStyle(color: AppTheme.textSubtle),
+                      ),
+                      const SizedBox(width: 8),
+                      StatusBadge(
+                        text: _threadStatusLabel(thread.status),
+                        variant: thread.status == ThreadStatus.running
+                            ? BadgeVariant.active
+                            : BadgeVariant.defaultVariant,
+                      ),
+                      if (hasPendingApprovals) ...[
+                        const SizedBox(width: 8),
+                        const Text(
+                          '•',
+                          style: TextStyle(color: AppTheme.textSubtle),
+                        ),
+                        const SizedBox(width: 8),
+                        PhosphorIcon(
+                          PhosphorIcons.shieldWarning(),
+                          size: 14,
+                          color: AppTheme.amber,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Approvals Req.',
+                          style: GoogleFonts.jetBrainsMono(
+                            color: AppTheme.amber,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              ConnectionStatusBanner(
+                state: _threadDetailConnectionBannerState(connectionState),
+                detail: connectionDetail,
+                compact: true,
+                margin: EdgeInsets.fromLTRB(leadingInset, 12, 0, 0),
+              ),
+              ValueListenableBuilder<bool>(
+                valueListenable: isHeaderCollapsed,
+                builder: (context, isCollapsed, child) {
+                  return AnimatedSize(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeInOut,
+                    alignment: Alignment.topCenter,
+                    child: isCollapsed
+                        ? const SizedBox(width: double.infinity)
+                        : child!,
+                  );
+                },
+                child: Column(
+                  children: [
+                    const SizedBox(height: 16),
+                    Padding(
+                      padding: EdgeInsets.only(left: leadingInset),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            flex: 3,
+                            child: FilledButton.tonalIcon(
+                              key: const Key('git-header-branch-button'),
+                              style: FilledButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                                backgroundColor: AppTheme.surfaceZinc800
+                                    .withValues(alpha: 0.5),
+                                foregroundColor: AppTheme.textMain,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  side: BorderSide(
+                                    color: Colors.white.withValues(alpha: 0.05),
+                                  ),
+                                ),
+                              ),
+                              onPressed: () async {
+                                await onOpenGitBranchSheet();
+                              },
+                              icon: PhosphorIcon(
+                                PhosphorIcons.gitBranch(),
+                                size: 16,
+                                color: gitControls.hasDirtyWorkingTree
+                                    ? AppTheme.amber
+                                    : AppTheme.textSubtle,
+                              ),
+                              label: Text(
+                                gitControls.repositoryContext.branch,
+                                style: const TextStyle(fontSize: 13),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 2,
+                            child: FilledButton.tonalIcon(
+                              key: const Key('git-header-sync-button'),
+                              style: FilledButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                                backgroundColor: AppTheme.surfaceZinc800
+                                    .withValues(alpha: 0.5),
+                                foregroundColor: AppTheme.textMain,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  side: BorderSide(
+                                    color: Colors.white.withValues(alpha: 0.05),
+                                  ),
+                                ),
+                              ),
+                              onPressed: () async {
+                                await onOpenGitSyncSheet();
+                              },
+                              icon: PhosphorIcon(
+                                PhosphorIcons.arrowsClockwise(),
+                                size: 16,
+                                color: AppTheme.textSubtle,
+                              ),
+                              label: Text(
+                                gitControls.syncLabel,
+                                style: const TextStyle(fontSize: 13),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton.tonal(
+                            key: const Key('open-on-mac-button'),
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size(44, 44),
+                              padding: const EdgeInsets.all(10),
+                              backgroundColor: AppTheme.surfaceZinc800
+                                  .withValues(alpha: 0.5),
+                              foregroundColor: AppTheme.textMain,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                side: BorderSide(
+                                  color: Colors.white.withValues(alpha: 0.05),
+                                ),
+                              ),
+                            ),
+                            onPressed: canOpenOnMac
+                                ? () async {
+                                    await onOpenOnMac();
+                                  }
+                                : null,
+                            child: state.isOpenOnMacInFlight
+                                ? const SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: AppTheme.textMain,
+                                    ),
+                                  )
+                                : PhosphorIcon(
+                                    PhosphorIcons.monitor(),
+                                    size: 18,
+                                    color: AppTheme.textMain,
+                                  ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
-          Padding(
-            padding: EdgeInsets.only(left: showBackButton ? 36 : 16),
-            child: SingleChildScrollView(
-              key: const Key('thread-detail-metadata-scroll'),
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  PhosphorIcon(
-                    PhosphorIcons.folderSimple(),
-                    size: 14,
-                    color: AppTheme.textSubtle,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    thread.repository,
-                    style: GoogleFonts.jetBrainsMono(
-                      color: AppTheme.textSubtle,
-                      fontSize: 12,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  const Text('•', style: TextStyle(color: AppTheme.textSubtle)),
-                  const SizedBox(width: 8),
-                  StatusBadge(
-                    text: _threadStatusLabel(thread.status),
-                    variant: thread.status == ThreadStatus.running
-                        ? BadgeVariant.active
-                        : BadgeVariant.defaultVariant,
-                  ),
-                  if (hasPendingApprovals) ...[
-                    const SizedBox(width: 8),
-                    const Text(
-                      '•',
-                      style: TextStyle(color: AppTheme.textSubtle),
-                    ),
-                    const SizedBox(width: 8),
-                    PhosphorIcon(
-                      PhosphorIcons.shieldWarning(),
-                      size: 14,
-                      color: AppTheme.amber,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Approvals Req.',
-                      style: GoogleFonts.jetBrainsMono(
-                        color: AppTheme.amber,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          ConnectionStatusBanner(
-            state: _threadDetailConnectionBannerState(connectionState),
-            detail: connectionDetail,
-            compact: true,
-            margin: EdgeInsets.fromLTRB(showBackButton ? 36 : 16, 12, 0, 0),
-          ),
-          ValueListenableBuilder<bool>(
-            valueListenable: isHeaderCollapsed,
-            builder: (context, isCollapsed, child) {
-              return AnimatedSize(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeInOut,
-                alignment: Alignment.topCenter,
-                child: isCollapsed
-                    ? const SizedBox(width: double.infinity)
-                    : child!,
-              );
-            },
-            child: Column(
-              children: [
-                const SizedBox(height: 16),
-                Padding(
-                  padding: EdgeInsets.only(left: showBackButton ? 36 : 16),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        flex: 3,
-                        child: FilledButton.tonalIcon(
-                          key: const Key('git-header-branch-button'),
-                          style: FilledButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 10,
-                            ),
-                            backgroundColor: AppTheme.surfaceZinc800.withValues(
-                              alpha: 0.5,
-                            ),
-                            foregroundColor: AppTheme.textMain,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              side: BorderSide(
-                                color: Colors.white.withValues(alpha: 0.05),
-                              ),
-                            ),
-                          ),
-                          onPressed: () async {
-                            await onOpenGitBranchSheet();
-                          },
-                          icon: PhosphorIcon(
-                            PhosphorIcons.gitBranch(),
-                            size: 16,
-                            color: gitControls.hasDirtyWorkingTree
-                                ? AppTheme.amber
-                                : AppTheme.textSubtle,
-                          ),
-                          label: Text(
-                            gitControls.repositoryContext.branch,
-                            style: const TextStyle(fontSize: 13),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        flex: 2,
-                        child: FilledButton.tonalIcon(
-                          key: const Key('git-header-sync-button'),
-                          style: FilledButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 10,
-                            ),
-                            backgroundColor: AppTheme.surfaceZinc800.withValues(
-                              alpha: 0.5,
-                            ),
-                            foregroundColor: AppTheme.textMain,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              side: BorderSide(
-                                color: Colors.white.withValues(alpha: 0.05),
-                              ),
-                            ),
-                          ),
-                          onPressed: () async {
-                            await onOpenGitSyncSheet();
-                          },
-                          icon: PhosphorIcon(
-                            PhosphorIcons.arrowsClockwise(),
-                            size: 16,
-                            color: AppTheme.textSubtle,
-                          ),
-                          label: Text(
-                            gitControls.syncLabel,
-                            style: const TextStyle(fontSize: 13),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        flex: 2,
-                        child: FilledButton.tonalIcon(
-                          key: const Key('git-header-diff-button'),
-                          style: FilledButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 10,
-                            ),
-                            backgroundColor: AppTheme.surfaceZinc800.withValues(
-                              alpha: 0.5,
-                            ),
-                            foregroundColor: AppTheme.textMain,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              side: BorderSide(
-                                color: Colors.white.withValues(alpha: 0.05),
-                              ),
-                            ),
-                          ),
-                          onPressed: state.thread == null
-                              ? null
-                              : () async {
-                                  await onOpenDiff();
-                                },
-                          icon: PhosphorIcon(
-                            PhosphorIcons.gitDiff(),
-                            size: 16,
-                            color: AppTheme.textSubtle,
-                          ),
-                          label: const Text(
-                            'Diff',
-                            style: TextStyle(fontSize: 13),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        flex: 2,
-                        child: FilledButton.tonalIcon(
-                          key: const Key('git-header-commit-button'),
-                          style: FilledButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 10,
-                            ),
-                            backgroundColor: AppTheme.surfaceZinc800.withValues(
-                              alpha: 0.5,
-                            ),
-                            foregroundColor: AppTheme.textMain,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              side: BorderSide(
-                                color: Colors.white.withValues(alpha: 0.05),
-                              ),
-                            ),
-                          ),
-                          onPressed: canStartCommit
-                              ? () async {
-                                  await onStartCommitAction();
-                                }
-                              : null,
-                          icon: state.isComposerMutationInFlight
-                              ? const SizedBox.square(
-                                  dimension: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: AppTheme.textMain,
-                                  ),
-                                )
-                              : PhosphorIcon(
-                                  PhosphorIcons.gitCommit(),
-                                  size: 16,
-                                  color: AppTheme.textSubtle,
-                                ),
-                          label: const Text(
-                            'Commit',
-                            style: TextStyle(fontSize: 13),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton.tonal(
-                        key: const Key('open-on-mac-button'),
-                        style: FilledButton.styleFrom(
-                          minimumSize: const Size(44, 44),
-                          padding: const EdgeInsets.all(10),
-                          backgroundColor: AppTheme.surfaceZinc800.withValues(
-                            alpha: 0.5,
-                          ),
-                          foregroundColor: AppTheme.textMain,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            side: BorderSide(
-                              color: Colors.white.withValues(alpha: 0.05),
-                            ),
-                          ),
-                        ),
-                        onPressed: canOpenOnMac
-                            ? () async {
-                                await onOpenOnMac();
-                              }
-                            : null,
-                        child: state.isOpenOnMacInFlight
-                            ? const SizedBox.square(
-                                dimension: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: AppTheme.textMain,
-                                ),
-                              )
-                            : PhosphorIcon(
-                                PhosphorIcons.monitor(),
-                                size: 18,
-                                color: AppTheme.textMain,
-                              ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -436,56 +405,103 @@ class _UnavailableThreadDetailHeader extends StatelessWidget {
     required this.connectionState,
     required this.connectionDetail,
     required this.showBackButton,
+    required this.onToggleSidebar,
+    required this.isSidebarVisible,
+    required this.onToggleDiff,
+    required this.isDiffVisible,
   });
 
   final VoidCallback onBack;
   final LiveConnectionState connectionState;
   final String? connectionDetail;
   final bool showBackButton;
+  final VoidCallback? onToggleSidebar;
+  final bool isSidebarVisible;
+  final VoidCallback? onToggleDiff;
+  final bool isDiffVisible;
 
   @override
   Widget build(BuildContext context) {
+    final showSidebarToggle = onToggleSidebar != null;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
       decoration: const BoxDecoration(
         color: AppTheme.background,
         border: Border(bottom: BorderSide(color: Colors.white10)),
       ),
-      child: Column(
-        children: [
-          Row(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            maxWidth: _ThreadDetailPageState._sessionContentMaxWidth,
+          ),
+          child: Column(
             children: [
-              if (showBackButton)
-                IconButton(
-                  key: const Key('thread-detail-back-button'),
-                  onPressed: onBack,
-                  icon: PhosphorIcon(
-                    PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
-                    size: 20,
-                    color: AppTheme.textMuted,
+              Row(
+                children: [
+                  if (showBackButton)
+                    IconButton(
+                      key: const Key('thread-detail-back-button'),
+                      onPressed: onBack,
+                      icon: PhosphorIcon(
+                        PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
+                        size: 20,
+                        color: AppTheme.textMuted,
+                      ),
+                    )
+                  else if (showSidebarToggle)
+                    IconButton(
+                      key: const Key('thread-detail-sidebar-toggle'),
+                      onPressed: onToggleSidebar,
+                      icon: PhosphorIcon(
+                        PhosphorIcons.sidebarSimple(
+                          isSidebarVisible
+                              ? PhosphorIconsStyle.fill
+                              : PhosphorIconsStyle.regular,
+                        ),
+                        size: 20,
+                        color: AppTheme.textMuted,
+                      ),
+                    )
+                  else
+                    const SizedBox(width: 8),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Session Details',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: -0.5,
+                      ),
+                    ),
                   ),
-                )
-              else
-                const SizedBox(width: 8),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Session Details',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: -0.5,
-                  ),
-                ),
+                  if (onToggleDiff != null)
+                    IconButton(
+                      key: const Key('thread-detail-diff-toggle'),
+                      onPressed: onToggleDiff,
+                      icon: PhosphorIcon(
+                        PhosphorIcons.gitDiff(
+                          isDiffVisible
+                              ? PhosphorIconsStyle.fill
+                              : PhosphorIconsStyle.regular,
+                        ),
+                        size: 20,
+                        color: isDiffVisible
+                            ? AppTheme.emerald
+                            : AppTheme.textMuted,
+                      ),
+                    ),
+                ],
+              ),
+              ConnectionStatusBanner(
+                state: _threadDetailConnectionBannerState(connectionState),
+                detail: connectionDetail,
+                compact: true,
+                margin: const EdgeInsets.only(top: 8),
               ),
             ],
           ),
-          ConnectionStatusBanner(
-            state: _threadDetailConnectionBannerState(connectionState),
-            detail: connectionDetail,
-            compact: true,
-            margin: const EdgeInsets.only(top: 8),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -597,19 +613,31 @@ class _ResolvedGitControls {
   }
 }
 
-class _GitBranchSheet extends StatelessWidget {
+class _GitBranchSheet extends StatefulWidget {
   const _GitBranchSheet({
     required this.gitControls,
     required this.gitBranchController,
     required this.onSwitchBranch,
+    required this.canStartCommit,
+    required this.onStartCommitAction,
   });
 
   final _ResolvedGitControls gitControls;
   final TextEditingController gitBranchController;
   final Future<bool> Function(String rawBranch) onSwitchBranch;
+  final bool canStartCommit;
+  final Future<bool> Function() onStartCommitAction;
+
+  @override
+  State<_GitBranchSheet> createState() => _GitBranchSheetState();
+}
+
+class _GitBranchSheetState extends State<_GitBranchSheet> {
+  bool _isCommitSubmitting = false;
 
   @override
   Widget build(BuildContext context) {
+    final commitEnabled = widget.canStartCommit && !_isCommitSubmitting;
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.only(
@@ -632,24 +660,24 @@ class _GitBranchSheet extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(
-              'Repository: ${gitControls.repositoryContext.repository}',
+              'Repository: ${widget.gitControls.repositoryContext.repository}',
               style: const TextStyle(color: AppTheme.textMuted, fontSize: 13),
             ),
             const SizedBox(height: 4),
             Text(
-              'Branch: ${gitControls.repositoryContext.branch}',
+              'Branch: ${widget.gitControls.repositoryContext.branch}',
               style: const TextStyle(color: AppTheme.textMuted, fontSize: 13),
             ),
             const SizedBox(height: 4),
             Text(
-              'Remote: ${gitControls.repositoryContext.remote}',
+              'Remote: ${widget.gitControls.repositoryContext.remote}',
               style: const TextStyle(color: AppTheme.textMuted, fontSize: 13),
             ),
             const SizedBox(height: 4),
             Text(
-              gitControls.statusLabel,
+              widget.gitControls.statusLabel,
               style: TextStyle(
-                color: gitControls.hasDirtyWorkingTree
+                color: widget.gitControls.hasDirtyWorkingTree
                     ? AppTheme.amber
                     : AppTheme.textMuted,
                 fontSize: 13,
@@ -661,8 +689,10 @@ class _GitBranchSheet extends StatelessWidget {
                 Expanded(
                   child: TextField(
                     key: const Key('git-branch-input'),
-                    controller: gitBranchController,
-                    enabled: gitControls.canRunGitMutations,
+                    controller: widget.gitBranchController,
+                    enabled:
+                        widget.gitControls.canRunGitMutations &&
+                        !_isCommitSubmitting,
                     style: const TextStyle(
                       color: AppTheme.textMain,
                       fontSize: 14,
@@ -694,13 +724,15 @@ class _GitBranchSheet extends StatelessWidget {
                       vertical: 14,
                     ),
                   ),
-                  onPressed: gitControls.canRunGitMutations
+                  onPressed:
+                      widget.gitControls.canRunGitMutations &&
+                          !_isCommitSubmitting
                       ? () async {
-                          final success = await onSwitchBranch(
-                            gitBranchController.text,
+                          final success = await widget.onSwitchBranch(
+                            widget.gitBranchController.text,
                           );
                           if (success) {
-                            gitBranchController.clear();
+                            widget.gitBranchController.clear();
                             if (context.mounted) {
                               Navigator.of(context).pop();
                             }
@@ -711,10 +743,58 @@ class _GitBranchSheet extends StatelessWidget {
                 ),
               ],
             ),
-            if (gitControls.unavailableMessage != null) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.tonalIcon(
+                key: const Key('git-branch-commit-button'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.surfaceZinc800.withValues(
+                    alpha: 0.7,
+                  ),
+                  foregroundColor: AppTheme.textMain,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                ),
+                onPressed: commitEnabled
+                    ? () async {
+                        setState(() {
+                          _isCommitSubmitting = true;
+                        });
+                        final success = await widget.onStartCommitAction();
+                        if (!mounted) {
+                          return;
+                        }
+                        setState(() {
+                          _isCommitSubmitting = false;
+                        });
+                        if (success) {
+                          Navigator.of(context).pop();
+                        }
+                      }
+                    : null,
+                icon: _isCommitSubmitting
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppTheme.textMain,
+                        ),
+                      )
+                    : PhosphorIcon(
+                        PhosphorIcons.gitCommit(),
+                        size: 16,
+                        color: AppTheme.textSubtle,
+                      ),
+                label: const Text('Commit'),
+              ),
+            ),
+            if (widget.gitControls.unavailableMessage != null) ...[
               const SizedBox(height: 12),
               Text(
-                gitControls.unavailableMessage!,
+                widget.gitControls.unavailableMessage!,
                 style: const TextStyle(color: AppTheme.rose, fontSize: 13),
               ),
             ],
