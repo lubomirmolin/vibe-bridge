@@ -1180,18 +1180,6 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
             onRetryCamera: _retryCamera,
           ),
 
-        if (displayStep == PairingStep.paired &&
-            pairingState.bridgeConnectionState ==
-                BridgeConnectionState.disconnected) ...[
-          _ConnectionWarningBanner(
-            message:
-                pairingState.errorMessage ??
-                'Bridge unreachable. Offline cache readable.',
-            onRetry: pairingController.retryTrustedBridgeConnection,
-          ),
-          const SizedBox(height: 16),
-        ],
-
         if (anchoredAction != null) ...[
           MagneticButton(
             variant: anchoredAction.variant,
@@ -1491,64 +1479,6 @@ class _IdentityRow extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _ConnectionWarningBanner extends StatelessWidget {
-  final String message;
-  final VoidCallback onRetry;
-
-  const _ConnectionWarningBanner({
-    required this.message,
-    required this.onRetry,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppTheme.amber.withValues(alpha: 0.1),
-        border: Border.all(color: AppTheme.amber.withValues(alpha: 0.3)),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              PhosphorIcon(
-                PhosphorIcons.warningCircle(PhosphorIconsStyle.duotone),
-                color: AppTheme.amber,
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'Disconnected',
-                style: TextStyle(
-                  color: AppTheme.amber,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            message,
-            style: const TextStyle(color: AppTheme.amber, fontSize: 13),
-          ),
-          const SizedBox(height: 16),
-          MagneticButton(
-            variant: MagneticButtonVariant.secondary,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            onClick: onRetry,
-            child: const Text(
-              'Retry connection',
-              style: TextStyle(color: AppTheme.amber),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
