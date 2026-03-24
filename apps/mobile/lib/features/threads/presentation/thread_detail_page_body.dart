@@ -196,7 +196,9 @@ class _ThreadDetailBody extends StatelessWidget {
                       const _InlineInfo(message: 'Loading older history…'),
                       const SizedBox(height: 12),
                     ],
-                    if (state.visibleItems.isEmpty)
+                    if (state.isInitialTimelineLoading)
+                      const _TimelineLoadingState()
+                    else if (state.visibleItems.isEmpty)
                       const _EmptyTimelineState()
                     else
                       ...timelineBlocks
@@ -441,6 +443,37 @@ class _ThreadApprovalsCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _TimelineLoadingState extends StatelessWidget {
+  const _TimelineLoadingState();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      key: Key('thread-detail-timeline-loading-state'),
+      padding: EdgeInsets.symmetric(vertical: 40),
+      child: Center(
+        child: Column(
+          children: [
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                color: AppTheme.emerald,
+              ),
+            ),
+            SizedBox(height: 16),
+            Text(
+              'Loading timeline…',
+              style: TextStyle(color: AppTheme.textMuted),
+            ),
+          ],
+        ),
       ),
     );
   }

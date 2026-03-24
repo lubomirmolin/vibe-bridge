@@ -242,6 +242,9 @@ class ThreadDetailState {
 
   bool get canLoadEarlierHistory => hasMoreBefore && !isLoadingEarlierHistory;
 
+  bool get isInitialTimelineLoading =>
+      isLoading && hasThread && visibleItems.isEmpty;
+
   List<ThreadActivityItem> get visibleItems => conversationItems;
 
   // Delegation accessors for sub-state fields (backward compat)
@@ -305,7 +308,8 @@ class ThreadDetailState {
     bool clearOpenOnMacErrorMessage = false,
   }) {
     // Resolve git sub-state: explicit object wins, else apply individual fields
-    final resolvedGit = git ??
+    final resolvedGit =
+        git ??
         _applyGitFieldOverrides(
           gitStatus: gitStatus,
           clearGitStatus: clearGitStatus,
@@ -319,7 +323,8 @@ class ThreadDetailState {
           clearGitControlsUnavailableReason: clearGitControlsUnavailableReason,
         );
 
-    final resolvedTurnControl = turnControl ??
+    final resolvedTurnControl =
+        turnControl ??
         _applyTurnControlFieldOverrides(
           isComposerMutationInFlight: isComposerMutationInFlight,
           isInterruptMutationInFlight: isInterruptMutationInFlight,
@@ -327,7 +332,8 @@ class ThreadDetailState {
           clearTurnControlError: clearTurnControlError,
         );
 
-    final resolvedOpenOnMac = openOnMac ??
+    final resolvedOpenOnMac =
+        openOnMac ??
         _applyOpenOnMacFieldOverrides(
           isOpenOnMacInFlight: isOpenOnMacInFlight,
           openOnMacMessage: openOnMacMessageValue,
@@ -531,10 +537,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     }
 
     _reconnectScheduler.cancel();
-    state = _resetTransientState(state).copyWith(
-      isLoading: true,
-      isUnavailable: false,
-    );
+    state = _resetTransientState(
+      state,
+    ).copyWith(isLoading: true, isUnavailable: false);
 
     try {
       await _closeLiveSubscription();
@@ -554,11 +559,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         context: 'loading thread detail',
       );
 
-      state = _resetTransientState(state).copyWith(
-        thread: scopedDetail,
-        isLoading: true,
-        isUnavailable: false,
-      );
+      state = _resetTransientState(
+        state,
+      ).copyWith(thread: scopedDetail, isLoading: true, isUnavailable: false);
       _threadListController.syncThreadDetail(scopedDetail);
 
       final page = await _bridgeApi.fetchThreadTimelinePage(
