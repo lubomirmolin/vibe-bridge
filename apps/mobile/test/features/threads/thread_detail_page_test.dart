@@ -138,6 +138,141 @@ void main() {
   );
 
   testWidgets(
+    'thread detail shows inline loader until initial timeline page resolves',
+    (tester) async {
+      final timelineCompleter = Completer<List<ThreadTimelineEntryDto>>();
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-456': [_thread456Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-456': [timelineCompleter.future],
+        },
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appSecureStoreProvider.overrideWithValue(InMemorySecureStore()),
+            threadListBridgeApiProvider.overrideWithValue(
+              FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]),
+            ),
+            approvalBridgeApiProvider.overrideWithValue(
+              EmptyApprovalBridgeApi(),
+            ),
+            threadDetailBridgeApiProvider.overrideWithValue(detailApi),
+            settingsBridgeApiProvider.overrideWithValue(
+              FakeSettingsBridgeApi(),
+            ),
+            threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+            threadCacheRepositoryProvider.overrideWithValue(
+              _newCacheRepository(),
+            ),
+          ],
+          child: const MaterialApp(
+            home: ThreadDetailPage(
+              bridgeApiBaseUrl: _bridgeApiBaseUrl,
+              threadId: 'thread-456',
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await _pumpForTransientUiWork(tester, iterations: 2);
+
+      expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
+      expect(find.text('Investigate reconnect dedup'), findsOneWidget);
+      expect(
+        find.byKey(const Key('thread-detail-timeline-loading-state')),
+        findsOneWidget,
+      );
+      expect(find.text('Loading timeline…'), findsOneWidget);
+      expect(find.text('No timeline entries yet.'), findsNothing);
+
+      timelineCompleter.complete(_mixedTimelineEvents());
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('thread-detail-timeline-loading-state')),
+        findsNothing,
+      );
+      expect(find.text('No timeline entries yet.'), findsNothing);
+      await _scrollUntilVisible(
+        tester,
+        find.text('Please summarize the latest bridge logs.'),
+      );
+      expect(
+        find.text('Please summarize the latest bridge logs.'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'thread detail shows empty timeline state only after initial empty page resolves',
+    (tester) async {
+      final timelineCompleter = Completer<List<ThreadTimelineEntryDto>>();
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-456': [_thread456Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-456': [timelineCompleter.future],
+        },
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appSecureStoreProvider.overrideWithValue(InMemorySecureStore()),
+            threadListBridgeApiProvider.overrideWithValue(
+              FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]),
+            ),
+            approvalBridgeApiProvider.overrideWithValue(
+              EmptyApprovalBridgeApi(),
+            ),
+            threadDetailBridgeApiProvider.overrideWithValue(detailApi),
+            settingsBridgeApiProvider.overrideWithValue(
+              FakeSettingsBridgeApi(),
+            ),
+            threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+            threadCacheRepositoryProvider.overrideWithValue(
+              _newCacheRepository(),
+            ),
+          ],
+          child: const MaterialApp(
+            home: ThreadDetailPage(
+              bridgeApiBaseUrl: _bridgeApiBaseUrl,
+              threadId: 'thread-456',
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await _pumpForTransientUiWork(tester, iterations: 2);
+
+      expect(
+        find.byKey(const Key('thread-detail-timeline-loading-state')),
+        findsOneWidget,
+      );
+      expect(find.text('No timeline entries yet.'), findsNothing);
+
+      timelineCompleter.complete(const <ThreadTimelineEntryDto>[]);
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('thread-detail-timeline-loading-state')),
+        findsNothing,
+      );
+      expect(find.text('No timeline entries yet.'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'thread list header plus opens draft detail and submits first prompt through a created thread',
     (tester) async {
       final createdThread = ThreadDetailDto(
@@ -4688,6 +4823,9 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     final scriptedResult = _nextResult(_timelineScriptByThreadId, threadId);
     if (scriptedResult is List<ThreadTimelineEntryDto>) {
       return scriptedResult;
+    }
+    if (scriptedResult is Future<List<ThreadTimelineEntryDto>>) {
+      return await scriptedResult;
     }
     if (scriptedResult is ThreadDetailBridgeException) {
       throw scriptedResult;
