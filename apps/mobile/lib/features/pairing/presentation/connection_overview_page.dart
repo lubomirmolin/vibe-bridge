@@ -186,13 +186,10 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
   }
 
   void _openScanner(PairingController pairingController) {
-    setState(() {
-      _scannerIssue = widget.initialScannerIssue;
-      _isLockedOn = false;
-      _scannedRawQr = null;
-      _swappedDuringWipe = false;
-      _cameraMounted = false;
-    });
+    _resetScannerState(
+      scannerIssue: widget.initialScannerIssue,
+      resetCameraMounted: true,
+    );
     pairingController.openScanner();
     _flipRevealController.reset();
     _scheduleCameraMount();
@@ -208,12 +205,7 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
   }
 
   Future<void> _retryCamera() async {
-    setState(() {
-      _scannerIssue = null;
-      _isLockedOn = false;
-      _scannedRawQr = null;
-      _swappedDuringWipe = false;
-    });
+    _resetScannerState(scannerIssue: null);
     _flipRevealController.reset();
     try {
       await _cameraController.start();
@@ -226,6 +218,47 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
       if (!mounted) return;
       setState(() => _scannerIssue = const PairingScannerIssue.failure());
     }
+  }
+
+  void _resetScannerState({
+    required PairingScannerIssue? scannerIssue,
+    bool resetCameraMounted = false,
+  }) {
+    setState(() {
+      _scannerIssue = scannerIssue;
+      _isLockedOn = false;
+      _scannedRawQr = null;
+      _swappedDuringWipe = false;
+      if (resetCameraMounted) {
+        _cameraMounted = false;
+      }
+    });
+  }
+
+  String? _extractDetectedRawQr(BarcodeCapture capture) {
+    for (final barcode in capture.barcodes) {
+      final rawValue = barcode.rawValue;
+      if (rawValue?.trim().isNotEmpty ?? false) {
+        return rawValue;
+      }
+    }
+
+    return null;
+  }
+
+  void _lockOnDetectedQr(String rawQr) {
+    setState(() {
+      _scannerIssue = null;
+      _scannedRawQr = rawQr;
+      _isLockedOn = true;
+    });
+
+    // Hang for visual lock-on confirmation, then explode the timeline unified
+    // single-shot wipe.
+    Future.delayed(const Duration(milliseconds: 800), () {
+      if (!mounted) return;
+      _flipRevealController.forward(from: 0.0);
+    });
   }
 
   void _maybeAutoOpenThreadList(PairingState pairingState) {
@@ -332,7 +365,7 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
 
   Widget _buildBackground() {
     return (widget.enableAnimatedBackground ?? widget.enableCameraPreview)
-        ? const AnimatedBridgeBackground(sceneScale: 1.08)
+        ? const AnimatedBridgeBackground(sceneScale: 0.9)
         : const ColoredBox(color: AppTheme.background);
   }
 
@@ -725,104 +758,133 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
     PairingStep? displayStepOverride,
   }) {
     final displayStep = displayStepOverride ?? pairingState.step;
-    if (displayStep == PairingStep.unpaired) {
-      return Column(
-        key: const ValueKey('title-unpaired'),
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Codex\nBridge',
-            style: Theme.of(context).textTheme.displayLarge?.copyWith(
-              fontWeight: FontWeight.w500,
-              height: 1.1,
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Text(
-            'Secure operator console for remote monitoring and control.',
-            style: TextStyle(color: AppTheme.textMuted, fontSize: 14),
-          ),
-        ],
-      );
-    } else if (displayStep == PairingStep.scanning) {
-      return Column(
-        key: const ValueKey('title-scanning'),
-        children: [
-          Text(
-            'Scan QR Code',
-            style: Theme.of(context).textTheme.headlineMedium,
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Display code on desktop bridge app',
-            style: TextStyle(color: AppTheme.textMuted),
-          ),
-        ],
-      );
-    } else if (displayStep == PairingStep.review) {
-      return Column(
-        key: const ValueKey('title-review'),
-        children: [
-          Text(
-            'Verify Identity',
-            style: Theme.of(context).textTheme.headlineMedium,
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Confirm desktop fingerprint before connecting.',
-            style: TextStyle(color: AppTheme.textMuted),
-          ),
-        ],
-      );
-    } else if (displayStep == PairingStep.paired) {
-      final pairedTitleStyle = Theme.of(context).textTheme.displayLarge
-          ?.copyWith(fontWeight: FontWeight.w500, height: 1.0);
-      final pairedBridgeNameStyle = Theme.of(context).textTheme.headlineSmall
-          ?.copyWith(fontWeight: FontWeight.w500, height: 1.05);
+    switch (displayStep) {
+      case PairingStep.unpaired:
+        return _buildUnpairedTitle();
+      case PairingStep.scanning:
+        return _buildScanningTitle();
+      case PairingStep.review:
+        return _buildReviewTitle();
+      case PairingStep.paired:
+        return _buildPairedTitle(pairingState);
+    }
+  }
 
-      return Column(
-        key: const ValueKey('title-paired'),
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text.rich(
-            TextSpan(
-              text: 'Connected to\n',
-              style: pairedTitleStyle,
-              children: [
-                TextSpan(
-                  text: pairingState.trustedBridge?.bridgeName ?? '',
-                  style: pairedBridgeNameStyle,
-                ),
-              ],
-            ),
+  Widget _buildUnpairedTitle() {
+    return Column(
+      key: const ValueKey('title-unpaired'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Codex\nBridge',
+          style: Theme.of(context).textTheme.displayLarge?.copyWith(
+            fontWeight: FontWeight.w500,
+            height: 1.1,
           ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
+        ),
+        const SizedBox(height: 16),
+        const Text(
+          'Secure operator console for remote monitoring and control.',
+          style: TextStyle(color: AppTheme.textMuted, fontSize: 14),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildScanningTitle() {
+    return Column(
+      key: const ValueKey('title-scanning'),
+      children: [
+        Text('Scan QR Code', style: Theme.of(context).textTheme.headlineMedium),
+        const SizedBox(height: 8),
+        const Text(
+          'Display code on desktop bridge app',
+          style: TextStyle(color: AppTheme.textMuted),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildReviewTitle() {
+    return Column(
+      key: const ValueKey('title-review'),
+      children: [
+        Text(
+          'Verify Identity',
+          style: Theme.of(context).textTheme.headlineMedium,
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Confirm desktop fingerprint before connecting.',
+          style: TextStyle(color: AppTheme.textMuted),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPairedTitle(PairingState pairingState) {
+    final pairedTitleStyle = Theme.of(context).textTheme.displayLarge?.copyWith(
+      fontWeight: FontWeight.w500,
+      height: 1.0,
+    );
+    final pairedBridgeNameStyle = Theme.of(context).textTheme.headlineSmall
+        ?.copyWith(fontWeight: FontWeight.w500, height: 1.05);
+    final bridgeSummary = pairingState.savedBridgeCount > 1
+        ? '${pairingState.savedBridgeCount} saved bridges available.'
+        : 'A trusted bridge connection is established.';
+
+    return Column(
+      key: const ValueKey('title-paired'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text.rich(
+          TextSpan(
+            text: 'Connected to\n',
+            style: pairedTitleStyle,
             children: [
-              Text(
-                pairingState.savedBridgeCount > 1
-                    ? '${pairingState.savedBridgeCount} saved bridges available.'
-                    : 'A trusted bridge connection is established.',
-                style: const TextStyle(color: AppTheme.textMuted, fontSize: 14),
-              ),
-              _PairingConnectionIndicator(
-                state: pairingState.bridgeConnectionState,
+              TextSpan(
+                text: pairingState.trustedBridge?.bridgeName ?? '',
+                style: pairedBridgeNameStyle,
               ),
             ],
           ),
-        ],
-      );
-    }
-    return const SizedBox.shrink(key: ValueKey('title-none'));
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 12,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(
+              bridgeSummary,
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 14),
+            ),
+            _PairingConnectionIndicator(
+              state: pairingState.bridgeConnectionState,
+            ),
+          ],
+        ),
+      ],
+    );
   }
 
   Widget _buildTopRightAction(
     PairingState pairingState,
     PairingController pairingController,
   ) {
+    final action = switch (pairingState.step) {
+      PairingStep.paired => IconButton(
+        key: const Key('top-right-add-bridge'),
+        tooltip: 'Add another bridge',
+        onPressed: () => _openScanner(pairingController),
+        icon: PhosphorIcon(
+          PhosphorIcons.plus(PhosphorIconsStyle.bold),
+          size: 24,
+        ),
+      ),
+      _ => const SizedBox.shrink(key: ValueKey('top-right-action-none')),
+    };
+
     return AnimatedSwitcher(
       duration: PairingConstants.buttonSwitcher,
       switchInCurve: Curves.easeOutCubic,
@@ -836,17 +898,7 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
           ),
         );
       },
-      child: pairingState.step == PairingStep.paired
-          ? IconButton(
-              key: const Key('top-right-add-bridge'),
-              tooltip: 'Add another bridge',
-              onPressed: () => _openScanner(pairingController),
-              icon: PhosphorIcon(
-                PhosphorIcons.plus(PhosphorIconsStyle.bold),
-                size: 24,
-              ),
-            )
-          : const SizedBox.shrink(key: ValueKey('top-right-action-none')),
+      child: action,
     );
   }
 
@@ -916,39 +968,16 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
                                             key: const Key('camera-scanner'),
                                             controller: _cameraController,
                                             onDetect: (capture) {
-                                              for (final barcode
-                                                  in capture.barcodes) {
-                                                if (barcode.rawValue
-                                                        ?.trim()
-                                                        .isNotEmpty ==
-                                                    true) {
-                                                  if (_isLockedOn) return;
-
-                                                  setState(() {
-                                                    _scannerIssue = null;
-                                                    _scannedRawQr =
-                                                        barcode.rawValue!;
-                                                    _isLockedOn = true;
-                                                  });
-
-                                                  // Hang for visual lock-on
-                                                  // confirmation, then explode
-                                                  // the timeline unified single-shot wipe
-                                                  Future.delayed(
-                                                    const Duration(
-                                                      milliseconds: 800,
-                                                    ),
-                                                    () {
-                                                      if (mounted) {
-                                                        _flipRevealController
-                                                            .forward(from: 0.0);
-                                                      }
-                                                    },
+                                              final rawQr =
+                                                  _extractDetectedRawQr(
+                                                    capture,
                                                   );
-
-                                                  break;
-                                                }
+                                              if (rawQr == null ||
+                                                  _isLockedOn) {
+                                                return;
                                               }
+
+                                              _lockOnDetectedQr(rawQr);
                                             },
                                             errorBuilder: (context, error) {
                                               _setScannerIssue(
@@ -1306,38 +1335,38 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
     PairingStep? displayStepOverride,
   }) {
     final displayStep = displayStepOverride ?? pairingState.step;
-    if (displayStep == PairingStep.unpaired) {
-      return _AnchoredFooterAction(
-        variant: MagneticButtonVariant.primary,
-        onClick: () => _openScanner(pairingController),
-        child: Row(
-          key: const ValueKey('footer-action-init'),
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text('Initialize Pairing'),
-            const SizedBox(width: 8),
-            PhosphorIcon(
-              PhosphorIcons.arrowRight(PhosphorIconsStyle.bold),
-              size: 16,
-            ),
-          ],
-        ),
-      );
+    switch (displayStep) {
+      case PairingStep.unpaired:
+        return _AnchoredFooterAction(
+          variant: MagneticButtonVariant.primary,
+          onClick: () => _openScanner(pairingController),
+          child: Row(
+            key: const ValueKey('footer-action-init'),
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text('Initialize Pairing'),
+              const SizedBox(width: 8),
+              PhosphorIcon(
+                PhosphorIcons.arrowRight(PhosphorIconsStyle.bold),
+                size: 16,
+              ),
+            ],
+          ),
+        );
+      case PairingStep.scanning:
+        return _AnchoredFooterAction(
+          variant: MagneticButtonVariant.secondary,
+          onClick: pairingController.cancelReview,
+          child: const Text(
+            'Cancel',
+            key: ValueKey('footer-action-cancel'),
+            textAlign: TextAlign.center,
+          ),
+        );
+      case PairingStep.review:
+      case PairingStep.paired:
+        return null;
     }
-
-    if (displayStep == PairingStep.scanning) {
-      return _AnchoredFooterAction(
-        variant: MagneticButtonVariant.secondary,
-        onClick: pairingController.cancelReview,
-        child: const Text(
-          'Cancel',
-          key: ValueKey('footer-action-cancel'),
-          textAlign: TextAlign.center,
-        ),
-      );
-    }
-
-    return null;
   }
 }
 

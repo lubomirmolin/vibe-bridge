@@ -190,14 +190,14 @@ class _BridgePainter extends CustomPainter {
   _BridgePainter({required this.time, required this.sceneScale});
 
   double _getCableY(double x) {
-    if (x < 300) {
-      final t = (x + 200) / 500;
+    if (x < -1000) {
+      final t = (x + 2500) / 1500;
       return pow(1 - t, 2) * 600 + 2 * (1 - t) * t * 650 + pow(t, 2) * 200;
-    } else if (x <= 700) {
-      final t = (x - 300) / 400;
+    } else if (x <= 500) {
+      final t = (x + 1000) / 1500;
       return pow(1 - t, 2) * 200 + 2 * (1 - t) * t * 900 + pow(t, 2) * 200;
     } else {
-      final t = (x - 700) / 500;
+      final t = (x - 500) / 1500;
       return pow(1 - t, 2) * 200 + 2 * (1 - t) * t * 650 + pow(t, 2) * 600;
     }
   }
@@ -234,33 +234,33 @@ class _BridgePainter extends CustomPainter {
       ..color = Colors.white.withValues(alpha: 0.3);
 
     // Towers
-    final towers = [300.0, 700.0];
+    final towers = [-1000.0, 500.0];
     for (var tx in towers) {
-      canvas.drawLine(Offset(tx - 20, 100), Offset(tx - 35, 700), solidPaint);
-      canvas.drawLine(Offset(tx + 20, 100), Offset(tx + 35, 700), solidPaint);
+      canvas.drawLine(Offset(tx - 30, 100), Offset(tx - 52, 700), solidPaint);
+      canvas.drawLine(Offset(tx + 30, 100), Offset(tx + 52, 700), solidPaint);
 
       canvas.drawLine(
-        Offset(tx - 25, 100),
-        Offset(tx + 25, 100),
+        Offset(tx - 37, 100),
+        Offset(tx + 37, 100),
         solidPaint
           ..strokeWidth = 4
           ..color = Colors.white.withValues(alpha: 0.5),
       );
       canvas.drawLine(
-        Offset(tx - 22, 115),
-        Offset(tx + 22, 115),
+        Offset(tx - 33, 115),
+        Offset(tx + 33, 115),
         solidPaint..strokeWidth = 2,
       );
       canvas.drawLine(
-        Offset(tx - 18, 130),
-        Offset(tx + 18, 130),
+        Offset(tx - 27, 130),
+        Offset(tx + 27, 130),
         solidPaint..strokeWidth = 1,
       );
 
       final bracingY = [200.0, 300.0, 400.0, 500.0, 620.0];
       for (int i = 0; i < bracingY.length; i++) {
         final cy = bracingY[i];
-        final widthAtY = 20 + ((cy - 100) / 600) * 15;
+        final widthAtY = 30 + ((cy - 100) / 600) * 22;
 
         canvas.drawLine(
           Offset(tx - widthAtY, cy),
@@ -277,7 +277,7 @@ class _BridgePainter extends CustomPainter {
 
         if (i < bracingY.length - 1) {
           final nextCy = bracingY[i + 1];
-          final nextWidth = 20 + ((nextCy - 100) / 600) * 15;
+          final nextWidth = 30 + ((nextCy - 100) / 600) * 22;
           canvas.drawLine(
             Offset(tx - widthAtY, cy),
             Offset(tx + nextWidth, nextCy),
@@ -298,17 +298,17 @@ class _BridgePainter extends CustomPainter {
 
     // Deck
     canvas.drawLine(
-      const Offset(-200, 610),
-      const Offset(1200, 610),
+      const Offset(-2500, 610),
+      const Offset(2000, 610),
       deckPaint,
     );
 
     // Main suspension cable
     final cablePath = Path()
-      ..moveTo(-200, 600)
-      ..quadraticBezierTo(50, 650, 300, 200)
-      ..quadraticBezierTo(500, 900, 700, 200)
-      ..quadraticBezierTo(950, 650, 1200, 600);
+      ..moveTo(-2500, 600)
+      ..quadraticBezierTo(-1750, 650, -1000, 200)
+      ..quadraticBezierTo(-250, 900, 500, 200)
+      ..quadraticBezierTo(1250, 650, 2000, 600);
 
     // Glow shadow
     canvas.drawPath(
@@ -356,9 +356,10 @@ class _BridgePainter extends CustomPainter {
     );
 
     // Vertical suspenders
-    for (int i = 0; i < 45; i++) {
-      final x = i * 30.0 - 150.0;
-      if ((x - 300).abs() < 35 || (x - 700).abs() < 35) continue;
+    for (int i = 0; i < 120; i++) {
+      final x = i * 40.0 - 2500.0;
+      if (x > 2000) break;
+      if ((x - -1000).abs() < 60 || (x - 500).abs() < 60) continue;
 
       final y = _getCableY(x);
       if (y > 600) continue;
@@ -380,14 +381,14 @@ class _BridgePainter extends CustomPainter {
     // Data streams moving across deck
     for (int i = 0; i < 3; i++) {
       final speed = 1.0 + i * 0.5;
-      final xOffset = ((time * speed * 50) + (i * 100)) % 1400 - 200.0;
+      final xOffset = ((time * speed * 50) + (i * 100)) % 4500 - 2500.0;
 
       final streamPaint = Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5
         ..color = Colors.white.withValues(alpha: 0.8);
 
-      for (double x = xOffset; x < 1200; x += 42) {
+      for (double x = xOffset; x < 2000; x += 60) {
         canvas.drawLine(
           Offset(x, 585.0 + i * 5),
           Offset(x + 2, 585.0 + i * 5),
