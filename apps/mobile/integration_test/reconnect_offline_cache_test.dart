@@ -6,7 +6,7 @@ import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_a
 import 'package:codex_mobile_companion/features/pairing/application/pairing_controller.dart';
 import 'package:codex_mobile_companion/features/pairing/data/pairing_bridge_api.dart';
 import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
-import 'package:codex_mobile_companion/features/pairing/presentation/pairing_flow_page.dart';
+import 'package:codex_mobile_companion/features/pairing/presentation/connection_overview_page.dart';
 import 'package:codex_mobile_companion/features/threads/application/thread_detail_controller.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
@@ -888,12 +888,13 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Disconnected'), findsOneWidget);
+      expect(find.text('Disconnected'), findsNothing);
+      expect(find.text('Retry connection'), findsNothing);
       expect(
         find.text(
           'Private bridge path is currently unreachable. Reconnect to Tailscale and retry.',
         ),
-        findsOneWidget,
+        findsNothing,
       );
 
       await tester.pump(const Duration(seconds: 3));
