@@ -19,6 +19,10 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::time::{Duration, sleep};
 
+use crate::codex_runtime::{
+    CodexRuntimeConfig, CodexRuntimeMode, CodexRuntimeSupervisor, verify_endpoint_reachable,
+};
+
 pub use config::BridgeConfig;
 use state::BridgeAppState;
 
@@ -51,6 +55,16 @@ fn remove_pid_file(state_directory: &std::path::Path) {
 
 pub async fn run_from_env() -> Result<(), String> {
     let config = BridgeConfig::from_env_and_args(std::env::args().skip(1))?;
+
+    let mut runtime = CodexRuntimeSupervisor::new(CodexRuntimeConfig {
+        mode: config.codex.mode,
+        endpoint: config.codex.endpoint.clone(),
+        command: config.codex.command.clone(),
+        args: config.codex.args.clone(),
+    });
+    runtime.initialize()?;
+    wait_for_codex_runtime(&config).await;
+
     let state = BridgeAppState::from_config(config.clone()).await;
     state.start_notification_forwarder();
     state.start_summary_reconciler();
@@ -87,7 +101,28 @@ pub async fn run_from_env() -> Result<(), String> {
     let _ = lan_shutdown_tx.send(());
     let _ = lan_manager.await;
     remove_pid_file(&config.state_directory);
+    drop(runtime);
     result
+}
+
+async fn wait_for_codex_runtime(config: &BridgeConfig) {
+    if !matches!(
+        config.codex.mode,
+        CodexRuntimeMode::Auto | CodexRuntimeMode::Spawn
+    ) {
+        return;
+    }
+
+    let Some(endpoint) = config.codex.endpoint.as_deref() else {
+        return;
+    };
+
+    for _ in 0..20 {
+        if verify_endpoint_reachable(endpoint).is_ok() {
+            return;
+        }
+        sleep(Duration::from_millis(250)).await;
+    }
 }
 
 struct ManagedLanListener {

@@ -243,6 +243,32 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
         if let speechHelperURL = pathResolver.resolveSpeechHelperBinaryURL() {
             environment["CODEX_MOBILE_COMPANION_SPEECH_HELPER_BINARY"] = speechHelperURL.path
         }
+
+        let homeDirectoryPath = environment["HOME"] ?? NSHomeDirectory()
+        let extraPathEntries = [
+            "\(homeDirectoryPath)/.bun/bin",
+            "\(homeDirectoryPath)/.nvm/versions/node",
+            "\(homeDirectoryPath)/.local/bin",
+            "\(homeDirectoryPath)/.cargo/bin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+        ]
+
+        var nvmNodeBins: [String] = []
+        let nvmVersionsPath = "\(homeDirectoryPath)/.nvm/versions/node"
+        if let entries = try? fileManager.contentsOfDirectory(atPath: nvmVersionsPath) {
+            for entry in entries.sorted().reversed() {
+                let binPath = "\(nvmVersionsPath)/\(entry)/bin"
+                if fileManager.isExecutableFile(atPath: "\(binPath)/node") {
+                    nvmNodeBins.append(binPath)
+                }
+            }
+        }
+
+        let existingPath = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        let allEntries = extraPathEntries + nvmNodeBins + [existingPath]
+        environment["PATH"] = allEntries.joined(separator: ":")
+
         return environment
     }
 

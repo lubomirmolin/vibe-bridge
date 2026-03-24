@@ -250,7 +250,7 @@ fn build_spawn_args(args: &[String], endpoint: Option<&str>) -> Vec<String> {
     spawn_args
 }
 
-fn verify_endpoint_reachable(endpoint: &str) -> Result<(), String> {
+pub(crate) fn verify_endpoint_reachable(endpoint: &str) -> Result<(), String> {
     let uri: Uri = endpoint
         .parse()
         .map_err(|error| format!("invalid codex endpoint '{endpoint}': {error}"))?;
