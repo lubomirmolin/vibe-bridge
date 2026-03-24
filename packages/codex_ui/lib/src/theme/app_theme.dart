@@ -3,7 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 class AppTheme {
   // Colors
-  static const Color background = Color(0xFF09090B); // zinc-950
+  static const Color background = Color(0xFF1C1B17); // zinc-950
   static const Color textMain = Color(0xFFE4E4E7); // zinc-200
   static const Color textMuted = Color(0xFFA1A1AA); // zinc-400
   static const Color textSubtle = Color(0xFF71717A); // zinc-500
@@ -14,7 +14,9 @@ class AppTheme {
   static const Color rose = Color(0xFFF43F5E); // rose-500
 
   // Surface colors
-  static const Color surfaceZinc100 = Color(0xFFF4F4F5); // zinc-100 (primary buttons)
+  static const Color surfaceZinc100 = Color(
+    0xFFF4F4F5,
+  ); // zinc-100 (primary buttons)
   static const Color surfaceZinc800 = Color(0xFF27272A); // zinc-800
   static const Color surfaceZinc900 = Color(0xFF19191C); // zinc-900
 
