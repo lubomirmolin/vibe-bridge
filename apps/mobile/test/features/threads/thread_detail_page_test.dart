@@ -21,6 +21,7 @@ import 'package:codex_ui/codex_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:record/record.dart';
 
@@ -2219,6 +2220,94 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     },
   );
 
+  testWidgets('picking an image only attaches it until submit is pressed', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-456': [_thread456Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-456': [<ThreadTimelineEntryDto>[]],
+      },
+    );
+    final image = await _createTestImageFile('picked-image.png');
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-456',
+      pickImagesOverride: () async => <XFile>[image],
+    );
+
+    await tester.tap(find.byKey(const Key('turn-composer-attach-button')));
+    await _pumpForTransientUiWork(tester);
+
+    expect(
+      detailApi.startTurnPromptsByThreadId.containsKey('thread-456'),
+      isFalse,
+    );
+    expect(
+      detailApi.startTurnImagesByThreadId.containsKey('thread-456'),
+      isFalse,
+    );
+
+    await tester.tap(find.byKey(const Key('turn-composer-submit')));
+    await _pumpForTransientUiWork(tester);
+
+    expect(detailApi.startTurnPromptsByThreadId['thread-456'], ['']);
+    expect(
+      detailApi.startTurnImagesByThreadId['thread-456']?.single.single,
+      startsWith('data:image/png;base64,'),
+    );
+  });
+
+  testWidgets('initial attached images still auto-submit on first load', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-456': [_thread456Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-456': [<ThreadTimelineEntryDto>[]],
+      },
+    );
+    final image = await _createTestImageFile('initial-image.png');
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          appSecureStoreProvider.overrideWithValue(InMemorySecureStore()),
+          threadListBridgeApiProvider.overrideWithValue(
+            FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]),
+          ),
+          approvalBridgeApiProvider.overrideWithValue(EmptyApprovalBridgeApi()),
+          threadDetailBridgeApiProvider.overrideWithValue(detailApi),
+          settingsBridgeApiProvider.overrideWithValue(FakeSettingsBridgeApi()),
+          threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+          threadCacheRepositoryProvider.overrideWithValue(
+            _newCacheRepository(),
+          ),
+        ],
+        child: MaterialApp(
+          home: ThreadDetailPage(
+            bridgeApiBaseUrl: _bridgeApiBaseUrl,
+            threadId: 'thread-456',
+            initialAttachedImages: <XFile>[image],
+          ),
+        ),
+      ),
+    );
+    await _pumpForTransientUiWork(tester, iterations: 8);
+
+    expect(detailApi.startTurnPromptsByThreadId['thread-456'], ['']);
+    expect(
+      detailApi.startTurnImagesByThreadId['thread-456']?.single.single,
+      startsWith('data:image/png;base64,'),
+    );
+  });
+
   testWidgets('composer model sheet updates model and intelligence summary', (
     tester,
   ) async {
@@ -3956,6 +4045,7 @@ Future<void> _pumpThreadDetailApp(
   ApprovalBridgeApi? approvalApi,
   ThreadCacheRepository? cacheRepository,
   SettingsBridgeApi? settingsApi,
+  Future<List<XFile>> Function()? pickImagesOverride,
   AudioRecorder? speechRecorder,
 }) async {
   await tester.pumpWidget(
@@ -3985,6 +4075,7 @@ Future<void> _pumpThreadDetailApp(
           bridgeApiBaseUrl: _bridgeApiBaseUrl,
           threadId: threadId,
           initialVisibleTimelineEntries: initialVisibleTimelineEntries,
+          pickImagesOverride: pickImagesOverride,
           speechRecorder: speechRecorder,
         ),
       ),
@@ -4047,6 +4138,25 @@ Future<void> _openGitSyncSheet(WidgetTester tester) async {
 Future<void> _openComposerModelSheet(WidgetTester tester) async {
   await tester.tap(find.byKey(const Key('turn-composer-model-button')));
   await tester.pumpAndSettle();
+}
+
+Future<void> _pumpForTransientUiWork(
+  WidgetTester tester, {
+  int iterations = 4,
+}) async {
+  for (var index = 0; index < iterations; index++) {
+    await tester.pump(const Duration(milliseconds: 150));
+  }
+}
+
+Future<XFile> _createTestImageFile(String fileName) async {
+  return XFile.fromData(
+    base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn2X1EAAAAASUVORK5CYII=',
+    ),
+    mimeType: 'image/png',
+    name: fileName,
+  );
 }
 
 Future<void> _focusComposer(WidgetTester tester) async {
