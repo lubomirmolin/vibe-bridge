@@ -10,7 +10,7 @@ enum SpeechModelState {
 }
 
 class SharedContract {
-  static const version = '2026-03-22';
+  static const version = '2026-03-23';
 }
 
 ThreadStatus threadStatusFromWire(String wireValue) {
@@ -212,41 +212,46 @@ class BridgePairingRouteHealthDto {
   }
 }
 
-class BridgeTrustedPhoneDto {
-  const BridgeTrustedPhoneDto({
-    required this.phoneId,
-    required this.phoneName,
+class BridgeTrustedDeviceDto {
+  const BridgeTrustedDeviceDto({
+    required this.deviceId,
+    required this.deviceName,
     required this.pairedAtEpochSeconds,
   });
 
-  final String phoneId;
-  final String phoneName;
+  final String deviceId;
+  final String deviceName;
   final int pairedAtEpochSeconds;
 
-  factory BridgeTrustedPhoneDto.fromJson(Map<String, dynamic> json) {
-    return BridgeTrustedPhoneDto(
-      phoneId: json['phone_id'] as String? ?? '',
-      phoneName: json['phone_name'] as String? ?? '',
+  factory BridgeTrustedDeviceDto.fromJson(Map<String, dynamic> json) {
+    return BridgeTrustedDeviceDto(
+      deviceId:
+          (json['device_id'] as String?) ?? (json['phone_id'] as String?) ?? '',
+      deviceName:
+          (json['device_name'] as String?) ??
+          (json['phone_name'] as String?) ??
+          '',
       pairedAtEpochSeconds:
           (json['paired_at_epoch_seconds'] as num?)?.toInt() ?? 0,
     );
   }
 }
 
-class BridgeActiveSessionDto {
-  const BridgeActiveSessionDto({
-    required this.phoneId,
+class BridgeTrustedSessionDto {
+  const BridgeTrustedSessionDto({
+    required this.deviceId,
     required this.sessionId,
     required this.finalizedAtEpochSeconds,
   });
 
-  final String phoneId;
+  final String deviceId;
   final String sessionId;
   final int finalizedAtEpochSeconds;
 
-  factory BridgeActiveSessionDto.fromJson(Map<String, dynamic> json) {
-    return BridgeActiveSessionDto(
-      phoneId: json['phone_id'] as String? ?? '',
+  factory BridgeTrustedSessionDto.fromJson(Map<String, dynamic> json) {
+    return BridgeTrustedSessionDto(
+      deviceId:
+          (json['device_id'] as String?) ?? (json['phone_id'] as String?) ?? '',
       sessionId: json['session_id'] as String? ?? '',
       finalizedAtEpochSeconds:
           (json['finalized_at_epoch_seconds'] as num?)?.toInt() ?? 0,
@@ -256,27 +261,69 @@ class BridgeActiveSessionDto {
 
 class BridgeTrustStatusDto {
   const BridgeTrustStatusDto({
-    required this.trustedPhone,
-    required this.activeSession,
+    required this.trustedDevices,
+    required this.trustedSessions,
   });
 
-  final BridgeTrustedPhoneDto? trustedPhone;
-  final BridgeActiveSessionDto? activeSession;
+  final List<BridgeTrustedDeviceDto> trustedDevices;
+  final List<BridgeTrustedSessionDto> trustedSessions;
+
+  bool get hasTrustedDevices => trustedDevices.isNotEmpty;
 
   factory BridgeTrustStatusDto.fromJson(Map<String, dynamic> json) {
+    final trustedDevices = _readTypedList(
+      json['trusted_devices'],
+      BridgeTrustedDeviceDto.fromJson,
+    );
+    final trustedSessions = _readTypedList(
+      json['trusted_sessions'],
+      BridgeTrustedSessionDto.fromJson,
+    );
+
+    final fallbackTrustedDevice = json['trusted_phone'] is Map<String, dynamic>
+        ? BridgeTrustedDeviceDto.fromJson(
+            json['trusted_phone'] as Map<String, dynamic>,
+          )
+        : null;
+    final fallbackTrustedSession =
+        json['active_session'] is Map<String, dynamic>
+        ? BridgeTrustedSessionDto.fromJson(
+            json['active_session'] as Map<String, dynamic>,
+          )
+        : null;
+    final resolvedTrustedDevices = trustedDevices.isNotEmpty
+        ? trustedDevices
+        : _singleOrEmpty(fallbackTrustedDevice);
+    final resolvedTrustedSessions = trustedSessions.isNotEmpty
+        ? trustedSessions
+        : _singleOrEmpty(fallbackTrustedSession);
+
     return BridgeTrustStatusDto(
-      trustedPhone: json['trusted_phone'] is Map<String, dynamic>
-          ? BridgeTrustedPhoneDto.fromJson(
-              json['trusted_phone'] as Map<String, dynamic>,
-            )
-          : null,
-      activeSession: json['active_session'] is Map<String, dynamic>
-          ? BridgeActiveSessionDto.fromJson(
-              json['active_session'] as Map<String, dynamic>,
-            )
-          : null,
+      trustedDevices: resolvedTrustedDevices,
+      trustedSessions: resolvedTrustedSessions,
     );
   }
+}
+
+List<T> _singleOrEmpty<T>(T? value) {
+  if (value == null) {
+    return const [];
+  }
+  return <T>[value];
+}
+
+List<T> _readTypedList<T>(
+  Object? value,
+  T Function(Map<String, dynamic>) fromJson,
+) {
+  if (value is! List<dynamic>) {
+    return const [];
+  }
+
+  return value
+      .whereType<Map<dynamic, dynamic>>()
+      .map((entry) => fromJson(Map<String, dynamic>.from(entry)))
+      .toList(growable: false);
 }
 
 class BridgeApiSurfaceDto {

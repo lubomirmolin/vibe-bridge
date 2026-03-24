@@ -66,7 +66,7 @@ class CodexPresentation {
   const CodexPresentation.initial()
     : statusLabel = 'Unchecked',
       detail =
-          'Codex CLI status has not been checked yet. The shell can still pair a phone, but threads and approvals need a local Codex runtime.',
+          'Codex CLI status has not been checked yet. The shell can still pair a device, but threads and approvals need a local Codex runtime.',
       nextStep = 'Check for Codex CLI',
       isReady = false,
       binaryPath = null,
@@ -124,6 +124,26 @@ class SpeechPanelPresentation {
   }
 }
 
+class TrustedDevicePresentation {
+  const TrustedDevicePresentation({
+    required this.deviceId,
+    required this.deviceName,
+    required this.pairedAtEpochSeconds,
+    this.sessionId,
+    this.finalizedAtEpochSeconds,
+  });
+
+  final String deviceId;
+  final String deviceName;
+  final int pairedAtEpochSeconds;
+  final String? sessionId;
+  final int? finalizedAtEpochSeconds;
+
+  bool get isActive => sessionId != null && sessionId!.trim().isNotEmpty;
+
+  String get displayLabel => '$deviceName ($deviceId)';
+}
+
 class ShellPresentationState {
   const ShellPresentationState({
     required this.shellState,
@@ -145,6 +165,7 @@ class ShellPresentationState {
     required this.trayStatusDetail,
     required this.tailscale,
     required this.codex,
+    required this.trustedDevices,
     required this.pairingSession,
     required this.errorMessage,
   });
@@ -155,7 +176,7 @@ class ShellPresentationState {
       supervisorStatusLabel: 'Not started',
       bridgeRuntimeLabel: 'Unavailable',
       pairedDeviceLabel: 'Not paired',
-      activeSessionLabel: 'No active session',
+      activeSessionLabel: 'No active sessions',
       runningThreadCount: 0,
       runtimeDetail: 'Waiting for bridge supervision…',
       speechPanel: SpeechPanelPresentation(
@@ -175,6 +196,7 @@ class ShellPresentationState {
       trayStatusDetail: 'System tray not initialized yet.',
       tailscale: TailscalePresentation.initial(),
       codex: CodexPresentation.initial(),
+      trustedDevices: <TrustedDevicePresentation>[],
       pairingSession: null,
       errorMessage: null,
     );
@@ -199,16 +221,27 @@ class ShellPresentationState {
   final String trayStatusDetail;
   final TailscalePresentation tailscale;
   final CodexPresentation codex;
+  final List<TrustedDevicePresentation> trustedDevices;
   final PairingSessionResponseDto? pairingSession;
   final String? errorMessage;
 
   bool get shouldShowPairingQr => shellState == ShellRuntimeState.unpaired;
+  bool get canGeneratePairingQr =>
+      shellState == ShellRuntimeState.unpaired ||
+      shellState == ShellRuntimeState.pairedIdle ||
+      shellState == ShellRuntimeState.pairedActive;
   bool get requiresTailscaleSetup =>
       shellState == ShellRuntimeState.needsTailscale;
   bool get requiresCodexSetup => codex.requiresSetup;
   bool get canRevokeTrust =>
-      shellState == ShellRuntimeState.pairedIdle ||
-      shellState == ShellRuntimeState.pairedActive;
+      trustedDevices.isNotEmpty &&
+      (shellState == ShellRuntimeState.pairedIdle ||
+          shellState == ShellRuntimeState.pairedActive);
+  bool get canRevokeActiveDevice =>
+      canRevokeTrust && trustedDevices.any((device) => device.isActive);
+  int get trustedDeviceCount => trustedDevices.length;
+  int get activeSessionCount =>
+      trustedDevices.where((device) => device.isActive).length;
 
   ShellPresentationState copyWith({
     ShellRuntimeState? shellState,
@@ -230,6 +263,7 @@ class ShellPresentationState {
     String? trayStatusDetail,
     TailscalePresentation? tailscale,
     CodexPresentation? codex,
+    List<TrustedDevicePresentation>? trustedDevices,
     PairingSessionResponseDto? pairingSession,
     bool clearPairingSession = false,
     String? errorMessage,
@@ -256,6 +290,7 @@ class ShellPresentationState {
       trayStatusDetail: trayStatusDetail ?? this.trayStatusDetail,
       tailscale: tailscale ?? this.tailscale,
       codex: codex ?? this.codex,
+      trustedDevices: trustedDevices ?? this.trustedDevices,
       pairingSession: clearPairingSession
           ? null
           : pairingSession ?? this.pairingSession,

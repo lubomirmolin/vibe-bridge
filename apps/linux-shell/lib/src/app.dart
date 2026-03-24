@@ -145,9 +145,11 @@ class _CodexLinuxShellAppState extends State<CodexLinuxShellApp>
             onCheckTailscale: _controller.checkTailscaleAvailability,
             onCheckCodex: _controller.checkCodexAvailability,
             onChooseCodexBinary: _chooseCodexBinary,
-            onRefreshQr: _controller.refreshPairingSession,
+            onRefreshQr: () => _controller.refreshPairingSession(force: true),
             onRestartRuntime: _controller.restartLocalRuntime,
-            onRevokeTrust: _controller.revokeTrustedPhoneFromDesktop,
+            onRevokeActiveDevice:
+                _controller.revokeActiveTrustedDeviceFromDesktop,
+            onRevokeAllDevices: _controller.revokeAllTrustedDevicesFromDesktop,
           );
         },
       ),

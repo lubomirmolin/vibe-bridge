@@ -9,8 +9,9 @@ void main() {
   test(
     'refreshRuntimeState keeps pairing available when codex runtime is degraded',
     () async {
+      final bridgeClient = _FakeShellBridgeClient();
       final controller = ShellController(
-        bridgeClient: _FakeShellBridgeClient(),
+        bridgeClient: bridgeClient,
         runtimeSupervisor: _FakeRuntimeSupervisor(),
         codexCliChecker: _FakeCodexCliChecker(),
       );
@@ -21,16 +22,78 @@ void main() {
       expect(controller.state.pairingSession, isNotNull);
       expect(controller.state.runtimeDetail, contains('ws://127.0.0.1:4222'));
       expect(controller.state.errorMessage, isNull);
+      expect(bridgeClient.fetchPairingSessionCallCount, 1);
     },
   );
+
+  test('refreshRuntimeState reuses an unexpired pairing session', () async {
+    final bridgeClient = _FakeShellBridgeClient();
+    final controller = ShellController(
+      bridgeClient: bridgeClient,
+      runtimeSupervisor: _FakeRuntimeSupervisor(),
+      codexCliChecker: _FakeCodexCliChecker(),
+    );
+
+    await controller.refreshRuntimeState();
+    await controller.refreshRuntimeState();
+
+    expect(controller.state.shellState, ShellRuntimeState.unpaired);
+    expect(controller.state.pairingSession, isNotNull);
+    expect(bridgeClient.fetchPairingSessionCallCount, 1);
+  });
+
+  test('paired runtime keeps a generated pairing code visible', () async {
+    final bridgeClient = _FakeShellBridgeClient(
+      trust: const BridgeTrustStatusDto(
+        trustedDevices: <BridgeTrustedDeviceDto>[
+          BridgeTrustedDeviceDto(
+            deviceId: 'phone-1',
+            deviceName: 'Pixel 9',
+            pairedAtEpochSeconds: 100,
+          ),
+        ],
+        trustedSessions: <BridgeTrustedSessionDto>[],
+      ),
+    );
+    final controller = ShellController(
+      bridgeClient: bridgeClient,
+      runtimeSupervisor: _FakeRuntimeSupervisor(),
+      codexCliChecker: _FakeCodexCliChecker(),
+    );
+
+    await controller.refreshRuntimeState();
+    await controller.refreshPairingSession(force: true);
+    final firstSessionId =
+        controller.state.pairingSession?.pairingSession.sessionId;
+
+    await controller.refreshRuntimeState();
+
+    expect(controller.state.shellState, ShellRuntimeState.pairedIdle);
+    expect(controller.state.pairingSession, isNotNull);
+    expect(
+      controller.state.pairingSession?.pairingSession.sessionId,
+      firstSessionId,
+    );
+    expect(bridgeClient.fetchPairingSessionCallCount, 1);
+  });
 }
 
 class _FakeShellBridgeClient implements ShellBridgeClient {
+  _FakeShellBridgeClient({
+    this.trust = const BridgeTrustStatusDto(
+      trustedDevices: <BridgeTrustedDeviceDto>[],
+      trustedSessions: <BridgeTrustedSessionDto>[],
+    ),
+  });
+
+  int fetchPairingSessionCallCount = 0;
+  final BridgeTrustStatusDto trust;
+
   @override
   Future<BridgeHealthResponseDto> fetchHealth() async {
-    return const BridgeHealthResponseDto(
+    return BridgeHealthResponseDto(
       status: 'ok',
-      runtime: BridgeRuntimeSnapshotDto(
+      runtime: const BridgeRuntimeSnapshotDto(
         mode: 'auto',
         state: 'degraded',
         endpoint: null,
@@ -39,18 +102,22 @@ class _FakeShellBridgeClient implements ShellBridgeClient {
             'notification stream unavailable: failed to connect to codex app-server websocket '
             '\'ws://127.0.0.1:4222\': URL error: Unable to connect to ws://127.0.0.1:4222/',
       ),
-      pairingRoute: BridgePairingRouteHealthDto(
+      pairingRoute: const BridgePairingRouteHealthDto(
         reachable: true,
         advertisedBaseUrl: 'https://lubo.taild54ede.ts.net',
         message: null,
       ),
-      trust: BridgeTrustStatusDto(trustedPhone: null, activeSession: null),
-      api: BridgeApiSurfaceDto(endpoints: <String>[], seededThreadCount: 0),
+      trust: trust,
+      api: const BridgeApiSurfaceDto(
+        endpoints: <String>[],
+        seededThreadCount: 0,
+      ),
     );
   }
 
   @override
   Future<PairingSessionResponseDto> fetchPairingSession() async {
+    fetchPairingSessionCallCount += 1;
     return PairingSessionResponseDto(
       contractVersion: SharedContract.version,
       bridgeIdentity: const PairingBridgeIdentityDto(
@@ -90,7 +157,7 @@ class _FakeShellBridgeClient implements ShellBridgeClient {
   }
 
   @override
-  Future<PairingRevokeResponseDto> revokeTrust({String? phoneId}) async {
+  Future<PairingRevokeResponseDto> revokeTrust({String? deviceId}) async {
     return const PairingRevokeResponseDto(
       contractVersion: SharedContract.version,
       revoked: false,

@@ -14,7 +14,8 @@ class ShellView extends StatelessWidget {
     required this.onChooseCodexBinary,
     required this.onRefreshQr,
     required this.onRestartRuntime,
-    required this.onRevokeTrust,
+    required this.onRevokeActiveDevice,
+    required this.onRevokeAllDevices,
   });
 
   final ShellPresentationState state;
@@ -23,7 +24,8 @@ class ShellView extends StatelessWidget {
   final Future<void> Function() onChooseCodexBinary;
   final Future<void> Function() onRefreshQr;
   final Future<void> Function() onRestartRuntime;
-  final Future<void> Function() onRevokeTrust;
+  final Future<void> Function() onRevokeActiveDevice;
+  final Future<void> Function() onRevokeAllDevices;
 
   @override
   Widget build(BuildContext context) {
@@ -96,7 +98,10 @@ class ShellView extends StatelessWidget {
                                                     onCheckTailscale,
                                                 onRestartRuntime:
                                                     onRestartRuntime,
-                                                onRevokeTrust: onRevokeTrust,
+                                                onRevokeActiveDevice:
+                                                    onRevokeActiveDevice,
+                                                onRevokeAllDevices:
+                                                    onRevokeAllDevices,
                                               ),
                                               if (state.errorMessage !=
                                                   null) ...[
@@ -139,7 +144,9 @@ class ShellView extends StatelessWidget {
                                         state: state,
                                         onCheckTailscale: onCheckTailscale,
                                         onRestartRuntime: onRestartRuntime,
-                                        onRevokeTrust: onRevokeTrust,
+                                        onRevokeActiveDevice:
+                                            onRevokeActiveDevice,
+                                        onRevokeAllDevices: onRevokeAllDevices,
                                       ),
                                       if (state.errorMessage != null) ...[
                                         const SizedBox(height: 16),
@@ -295,7 +302,7 @@ class _PairDeviceCard extends StatelessWidget {
           ),
           const SizedBox(height: 24),
           Text(
-            isPaired ? 'Device Paired' : 'Pair Device',
+            isPaired ? 'Trusted Devices' : 'Pair Device',
             style: const TextStyle(
               color: AppTheme.textMain,
               fontSize: 20,
@@ -305,8 +312,8 @@ class _PairDeviceCard extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             isPaired
-                ? 'Your companion device is connected securely.'
-                : 'Open Codex Companion on your phone and scan this code to establish a secure local connection.',
+                ? 'Trusted devices can stay connected while you generate another pairing code for a new device.'
+                : 'Open Codex Companion on a device and scan this code to establish a secure local connection.',
             textAlign: TextAlign.center,
             style: const TextStyle(
               color: AppTheme.textMuted,
@@ -315,7 +322,11 @@ class _PairDeviceCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 32),
-          if (!isPaired && session != null) ...[
+          if (isPaired && state.trustedDevices.isNotEmpty) ...[
+            _TrustedDevicesPanel(state: state),
+            const SizedBox(height: 24),
+          ],
+          if (session != null) ...[
             Container(
               key: const Key('pairing-qr'),
               padding: const EdgeInsets.all(20),
@@ -368,30 +379,19 @@ class _PairDeviceCard extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: TextButton(
-                onPressed: state.isLoadingPairing ? null : onRefreshQr,
+                onPressed: state.isLoadingPairing || !state.canGeneratePairingQr
+                    ? null
+                    : onRefreshQr,
                 style: TextButton.styleFrom(
                   foregroundColor: AppTheme.textMuted,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
                 child: Text(
-                  state.isLoadingPairing ? 'Generating...' : 'Refresh Code',
-                ),
-              ),
-            ),
-          ] else if (isPaired) ...[
-            Container(
-              width: 260,
-              height: 260,
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
-              ),
-              child: Center(
-                child: PhosphorIcon(
-                  PhosphorIcons.shieldCheck(),
-                  color: AppTheme.emerald,
-                  size: 64,
+                  state.isLoadingPairing
+                      ? 'Generating...'
+                      : isPaired
+                      ? 'Refresh Pairing Code'
+                      : 'Refresh Code',
                 ),
               ),
             ),
@@ -419,9 +419,15 @@ class _PairDeviceCard extends StatelessWidget {
               width: double.infinity,
               child: MagneticButton(
                 variant: MagneticButtonVariant.primary,
-                onClick: state.isLoadingPairing ? () {} : () => onRefreshQr(),
+                onClick: state.isLoadingPairing || !state.canGeneratePairingQr
+                    ? () {}
+                    : () => onRefreshQr(),
                 child: Text(
-                  state.isLoadingPairing ? 'Generating...' : 'Generate Code',
+                  state.isLoadingPairing
+                      ? 'Generating...'
+                      : isPaired
+                      ? 'Generate Another Code'
+                      : 'Generate Code',
                 ),
               ),
             ),
@@ -599,6 +605,104 @@ class _TailscaleRequiredCard extends StatelessWidget {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrustedDevicesPanel extends StatelessWidget {
+  const _TrustedDevicesPanel({required this.state});
+
+  final ShellPresentationState state;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                'Trusted Devices',
+                style: TextStyle(color: AppTheme.textSubtle, fontSize: 12),
+              ),
+              const Spacer(),
+              Text(
+                '${state.trustedDeviceCount} total',
+                style: const TextStyle(
+                  color: AppTheme.textMuted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ...state.trustedDevices.map((device) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Row(
+                children: [
+                  Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: device.isActive
+                          ? AppTheme.emerald
+                          : AppTheme.textSubtle,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          device.deviceName,
+                          style: const TextStyle(
+                            color: AppTheme.textMain,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          device.deviceId,
+                          style: AppTheme.monoTextStyle.copyWith(
+                            color: AppTheme.textMuted,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    device.sessionId == null
+                        ? 'PAIRED'
+                        : 'SESSION ${device.sessionId}',
+                    style: TextStyle(
+                      color: device.isActive
+                          ? AppTheme.emerald
+                          : AppTheme.textSubtle,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
         ],
       ),
     );
@@ -834,6 +938,20 @@ class _ConnectionDetailsCard extends StatelessWidget {
           _DetailRow(label: 'Codex', value: state.codex.statusLabel),
           Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
           _DetailRow(
+            label: 'Trusted Devices',
+            value: state.trustedDeviceCount == 0
+                ? 'None'
+                : '${state.trustedDeviceCount}',
+          ),
+          Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
+          _DetailRow(
+            label: 'Trusted Sessions',
+            value: state.activeSessionCount == 0
+                ? 'None'
+                : '${state.activeSessionCount}',
+          ),
+          Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
+          _DetailRow(
             label: 'Active Threads',
             value: '${state.runningThreadCount} sessions',
           ),
@@ -897,13 +1015,15 @@ class _SystemActionsCard extends StatelessWidget {
     required this.state,
     required this.onCheckTailscale,
     required this.onRestartRuntime,
-    required this.onRevokeTrust,
+    required this.onRevokeActiveDevice,
+    required this.onRevokeAllDevices,
   });
 
   final ShellPresentationState state;
   final Future<void> Function() onCheckTailscale;
   final Future<void> Function() onRestartRuntime;
-  final Future<void> Function() onRevokeTrust;
+  final Future<void> Function() onRevokeActiveDevice;
+  final Future<void> Function() onRevokeAllDevices;
 
   @override
   Widget build(BuildContext context) {
@@ -958,15 +1078,31 @@ class _SystemActionsCard extends StatelessWidget {
             icon: PhosphorIcons.linkBreak(),
             iconColor: AppTheme.rose,
             iconBg: AppTheme.rose.withValues(alpha: 0.1),
-            title: 'Unpair Phone',
-            subtitle: 'Revoke trust from the current device',
+            title: 'Unpair Active Device',
+            subtitle: 'Revoke trust from the currently active trusted device',
             buttonLabel: state.isRevokingTrust ? 'Revoking...' : 'Unpair',
+            isDestructive: true,
+            onTap:
+                state.canRevokeActiveDevice &&
+                    !state.isRevokingTrust &&
+                    !state.isRefreshingRuntime
+                ? onRevokeActiveDevice
+                : null,
+          ),
+          Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
+          _ActionRow(
+            icon: PhosphorIcons.prohibit(),
+            iconColor: AppTheme.rose,
+            iconBg: AppTheme.rose.withValues(alpha: 0.1),
+            title: 'Unpair All Devices',
+            subtitle: 'Clear every trusted device and require fresh pairing',
+            buttonLabel: state.isRevokingTrust ? 'Revoking...' : 'Unpair All',
             isDestructive: true,
             onTap:
                 state.canRevokeTrust &&
                     !state.isRevokingTrust &&
                     !state.isRefreshingRuntime
-                ? onRevokeTrust
+                ? onRevokeAllDevices
                 : null,
           ),
         ],

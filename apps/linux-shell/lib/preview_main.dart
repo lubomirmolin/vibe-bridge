@@ -53,7 +53,8 @@ class _PreviewHomeState extends State<_PreviewHome> {
           onChooseCodexBinary: () async {},
           onRefreshQr: () async {},
           onRestartRuntime: () async {},
-          onRevokeTrust: () async {},
+          onRevokeActiveDevice: () async {},
+          onRevokeAllDevices: () async {},
         ),
         SafeArea(
           child: Align(
@@ -187,12 +188,17 @@ ShellPresentationState _stateFor(PreviewScenario scenario) {
       PreviewScenario.starting => 'Awaiting handshake',
       PreviewScenario.needsTailscale => 'Tailscale not installed',
       PreviewScenario.needsCodex => 'Not paired',
-      _ => 'Pixel 9 Pro (phone-1)',
+      PreviewScenario.pairedIdle => '2 trusted devices',
+      PreviewScenario.pairedActive => '2 trusted devices',
+      PreviewScenario.degraded => 'Unavailable',
     },
     activeSessionLabel: switch (scenario) {
       PreviewScenario.pairedActive => 'session-7f4d',
       PreviewScenario.pairedIdle => 'session-7f4d',
-      _ => 'No active session',
+      PreviewScenario.starting => 'Waiting for bridge',
+      PreviewScenario.needsTailscale => 'Unavailable',
+      PreviewScenario.degraded => 'Unavailable',
+      _ => 'No active sessions',
     },
     runningThreadCount: switch (scenario) {
       PreviewScenario.pairedActive => 3,
@@ -202,11 +208,11 @@ ShellPresentationState _stateFor(PreviewScenario scenario) {
       PreviewScenario.starting =>
         'Preparing the bundled bridge-server and checking local health.',
       PreviewScenario.unpaired =>
-        'Bridge runtime healthy. Waiting for a phone to trust this host.',
+        'Bridge runtime healthy. Waiting for a device to trust this host.',
       PreviewScenario.pairedIdle =>
         'Bridge runtime healthy. Host paired and ready for mobile control.',
       PreviewScenario.pairedActive =>
-        'Bridge runtime healthy. A paired phone currently has an active session.',
+        'Bridge runtime healthy. A trusted device currently has an active session.',
       PreviewScenario.needsTailscale =>
         'Private pairing route is unavailable until Tailscale is installed and connected.',
       PreviewScenario.needsCodex =>
@@ -250,9 +256,44 @@ ShellPresentationState _stateFor(PreviewScenario scenario) {
     trayAvailable: true,
     trayStatusDetail:
         'Preview tray detail only. No real tray integration here.',
+    trustedDevices: switch (scenario) {
+      PreviewScenario.pairedIdle => const <TrustedDevicePresentation>[
+        TrustedDevicePresentation(
+          deviceId: 'phone-1',
+          deviceName: 'Pixel 9 Pro',
+          pairedAtEpochSeconds: 1735689600,
+          sessionId: 'session-7f4d',
+          finalizedAtEpochSeconds: 1735689700,
+        ),
+        TrustedDevicePresentation(
+          deviceId: 'tablet-2',
+          deviceName: 'iPad Mini',
+          pairedAtEpochSeconds: 1735689800,
+        ),
+      ],
+      PreviewScenario.pairedActive => const <TrustedDevicePresentation>[
+        TrustedDevicePresentation(
+          deviceId: 'phone-1',
+          deviceName: 'Pixel 9 Pro',
+          pairedAtEpochSeconds: 1735689600,
+          sessionId: 'session-7f4d',
+          finalizedAtEpochSeconds: 1735689700,
+        ),
+        TrustedDevicePresentation(
+          deviceId: 'tablet-2',
+          deviceName: 'iPad Mini',
+          pairedAtEpochSeconds: 1735689800,
+          sessionId: 'session-9b2a',
+          finalizedAtEpochSeconds: 1735689900,
+        ),
+      ],
+      _ => const <TrustedDevicePresentation>[],
+    },
     pairingSession:
         scenario == PreviewScenario.unpaired ||
-            scenario == PreviewScenario.needsCodex
+            scenario == PreviewScenario.needsCodex ||
+            scenario == PreviewScenario.pairedIdle ||
+            scenario == PreviewScenario.pairedActive
         ? PairingSessionResponseDto(
             contractVersion: SharedContract.version,
             bridgeIdentity: const PairingBridgeIdentityDto(
