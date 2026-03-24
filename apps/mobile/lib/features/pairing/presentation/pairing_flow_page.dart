@@ -99,6 +99,8 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
   bool _swappedDuringWipe = false;
   bool _cameraMounted = false;
   String? _scannedRawQr;
+  bool _isSwiping = false;
+  double _swipeOffset = 0.0;
 
   @override
   void initState() {
@@ -424,7 +426,7 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
           curve: Curves.easeOutCubic,
         ).transform(_layoutTransitionController.value);
 
-        return Column(
+        Widget content = Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             SizedBox(
@@ -557,6 +559,74 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
             ),
           ],
         );
+
+        if (displayStep == PairingStep.paired &&
+            pairingState.savedBridgeCount > 1) {
+          content = GestureDetector(
+            key: const Key('global-swipe-detector'),
+            behavior: HitTestBehavior.translucent,
+            onVerticalDragStart: (details) {
+              setState(() {
+                _isSwiping = true;
+              });
+            },
+            onVerticalDragUpdate: (details) {
+              setState(() {
+                _swipeOffset += details.primaryDelta ?? 0;
+                if (_swipeOffset > 0) {
+                  _swipeOffset *= 0.5;
+                }
+              });
+            },
+            onVerticalDragEnd: (details) {
+              final velocity = details.primaryVelocity ?? 0;
+              final shouldSwitch = _swipeOffset < -40 || velocity < -150;
+
+              setState(() {
+                _isSwiping = false;
+                if (shouldSwitch) {
+                  _swipeOffset = -60;
+                } else {
+                  _swipeOffset = 0.0;
+                }
+              });
+
+              if (shouldSwitch) {
+                Future.delayed(const Duration(milliseconds: 150), () {
+                  if (mounted) {
+                    _activateNextSavedBridge(pairingState, pairingController);
+                    setState(() {
+                      _swipeOffset = 0.0;
+                    });
+                  }
+                });
+              }
+            },
+            onVerticalDragCancel: () {
+              setState(() {
+                _isSwiping = false;
+                _swipeOffset = 0.0;
+              });
+            },
+            child: TweenAnimationBuilder<double>(
+              tween: Tween<double>(begin: 0.0, end: _swipeOffset),
+              duration: _isSwiping
+                  ? Duration.zero
+                  : const Duration(milliseconds: 300),
+              curve: Curves.easeOutCubic,
+              builder: (context, value, child) {
+                final opacity = (1.0 - (value.abs() / 60)).clamp(0.0, 1.0);
+                return Transform.translate(
+                  offset: Offset(0, value),
+                  child: Opacity(opacity: opacity, child: child),
+                );
+              },
+              child: content,
+            ),
+          );
+        }
+
+        return content;
       },
     );
   }
@@ -676,11 +746,21 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
             ),
           ),
           const SizedBox(height: 12),
-          Text(
-            pairingState.savedBridgeCount > 1
-                ? '${pairingState.savedBridgeCount} saved bridges available.'
-                : 'A trusted bridge connection is established.',
-            style: const TextStyle(color: AppTheme.textMuted, fontSize: 14),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                pairingState.savedBridgeCount > 1
+                    ? '${pairingState.savedBridgeCount} saved bridges available.'
+                    : 'A trusted bridge connection is established.',
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 14),
+              ),
+              _PairingConnectionIndicator(
+                state: pairingState.bridgeConnectionState,
+              ),
+            ],
           ),
         ],
       );
@@ -706,19 +786,13 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
         );
       },
       child: pairingState.step == PairingStep.paired
-          ? Container(
-              key: const ValueKey('top-right-action-add'),
-              decoration: LiquidStyles.liquidGlass.copyWith(
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: IconButton(
-                key: const Key('top-right-add-bridge'),
-                tooltip: 'Add another bridge',
-                onPressed: () => _openScanner(pairingController),
-                icon: PhosphorIcon(
-                  PhosphorIcons.plus(PhosphorIconsStyle.bold),
-                  size: 18,
-                ),
+          ? IconButton(
+              key: const Key('top-right-add-bridge'),
+              tooltip: 'Add another bridge',
+              onPressed: () => _openScanner(pairingController),
+              icon: PhosphorIcon(
+                PhosphorIcons.plus(PhosphorIconsStyle.bold),
+                size: 24,
               ),
             )
           : const SizedBox.shrink(key: ValueKey('top-right-action-none')),
@@ -891,11 +965,17 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
             children: [
               Row(
                 children: [
-                  Text(
-                    'Saved host bridges',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
+                  Expanded(
+                    child: Text(
+                      'Saved host bridges',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
+                  ),
+                  _PairingConnectionIndicator(
+                    state: pairingState.bridgeConnectionState,
+                    compact: true,
                   ),
                 ],
               ),
@@ -956,14 +1036,9 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
                         ),
                         const SizedBox(width: 12),
                         if (isActive)
-                          const Text(
-                            'ACTIVE',
-                            style: TextStyle(
-                              color: AppTheme.emerald,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 1.1,
-                            ),
+                          _PairingConnectionIndicator(
+                            state: pairingState.bridgeConnectionState,
+                            compact: true,
                           )
                         else
                           TextButton(
@@ -1139,14 +1214,8 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
               behavior: HitTestBehavior.opaque,
               onTap: () =>
                   _activateNextSavedBridge(pairingState, pairingController),
-              onVerticalDragEnd: (details) {
-                final velocity = details.primaryVelocity ?? 0;
-                if (velocity < -150) {
-                  _activateNextSavedBridge(pairingState, pairingController);
-                }
-              },
               child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
+                padding: const EdgeInsets.symmetric(vertical: 8),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -1169,7 +1238,7 @@ class _PairingFlowPageState extends ConsumerState<PairingFlowPage>
                     ),
                     const SizedBox(width: 8),
                     const Text(
-                      'Swipe up to switch between devices',
+                      'Swipe up anywhere to switch device',
                       style: TextStyle(
                         color: AppTheme.textSubtle,
                         fontSize: 12,
@@ -1237,6 +1306,68 @@ class _AnchoredFooterAction {
   final MagneticButtonVariant variant;
   final VoidCallback onClick;
   final Widget child;
+}
+
+class _PairingConnectionIndicator extends StatelessWidget {
+  const _PairingConnectionIndicator({
+    required this.state,
+    this.compact = false,
+  });
+
+  final BridgeConnectionState state;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = switch (state) {
+      BridgeConnectionState.connected => (
+        color: AppTheme.emerald,
+        label: 'Online',
+      ),
+      BridgeConnectionState.reconnecting => (
+        color: AppTheme.amber,
+        label: 'Reconnecting',
+      ),
+      BridgeConnectionState.disconnected => (
+        color: AppTheme.rose,
+        label: 'Offline',
+      ),
+    };
+
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 10 : 12,
+        vertical: compact ? 6 : 8,
+      ),
+      decoration: BoxDecoration(
+        color: palette.color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: palette.color.withValues(alpha: 0.28)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: compact ? 8 : 10,
+            height: compact ? 8 : 10,
+            decoration: BoxDecoration(
+              color: palette.color,
+              shape: BoxShape.circle,
+            ),
+          ),
+          SizedBox(width: compact ? 6 : 8),
+          Text(
+            palette.label,
+            style: TextStyle(
+              color: palette.color,
+              fontSize: compact ? 11 : 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _OutsideCardClipper extends CustomClipper<Path> {

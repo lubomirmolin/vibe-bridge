@@ -50,21 +50,91 @@ void main() {
   testWidgets('renders paired idle state', (tester) async {
     await _pumpShellView(
       tester,
-      _state(shellState: ShellRuntimeState.pairedIdle),
+      _state(
+        shellState: ShellRuntimeState.pairedIdle,
+        trustedDevices: const <TrustedDevicePresentation>[
+          TrustedDevicePresentation(
+            deviceId: 'phone-1',
+            deviceName: 'Pixel 9',
+            pairedAtEpochSeconds: 100,
+            sessionId: 'session-1',
+            finalizedAtEpochSeconds: 110,
+          ),
+        ],
+      ),
     );
 
-    expect(find.text('Device Paired'), findsOneWidget);
+    expect(find.text('Trusted Devices'), findsWidgets);
     expect(find.text('Connected'), findsWidgets);
   });
 
   testWidgets('renders paired active state', (tester) async {
     await _pumpShellView(
       tester,
-      _state(shellState: ShellRuntimeState.pairedActive, runningThreadCount: 3),
+      _state(
+        shellState: ShellRuntimeState.pairedActive,
+        runningThreadCount: 3,
+        trustedDevices: const <TrustedDevicePresentation>[
+          TrustedDevicePresentation(
+            deviceId: 'phone-1',
+            deviceName: 'Pixel 9',
+            pairedAtEpochSeconds: 100,
+            sessionId: 'session-1',
+            finalizedAtEpochSeconds: 110,
+          ),
+        ],
+      ),
     );
 
     expect(find.text('Connected'), findsWidgets);
     expect(find.text('3 sessions'), findsOneWidget);
+  });
+
+  testWidgets('renders multiple trusted devices and paired QR actions', (
+    tester,
+  ) async {
+    await _pumpShellView(
+      tester,
+      _state(
+        shellState: ShellRuntimeState.pairedIdle,
+        trustedDevices: const <TrustedDevicePresentation>[
+          TrustedDevicePresentation(
+            deviceId: 'phone-1',
+            deviceName: 'Pixel 9',
+            pairedAtEpochSeconds: 100,
+            sessionId: 'session-1',
+            finalizedAtEpochSeconds: 110,
+          ),
+          TrustedDevicePresentation(
+            deviceId: 'tablet-2',
+            deviceName: 'iPad Mini',
+            pairedAtEpochSeconds: 120,
+          ),
+        ],
+        pairingSession: PairingSessionResponseDto(
+          contractVersion: SharedContract.version,
+          bridgeIdentity: const PairingBridgeIdentityDto(
+            bridgeId: 'bridge-1',
+            displayName: 'Codex Host',
+            apiBaseUrl: 'http://127.0.0.1:3110',
+          ),
+          pairingSession: const PairingSessionDto(
+            sessionId: 'session-2',
+            pairingToken: 'token',
+            issuedAtEpochSeconds: 100,
+            expiresAtEpochSeconds: 200,
+          ),
+          qrPayload: 'codex://pair?session=session-2',
+        ),
+      ),
+    );
+
+    expect(find.text('Trusted Devices'), findsWidgets);
+    expect(find.text('Pixel 9'), findsOneWidget);
+    expect(find.text('iPad Mini'), findsOneWidget);
+    expect(find.text('Refresh Pairing Code'), findsOneWidget);
+    expect(find.text('Unpair Active Device'), findsOneWidget);
+    expect(find.text('Unpair All Devices'), findsOneWidget);
   });
 
   testWidgets('renders degraded state', (tester) async {
@@ -148,7 +218,8 @@ Widget _wrap(ShellPresentationState state) {
       onChooseCodexBinary: () async {},
       onRefreshQr: () async {},
       onRestartRuntime: () async {},
-      onRevokeTrust: () async {},
+      onRevokeActiveDevice: () async {},
+      onRevokeAllDevices: () async {},
     ),
   );
 }
@@ -170,6 +241,7 @@ ShellPresentationState _state({
   PairingSessionResponseDto? pairingSession,
   TailscalePresentation? tailscale,
   CodexPresentation? codex,
+  List<TrustedDevicePresentation>? trustedDevices,
 }) {
   return ShellPresentationState.initial().copyWith(
     shellState: shellState,
@@ -179,10 +251,13 @@ ShellPresentationState _state({
       ShellRuntimeState.unpaired => 'Not paired',
       ShellRuntimeState.needsTailscale => 'Tailscale not installed',
       ShellRuntimeState.degraded => 'Unavailable',
-      _ => 'Pixel 9 (phone-1)',
+      _ =>
+        trustedDevices != null && trustedDevices.length > 1
+            ? '${trustedDevices.length} trusted devices'
+            : 'Pixel 9 (phone-1)',
     },
     activeSessionLabel: switch (shellState) {
-      ShellRuntimeState.unpaired => 'No active session',
+      ShellRuntimeState.unpaired => 'No active sessions',
       ShellRuntimeState.needsTailscale => 'Unavailable',
       ShellRuntimeState.degraded => 'Unavailable',
       _ => 'session-1',
@@ -217,6 +292,7 @@ ShellPresentationState _state({
         ),
     trayAvailable: true,
     trayStatusDetail: 'Tray integration is active.',
+    trustedDevices: trustedDevices ?? const <TrustedDevicePresentation>[],
     pairingSession: pairingSession,
   );
 }

@@ -229,6 +229,50 @@ void main() {
     expect(find.byKey(const Key('activate-bridge-bridge-a1')), findsNothing);
   });
 
+  testWidgets('swiping up on switch hint cycles the active saved bridge', (
+    tester,
+  ) async {
+    final store = InMemorySecureStore();
+    await _pumpPairingFlow(
+      tester,
+      store: store,
+      bridgeApi: FakePairingBridgeApi(),
+    );
+
+    await _openScanner(tester);
+    await _submitPayload(
+      tester,
+      _validPayloadJson(bridgeId: 'bridge-a1', sessionId: 'session-first'),
+    );
+
+    await tester.tap(find.text('Trust & Connect'));
+    await _pumpUi(tester);
+
+    await _openScannerFromController(tester);
+    await _submitPayload(
+      tester,
+      _validPayloadJson(bridgeId: 'bridge-b2', sessionId: 'session-second'),
+    );
+
+    await tester.tap(find.text('Trust & Connect'));
+    await _pumpUi(tester);
+
+    expect(find.byKey(const Key('activate-bridge-bridge-a1')), findsOneWidget);
+    expect(find.byKey(const Key('activate-bridge-bridge-b2')), findsNothing);
+
+    // Simulate swipe up gesture
+    await tester.fling(
+      find.byKey(const Key('swipe-switch-hint')),
+      const Offset(0, -200),
+      500,
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    await _pumpUi(tester);
+
+    expect(find.byKey(const Key('activate-bridge-bridge-b2')), findsOneWidget);
+    expect(find.byKey(const Key('activate-bridge-bridge-a1')), findsNothing);
+  });
+
   testWidgets(
     'revoked trust on reconnect clears local trust and requires re-pair',
     (tester) async {

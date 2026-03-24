@@ -8,7 +8,7 @@ abstract interface class ShellBridgeClient {
   Future<ThreadListResponseDto> fetchThreads();
   Future<SpeechModelStatusDto> fetchSpeechModelStatus();
   Future<PairingSessionResponseDto> fetchPairingSession();
-  Future<PairingRevokeResponseDto> revokeTrust({String? phoneId});
+  Future<PairingRevokeResponseDto> revokeTrust({String? deviceId});
 }
 
 class BridgeShellApiClient implements ShellBridgeClient {
@@ -96,10 +96,11 @@ class BridgeShellApiClient implements ShellBridgeClient {
   }
 
   @override
-  Future<PairingRevokeResponseDto> revokeTrust({String? phoneId}) async {
+  Future<PairingRevokeResponseDto> revokeTrust({String? deviceId}) async {
     final query = <String, String>{'actor': 'linux-shell'};
-    if (phoneId != null && phoneId.trim().isNotEmpty) {
-      query['phone_id'] = phoneId.trim();
+    if (deviceId != null && deviceId.trim().isNotEmpty) {
+      query['device_id'] = deviceId.trim();
+      query['phone_id'] = deviceId.trim();
     }
     final url = _resolve(
       '/pairing/trust/revoke',

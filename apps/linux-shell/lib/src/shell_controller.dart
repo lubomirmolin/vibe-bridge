@@ -31,7 +31,8 @@ class ShellController extends ChangeNotifier {
   ShellPresentationState _state = ShellPresentationState.initial();
   ShellPresentationState get state => _state;
 
-  String? _trustedPhoneId;
+  String? _activeTrustedDeviceId;
+  PairingSessionResponseDto? _cachedPairingSession;
   bool _disposed = false;
   Future<void>? _supervisionLoop;
 
@@ -231,7 +232,7 @@ class ShellController extends ChangeNotifier {
     }
   }
 
-  Future<void> revokeTrustedPhoneFromDesktop() async {
+  Future<void> revokeActiveTrustedDeviceFromDesktop() async {
     if (_state.isRevokingTrust) {
       return;
     }
@@ -239,13 +240,13 @@ class ShellController extends ChangeNotifier {
     _emit(_state.copyWith(isRevokingTrust: true));
     try {
       final response = await _bridgeClient.revokeTrust(
-        phoneId: _trustedPhoneId,
+        deviceId: _activeTrustedDeviceId,
       );
       if (response.revoked) {
         _emit(
           _state.copyWith(
             runtimeDetail:
-                'Desktop trust revoked. The phone must pair again before reconnecting.',
+                'The active trusted device was revoked. It must pair again before reconnecting.',
             clearErrorMessage: true,
           ),
         );
@@ -256,14 +257,54 @@ class ShellController extends ChangeNotifier {
       } else {
         _emit(
           _state.copyWith(
-            errorMessage: 'No trusted phone was available to revoke.',
+            errorMessage: 'No active trusted device was available to revoke.',
           ),
         );
       }
     } catch (error) {
       _emit(
         _state.copyWith(
-          errorMessage: 'Failed to revoke trust from Linux shell: $error',
+          errorMessage:
+              'Failed to revoke the active device from Linux shell: $error',
+        ),
+      );
+    } finally {
+      _emit(_state.copyWith(isRevokingTrust: false));
+    }
+  }
+
+  Future<void> revokeAllTrustedDevicesFromDesktop() async {
+    if (_state.isRevokingTrust) {
+      return;
+    }
+
+    _emit(_state.copyWith(isRevokingTrust: true));
+    try {
+      final response = await _bridgeClient.revokeTrust();
+      if (response.revoked) {
+        _emit(
+          _state.copyWith(
+            runtimeDetail:
+                'All trusted devices were revoked. New pairings now require a fresh QR handshake.',
+            clearErrorMessage: true,
+          ),
+        );
+        await refreshRuntimeState();
+        if (_state.shellState == ShellRuntimeState.unpaired) {
+          await refreshPairingSessionIfNeeded();
+        }
+      } else {
+        _emit(
+          _state.copyWith(
+            errorMessage: 'No trusted devices were available to revoke.',
+          ),
+        );
+      }
+    } catch (error) {
+      _emit(
+        _state.copyWith(
+          errorMessage:
+              'Failed to revoke trusted devices from Linux shell: $error',
         ),
       );
     } finally {
@@ -276,24 +317,42 @@ class ShellController extends ChangeNotifier {
       return;
     }
 
-    final session = _state.pairingSession;
-    if (session != null) {
-      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      if (session.pairingSession.expiresAtEpochSeconds > now + 15) {
-        return;
+    final session = _state.pairingSession ?? _cachedPairingSession;
+    if (session != null && _isPairingSessionUsable(session)) {
+      if (_state.pairingSession == null) {
+        _emit(
+          _state.copyWith(pairingSession: session, clearErrorMessage: true),
+        );
       }
+      return;
     }
     await refreshPairingSession();
   }
 
-  Future<void> refreshPairingSession() async {
-    if (!_state.shouldShowPairingQr || _state.isLoadingPairing) {
+  Future<void> refreshPairingSession({bool force = false}) async {
+    if (!_state.canGeneratePairingQr || _state.isLoadingPairing) {
+      return;
+    }
+
+    final cachedSession = _state.pairingSession ?? _cachedPairingSession;
+    if (!force &&
+        cachedSession != null &&
+        _isPairingSessionUsable(cachedSession)) {
+      if (_state.pairingSession == null) {
+        _emit(
+          _state.copyWith(
+            pairingSession: cachedSession,
+            clearErrorMessage: true,
+          ),
+        );
+      }
       return;
     }
 
     _emit(_state.copyWith(isLoadingPairing: true));
     try {
       final session = await _bridgeClient.fetchPairingSession();
+      _cachedPairingSession = session;
       _emit(_state.copyWith(pairingSession: session, clearErrorMessage: true));
     } catch (error) {
       _emit(
@@ -306,6 +365,11 @@ class ShellController extends ChangeNotifier {
     } finally {
       _emit(_state.copyWith(isLoadingPairing: false));
     }
+  }
+
+  bool _isPairingSessionUsable(PairingSessionResponseDto session) {
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    return session.pairingSession.expiresAtEpochSeconds > now;
   }
 
   @override
@@ -379,26 +443,49 @@ class ShellController extends ChangeNotifier {
     required CodexPresentation codex,
     String? runtimeIssue,
   }) {
-    final shellState = trustStatus?.trustedPhone == null
+    final trustedDevices = _buildTrustedDevicePresentation(trustStatus);
+    final shellState = trustedDevices.isEmpty
         ? ShellRuntimeState.unpaired
         : runningThreadCount > 0
         ? ShellRuntimeState.pairedActive
         : ShellRuntimeState.pairedIdle;
 
-    _trustedPhoneId = trustStatus?.trustedPhone?.phoneId;
+    final activeDevice = trustedDevices
+        .where((device) => device.isActive)
+        .fold<TrustedDevicePresentation?>(
+          null,
+          (current, device) => current == null
+              ? device
+              : ((device.finalizedAtEpochSeconds ?? 0) >
+                    (current.finalizedAtEpochSeconds ?? 0))
+              ? device
+              : current,
+        );
+    _activeTrustedDeviceId =
+        activeDevice?.deviceId ??
+        (trustedDevices.isEmpty ? null : trustedDevices.first.deviceId);
+    final activeSessionCount = trustedDevices
+        .where((device) => device.isActive)
+        .length;
     _emit(
       _state.copyWith(
         shellState: shellState,
         bridgeRuntimeLabel: bridgeRuntimeLabel,
-        pairedDeviceLabel: trustStatus?.trustedPhone == null
+        pairedDeviceLabel: trustedDevices.isEmpty
             ? 'Not paired'
-            : '${trustStatus!.trustedPhone!.phoneName} (${trustStatus.trustedPhone!.phoneId})',
-        activeSessionLabel:
-            trustStatus?.activeSession?.sessionId ?? 'No active session',
+            : trustedDevices.length == 1
+            ? trustedDevices.first.displayLabel
+            : '${trustedDevices.length} trusted devices',
+        activeSessionLabel: activeSessionCount == 0
+            ? 'No active sessions'
+            : activeSessionCount == 1
+            ? activeDevice?.sessionId ?? '1 active session'
+            : '$activeSessionCount active sessions',
         runningThreadCount: runningThreadCount,
         runtimeDetail: runtimeDetail,
         speechPanel: _speechPanelFor(speechStatus),
         codex: codex,
+        trustedDevices: trustedDevices,
         tailscale: _state.tailscale.copyWith(
           statusLabel: 'Connected',
           detail: 'Tailscale route is available for private pairing.',
@@ -408,7 +495,6 @@ class ShellController extends ChangeNotifier {
         ),
         errorMessage: runtimeIssue,
         clearErrorMessage: runtimeIssue == null,
-        clearPairingSession: shellState != ShellRuntimeState.unpaired,
       ),
     );
   }
@@ -417,7 +503,7 @@ class ShellController extends ChangeNotifier {
     required String bridgeLabel,
     required String detail,
   }) {
-    _trustedPhoneId = null;
+    _activeTrustedDeviceId = null;
     _emit(
       _state.copyWith(
         shellState: ShellRuntimeState.starting,
@@ -432,6 +518,7 @@ class ShellController extends ChangeNotifier {
               'Speech transcription is not available from the Linux shell yet.',
           isReadOnly: true,
         ),
+        trustedDevices: const <TrustedDevicePresentation>[],
         clearPairingSession: true,
         clearErrorMessage: true,
       ),
@@ -439,7 +526,7 @@ class ShellController extends ChangeNotifier {
   }
 
   void _applyDegradedState(String message, {CodexPresentation? codex}) {
-    _trustedPhoneId = null;
+    _activeTrustedDeviceId = null;
     _emit(
       _state.copyWith(
         shellState: ShellRuntimeState.degraded,
@@ -455,6 +542,7 @@ class ShellController extends ChangeNotifier {
           isReadOnly: true,
         ),
         codex: codex ?? _state.codex,
+        trustedDevices: const <TrustedDevicePresentation>[],
         clearPairingSession: true,
         errorMessage: message,
       ),
@@ -465,7 +553,7 @@ class ShellController extends ChangeNotifier {
     required String message,
     required TailscalePresentation tailscale,
   }) {
-    _trustedPhoneId = null;
+    _activeTrustedDeviceId = null;
     _emit(
       _state.copyWith(
         shellState: ShellRuntimeState.needsTailscale,
@@ -483,10 +571,43 @@ class ShellController extends ChangeNotifier {
               'Speech transcription is not available from the Linux shell yet.',
           isReadOnly: true,
         ),
+        trustedDevices: const <TrustedDevicePresentation>[],
         clearPairingSession: true,
         clearErrorMessage: true,
       ),
     );
+  }
+
+  List<TrustedDevicePresentation> _buildTrustedDevicePresentation(
+    BridgeTrustStatusDto? trustStatus,
+  ) {
+    if (trustStatus == null || trustStatus.trustedDevices.isEmpty) {
+      return const <TrustedDevicePresentation>[];
+    }
+
+    return trustStatus.trustedDevices
+        .map((device) {
+          final matchingSession = trustStatus.trustedSessions
+              .where((session) => session.deviceId == device.deviceId)
+              .fold<BridgeTrustedSessionDto?>(
+                null,
+                (current, session) =>
+                    current == null ||
+                        session.finalizedAtEpochSeconds >
+                            current.finalizedAtEpochSeconds
+                    ? session
+                    : current,
+              );
+
+          return TrustedDevicePresentation(
+            deviceId: device.deviceId,
+            deviceName: device.deviceName,
+            pairedAtEpochSeconds: device.pairedAtEpochSeconds,
+            sessionId: matchingSession?.sessionId,
+            finalizedAtEpochSeconds: matchingSession?.finalizedAtEpochSeconds,
+          );
+        })
+        .toList(growable: false);
   }
 
   SpeechPanelPresentation _speechPanelFor(SpeechModelStatusDto? status) {

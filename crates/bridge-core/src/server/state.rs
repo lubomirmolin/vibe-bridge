@@ -4,6 +4,7 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::MutexGuard;
 
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -251,19 +252,24 @@ impl BridgeAppState {
         self.inner.pairing_route.clear_lan_listener_runtime();
     }
 
+    fn pairing_sessions_guard(&self) -> MutexGuard<'_, PairingSessionService> {
+        match self.inner.pairing_sessions.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                eprintln!(
+                    "bridge pairing session state was poisoned; continuing with recovered state"
+                );
+                poisoned.into_inner()
+            }
+        }
+    }
+
     pub fn trust_snapshot(&self) -> PairingTrustSnapshot {
-        self.inner
-            .pairing_sessions
-            .lock()
-            .expect("pairing sessions lock should not be poisoned")
-            .trust_snapshot()
+        self.pairing_sessions_guard().trust_snapshot()
     }
 
     pub fn issue_pairing_session(&self) -> PairingSessionResponse {
-        self.inner
-            .pairing_sessions
-            .lock()
-            .expect("pairing sessions lock should not be poisoned")
+        self.pairing_sessions_guard()
             .issue_session_with_routes(self.inner.pairing_route.pairing_routes())
     }
 
@@ -271,10 +277,7 @@ impl BridgeAppState {
         &self,
         request: PairingFinalizeRequest,
     ) -> Result<PairingFinalizeResponse, PairingFinalizeError> {
-        self.inner
-            .pairing_sessions
-            .lock()
-            .expect("pairing sessions lock should not be poisoned")
+        self.pairing_sessions_guard()
             .finalize_trust_with_routes(request, self.inner.pairing_route.pairing_routes())
     }
 
@@ -282,10 +285,7 @@ impl BridgeAppState {
         &self,
         request: PairingHandshakeRequest,
     ) -> Result<PairingHandshakeResponse, PairingHandshakeError> {
-        self.inner
-            .pairing_sessions
-            .lock()
-            .expect("pairing sessions lock should not be poisoned")
+        self.pairing_sessions_guard()
             .handshake_with_routes(request, self.inner.pairing_route.pairing_routes())
     }
 
@@ -297,10 +297,7 @@ impl BridgeAppState {
     }
 
     pub fn revoke_trust(&self, phone_id: Option<String>) -> Result<PairingRevokeResponse, String> {
-        self.inner
-            .pairing_sessions
-            .lock()
-            .expect("pairing sessions lock should not be poisoned")
+        self.pairing_sessions_guard()
             .revoke_trust(PairingRevokeRequest { phone_id })
     }
 
