@@ -189,23 +189,112 @@ class _BridgePainter extends CustomPainter {
 
   _BridgePainter({required this.time, required this.sceneScale});
 
+  double _getDeckY(double x) {
+    return 600.0 + (x - 250.0) * -0.25;
+  }
+
+  double _getDeckThickness(double x) {
+    return max(2.0, 20.0 - (x - 250.0) * 0.0266);
+  }
+
   double _getCableY(double x) {
-    if (x < -1000) {
-      final t = (x + 2500) / 1500;
-      return pow(1 - t, 2) * 600 + 2 * (1 - t) * t * 650 + pow(t, 2) * 200;
-    } else if (x <= 500) {
-      final t = (x + 1000) / 1500;
-      return pow(1 - t, 2) * 200 + 2 * (1 - t) * t * 900 + pow(t, 2) * 200;
+    if (x < 250) {
+      final t = (x + 200) / 450;
+      return pow(1 - t, 2) * 400 + 2 * (1 - t) * t * 200 + pow(t, 2) * -150;
+    } else if (x <= 850) {
+      final t = (x - 250) / 600;
+      return pow(1 - t, 2) * -150 + 2 * (1 - t) * t * 950 + pow(t, 2) * 250;
     } else {
-      final t = (x - 500) / 1500;
-      return pow(1 - t, 2) * 200 + 2 * (1 - t) * t * 650 + pow(t, 2) * 600;
+      final t = (x - 850) / 400;
+      return pow(1 - t, 2) * 250 + 2 * (1 - t) * t * 400 + pow(t, 2) * 400;
+    }
+  }
+
+  void _drawPerspectiveTower(
+    Canvas canvas,
+    Paint paint, {
+    required double cx,
+    required double yTop,
+    required double yBottom,
+    required double wTop,
+    required double wBottom,
+  }) {
+    // Legs
+    canvas.drawLine(
+      Offset(cx - wTop / 2, yTop),
+      Offset(cx - wBottom / 2, yBottom),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(cx + wTop / 2, yTop),
+      Offset(cx + wBottom / 2, yBottom),
+      paint,
+    );
+
+    // Top horizontal bars
+    canvas.drawLine(
+      Offset(cx - wTop / 2 - 5, yTop),
+      Offset(cx + wTop / 2 + 5, yTop),
+      paint
+        ..strokeWidth = 4
+        ..color = Colors.white.withValues(alpha: 0.5),
+    );
+    canvas.drawLine(
+      Offset(cx - wTop / 2, yTop + 15),
+      Offset(cx + wTop / 2, yTop + 15),
+      paint..strokeWidth = 2,
+    );
+
+    // reset paint
+    paint.strokeWidth = 2;
+    paint.color = Colors.white.withValues(alpha: 0.3);
+
+    // Cross bracings
+    final height = yBottom - yTop;
+    final bracingFractions = [0.15, 0.3, 0.45, 0.6, 0.75, 0.9];
+    for (int i = 0; i < bracingFractions.length; i++) {
+      final t = bracingFractions[i];
+      final cy = yTop + height * t;
+      final w = wTop + (wBottom - wTop) * t;
+
+      canvas.drawLine(
+        Offset(cx - w / 2, cy),
+        Offset(cx + w / 2, cy),
+        paint
+          ..strokeWidth = 3
+          ..color = Colors.white.withValues(alpha: 0.4),
+      );
+      canvas.drawLine(
+        Offset(cx - w / 2, cy + 10),
+        Offset(cx + w / 2, cy + 10),
+        paint..strokeWidth = 1,
+      );
+
+      if (i < bracingFractions.length - 1) {
+        final nextT = bracingFractions[i + 1];
+        final nextCy = yTop + height * nextT;
+        final nextW = wTop + (wBottom - wTop) * nextT;
+
+        canvas.drawLine(
+          Offset(cx - w / 2, cy),
+          Offset(cx + nextW / 2, nextCy),
+          paint
+            ..strokeWidth = 1
+            ..color = Colors.white.withValues(alpha: 0.3),
+        );
+        canvas.drawLine(
+          Offset(cx + w / 2, cy),
+          Offset(cx - nextW / 2, nextCy),
+          paint
+            ..strokeWidth = 1
+            ..color = Colors.white.withValues(alpha: 0.3),
+        );
+      }
     }
   }
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Map the 0-1000 coordinate system from the React SVG to the physical size
-    // and preserve aspect ratio by scaling and translating
     final scale = max(size.width / 1000, size.height / 1000) * sceneScale;
     final dx = (size.width - 1000 * scale) / 2;
     final dy = (size.height - 1000 * scale) / 2;
@@ -214,14 +303,10 @@ class _BridgePainter extends CustomPainter {
     canvas.translate(dx, dy);
     canvas.scale(scale);
 
-    // Apply the subtle breathing drift for parallax (since we don't have device gyroscope hooked up yet)
     final slowDriftX = sin(time * pi / 4) * 15;
     final slowDriftY = cos(time * pi / 4) * 8;
 
-    // Apply the slight tilt from React: transform="rotate(-5 500 500) translate(0, 50)"
-    canvas.translate(500 + slowDriftX, 500 + slowDriftY);
-    canvas.rotate(-5 * pi / 180);
-    canvas.translate(-500, -450); // -500 + 50 translate
+    canvas.translate(slowDriftX, slowDriftY);
 
     final solidPaint = Paint()
       ..style = PaintingStyle.stroke
@@ -234,81 +319,57 @@ class _BridgePainter extends CustomPainter {
       ..color = Colors.white.withValues(alpha: 0.3);
 
     // Towers
-    final towers = [-1000.0, 500.0];
-    for (var tx in towers) {
-      canvas.drawLine(Offset(tx - 30, 100), Offset(tx - 52, 700), solidPaint);
-      canvas.drawLine(Offset(tx + 30, 100), Offset(tx + 52, 700), solidPaint);
+    _drawPerspectiveTower(
+      canvas,
+      solidPaint,
+      cx: 250,
+      yTop: -150,
+      yBottom: 1000,
+      wTop: 150,
+      wBottom: 250,
+    );
 
-      canvas.drawLine(
-        Offset(tx - 37, 100),
-        Offset(tx + 37, 100),
-        solidPaint
-          ..strokeWidth = 4
-          ..color = Colors.white.withValues(alpha: 0.5),
-      );
-      canvas.drawLine(
-        Offset(tx - 33, 115),
-        Offset(tx + 33, 115),
-        solidPaint..strokeWidth = 2,
-      );
-      canvas.drawLine(
-        Offset(tx - 27, 130),
-        Offset(tx + 27, 130),
-        solidPaint..strokeWidth = 1,
-      );
-
-      final bracingY = [200.0, 300.0, 400.0, 500.0, 620.0];
-      for (int i = 0; i < bracingY.length; i++) {
-        final cy = bracingY[i];
-        final widthAtY = 30 + ((cy - 100) / 600) * 22;
-
-        canvas.drawLine(
-          Offset(tx - widthAtY, cy),
-          Offset(tx + widthAtY, cy),
-          solidPaint
-            ..strokeWidth = 3
-            ..color = Colors.white.withValues(alpha: 0.4),
-        );
-        canvas.drawLine(
-          Offset(tx - widthAtY, cy + 10),
-          Offset(tx + widthAtY, cy + 10),
-          solidPaint..strokeWidth = 1,
-        );
-
-        if (i < bracingY.length - 1) {
-          final nextCy = bracingY[i + 1];
-          final nextWidth = 30 + ((nextCy - 100) / 600) * 22;
-          canvas.drawLine(
-            Offset(tx - widthAtY, cy),
-            Offset(tx + nextWidth, nextCy),
-            solidPaint
-              ..strokeWidth = 1
-              ..color = Colors.white.withValues(alpha: 0.3),
-          );
-          canvas.drawLine(
-            Offset(tx + widthAtY, cy),
-            Offset(tx - nextWidth, nextCy),
-            solidPaint
-              ..strokeWidth = 1
-              ..color = Colors.white.withValues(alpha: 0.3),
-          );
-        }
-      }
-    }
+    _drawPerspectiveTower(
+      canvas,
+      solidPaint,
+      cx: 850,
+      yTop: 250,
+      yBottom: 600,
+      wTop: 40,
+      wBottom: 60,
+    );
 
     // Deck
+    final deckPath = Path()
+      ..moveTo(-200, _getDeckY(-200))
+      ..lineTo(1250, _getDeckY(1250))
+      ..lineTo(1250, _getDeckY(1250) + _getDeckThickness(1250))
+      ..lineTo(-200, _getDeckY(-200) + _getDeckThickness(-200))
+      ..close();
+
+    canvas.drawPath(
+      deckPath,
+      Paint()
+        ..style = PaintingStyle.fill
+        ..color = Colors.white.withValues(alpha: 0.05),
+    );
     canvas.drawLine(
-      const Offset(-2500, 610),
-      const Offset(2000, 610),
+      Offset(-200, _getDeckY(-200)),
+      Offset(1250, _getDeckY(1250)),
       deckPaint,
+    );
+    canvas.drawLine(
+      Offset(-200, _getDeckY(-200) + _getDeckThickness(-200)),
+      Offset(1250, _getDeckY(1250) + _getDeckThickness(1250)),
+      deckPaint..strokeWidth = 1,
     );
 
     // Main suspension cable
     final cablePath = Path()
-      ..moveTo(-2500, 600)
-      ..quadraticBezierTo(-1750, 650, -1000, 200)
-      ..quadraticBezierTo(-250, 900, 500, 200)
-      ..quadraticBezierTo(1250, 650, 2000, 600);
+      ..moveTo(-200, 400)
+      ..quadraticBezierTo(25, 200, 250, -150)
+      ..quadraticBezierTo(550, 950, 850, 250)
+      ..quadraticBezierTo(1050, 400, 1250, 400);
 
     // Glow shadow
     canvas.drawPath(
@@ -320,12 +381,10 @@ class _BridgePainter extends CustomPainter {
     );
 
     // Main cable line animated dashes
-    // Dash runs infinitely since time strictly grows linearly
     final dashOffset = -(time * 15.0);
-
     Path dashedCable = Path();
     for (final metric in cablePath.computeMetrics()) {
-      double distance = dashOffset % 16.0; // 8 dash + 8 gap
+      double distance = dashOffset % 16.0;
       if (distance < 0) distance += 16.0;
       bool draw = true;
       double currentPos = 0.0;
@@ -356,24 +415,34 @@ class _BridgePainter extends CustomPainter {
     );
 
     // Vertical suspenders
-    for (int i = 0; i < 120; i++) {
-      final x = i * 40.0 - 2500.0;
-      if (x > 2000) break;
-      if ((x - -1000).abs() < 60 || (x - 500).abs() < 60) continue;
+    List<double> suspenderXs = [];
+    double currentX = -200;
+    double currentSpacing = 40;
+    while (currentX < 1250) {
+      suspenderXs.add(currentX);
+      currentSpacing = 40 - (currentX + 200) * 0.025;
+      if (currentSpacing < 4) currentSpacing = 4;
+      currentX += currentSpacing;
+    }
 
-      final y = _getCableY(x);
-      if (y > 600) continue;
+    for (int i = 0; i < suspenderXs.length; i++) {
+      final x = suspenderXs[i];
+      if ((x - 250).abs() < 25 || (x - 850).abs() < 15) continue;
 
-      // Animate opacity based on phase and time
+      final yTopCable = _getCableY(x);
+      final yDeck = _getDeckY(x);
+
+      if (yTopCable > yDeck) continue;
+
       final phase = (i * 0.05 + time * 0.5) % 1.0;
-      final opacity = 0.2 + (sin(phase * pi) * 0.6).abs();
+      final opacity = 0.15 + (sin(phase * pi) * 0.6).abs();
 
       canvas.drawLine(
-        Offset(x, y),
-        Offset(x, 600),
+        Offset(x, yTopCable),
+        Offset(x, yDeck),
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1
+          ..strokeWidth = max(0.5, 2.0 - (x + 200) * 0.001)
           ..color = Colors.white.withValues(alpha: opacity),
       );
     }
@@ -381,19 +450,27 @@ class _BridgePainter extends CustomPainter {
     // Data streams moving across deck
     for (int i = 0; i < 3; i++) {
       final speed = 1.0 + i * 0.5;
-      final xOffset = ((time * speed * 50) + (i * 100)) % 4500 - 2500.0;
+      final baseOffset = (time * speed * 150) % 300;
 
       final streamPaint = Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5
         ..color = Colors.white.withValues(alpha: 0.8);
 
-      for (double x = xOffset; x < 2000; x += 60) {
+      double currentStreamX = -200 + baseOffset + (i * 100);
+      while (currentStreamX < 1250) {
+        double dX = 25;
+        double nextX = currentStreamX + dX;
+
+        double yOffset = -5.0 + i * 4.0;
+
         canvas.drawLine(
-          Offset(x, 585.0 + i * 5),
-          Offset(x + 2, 585.0 + i * 5),
+          Offset(currentStreamX, _getDeckY(currentStreamX) + yOffset),
+          Offset(nextX, _getDeckY(nextX) + yOffset),
           streamPaint,
         );
+
+        currentStreamX += 100; // gap
       }
     }
 
