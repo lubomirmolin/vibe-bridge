@@ -203,7 +203,7 @@ void main() {
           ),
         ],
         child: const MaterialApp(
-          home: PairingFlowPage(
+          home: ConnectionOverviewPage(
             enableCameraPreview: false,
             autoOpenThreadsOnPairing: true,
           ),
@@ -293,7 +293,7 @@ void main() {
             nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 18, 10, 0)),
           ],
           child: const MaterialApp(
-            home: PairingFlowPage(enableCameraPreview: false),
+            home: ConnectionOverviewPage(enableCameraPreview: false),
           ),
         ),
       );
@@ -349,7 +349,7 @@ void main() {
             nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 18, 10, 0)),
           ],
           child: const MaterialApp(
-            home: PairingFlowPage(enableCameraPreview: false),
+            home: ConnectionOverviewPage(enableCameraPreview: false),
           ),
         ),
       );
@@ -882,7 +882,7 @@ void main() {
             approvalBridgeApiProvider.overrideWithValue(approvalApi),
           ],
           child: const MaterialApp(
-            home: PairingFlowPage(enableCameraPreview: false),
+            home: ConnectionOverviewPage(enableCameraPreview: false),
           ),
         ),
       );
@@ -1204,7 +1204,7 @@ Future<void> _submitPayloadFromController(
   String payload,
 ) async {
   final container = ProviderScope.containerOf(
-    tester.element(find.byType(PairingFlowPage)),
+    tester.element(find.byType(ConnectionOverviewPage)),
   );
   container
       .read(pairingControllerProvider.notifier)

@@ -78,6 +78,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
     this.initialAttachedImages = const <XFile>[],
     this.initialSelectedModel,
     this.initialSelectedReasoningEffort,
+    this.pickImagesOverride,
     this.speechRecorder,
     this.showBackButton = true,
     this.embedInScaffold = true,
@@ -97,6 +98,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
     required String this.draftWorkspacePath,
     required String this.draftWorkspaceLabel,
     this.initialVisibleTimelineEntries = 80,
+    this.pickImagesOverride,
     this.speechRecorder,
     this.showBackButton = true,
     this.embedInScaffold = true,
@@ -120,6 +122,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
   final List<XFile> initialAttachedImages;
   final String? initialSelectedModel;
   final String? initialSelectedReasoningEffort;
+  final Future<List<XFile>> Function()? pickImagesOverride;
   final AudioRecorder? speechRecorder;
   final bool showBackButton;
   final bool embedInScaffold;
@@ -200,6 +203,12 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   List<XFile> get _effectiveInitialAttachedImages =>
       _localDraftTransition?.initialAttachedImages ??
       widget.initialAttachedImages;
+
+  bool get _hasPendingInitialComposerSubmission {
+    final initialComposerInput = _effectiveInitialComposerInput?.trim();
+    return (initialComposerInput != null && initialComposerInput.isNotEmpty) ||
+        _effectiveInitialAttachedImages.isNotEmpty;
+  }
 
   @override
   void initState() {
@@ -610,10 +619,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   }
 
   Future<void> _pickImages() async {
-    final images = await _imagePicker.pickMultiImage(
-      imageQuality: 90,
-      maxWidth: 2048,
-    );
+    final images =
+        await widget.pickImagesOverride?.call() ??
+        await _imagePicker.pickMultiImage(imageQuality: 90, maxWidth: 2048);
     if (!mounted || images.isEmpty) {
       return;
     }
@@ -1377,10 +1385,11 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         !state.isLoading &&
         state.hasThread &&
         !state.isTurnActive &&
-        !state.isComposerMutationInFlight) {
+        !state.isComposerMutationInFlight &&
+        _hasPendingInitialComposerSubmission) {
       final initialComposerInput = _effectiveInitialComposerInput?.trim();
-      if ((initialComposerInput != null && initialComposerInput.isNotEmpty) ||
-          _attachedImages.isNotEmpty) {
+      if (initialComposerInput != null ||
+          _effectiveInitialAttachedImages.isNotEmpty) {
         _didSubmitInitialComposerInput = true;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) {

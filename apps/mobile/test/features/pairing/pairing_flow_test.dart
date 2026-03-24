@@ -569,7 +569,7 @@ Future<void> _pumpPairingFlow(
           settingsBridgeApiProvider.overrideWithValue(settingsBridgeApi),
       ],
       child: MaterialApp(
-        home: PairingFlowPage(
+        home: ConnectionOverviewPage(
           enableCameraPreview: false,
           initialScannerIssue: initialScannerIssue,
         ),
@@ -598,7 +598,7 @@ Future<void> _submitPayload(WidgetTester tester, String payload) async {
 
 PairingController _pairingController(WidgetTester tester) {
   final container = ProviderScope.containerOf(
-    tester.element(find.byType(PairingFlowPage)),
+    tester.element(find.byType(ConnectionOverviewPage)),
   );
   return container.read(pairingControllerProvider.notifier);
 }

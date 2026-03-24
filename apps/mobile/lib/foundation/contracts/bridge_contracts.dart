@@ -1485,6 +1485,36 @@ class ThreadDetailDto {
   final AccessMode accessMode;
   final String lastTurnSummary;
 
+  ThreadDetailDto copyWith({
+    String? contractVersion,
+    String? threadId,
+    String? title,
+    ThreadStatus? status,
+    String? workspace,
+    String? repository,
+    String? branch,
+    String? createdAt,
+    String? updatedAt,
+    String? source,
+    AccessMode? accessMode,
+    String? lastTurnSummary,
+  }) {
+    return ThreadDetailDto(
+      contractVersion: contractVersion ?? this.contractVersion,
+      threadId: threadId ?? this.threadId,
+      title: title ?? this.title,
+      status: status ?? this.status,
+      workspace: workspace ?? this.workspace,
+      repository: repository ?? this.repository,
+      branch: branch ?? this.branch,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      source: source ?? this.source,
+      accessMode: accessMode ?? this.accessMode,
+      lastTurnSummary: lastTurnSummary ?? this.lastTurnSummary,
+    );
+  }
+
   factory ThreadDetailDto.fromJson(Map<String, dynamic> json) {
     return ThreadDetailDto(
       contractVersion: json['contract_version'] as String,

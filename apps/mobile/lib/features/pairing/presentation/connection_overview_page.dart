@@ -14,7 +14,7 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 /// Main connection overview page that handles device pairing and management.
-/// 
+///
 /// This page orchestrates the entire connection flow:
 /// - Initial pairing via QR code scanning
 /// - Trust confirmation and review
@@ -34,7 +34,7 @@ class ConnectionOverviewPage extends ConsumerStatefulWidget {
   final bool autoOpenThreadsOnPairing;
 
   @override
-  ConsumerState<ConnectionOverviewPage> createState() => 
+  ConsumerState<ConnectionOverviewPage> createState() =>
       _ConnectionOverviewPageState();
 }
 
@@ -47,7 +47,7 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
   late final AnimationController _layoutTransitionController;
   late final AnimationController _flipRevealController;
   late final AnimationController _swipeHintController;
-  
+
   // Animations
   late final Animation<double> _flipRotation;
   late final Animation<double> _flipScale;
@@ -58,7 +58,7 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
   final Set<String> _autoOpenedThreadSessionIds = <String>{};
   final GlobalKey _foregroundFrameKey = GlobalKey();
   final GlobalKey _centerSlotKey = GlobalKey();
-  
+
   Timer? _cameraMountTimer;
   PairingScannerIssue? _scannerIssue;
   bool _isAutoOpeningThreadList = false;
@@ -83,7 +83,7 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
     _manualPayloadFocusNode = FocusNode();
     _cameraController = MobileScannerController();
     _scannerIssue = widget.initialScannerIssue;
-    
+
     _layoutTransitionController = AnimationController(
       vsync: this,
       duration: PairingConstants.layoutTransition,
@@ -114,14 +114,14 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
         curve: const Interval(0.30, 0.50, curve: Curves.easeInQuint),
       ),
     );
-    
+
     _swipeHintLift = Tween<double>(begin: 2.0, end: -4.0).animate(
       CurvedAnimation(
         parent: _swipeHintController,
         curve: Curves.easeInOutCubic,
       ),
     );
-    
+
     _swipeHintOpacity = Tween<double>(begin: 0.5, end: 1.0).animate(
       CurvedAnimation(
         parent: _swipeHintController,
@@ -136,7 +136,7 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
     // Swap application state once the wipe has expanded enough to hide the
     // foreground transition under the expanding card.
     _flipRevealController.addListener(() {
-      if (_flipRevealController.value >= PairingConstants.flipRevealSwapPoint && 
+      if (_flipRevealController.value >= PairingConstants.flipRevealSwapPoint &&
           !_swappedDuringWipe) {
         _swappedDuringWipe = true;
         if (_scannedRawQr != null) {
@@ -146,7 +146,7 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
         }
       }
     });
-    
+
     _swipeHintController.repeat(reverse: true);
   }
 
@@ -219,8 +219,9 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
       await _cameraController.start();
     } on MobileScannerException catch (error) {
       if (!mounted) return;
-      setState(() => 
-          _scannerIssue = PairingScannerIssue.fromScannerException(error));
+      setState(
+        () => _scannerIssue = PairingScannerIssue.fromScannerException(error),
+      );
     } catch (_) {
       if (!mounted) return;
       setState(() => _scannerIssue = const PairingScannerIssue.failure());
@@ -237,8 +238,7 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
     if (bridge == null || _isAutoOpeningThreadList) return;
 
     final sessionId = bridge.sessionId.trim();
-    if (sessionId.isEmpty || 
-        _autoOpenedThreadSessionIds.contains(sessionId)) {
+    if (sessionId.isEmpty || _autoOpenedThreadSessionIds.contains(sessionId)) {
       return;
     }
 
@@ -252,9 +252,8 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
       try {
         await Navigator.of(context).push(
           MaterialPageRoute<void>(
-            builder: (context) => ThreadListPage(
-              bridgeApiBaseUrl: bridge.bridgeApiBaseUrl,
-            ),
+            builder: (context) =>
+                ThreadListPage(bridgeApiBaseUrl: bridge.bridgeApiBaseUrl),
           ),
         );
       } finally {
@@ -265,11 +264,11 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
 
   // TODO: Extract these layout helper methods to a separate mixin or utility
   Offset? _resolveWipeCenter() {
-    final foregroundBox = _foregroundFrameKey.currentContext?.findRenderObject()
-        as RenderBox?;
-    final centerSlotBox = _centerSlotKey.currentContext?.findRenderObject()
-        as RenderBox?;
-    
+    final foregroundBox =
+        _foregroundFrameKey.currentContext?.findRenderObject() as RenderBox?;
+    final centerSlotBox =
+        _centerSlotKey.currentContext?.findRenderObject() as RenderBox?;
+
     if (foregroundBox == null || !foregroundBox.hasSize) return null;
     if (centerSlotBox == null || !centerSlotBox.hasSize) {
       return foregroundBox.size.center(Offset.zero);
@@ -393,8 +392,6 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
     );
   }
 
-  // TODO: Continue breaking down these massive methods into smaller widgets
-  // For now, keeping the structure similar but will extract in next step
   Widget _buildForegroundLayout({
     required PairingState pairingState,
     required PairingController pairingController,
@@ -403,9 +400,285 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
     Key? centerSlotKey,
     PairingStep? displayStepOverride,
   }) {
-    // This method is still too large - will extract into smaller widgets
-    // in the next refactoring step
-    return const Placeholder(); // TODO: Implement
+    return AnimatedBuilder(
+      animation: _layoutTransitionController,
+      builder: (context, child) {
+        final displayStep = displayStepOverride ?? pairingState.step;
+        final layoutProgress = Curves.easeOutCubic.transform(
+          _layoutTransitionController.value,
+        );
+        final centerProgress = Interval(
+          PairingConstants.centerAnimationStart,
+          1.0,
+          curve: Curves.easeOutCubic,
+        ).transform(_layoutTransitionController.value);
+
+        Widget content = Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildTitleSection(
+              pairingState,
+              titleSlotHeight,
+              titleTravel,
+              layoutProgress,
+              displayStep,
+            ),
+            _buildCenterSection(
+              pairingState,
+              pairingController,
+              centerSlotKey,
+              centerProgress,
+              displayStep,
+            ),
+            _buildFooterSection(pairingState, pairingController, displayStep),
+          ],
+        );
+
+        // Add swipe gesture for device switching when multiple bridges exist
+        if (displayStep == PairingStep.paired &&
+            pairingState.savedBridgeCount > 1) {
+          content = _buildSwipeGestureWrapper(
+            content,
+            pairingState,
+            pairingController,
+          );
+        }
+
+        return Transform.translate(
+          offset: Offset(0, _swipeOffset),
+          child: content,
+        );
+      },
+    );
+  }
+
+  Widget _buildTitleSection(
+    PairingState pairingState,
+    double titleSlotHeight,
+    double titleTravel,
+    double layoutProgress,
+    PairingStep displayStep,
+  ) {
+    return SizedBox(
+      height: titleSlotHeight,
+      child: Transform.translate(
+        offset: Offset(0, titleTravel * (1.0 - layoutProgress)),
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: AnimatedSwitcher(
+            duration: PairingConstants.titleSwitcher,
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            layoutBuilder: (currentChild, previousChildren) {
+              return Stack(
+                alignment: Alignment.topCenter,
+                children: currentChild == null
+                    ? previousChildren
+                    : [...previousChildren, currentChild],
+              );
+            },
+            transitionBuilder: (child, animation) {
+              return FadeTransition(
+                opacity: animation,
+                child: SlideTransition(
+                  position: Tween<Offset>(
+                    begin: const Offset(0, 0.08),
+                    end: Offset.zero,
+                  ).animate(animation),
+                  child: child,
+                ),
+              );
+            },
+            child: _buildTitleArea(
+              pairingState,
+              displayStepOverride: displayStep,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCenterSection(
+    PairingState pairingState,
+    PairingController pairingController,
+    Key? centerSlotKey,
+    double centerProgress,
+    PairingStep displayStep,
+  ) {
+    return Expanded(
+      child: Align(
+        key: centerSlotKey,
+        alignment: Alignment.center,
+        child: IgnorePointer(
+          ignoring: displayStep == PairingStep.unpaired,
+          child: Opacity(
+            opacity: displayStep == PairingStep.unpaired ? 0.0 : centerProgress,
+            child: Transform.translate(
+              offset: Offset(0, 32.0 * (1.0 - centerProgress)),
+              child: AnimatedSwitcher(
+                duration: PairingConstants.centerSwitcher,
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                layoutBuilder: (currentChild, previousChildren) {
+                  return Stack(
+                    alignment: Alignment.center,
+                    clipBehavior: Clip.none,
+                    children: currentChild == null
+                        ? previousChildren
+                        : [...previousChildren, currentChild],
+                  );
+                },
+                transitionBuilder: (child, animation) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: ScaleTransition(
+                      scale: Tween<double>(
+                        begin: 0.96,
+                        end: 1.0,
+                      ).animate(animation),
+                      child: child,
+                    ),
+                  );
+                },
+                child: _buildCenterCard(
+                  pairingState,
+                  pairingController,
+                  displayStepOverride: displayStep,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFooterSection(
+    PairingState pairingState,
+    PairingController pairingController,
+    PairingStep displayStep,
+  ) {
+    return SizedBox(
+      width: double.infinity,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(
+          minHeight: PairingConstants.footerBaseHeight,
+        ),
+        child: Align(
+          alignment: Alignment.bottomCenter,
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 320),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            layoutBuilder: (currentChild, previousChildren) {
+              return Stack(
+                alignment: Alignment.bottomCenter,
+                children: currentChild == null
+                    ? previousChildren
+                    : [...previousChildren, currentChild],
+              );
+            },
+            transitionBuilder: (child, animation) {
+              return FadeTransition(
+                opacity: animation,
+                child: SlideTransition(
+                  position: Tween<Offset>(
+                    begin: const Offset(0, 0.04),
+                    end: Offset.zero,
+                  ).animate(animation),
+                  child: child,
+                ),
+              );
+            },
+            child: _buildFooterArea(
+              pairingState,
+              pairingController,
+              displayStepOverride: displayStep,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSwipeGestureWrapper(
+    Widget content,
+    PairingState pairingState,
+    PairingController pairingController,
+  ) {
+    return GestureDetector(
+      key: const Key('global-swipe-detector'),
+      behavior: HitTestBehavior.translucent,
+      onVerticalDragStart: (details) {
+        setState(() => _isSwiping = true);
+      },
+      onVerticalDragUpdate: (details) {
+        setState(() {
+          _swipeOffset += details.primaryDelta ?? 0;
+          if (_swipeOffset > 0) {
+            _swipeOffset *= 0.5; // Resistance when swiping down
+          }
+        });
+      },
+      onVerticalDragEnd: (details) {
+        final velocity = details.primaryVelocity ?? 0;
+        final shouldSwitch = _swipeOffset < -40 || velocity < -150;
+
+        setState(() {
+          _isSwiping = false;
+          // If we're switching, animate further up to exit the screen.
+          // Otherwise, animate back to center (0.0).
+          _swipeOffset = shouldSwitch ? -80 : 0.0;
+        });
+
+        if (shouldSwitch) {
+          // Wait for the exit animation to get mostly off-screen
+          Future.delayed(const Duration(milliseconds: 150), () {
+            if (mounted) {
+              // Jump the container to the bottom so it can slide UP into place
+              setState(() {
+                _isSwiping = true; // Duration.zero forces instant jump
+                _swipeOffset = 80.0;
+              });
+
+              _activateNextSavedBridge(pairingState, pairingController);
+
+              // On the very next frame, re-enable animation and slide UP to center
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                  setState(() {
+                    _isSwiping = false; // Restores 300ms animation duration
+                    _swipeOffset = 0.0;
+                  });
+                }
+              });
+            }
+          });
+        }
+      },
+      onVerticalDragCancel: () {
+        setState(() {
+          _isSwiping = false;
+          _swipeOffset = 0.0;
+        });
+      },
+      child: TweenAnimationBuilder<double>(
+        tween: Tween<double>(begin: 0.0, end: _swipeOffset),
+        duration: _isSwiping
+            ? Duration.zero
+            : const Duration(milliseconds: 300),
+        curve: Curves.easeOutCubic,
+        builder: (context, value, child) {
+          final opacity = (1.0 - (value.abs() / 60)).clamp(0.0, 1.0);
+          return Transform.translate(
+            offset: Offset(0, value),
+            child: Opacity(opacity: opacity, child: child),
+          );
+        },
+        child: content,
+      ),
+    );
   }
 
   Widget _buildForegroundWipeOverlay({
@@ -414,13 +687,958 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
     required double titleSlotHeight,
     required double titleTravel,
   }) {
-    return const Placeholder(); // TODO: Implement
+    return AnimatedBuilder(
+      animation: _flipRevealController,
+      builder: (context, child) {
+        if (_flipRevealController.isDismissed) {
+          return const SizedBox.shrink();
+        }
+
+        final wipeRect = _resolveWipeCardRect();
+        if (wipeRect == null) {
+          return const SizedBox.shrink();
+        }
+
+        final wipeRadius =
+            PairingConstants.scanCardRadius * max(1.0, _flipScale.value);
+        return IgnorePointer(
+          child: ClipPath(
+            clipper: _OutsideCardClipper(
+              cutoutRect: wipeRect,
+              cutoutRadius: wipeRadius,
+            ),
+            child: _buildForegroundLayout(
+              pairingState: pairingState,
+              pairingController: pairingController,
+              titleSlotHeight: titleSlotHeight,
+              titleTravel: titleTravel,
+              displayStepOverride: PairingStep.scanning,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildTitleArea(
+    PairingState pairingState, {
+    PairingStep? displayStepOverride,
+  }) {
+    final displayStep = displayStepOverride ?? pairingState.step;
+    if (displayStep == PairingStep.unpaired) {
+      return Column(
+        key: const ValueKey('title-unpaired'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Codex\nBridge',
+            style: Theme.of(context).textTheme.displayLarge?.copyWith(
+              fontWeight: FontWeight.w500,
+              height: 1.1,
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Secure operator console for remote monitoring and control.',
+            style: TextStyle(color: AppTheme.textMuted, fontSize: 14),
+          ),
+        ],
+      );
+    } else if (displayStep == PairingStep.scanning) {
+      return Column(
+        key: const ValueKey('title-scanning'),
+        children: [
+          Text(
+            'Scan QR Code',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Display code on desktop bridge app',
+            style: TextStyle(color: AppTheme.textMuted),
+          ),
+        ],
+      );
+    } else if (displayStep == PairingStep.review) {
+      return Column(
+        key: const ValueKey('title-review'),
+        children: [
+          Text(
+            'Verify Identity',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Confirm desktop fingerprint before connecting.',
+            style: TextStyle(color: AppTheme.textMuted),
+          ),
+        ],
+      );
+    } else if (displayStep == PairingStep.paired) {
+      final pairedTitleStyle = Theme.of(context).textTheme.displayLarge
+          ?.copyWith(fontWeight: FontWeight.w500, height: 1.0);
+      final pairedBridgeNameStyle = Theme.of(context).textTheme.headlineSmall
+          ?.copyWith(fontWeight: FontWeight.w500, height: 1.05);
+
+      return Column(
+        key: const ValueKey('title-paired'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text.rich(
+            TextSpan(
+              text: 'Connected to\n',
+              style: pairedTitleStyle,
+              children: [
+                TextSpan(
+                  text: pairingState.trustedBridge?.bridgeName ?? '',
+                  style: pairedBridgeNameStyle,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                pairingState.savedBridgeCount > 1
+                    ? '${pairingState.savedBridgeCount} saved bridges available.'
+                    : 'A trusted bridge connection is established.',
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 14),
+              ),
+              _PairingConnectionIndicator(
+                state: pairingState.bridgeConnectionState,
+              ),
+            ],
+          ),
+        ],
+      );
+    }
+    return const SizedBox.shrink(key: ValueKey('title-none'));
   }
 
   Widget _buildTopRightAction(
     PairingState pairingState,
     PairingController pairingController,
   ) {
-    return const Placeholder(); // TODO: Implement
+    return AnimatedSwitcher(
+      duration: PairingConstants.buttonSwitcher,
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, animation) {
+        return FadeTransition(
+          opacity: animation,
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.92, end: 1.0).animate(animation),
+            child: child,
+          ),
+        );
+      },
+      child: pairingState.step == PairingStep.paired
+          ? IconButton(
+              key: const Key('top-right-add-bridge'),
+              tooltip: 'Add another bridge',
+              onPressed: () => _openScanner(pairingController),
+              icon: PhosphorIcon(
+                PhosphorIcons.plus(PhosphorIconsStyle.bold),
+                size: 24,
+              ),
+            )
+          : const SizedBox.shrink(key: ValueKey('top-right-action-none')),
+    );
+  }
+
+  Widget _buildCenterCard(
+    PairingState pairingState,
+    PairingController pairingController, {
+    PairingStep? displayStepOverride,
+  }) {
+    final displayStep = displayStepOverride ?? pairingState.step;
+    if (displayStep == PairingStep.scanning) {
+      return AnimatedBuilder(
+        key: const ValueKey('card-scanning'),
+        animation: _flipRevealController,
+        builder: (context, child) {
+          final isFlipped = _flipRotation.value > (pi / 2);
+
+          return Transform(
+            alignment: Alignment.center,
+            transform: Matrix4.identity()
+              ..setEntry(3, 2, 0.002) // Perspective flip
+              ..scaleByDouble(_flipScale.value, _flipScale.value, 1.0, 1.0)
+              ..rotateY(_flipRotation.value),
+            child: isFlipped
+                ? _buildRevealMaskCard()
+                : Container(
+                    width: PairingConstants.scanCardSize,
+                    height: PairingConstants.scanCardSize,
+                    decoration: LiquidStyles.liquidGlass,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(
+                        PairingConstants.scanCardRadius,
+                      ),
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 700),
+                        switchInCurve: Curves.easeOutCubic,
+                        switchOutCurve: Curves.easeOutCubic,
+                        child: _isLockedOn && _scannedRawQr != null
+                            ? Container(
+                                key: const ValueKey('qr-reconstructed'),
+                                color: AppTheme.background,
+                                padding: const EdgeInsets.all(16),
+                                child: QrImageView(
+                                  data: _scannedRawQr!,
+                                  version: QrVersions.auto,
+                                  padding: EdgeInsets.zero,
+                                  eyeStyle: const QrEyeStyle(
+                                    eyeShape: QrEyeShape.square,
+                                    color: Colors.white,
+                                  ),
+                                  dataModuleStyle: const QrDataModuleStyle(
+                                    dataModuleShape: QrDataModuleShape.square,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              )
+                            : Stack(
+                                key: const ValueKey('camera'),
+                                fit: StackFit.expand,
+                                children: [
+                                  Container(color: const Color(0xFF09090B)),
+                                  AnimatedSwitcher(
+                                    duration: const Duration(milliseconds: 400),
+                                    child:
+                                        (widget.enableCameraPreview &&
+                                            _cameraMounted)
+                                        ? MobileScanner(
+                                            key: const Key('camera-scanner'),
+                                            controller: _cameraController,
+                                            onDetect: (capture) {
+                                              for (final barcode
+                                                  in capture.barcodes) {
+                                                if (barcode.rawValue
+                                                        ?.trim()
+                                                        .isNotEmpty ==
+                                                    true) {
+                                                  if (_isLockedOn) return;
+
+                                                  setState(() {
+                                                    _scannerIssue = null;
+                                                    _scannedRawQr =
+                                                        barcode.rawValue!;
+                                                    _isLockedOn = true;
+                                                  });
+
+                                                  // Hang for visual lock-on
+                                                  // confirmation, then explode
+                                                  // the timeline unified single-shot wipe
+                                                  Future.delayed(
+                                                    const Duration(
+                                                      milliseconds: 800,
+                                                    ),
+                                                    () {
+                                                      if (mounted) {
+                                                        _flipRevealController
+                                                            .forward(from: 0.0);
+                                                      }
+                                                    },
+                                                  );
+
+                                                  break;
+                                                }
+                                              }
+                                            },
+                                            errorBuilder: (context, error) {
+                                              _setScannerIssue(
+                                                PairingScannerIssue.fromScannerException(
+                                                  error,
+                                                ),
+                                              );
+                                              return const Center(
+                                                child: Icon(
+                                                  Icons.videocam_off,
+                                                  color: AppTheme.textMuted,
+                                                ),
+                                              );
+                                            },
+                                          )
+                                        : const SizedBox.shrink(
+                                            key: Key('camera-loading'),
+                                          ),
+                                  ),
+                                ],
+                              ),
+                      ),
+                    ),
+                  ),
+          );
+        },
+      );
+    }
+
+    if (displayStep == PairingStep.review) {
+      final payload = pairingState.pendingPayload;
+      return Container(
+        key: const ValueKey('card-review'),
+        padding: const EdgeInsets.all(24),
+        decoration: LiquidStyles.liquidGlass,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (payload != null) ...[
+              _IdentityRow(label: 'Bridge', value: payload.bridgeName),
+              const Divider(color: Colors.white10, height: 24),
+              _IdentityRow(label: 'Host URL', value: payload.bridgeApiBaseUrl),
+              const Divider(color: Colors.white10, height: 24),
+              _IdentityRow(
+                label: 'Identity',
+                value: payload.bridgeId,
+                valueColor: AppTheme.emerald,
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    if (displayStep == PairingStep.paired) {
+      final activeBridge = pairingState.trustedBridge;
+      if (activeBridge == null) {
+        return const SizedBox.shrink(key: ValueKey('card-paired-empty'));
+      }
+
+      return Container(
+        key: const ValueKey('card-paired'),
+        padding: const EdgeInsets.all(24),
+        decoration: LiquidStyles.liquidGlass,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Saved host bridges',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  _PairingConnectionIndicator(
+                    state: pairingState.bridgeConnectionState,
+                    compact: true,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _IdentityRow(label: 'Bridge', value: activeBridge.bridgeName),
+              const Divider(color: Colors.white10, height: 24),
+              _IdentityRow(
+                label: 'Host URL',
+                value: activeBridge.bridgeApiBaseUrl,
+              ),
+              const Divider(color: Colors.white10, height: 24),
+              _IdentityRow(
+                label: 'Identity',
+                value: activeBridge.bridgeId,
+                valueColor: AppTheme.emerald,
+              ),
+              if (pairingState.savedBridgeCount > 1) ...[
+                const Divider(color: Colors.white10, height: 24),
+                Text(
+                  'Other saved bridges',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 12),
+                ...pairingState.savedBridges.map((bridge) {
+                  final isActive =
+                      bridge.bridgeId == pairingState.activeBridgeId;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                bridge.bridgeName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: AppTheme.textMain,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                bridge.bridgeApiBaseUrl,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: AppTheme.textMuted,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        if (isActive)
+                          _PairingConnectionIndicator(
+                            state: pairingState.bridgeConnectionState,
+                            compact: true,
+                          )
+                        else
+                          TextButton(
+                            key: Key('activate-bridge-${bridge.bridgeId}'),
+                            onPressed: () => pairingController
+                                .activateSavedBridge(bridge.bridgeId),
+                            child: const Text('Activate'),
+                          ),
+                      ],
+                    ),
+                  );
+                }),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+
+    return const SizedBox.shrink(key: ValueKey('card-none'));
+  }
+
+  Widget _buildRevealMaskCard() {
+    return SizedBox(
+      width: PairingConstants.scanCardSize,
+      height: PairingConstants.scanCardSize,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(PairingConstants.scanCardRadius),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Colors.white.withValues(alpha: 0.07),
+                  Colors.white.withValues(alpha: 0.015),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(
+                PairingConstants.scanCardRadius,
+              ),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+            ),
+            child: const SizedBox.expand(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFooterArea(
+    PairingState pairingState,
+    PairingController pairingController, {
+    PairingStep? displayStepOverride,
+  }) {
+    final displayStep = displayStepOverride ?? pairingState.step;
+    final anchoredAction = _buildAnchoredFooterAction(
+      pairingState,
+      pairingController,
+      displayStepOverride: displayStep,
+    );
+
+    return Column(
+      key: ValueKey('footer-$displayStep'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (pairingState.rePairRequiredForSecurity) ...[
+          _SecurityRePairRequiredBanner(message: pairingState.errorMessage),
+          const SizedBox(height: 16),
+        ] else if (pairingState.errorMessage != null &&
+            displayStep != PairingStep.paired) ...[
+          Text(
+            pairingState.errorMessage!,
+            style: const TextStyle(color: AppTheme.rose),
+          ),
+          const SizedBox(height: 16),
+        ],
+
+        if (displayStep == PairingStep.scanning && _scannerIssue != null)
+          _ScannerIssueBanner(
+            issue: _scannerIssue!,
+            onRetryCamera: _retryCamera,
+          ),
+
+        if (displayStep == PairingStep.paired &&
+            pairingState.bridgeConnectionState ==
+                BridgeConnectionState.disconnected) ...[
+          _ConnectionWarningBanner(
+            message:
+                pairingState.errorMessage ??
+                'Bridge unreachable. Offline cache readable.',
+            onRetry: pairingController.retryTrustedBridgeConnection,
+          ),
+          const SizedBox(height: 16),
+        ],
+
+        if (anchoredAction != null) ...[
+          MagneticButton(
+            variant: anchoredAction.variant,
+            onClick: anchoredAction.onClick,
+            child: AnimatedSwitcher(
+              duration: PairingConstants.buttonSwitcher,
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              transitionBuilder: (child, animation) {
+                return FadeTransition(
+                  opacity: animation,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0, 0.06),
+                      end: Offset.zero,
+                    ).animate(animation),
+                    child: child,
+                  ),
+                );
+              },
+              child: anchoredAction.child,
+            ),
+          ),
+        ] else if (displayStep == PairingStep.review) ...[
+          MagneticButton(
+            variant: MagneticButtonVariant.primary,
+            onClick: pairingState.isPersistingTrust
+                ? () {}
+                : () => pairingController.confirmTrust(),
+            child: const Text('Trust & Connect'),
+          ),
+          const SizedBox(height: 12),
+          MagneticButton(
+            variant: MagneticButtonVariant.secondary,
+            onClick: pairingController.cancelReview,
+            child: const Text('Reject'),
+          ),
+        ] else if (displayStep == PairingStep.paired) ...[
+          MagneticButton(
+            variant: MagneticButtonVariant.primary,
+            onClick: () {
+              final bridge = pairingState.trustedBridge;
+              if (bridge == null) return;
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) => ThreadListPage(
+                    bridgeApiBaseUrl: bridge.bridgeApiBaseUrl,
+                    autoOpenPreviouslySelectedThread: false,
+                  ),
+                ),
+              );
+            },
+            child: const Text('Open sessions'),
+          ),
+          const SizedBox(height: 12),
+          MagneticButton(
+            variant: MagneticButtonVariant.secondary,
+            onClick: () {
+              final bridge = pairingState.trustedBridge;
+              if (bridge == null) return;
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) =>
+                      SettingsPage(bridgeApiBaseUrl: bridge.bridgeApiBaseUrl),
+                ),
+              );
+            },
+            child: const Text(
+              'Device Settings',
+              key: Key('open-device-settings'),
+            ),
+          ),
+          if (pairingState.savedBridgeCount > 1) ...[
+            const SizedBox(height: 12),
+            GestureDetector(
+              key: const Key('swipe-switch-hint'),
+              behavior: HitTestBehavior.opaque,
+              onTap: () =>
+                  _activateNextSavedBridge(pairingState, pairingController),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    AnimatedBuilder(
+                      animation: _swipeHintController,
+                      builder: (context, child) {
+                        return Opacity(
+                          opacity: _swipeHintOpacity.value,
+                          child: Transform.translate(
+                            offset: Offset(0, _swipeHintLift.value),
+                            child: child,
+                          ),
+                        );
+                      },
+                      child: PhosphorIcon(
+                        PhosphorIcons.caretUp(PhosphorIconsStyle.bold),
+                        size: 14,
+                        color: AppTheme.textSubtle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Swipe up anywhere to switch device',
+                      style: TextStyle(
+                        color: AppTheme.textSubtle,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ],
+    );
+  }
+
+  _AnchoredFooterAction? _buildAnchoredFooterAction(
+    PairingState pairingState,
+    PairingController pairingController, {
+    PairingStep? displayStepOverride,
+  }) {
+    final displayStep = displayStepOverride ?? pairingState.step;
+    if (displayStep == PairingStep.unpaired) {
+      return _AnchoredFooterAction(
+        variant: MagneticButtonVariant.primary,
+        onClick: () => _openScanner(pairingController),
+        child: Row(
+          key: const ValueKey('footer-action-init'),
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text('Initialize Pairing'),
+            const SizedBox(width: 8),
+            PhosphorIcon(
+              PhosphorIcons.arrowRight(PhosphorIconsStyle.bold),
+              size: 16,
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (displayStep == PairingStep.scanning) {
+      return _AnchoredFooterAction(
+        variant: MagneticButtonVariant.secondary,
+        onClick: pairingController.cancelReview,
+        child: const Text(
+          'Cancel',
+          key: ValueKey('footer-action-cancel'),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+
+    return null;
+  }
+}
+
+class _AnchoredFooterAction {
+  const _AnchoredFooterAction({
+    required this.variant,
+    required this.onClick,
+    required this.child,
+  });
+
+  final MagneticButtonVariant variant;
+  final VoidCallback onClick;
+  final Widget child;
+}
+
+class _PairingConnectionIndicator extends StatelessWidget {
+  const _PairingConnectionIndicator({
+    required this.state,
+    this.compact = false,
+  });
+
+  final BridgeConnectionState state;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = switch (state) {
+      BridgeConnectionState.connected => (
+        color: AppTheme.emerald,
+        label: 'Online',
+      ),
+      BridgeConnectionState.reconnecting => (
+        color: AppTheme.amber,
+        label: 'Reconnecting',
+      ),
+      BridgeConnectionState.disconnected => (
+        color: AppTheme.rose,
+        label: 'Offline',
+      ),
+    };
+
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 10 : 12,
+        vertical: compact ? 6 : 8,
+      ),
+      decoration: BoxDecoration(
+        color: palette.color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: palette.color.withValues(alpha: 0.28)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: compact ? 8 : 10,
+            height: compact ? 8 : 10,
+            decoration: BoxDecoration(
+              color: palette.color,
+              shape: BoxShape.circle,
+            ),
+          ),
+          SizedBox(width: compact ? 6 : 8),
+          Text(
+            palette.label,
+            style: TextStyle(
+              color: palette.color,
+              fontSize: compact ? 11 : 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OutsideCardClipper extends CustomClipper<Path> {
+  const _OutsideCardClipper({
+    required this.cutoutRect,
+    required this.cutoutRadius,
+  });
+
+  final Rect cutoutRect;
+  final double cutoutRadius;
+
+  @override
+  Path getClip(Size size) {
+    final fullScreen = Path()..addRect(Offset.zero & size);
+    final cutout = Path()
+      ..addRRect(
+        RRect.fromRectAndRadius(cutoutRect, Radius.circular(cutoutRadius)),
+      );
+
+    return Path.combine(PathOperation.difference, fullScreen, cutout);
+  }
+
+  @override
+  bool shouldReclip(covariant _OutsideCardClipper oldClipper) {
+    return oldClipper.cutoutRect != cutoutRect ||
+        oldClipper.cutoutRadius != cutoutRadius;
+  }
+}
+
+class _IdentityRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? valueColor;
+
+  const _IdentityRow({
+    required this.label,
+    required this.value,
+    this.valueColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: AppTheme.textSubtle,
+            fontSize: 13,
+            fontFamily: 'JetBrains Mono',
+          ),
+        ),
+        Flexible(
+          child: Text(
+            value,
+            style: TextStyle(
+              color: valueColor ?? AppTheme.textMain,
+              fontSize: 13,
+              fontFamily: 'JetBrains Mono',
+            ),
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.right,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ConnectionWarningBanner extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+
+  const _ConnectionWarningBanner({
+    required this.message,
+    required this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.amber.withValues(alpha: 0.1),
+        border: Border.all(color: AppTheme.amber.withValues(alpha: 0.3)),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              PhosphorIcon(
+                PhosphorIcons.warningCircle(PhosphorIconsStyle.duotone),
+                color: AppTheme.amber,
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                'Disconnected',
+                style: TextStyle(
+                  color: AppTheme.amber,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            message,
+            style: const TextStyle(color: AppTheme.amber, fontSize: 13),
+          ),
+          const SizedBox(height: 16),
+          MagneticButton(
+            variant: MagneticButtonVariant.secondary,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            onClick: onRetry,
+            child: const Text(
+              'Retry connection',
+              style: TextStyle(color: AppTheme.amber),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SecurityRePairRequiredBanner extends StatelessWidget {
+  final String? message;
+  const _SecurityRePairRequiredBanner({this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.rose.withValues(alpha: 0.1),
+        border: Border.all(color: AppTheme.rose.withValues(alpha: 0.3)),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Re-pair required',
+            style: TextStyle(color: AppTheme.rose, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            message ?? 'Stored trust no longer matches.',
+            style: const TextStyle(color: AppTheme.rose, fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ScannerIssueBanner extends StatelessWidget {
+  final PairingScannerIssue issue;
+  final VoidCallback onRetryCamera;
+
+  const _ScannerIssueBanner({required this.issue, required this.onRetryCamera});
+
+  String get _headline {
+    switch (issue.type) {
+      case PairingScannerIssueType.permissionDenied:
+        return 'Camera permission blocked';
+      case PairingScannerIssueType.scannerFailure:
+        return 'Scanner unavailable';
+    }
+  }
+
+  String get _body {
+    switch (issue.type) {
+      case PairingScannerIssueType.permissionDenied:
+        return 'Enable camera access in system settings, then retry scanning.';
+      case PairingScannerIssueType.scannerFailure:
+        return 'Camera feed could not be read. Retry scanning.';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: 24),
+      decoration: BoxDecoration(
+        color: AppTheme.rose.withValues(alpha: 0.1),
+        border: Border.all(color: AppTheme.rose.withValues(alpha: 0.3)),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            _headline,
+            style: TextStyle(color: AppTheme.rose, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Text(_body, style: const TextStyle(color: AppTheme.rose)),
+          if (issue.details case final details?) ...[
+            const SizedBox(height: 8),
+            Text(details, style: const TextStyle(color: AppTheme.rose)),
+          ],
+          const SizedBox(height: 8),
+          MagneticButton(
+            variant: MagneticButtonVariant.danger,
+            onClick: onRetryCamera,
+            child: const Text('Retry camera'),
+          ),
+        ],
+      ),
+    );
   }
 }

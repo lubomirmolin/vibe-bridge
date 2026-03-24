@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
+import 'package:codex_mobile_companion/foundation/connectivity/reconnect_scheduler.dart';
 import 'package:codex_mobile_companion/features/threads/application/thread_list_controller.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
@@ -53,6 +54,126 @@ class ThreadDetailControllerArgs {
       Object.hash(bridgeApiBaseUrl, threadId, initialVisibleTimelineEntries);
 }
 
+// ---------------------------------------------------------------------------
+// Sub-states
+// ---------------------------------------------------------------------------
+
+class ThreadGitState {
+  const ThreadGitState({
+    this.gitStatus,
+    this.isGitStatusLoading = false,
+    this.isGitMutationInFlight = false,
+    this.gitErrorMessage,
+    this.gitMutationMessage,
+    this.gitControlsUnavailableReason,
+  });
+
+  final GitStatusResponseDto? gitStatus;
+  final bool isGitStatusLoading;
+  final bool isGitMutationInFlight;
+  final String? gitErrorMessage;
+  final String? gitMutationMessage;
+  final String? gitControlsUnavailableReason;
+
+  static const initial = ThreadGitState();
+
+  ThreadGitState copyWith({
+    GitStatusResponseDto? gitStatus,
+    bool clearGitStatus = false,
+    bool? isGitStatusLoading,
+    bool? isGitMutationInFlight,
+    String? gitErrorMessage,
+    bool clearGitErrorMessage = false,
+    String? gitMutationMessage,
+    bool clearGitMutationMessage = false,
+    String? gitControlsUnavailableReason,
+    bool clearGitControlsUnavailableReason = false,
+  }) {
+    return ThreadGitState(
+      gitStatus: clearGitStatus ? null : (gitStatus ?? this.gitStatus),
+      isGitStatusLoading: isGitStatusLoading ?? this.isGitStatusLoading,
+      isGitMutationInFlight:
+          isGitMutationInFlight ?? this.isGitMutationInFlight,
+      gitErrorMessage: clearGitErrorMessage
+          ? null
+          : (gitErrorMessage ?? this.gitErrorMessage),
+      gitMutationMessage: clearGitMutationMessage
+          ? null
+          : (gitMutationMessage ?? this.gitMutationMessage),
+      gitControlsUnavailableReason: clearGitControlsUnavailableReason
+          ? null
+          : (gitControlsUnavailableReason ?? this.gitControlsUnavailableReason),
+    );
+  }
+}
+
+class ThreadTurnControlState {
+  const ThreadTurnControlState({
+    this.isComposerMutationInFlight = false,
+    this.isInterruptMutationInFlight = false,
+    this.turnControlErrorMessage,
+  });
+
+  final bool isComposerMutationInFlight;
+  final bool isInterruptMutationInFlight;
+  final String? turnControlErrorMessage;
+
+  static const initial = ThreadTurnControlState();
+
+  ThreadTurnControlState copyWith({
+    bool? isComposerMutationInFlight,
+    bool? isInterruptMutationInFlight,
+    String? turnControlErrorMessage,
+    bool clearTurnControlError = false,
+  }) {
+    return ThreadTurnControlState(
+      isComposerMutationInFlight:
+          isComposerMutationInFlight ?? this.isComposerMutationInFlight,
+      isInterruptMutationInFlight:
+          isInterruptMutationInFlight ?? this.isInterruptMutationInFlight,
+      turnControlErrorMessage: clearTurnControlError
+          ? null
+          : (turnControlErrorMessage ?? this.turnControlErrorMessage),
+    );
+  }
+}
+
+class ThreadOpenOnMacState {
+  const ThreadOpenOnMacState({
+    this.isOpenOnMacInFlight = false,
+    this.openOnMacMessage,
+    this.openOnMacErrorMessage,
+  });
+
+  final bool isOpenOnMacInFlight;
+  final String? openOnMacMessage;
+  final String? openOnMacErrorMessage;
+
+  static const initial = ThreadOpenOnMacState();
+
+  ThreadOpenOnMacState copyWith({
+    bool? isOpenOnMacInFlight,
+    String? openOnMacMessage,
+    bool clearOpenOnMacMessage = false,
+    String? openOnMacErrorMessage,
+    bool clearOpenOnMacErrorMessage = false,
+  }) {
+    return ThreadOpenOnMacState(
+      isOpenOnMacInFlight: isOpenOnMacInFlight ?? this.isOpenOnMacInFlight,
+      openOnMacMessage: clearOpenOnMacMessage
+          ? null
+          : (openOnMacMessage ?? this.openOnMacMessage),
+      openOnMacErrorMessage: clearOpenOnMacErrorMessage
+          ? null
+          : (openOnMacErrorMessage ?? this.openOnMacErrorMessage),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main state
+// ---------------------------------------------------------------------------
+
 class ThreadDetailState {
   const ThreadDetailState({
     required this.threadId,
@@ -69,18 +190,9 @@ class ThreadDetailState {
     this.hasMoreBefore = false,
     this.nextBefore,
     this.isLoadingEarlierHistory = false,
-    this.isComposerMutationInFlight = false,
-    this.isInterruptMutationInFlight = false,
-    this.turnControlErrorMessage,
-    this.gitStatus,
-    this.isGitStatusLoading = false,
-    this.isGitMutationInFlight = false,
-    this.gitErrorMessage,
-    this.gitMutationMessage,
-    this.gitControlsUnavailableReason,
-    this.isOpenOnMacInFlight = false,
-    this.openOnMacMessage,
-    this.openOnMacErrorMessage,
+    this.git = ThreadGitState.initial,
+    this.turnControl = ThreadTurnControlState.initial,
+    this.openOnMac = ThreadOpenOnMacState.initial,
   });
 
   final String threadId;
@@ -97,18 +209,11 @@ class ThreadDetailState {
   final bool hasMoreBefore;
   final String? nextBefore;
   final bool isLoadingEarlierHistory;
-  final bool isComposerMutationInFlight;
-  final bool isInterruptMutationInFlight;
-  final String? turnControlErrorMessage;
-  final GitStatusResponseDto? gitStatus;
-  final bool isGitStatusLoading;
-  final bool isGitMutationInFlight;
-  final String? gitErrorMessage;
-  final String? gitMutationMessage;
-  final String? gitControlsUnavailableReason;
-  final bool isOpenOnMacInFlight;
-  final String? openOnMacMessage;
-  final String? openOnMacErrorMessage;
+  final ThreadGitState git;
+  final ThreadTurnControlState turnControl;
+  final ThreadOpenOnMacState openOnMac;
+
+  // ---- Convenience accessors (preserve existing public API) ----
 
   bool get hasThread => thread != null;
 
@@ -117,14 +222,14 @@ class ThreadDetailState {
   bool get canRunMutatingActions => !isConnectivityUnavailable;
 
   bool get hasGitRepositoryContext =>
-      gitStatus != null &&
-      _isRepositoryContextResolvable(gitStatus!.repository);
+      git.gitStatus != null &&
+      _isRepositoryContextResolvable(git.gitStatus!.repository);
 
   bool get canRunGitMutations =>
       canRunMutatingActions &&
       hasGitRepositoryContext &&
-      !isGitStatusLoading &&
-      !isGitMutationInFlight;
+      !git.isGitStatusLoading &&
+      !git.isGitMutationInFlight;
 
   bool get isTurnActive => thread?.status == ThreadStatus.running;
 
@@ -138,6 +243,23 @@ class ThreadDetailState {
   bool get canLoadEarlierHistory => hasMoreBefore && !isLoadingEarlierHistory;
 
   List<ThreadActivityItem> get visibleItems => conversationItems;
+
+  // Delegation accessors for sub-state fields (backward compat)
+  GitStatusResponseDto? get gitStatus => git.gitStatus;
+  bool get isGitStatusLoading => git.isGitStatusLoading;
+  bool get isGitMutationInFlight => git.isGitMutationInFlight;
+  String? get gitErrorMessage => git.gitErrorMessage;
+  String? get gitMutationMessage => git.gitMutationMessage;
+  String? get gitControlsUnavailableReason => git.gitControlsUnavailableReason;
+  bool get isComposerMutationInFlight => turnControl.isComposerMutationInFlight;
+  bool get isInterruptMutationInFlight =>
+      turnControl.isInterruptMutationInFlight;
+  String? get turnControlErrorMessage => turnControl.turnControlErrorMessage;
+  bool get isOpenOnMacInFlight => openOnMac.isOpenOnMacInFlight;
+  String? get openOnMacMessage => openOnMac.openOnMacMessage;
+  String? get openOnMacErrorMessage => openOnMac.openOnMacErrorMessage;
+
+  // ---- copyWith ----
 
   ThreadDetailState copyWith({
     LiveConnectionState? liveConnectionState,
@@ -158,6 +280,10 @@ class ThreadDetailState {
     String? nextBefore,
     bool clearNextBefore = false,
     bool? isLoadingEarlierHistory,
+    ThreadGitState? git,
+    ThreadTurnControlState? turnControl,
+    ThreadOpenOnMacState? openOnMac,
+    // Legacy individual sub-state fields (thin wrappers for call-site compat)
     bool? isComposerMutationInFlight,
     bool? isInterruptMutationInFlight,
     String? turnControlErrorMessage,
@@ -173,11 +299,43 @@ class ThreadDetailState {
     String? gitControlsUnavailableReason,
     bool clearGitControlsUnavailableReason = false,
     bool? isOpenOnMacInFlight,
-    String? openOnMacMessage,
+    String? openOnMacMessageValue,
     bool clearOpenOnMacMessage = false,
-    String? openOnMacErrorMessage,
+    String? openOnMacErrorMessageValue,
     bool clearOpenOnMacErrorMessage = false,
   }) {
+    // Resolve git sub-state: explicit object wins, else apply individual fields
+    final resolvedGit = git ??
+        _applyGitFieldOverrides(
+          gitStatus: gitStatus,
+          clearGitStatus: clearGitStatus,
+          isGitStatusLoading: isGitStatusLoading,
+          isGitMutationInFlight: isGitMutationInFlight,
+          gitErrorMessage: gitErrorMessage,
+          clearGitErrorMessage: clearGitErrorMessage,
+          gitMutationMessage: gitMutationMessage,
+          clearGitMutationMessage: clearGitMutationMessage,
+          gitControlsUnavailableReason: gitControlsUnavailableReason,
+          clearGitControlsUnavailableReason: clearGitControlsUnavailableReason,
+        );
+
+    final resolvedTurnControl = turnControl ??
+        _applyTurnControlFieldOverrides(
+          isComposerMutationInFlight: isComposerMutationInFlight,
+          isInterruptMutationInFlight: isInterruptMutationInFlight,
+          turnControlErrorMessage: turnControlErrorMessage,
+          clearTurnControlError: clearTurnControlError,
+        );
+
+    final resolvedOpenOnMac = openOnMac ??
+        _applyOpenOnMacFieldOverrides(
+          isOpenOnMacInFlight: isOpenOnMacInFlight,
+          openOnMacMessage: openOnMacMessageValue,
+          clearOpenOnMacMessage: clearOpenOnMacMessage,
+          openOnMacErrorMessage: openOnMacErrorMessageValue,
+          clearOpenOnMacErrorMessage: clearOpenOnMacErrorMessage,
+        );
+
     return ThreadDetailState(
       threadId: threadId,
       liveConnectionState: liveConnectionState ?? this.liveConnectionState,
@@ -201,33 +359,90 @@ class ThreadDetailState {
       nextBefore: clearNextBefore ? null : (nextBefore ?? this.nextBefore),
       isLoadingEarlierHistory:
           isLoadingEarlierHistory ?? this.isLoadingEarlierHistory,
-      isComposerMutationInFlight:
-          isComposerMutationInFlight ?? this.isComposerMutationInFlight,
-      isInterruptMutationInFlight:
-          isInterruptMutationInFlight ?? this.isInterruptMutationInFlight,
-      turnControlErrorMessage: clearTurnControlError
-          ? null
-          : (turnControlErrorMessage ?? this.turnControlErrorMessage),
-      gitStatus: clearGitStatus ? null : (gitStatus ?? this.gitStatus),
-      isGitStatusLoading: isGitStatusLoading ?? this.isGitStatusLoading,
-      isGitMutationInFlight:
-          isGitMutationInFlight ?? this.isGitMutationInFlight,
-      gitErrorMessage: clearGitErrorMessage
-          ? null
-          : (gitErrorMessage ?? this.gitErrorMessage),
-      gitMutationMessage: clearGitMutationMessage
-          ? null
-          : (gitMutationMessage ?? this.gitMutationMessage),
-      gitControlsUnavailableReason: clearGitControlsUnavailableReason
-          ? null
-          : (gitControlsUnavailableReason ?? this.gitControlsUnavailableReason),
-      isOpenOnMacInFlight: isOpenOnMacInFlight ?? this.isOpenOnMacInFlight,
-      openOnMacMessage: clearOpenOnMacMessage
-          ? null
-          : (openOnMacMessage ?? this.openOnMacMessage),
-      openOnMacErrorMessage: clearOpenOnMacErrorMessage
-          ? null
-          : (openOnMacErrorMessage ?? this.openOnMacErrorMessage),
+      git: resolvedGit,
+      turnControl: resolvedTurnControl,
+      openOnMac: resolvedOpenOnMac,
+    );
+  }
+
+  ThreadGitState _applyGitFieldOverrides({
+    GitStatusResponseDto? gitStatus,
+    bool clearGitStatus = false,
+    bool? isGitStatusLoading,
+    bool? isGitMutationInFlight,
+    String? gitErrorMessage,
+    bool clearGitErrorMessage = false,
+    String? gitMutationMessage,
+    bool clearGitMutationMessage = false,
+    String? gitControlsUnavailableReason,
+    bool clearGitControlsUnavailableReason = false,
+  }) {
+    if (gitStatus == null &&
+        !clearGitStatus &&
+        isGitStatusLoading == null &&
+        isGitMutationInFlight == null &&
+        gitErrorMessage == null &&
+        !clearGitErrorMessage &&
+        gitMutationMessage == null &&
+        !clearGitMutationMessage &&
+        gitControlsUnavailableReason == null &&
+        !clearGitControlsUnavailableReason) {
+      return git;
+    }
+    return git.copyWith(
+      gitStatus: gitStatus,
+      clearGitStatus: clearGitStatus,
+      isGitStatusLoading: isGitStatusLoading,
+      isGitMutationInFlight: isGitMutationInFlight,
+      gitErrorMessage: gitErrorMessage,
+      clearGitErrorMessage: clearGitErrorMessage,
+      gitMutationMessage: gitMutationMessage,
+      clearGitMutationMessage: clearGitMutationMessage,
+      gitControlsUnavailableReason: gitControlsUnavailableReason,
+      clearGitControlsUnavailableReason: clearGitControlsUnavailableReason,
+    );
+  }
+
+  ThreadTurnControlState _applyTurnControlFieldOverrides({
+    bool? isComposerMutationInFlight,
+    bool? isInterruptMutationInFlight,
+    String? turnControlErrorMessage,
+    bool clearTurnControlError = false,
+  }) {
+    if (isComposerMutationInFlight == null &&
+        isInterruptMutationInFlight == null &&
+        turnControlErrorMessage == null &&
+        !clearTurnControlError) {
+      return turnControl;
+    }
+    return turnControl.copyWith(
+      isComposerMutationInFlight: isComposerMutationInFlight,
+      isInterruptMutationInFlight: isInterruptMutationInFlight,
+      turnControlErrorMessage: turnControlErrorMessage,
+      clearTurnControlError: clearTurnControlError,
+    );
+  }
+
+  ThreadOpenOnMacState _applyOpenOnMacFieldOverrides({
+    bool? isOpenOnMacInFlight,
+    String? openOnMacMessage,
+    bool clearOpenOnMacMessage = false,
+    String? openOnMacErrorMessage,
+    bool clearOpenOnMacErrorMessage = false,
+  }) {
+    if (isOpenOnMacInFlight == null &&
+        openOnMacMessage == null &&
+        !clearOpenOnMacMessage &&
+        openOnMacErrorMessage == null &&
+        !clearOpenOnMacErrorMessage) {
+      return openOnMac;
+    }
+    return openOnMac.copyWith(
+      isOpenOnMacInFlight: isOpenOnMacInFlight,
+      openOnMacMessage: openOnMacMessage,
+      clearOpenOnMacMessage: clearOpenOnMacMessage,
+      openOnMacErrorMessage: openOnMacErrorMessage,
+      clearOpenOnMacErrorMessage: clearOpenOnMacErrorMessage,
     );
   }
 }
@@ -247,6 +462,10 @@ bool _isExplorationTimelineItem(ThreadActivityItem item) {
       ThreadActivityPresentationGroupKind.exploration;
 }
 
+// ---------------------------------------------------------------------------
+// Controller
+// ---------------------------------------------------------------------------
+
 class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   ThreadDetailController({
     required String bridgeApiBaseUrl,
@@ -263,6 +482,10 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
        _threadListController = threadListController,
        _debugLog = debugLog ?? _defaultDebugLog,
        super(ThreadDetailState(threadId: threadId)) {
+    _reconnectScheduler = ReconnectScheduler(
+      onReconnect: _runReconnectCatchUp,
+      isDisposed: () => _isDisposed,
+    );
     loadThread();
   }
 
@@ -274,44 +497,43 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   final void Function(String message) _debugLog;
   final Set<String> _knownEventIds = <String>{};
 
+  late final ReconnectScheduler _reconnectScheduler;
   ThreadLiveSubscription? _liveSubscription;
   StreamSubscription<BridgeEventEnvelope<Map<String, dynamic>>>?
   _liveEventSubscription;
-  Timer? _reconnectTimer;
   Timer? _detailRefreshTimer;
-  bool _isReconnectInProgress = false;
   bool _isDetailRefreshInFlight = false;
   bool _shouldRefreshDetailAfterCurrentRequest = false;
   bool _isDisposed = false;
   DateTime? _pendingPromptSubmittedAt;
+
+  /// Resets all transient sub-state to initial values. Used when
+  /// (re-)loading the thread or catching up after a reconnect.
+  ThreadDetailState _resetTransientState(ThreadDetailState base) {
+    return base.copyWith(
+      clearErrorMessage: true,
+      clearStreamErrorMessage: true,
+      clearStaleMessage: true,
+      isShowingCachedData: false,
+      isConnectivityUnavailable: false,
+      hasMoreBefore: false,
+      clearNextBefore: true,
+      isLoadingEarlierHistory: false,
+      git: ThreadGitState.initial,
+      turnControl: ThreadTurnControlState.initial,
+      openOnMac: ThreadOpenOnMacState.initial,
+    );
+  }
 
   Future<void> loadThread() async {
     if (_isDisposed) {
       return;
     }
 
-    _reconnectTimer?.cancel();
-    state = state.copyWith(
+    _reconnectScheduler.cancel();
+    state = _resetTransientState(state).copyWith(
       isLoading: true,
       isUnavailable: false,
-      clearErrorMessage: true,
-      clearStreamErrorMessage: true,
-      clearStaleMessage: true,
-      clearTurnControlError: true,
-      isShowingCachedData: false,
-      isConnectivityUnavailable: false,
-      hasMoreBefore: false,
-      clearNextBefore: true,
-      isLoadingEarlierHistory: false,
-      clearGitStatus: true,
-      isGitStatusLoading: false,
-      isGitMutationInFlight: false,
-      clearGitErrorMessage: true,
-      clearGitMutationMessage: true,
-      clearGitControlsUnavailableReason: true,
-      isOpenOnMacInFlight: false,
-      clearOpenOnMacMessage: true,
-      clearOpenOnMacErrorMessage: true,
     );
 
     try {
@@ -332,28 +554,10 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         context: 'loading thread detail',
       );
 
-      state = state.copyWith(
+      state = _resetTransientState(state).copyWith(
         thread: scopedDetail,
         isLoading: true,
         isUnavailable: false,
-        clearErrorMessage: true,
-        clearStreamErrorMessage: true,
-        clearStaleMessage: true,
-        clearTurnControlError: true,
-        isShowingCachedData: false,
-        isConnectivityUnavailable: false,
-        hasMoreBefore: false,
-        clearNextBefore: true,
-        isLoadingEarlierHistory: false,
-        clearGitStatus: true,
-        isGitStatusLoading: false,
-        isGitMutationInFlight: false,
-        clearGitErrorMessage: true,
-        clearGitMutationMessage: true,
-        clearGitControlsUnavailableReason: true,
-        isOpenOnMacInFlight: false,
-        clearOpenOnMacMessage: true,
-        clearOpenOnMacErrorMessage: true,
       );
       _threadListController.syncThreadDetail(scopedDetail);
 
@@ -380,30 +584,14 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         return;
       }
 
-      state = state.copyWith(
+      state = _resetTransientState(state).copyWith(
         thread: scopedDetail,
         items: items,
         liveConnectionState: LiveConnectionState.connected,
         isLoading: true,
         isUnavailable: false,
-        clearErrorMessage: true,
-        clearStreamErrorMessage: true,
-        clearStaleMessage: true,
-        clearTurnControlError: true,
-        isShowingCachedData: false,
-        isConnectivityUnavailable: false,
         hasMoreBefore: scopedPage.hasMoreBefore,
         nextBefore: scopedPage.nextBefore,
-        isLoadingEarlierHistory: false,
-        clearGitStatus: true,
-        isGitStatusLoading: false,
-        isGitMutationInFlight: false,
-        clearGitErrorMessage: true,
-        clearGitMutationMessage: true,
-        clearGitControlsUnavailableReason: true,
-        isOpenOnMacInFlight: false,
-        clearOpenOnMacMessage: true,
-        clearOpenOnMacErrorMessage: true,
       );
       await refreshGitStatus(showLoading: false);
       await _startLiveSubscription();
@@ -537,7 +725,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   }
 
   Future<void> retryReconnectCatchUp() async {
-    _reconnectTimer?.cancel();
+    _reconnectScheduler.cancel();
     await _runReconnectCatchUp();
   }
 
@@ -592,25 +780,13 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       gitControlsUnavailableReason:
           'Git controls are unavailable while reconnecting to the private route.',
     );
-    _scheduleReconnectCatchUp();
-  }
-
-  void _scheduleReconnectCatchUp() {
-    if (_isDisposed || _reconnectTimer?.isActive == true) {
-      return;
-    }
-
-    _reconnectTimer = Timer(const Duration(seconds: 2), () {
-      unawaited(_runReconnectCatchUp());
-    });
+    _reconnectScheduler.schedule();
   }
 
   Future<void> _runReconnectCatchUp() async {
-    if (_isDisposed || _isReconnectInProgress) {
+    if (_isDisposed) {
       return;
     }
-
-    _isReconnectInProgress = true;
 
     try {
       if (state.liveConnectionState == LiveConnectionState.disconnected) {
@@ -642,12 +818,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearTurnControlError: true,
         isShowingCachedData: false,
         isConnectivityUnavailable: false,
-        clearGitStatus: true,
-        isGitStatusLoading: false,
-        isGitMutationInFlight: false,
-        clearGitErrorMessage: true,
-        clearGitMutationMessage: true,
-        clearGitControlsUnavailableReason: true,
+        git: ThreadGitState.initial,
       );
       _threadListController.syncThreadDetail(scopedDetail);
 
@@ -683,12 +854,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         isUnavailable: false,
         isShowingCachedData: false,
         isConnectivityUnavailable: false,
-        clearGitStatus: true,
-        isGitStatusLoading: false,
-        isGitMutationInFlight: false,
-        clearGitErrorMessage: true,
-        clearGitMutationMessage: true,
-        clearGitControlsUnavailableReason: true,
+        git: ThreadGitState.initial,
       );
 
       await refreshGitStatus(showLoading: false);
@@ -706,15 +872,13 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         isShowingCachedData: false,
         isConnectivityUnavailable: true,
       );
-      _scheduleReconnectCatchUp();
+      _reconnectScheduler.schedule();
     } catch (_) {
       if (_isDisposed) {
         return;
       }
 
-      _scheduleReconnectCatchUp();
-    } finally {
-      _isReconnectInProgress = false;
+      _reconnectScheduler.schedule();
     }
   }
 
@@ -1175,8 +1339,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   Future<bool> openOnMac() async {
     state = state.copyWith(
       isOpenOnMacInFlight: false,
-      openOnMacMessage: null,
-      openOnMacErrorMessage: 'Open-on-host is unavailable in this build.',
+      openOnMacErrorMessageValue: 'Open-on-host is unavailable in this build.',
       clearOpenOnMacMessage: true,
     );
     return false;
@@ -1523,18 +1686,11 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
     ThreadDetailDto? nextThread = thread;
     if (thread != null) {
-      nextThread = ThreadDetailDto(
-        contractVersion: thread.contractVersion,
-        threadId: thread.threadId,
-        title: thread.title,
+      nextThread = thread.copyWith(
         status: mutationResult.threadStatus,
-        workspace: thread.workspace,
         repository: mutationResult.repository.repository,
         branch: mutationResult.repository.branch,
-        createdAt: thread.createdAt,
         updatedAt: nextUpdatedAt,
-        source: thread.source,
-        accessMode: thread.accessMode,
         lastTurnSummary: mutationResult.message,
       );
       _threadListController.syncThreadDetail(nextThread);
@@ -1581,18 +1737,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     }
 
     state = state.copyWith(
-      thread: ThreadDetailDto(
-        contractVersion: thread.contractVersion,
-        threadId: thread.threadId,
-        title: thread.title,
+      thread: thread.copyWith(
         status: status,
-        workspace: thread.workspace,
-        repository: thread.repository,
-        branch: thread.branch,
-        createdAt: thread.createdAt,
         updatedAt: updatedAt,
-        source: thread.source,
-        accessMode: thread.accessMode,
         lastTurnSummary: lastTurnSummary,
       ),
     );
@@ -1748,7 +1895,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   @override
   void dispose() {
     _isDisposed = true;
-    _reconnectTimer?.cancel();
+    _reconnectScheduler.dispose();
     _detailRefreshTimer?.cancel();
     unawaited(_closeLiveSubscription());
     super.dispose();
