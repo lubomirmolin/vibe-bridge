@@ -373,6 +373,10 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
     PairingState pairingState,
     PairingController pairingController,
   ) {
+    if (pairingState.isRestoringSavedBridges) {
+      return _buildRestoringSplash();
+    }
+
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(32.0),
@@ -420,6 +424,55 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
               ),
             );
           },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRestoringSplash() {
+    return SafeArea(
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Column(
+              key: const ValueKey('restoring-splash'),
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Codex\nBridge',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.displayLarge?.copyWith(
+                    fontWeight: FontWeight.w500,
+                    height: 1.1,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Restoring saved bridges...',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: AppTheme.textMain,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Checking trusted devices before opening the pairing flow.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: AppTheme.textMuted, fontSize: 14),
+                ),
+                const SizedBox(height: 24),
+                const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2.2),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

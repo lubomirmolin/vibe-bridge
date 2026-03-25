@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:codex_mobile_companion/features/pairing/application/pairing_controller.dart';
 import 'package:codex_mobile_companion/features/pairing/data/pairing_bridge_api.dart';
 import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
@@ -273,6 +275,54 @@ void main() {
     expect(find.byKey(const Key('activate-bridge-bridge-b2')), findsOneWidget);
     expect(find.byKey(const Key('activate-bridge-bridge-a1')), findsNothing);
   });
+
+  testWidgets(
+    'launch keeps a splash placeholder visible until saved bridge restore completes',
+    (tester) async {
+      final store = InMemorySecureStore();
+      await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
+{
+  "bridge_id": "bridge-a1",
+  "bridge_name": "Operator Workstation",
+  "bridge_api_base_url": "https://bridge.ts.net",
+  "session_id": "session-1",
+  "paired_at_epoch_seconds": 100
+}
+''');
+      await store.writeSecret(
+        SecureValueKey.sessionToken,
+        'bridge-session-token',
+      );
+      await store.writeSecret(SecureValueKey.pairingPrivateKey, 'phone-a1');
+      final bridgeApi = DelayedHandshakePairingBridgeApi();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            secureStoreProvider.overrideWithValue(store),
+            pairingBridgeApiProvider.overrideWithValue(bridgeApi),
+            nowUtcProvider.overrideWithValue(DateTime.utc(2026, 3, 17, 21, 0)),
+          ],
+          child: const MaterialApp(
+            home: ConnectionOverviewPage(enableCameraPreview: false),
+          ),
+        ),
+      );
+
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('restoring-splash')), findsOneWidget);
+      expect(find.text('Restoring saved bridges...'), findsOneWidget);
+      expect(find.text('Initialize Pairing'), findsNothing);
+
+      bridgeApi.completeHandshake(const PairingHandshakeResult.trusted());
+      await _pumpUi(tester);
+
+      expect(find.byKey(const ValueKey('restoring-splash')), findsNothing);
+      expect(find.text('Connected to\nOperator Workstation'), findsOneWidget);
+      expect(find.text('Saved host bridges'), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'revoked trust on reconnect clears local trust and requires re-pair',
@@ -693,6 +743,30 @@ class FakePairingBridgeApi implements PairingBridgeApi {
   }) async {
     revokeTrustCalls += 1;
     return revokeResult;
+  }
+}
+
+class DelayedHandshakePairingBridgeApi extends FakePairingBridgeApi {
+  DelayedHandshakePairingBridgeApi();
+
+  final Completer<PairingHandshakeResult> _handshakeCompleter =
+      Completer<PairingHandshakeResult>();
+
+  void completeHandshake(PairingHandshakeResult result) {
+    if (_handshakeCompleter.isCompleted) {
+      return;
+    }
+    _handshakeCompleter.complete(result);
+  }
+
+  @override
+  Future<PairingHandshakeResult> handshake({
+    required TrustedBridgeIdentity trustedBridge,
+    required String phoneId,
+    required String sessionToken,
+  }) async {
+    handshakeCalls += 1;
+    return _handshakeCompleter.future;
   }
 }
 

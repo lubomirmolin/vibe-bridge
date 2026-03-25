@@ -181,6 +181,63 @@ void main() {
     expect(find.byKey(const Key('thread-wide-left-pane')), findsNothing);
   });
 
+  testWidgets(
+    'narrow layout keeps active threads header aligned with detail header',
+    (tester) async {
+      await _setDisplaySize(tester, const Size(430, 900));
+      final cacheRepository = _newCacheRepository();
+      final bridgeApi = FakeThreadListBridgeApi(
+        scriptedResults: [_sampleThreads()],
+      );
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+      );
+
+      await _pumpThreadListPage(
+        tester,
+        bridgeApi: bridgeApi,
+        detailApi: detailApi,
+        cacheRepository: cacheRepository,
+      );
+      await tester.pumpAndSettle();
+
+      final listBackCenter = tester.getCenter(
+        find.byKey(const Key('thread-list-back-button')),
+      );
+      final listTitleTopLeft = tester.getTopLeft(
+        find.byKey(const Key('thread-list-title')),
+      );
+      final listTitle = tester.widget<Text>(
+        find.byKey(const Key('thread-list-title')),
+      );
+
+      await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+      await tester.pumpAndSettle();
+
+      final detailBackCenter = tester.getCenter(
+        find.byKey(const Key('thread-detail-back-button')),
+      );
+      final detailTitleTopLeft = tester.getTopLeft(
+        find.byKey(const Key('thread-detail-title')),
+      );
+      final detailTitle = tester.widget<Text>(
+        find.byKey(const Key('thread-detail-title')),
+      );
+
+      expect(detailBackCenter.dx, closeTo(listBackCenter.dx, 0.1));
+      expect(detailBackCenter.dy, closeTo(listBackCenter.dy, 0.1));
+      expect(detailTitleTopLeft.dx, closeTo(listTitleTopLeft.dx, 0.1));
+      expect(detailTitleTopLeft.dy, closeTo(listTitleTopLeft.dy, 0.1));
+      expect(detailTitle.style?.fontSize, listTitle.style?.fontSize);
+      expect(detailTitle.style?.fontWeight, listTitle.style?.fontWeight);
+    },
+  );
+
   test('adaptive layout treats a vertical hinge as a wide split workspace', () {
     const layout = AdaptiveLayoutInfo(
       windowSize: Size(1280, 900),
@@ -241,6 +298,36 @@ void main() {
       );
     },
   );
+
+  testWidgets('thread summary cards fill the available group width', (
+    tester,
+  ) async {
+    await _setDisplaySize(tester, const Size(430, 900));
+    final cacheRepository = _newCacheRepository();
+    final bridgeApi = FakeThreadListBridgeApi(
+      scriptedResults: [_sampleThreads()],
+    );
+
+    await _pumpThreadListPage(
+      tester,
+      bridgeApi: bridgeApi,
+      cacheRepository: cacheRepository,
+    );
+    await tester.pumpAndSettle();
+
+    final groupWidth = tester
+        .getSize(
+          find.byKey(
+            const Key('thread-folder-group-/workspace/codex-mobile-companion'),
+          ),
+        )
+        .width;
+    final cardWidth = tester
+        .getSize(find.byKey(const Key('thread-summary-card-thread-123')))
+        .width;
+
+    expect(cardWidth, closeTo(groupWidth, 0.1));
+  });
 
   testWidgets('shows an explicit empty state when no threads exist', (
     tester,

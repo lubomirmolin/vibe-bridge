@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:convert';
 
 import 'package:codex_mobile_companion/features/pairing/data/pairing_bridge_api.dart';
@@ -44,6 +45,7 @@ class PairingState {
     required this.rePairRequiredForSecurity,
     required this.savedBridges,
     required this.activeBridgeId,
+    required this.isRestoringSavedBridges,
     this.pendingPayload,
     this.trustedBridge,
     this.errorMessage,
@@ -59,6 +61,7 @@ class PairingState {
   final bool rePairRequiredForSecurity;
   final List<TrustedBridgeIdentity> savedBridges;
   final String? activeBridgeId;
+  final bool isRestoringSavedBridges;
   final bool isPersistingTrust;
 
   int get savedBridgeCount => savedBridges.length;
@@ -75,6 +78,7 @@ class PairingState {
       rePairRequiredForSecurity: false,
       savedBridges: <TrustedBridgeIdentity>[],
       activeBridgeId: null,
+      isRestoringSavedBridges: true,
     );
   }
 
@@ -92,6 +96,7 @@ class PairingState {
     List<TrustedBridgeIdentity>? savedBridges,
     String? activeBridgeId,
     bool clearActiveBridgeId = false,
+    bool? isRestoringSavedBridges,
     bool? isPersistingTrust,
   }) {
     return PairingState(
@@ -118,6 +123,8 @@ class PairingState {
       activeBridgeId: clearActiveBridgeId
           ? null
           : (activeBridgeId ?? this.activeBridgeId),
+      isRestoringSavedBridges:
+          isRestoringSavedBridges ?? this.isRestoringSavedBridges,
       isPersistingTrust: isPersistingTrust ?? this.isPersistingTrust,
     );
   }
@@ -146,45 +153,86 @@ class PairingController extends StateNotifier<PairingState> {
   bool _isDisposed = false;
 
   Future<void> _restoreTrustedBridge() async {
-    final savedBridgeRegistry = await _readSavedBridgeRegistry();
-    if (savedBridgeRegistry != null && savedBridgeRegistry.hasConnections) {
-      await _restoreSavedBridgeRegistry(savedBridgeRegistry);
-      return;
-    }
-
-    final raw = await _secureStore.readSecret(
-      SecureValueKey.trustedBridgeIdentity,
+    _logDiagnostic(
+      'restore_started',
+      details: <String, Object?>{
+        'step': state.step.name,
+        'saved_bridge_count': state.savedBridgeCount,
+        'active_bridge_id': state.activeBridgeId,
+      },
     );
-    if (raw == null) {
-      return;
-    }
-
-    final sessionToken = await _secureStore.readSecret(
-      SecureValueKey.sessionToken,
-    );
-    if (sessionToken == null || sessionToken.trim().isEmpty) {
-      await _clearLocalTrust();
-      return;
-    }
-
     try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map<String, dynamic>) {
-        throw const FormatException(
-          'Trusted bridge identity must be an object.',
+      final savedBridgeRegistry = await _readSavedBridgeRegistry();
+      if (savedBridgeRegistry != null && savedBridgeRegistry.hasConnections) {
+        _logDiagnostic(
+          'restore_saved_registry_found',
+          details: <String, Object?>{
+            'connection_count': savedBridgeRegistry.connections.length,
+            'active_bridge_id': savedBridgeRegistry.activeBridgeId,
+          },
         );
+        await _restoreSavedBridgeRegistry(savedBridgeRegistry);
+        return;
       }
 
-      final trustedBridge = TrustedBridgeIdentity.fromJson(decoded);
-      final migratedRegistry = _SavedBridgeRegistry.single(
-        trustedBridge: trustedBridge,
-        sessionToken: sessionToken.trim(),
-        selectedAtEpochSeconds: _nowUtc().millisecondsSinceEpoch ~/ 1000,
+      final raw = await _secureStore.readSecret(
+        SecureValueKey.trustedBridgeIdentity,
       );
-      await _writeSavedBridgeRegistry(migratedRegistry);
-      await _restoreSavedBridgeRegistry(migratedRegistry);
-    } on FormatException {
-      await _clearLocalTrust();
+      if (raw == null) {
+        _logDiagnostic('restore_no_local_trust');
+        return;
+      }
+
+      final sessionToken = await _secureStore.readSecret(
+        SecureValueKey.sessionToken,
+      );
+      if (sessionToken == null || sessionToken.trim().isEmpty) {
+        _logDiagnostic('restore_missing_session_token');
+        await _clearLocalTrust();
+        return;
+      }
+
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map<String, dynamic>) {
+          throw const FormatException(
+            'Trusted bridge identity must be an object.',
+          );
+        }
+
+        final trustedBridge = TrustedBridgeIdentity.fromJson(decoded);
+        final migratedRegistry = _SavedBridgeRegistry.single(
+          trustedBridge: trustedBridge,
+          sessionToken: sessionToken.trim(),
+          selectedAtEpochSeconds: _nowUtc().millisecondsSinceEpoch ~/ 1000,
+        );
+        _logDiagnostic(
+          'restore_migrating_legacy_trust',
+          details: <String, Object?>{
+            'bridge_id': trustedBridge.bridgeId,
+            'bridge_name': trustedBridge.bridgeName,
+          },
+        );
+        await _writeSavedBridgeRegistry(migratedRegistry);
+        await _restoreSavedBridgeRegistry(migratedRegistry);
+      } on FormatException {
+        _logDiagnostic('restore_invalid_legacy_trust');
+        await _clearLocalTrust();
+      }
+    } finally {
+      if (!_isDisposed) {
+        _logDiagnostic(
+          'restore_finished',
+          details: <String, Object?>{
+            'step': state.step.name,
+            'saved_bridge_count': state.savedBridgeCount,
+            'active_bridge_id': state.activeBridgeId,
+            'trusted_bridge_id': state.trustedBridge?.bridgeId,
+            'connection_state': state.bridgeConnectionState.name,
+          },
+        );
+        state = state.copyWith(isRestoringSavedBridges: false);
+      }
     }
   }
 
@@ -287,6 +335,17 @@ class PairingController extends StateNotifier<PairingState> {
           selectedAtEpochSeconds: selectedAtEpochSeconds,
         );
 
+    _logDiagnostic(
+      'confirm_trust_persisting',
+      details: <String, Object?>{
+        'bridge_id': trust.bridgeId,
+        'bridge_name': trust.bridgeName,
+        'previous_bridge_id': previousBridgeId,
+        'saved_bridge_count': registry.connections.length,
+        'active_bridge_id': registry.activeBridgeId,
+      },
+    );
+
     await _writeSavedBridgeRegistry(
       registry,
       clearCachedThreadState:
@@ -331,6 +390,14 @@ class PairingController extends StateNotifier<PairingState> {
     _SavedBridgeRegistry savedBridgeRegistry,
   ) async {
     final activeConnection = savedBridgeRegistry.activeConnection;
+    _logDiagnostic(
+      'restore_registry_selected',
+      details: <String, Object?>{
+        'connection_count': savedBridgeRegistry.connections.length,
+        'active_bridge_id': savedBridgeRegistry.activeBridgeId,
+        'active_connection_bridge_id': activeConnection?.trustedBridge.bridgeId,
+      },
+    );
     if (activeConnection == null) {
       await _clearLocalTrust(clearCachedThreadState: true);
       state = state.copyWith(
@@ -351,6 +418,16 @@ class PairingController extends StateNotifier<PairingState> {
       trustedBridge: trustedBridge,
       phoneId: phoneId,
       sessionToken: activeConnection.sessionToken,
+    );
+    _logDiagnostic(
+      'restore_handshake_result',
+      details: <String, Object?>{
+        'bridge_id': trustedBridge.bridgeId,
+        'is_trusted': handshake.isTrusted,
+        'connectivity_unavailable': handshake.connectivityUnavailable,
+        'requires_repair': handshake.requiresRePair,
+        'message': handshake.message,
+      },
     );
 
     if (handshake.isTrusted) {
@@ -714,6 +791,14 @@ class PairingController extends StateNotifier<PairingState> {
     _SavedBridgeRegistry savedBridgeRegistry, {
     bool clearCachedThreadState = false,
   }) async {
+    _logDiagnostic(
+      'write_saved_registry',
+      details: <String, Object?>{
+        'connection_count': savedBridgeRegistry.connections.length,
+        'active_bridge_id': savedBridgeRegistry.activeBridgeId,
+        'clear_cached_thread_state': clearCachedThreadState,
+      },
+    );
     if (savedBridgeRegistry.hasConnections) {
       await _secureStore.writeSecret(
         SecureValueKey.savedBridgeRegistry,
@@ -749,6 +834,13 @@ class PairingController extends StateNotifier<PairingState> {
     _isDisposed = true;
     _cancelReconnectTimer();
     super.dispose();
+  }
+
+  void _logDiagnostic(
+    String event, {
+    Map<String, Object?> details = const <String, Object?>{},
+  }) {
+    developer.log('$event ${jsonEncode(details)}', name: 'PairingController');
   }
 }
 

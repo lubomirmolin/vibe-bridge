@@ -101,6 +101,42 @@ final class CodexMobileCompanionTests: XCTestCase {
         XCTAssertTrue(url.path.hasSuffix("/CodexMobileCompanion/bridge-core"))
     }
 
+    func testBridgeSupervisorLogWriterPersistsTimestampedLines() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let logFileURL = tempDirectory.appendingPathComponent("bridge-supervisor.log")
+        let fixedDate = Date(timeIntervalSince1970: 1_742_924_800)
+        let writer = BridgeSupervisorLogWriter(
+            fileManager: .default,
+            logFileURL: logFileURL,
+            now: { fixedDate }
+        )
+
+        writer.append("[supervisor] bridge helper launched")
+        writer.append("[stderr] panic: listener failed")
+
+        let contents = try String(contentsOf: logFileURL, encoding: .utf8)
+        XCTAssertTrue(contents.contains("[supervisor] bridge helper launched"))
+        XCTAssertTrue(contents.contains("[stderr] panic: listener failed"))
+        XCTAssertTrue(contents.contains("[202"))
+    }
+
+    func testBridgeTerminationSummaryIncludesSignalAndLogPath() {
+        let summary = BridgeTerminationSummary.make(
+            reason: .uncaughtSignal,
+            status: 11,
+            recentLogLines: [
+                "[stdout] boot",
+                "[stderr] thread 'main' panicked"
+            ],
+            logPath: "/tmp/bridge-supervisor.log"
+        )
+
+        XCTAssertTrue(summary.contains("crashed from signal 11"))
+        XCTAssertTrue(summary.contains("[stderr] thread 'main' panicked"))
+        XCTAssertTrue(summary.contains("/tmp/bridge-supervisor.log"))
+    }
+
     func testShellStateResolverMapsUnpairedPairedIdleAndPairedActive() {
         XCTAssertEqual(
             ShellStateResolver.resolveShellState(trustStatus: nil, runningThreadCount: 0),

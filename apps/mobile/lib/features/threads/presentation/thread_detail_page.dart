@@ -42,6 +42,8 @@ part 'thread_detail_page_header.dart';
 part 'thread_detail_page_message.dart';
 part 'thread_detail_page_timeline.dart';
 
+const double threadSessionContentMaxWidth = 1280;
+
 class ThreadDraftCreatedTransition {
   const ThreadDraftCreatedTransition({
     required this.threadId,
@@ -144,7 +146,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
 
 class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   static const double _historyPrefetchTriggerOffset = 160;
-  static const double _sessionContentMaxWidth = 1280;
+  static const double _sessionContentMaxWidth = threadSessionContentMaxWidth;
 
   late final TextEditingController _composerController;
   late final FocusNode _composerFocusNode;

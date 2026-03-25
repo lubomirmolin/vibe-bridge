@@ -847,6 +847,9 @@ class RuntimeSupervisor {
   ManagedProcessHandle? _managedProcess;
   final List<String> _recentLogLines = <String>[];
   String? _lastExitSummary;
+  Directory? _resolvedStateDirectory;
+  File? _bridgeSupervisorLogFile;
+  Future<void> _logWriteChain = Future<void>.value();
 
   bool get managesProcess => _managedProcess != null;
 
@@ -963,6 +966,10 @@ class RuntimeSupervisor {
       return;
     }
 
+    _appendSupervisorLog(
+      'stopping managed bridge helper (pid ${managedProcess.pid ?? 0})',
+    );
+
     if (managedProcess.isRunning) {
       managedProcess.kill(ProcessSignal.sigterm);
       try {
@@ -978,58 +985,79 @@ class RuntimeSupervisor {
     }
 
     _managedProcess = null;
+    _recentLogLines.clear();
+    _lastExitSummary = null;
   }
 
   Future<RuntimeLaunchSnapshot> _startBridgeProcess() async {
-    final stateDirectory = _stateDirectoryProvider.resolveStateDirectory();
+    final stateDirectory = _resolveStateDirectory();
     await stateDirectory.create(recursive: true);
-
-    final bridgeBinaryPath = _binaryResolver.resolveBridgeBinaryPath();
-    final codexBinaryPath = _binaryResolver.resolveCodexBinaryPath();
-
-    final arguments = <String>[
-      '--host',
-      bridgeHost,
-      '--port',
-      '$bridgePort',
-      '--admin-port',
-      '$adminPort',
-      '--state-directory',
-      stateDirectory.path,
-      '--codex-mode',
-      'auto',
-      if (codexBinaryPath != null) ...['--codex-command', codexBinaryPath],
-    ];
-
-    final process = await _processLauncher.start(
-      executable: bridgeBinaryPath,
-      arguments: arguments,
-      environment: buildCodexProcessEnvironment(
-        _processEnvironment,
-        codexBinaryPath: codexBinaryPath,
-      ),
-      workingDirectory: stateDirectory.path,
+    _bridgeSupervisorLogFile = File(
+      '${stateDirectory.path}/bridge-supervisor.log',
     );
+    _recentLogLines.clear();
+    _lastExitSummary = null;
 
-    _wireLogs(process.stdoutLines, source: 'stdout');
-    _wireLogs(process.stderrLines, source: 'stderr');
-    unawaited(
-      process.exitCode.then((code) {
-        final summary = _recentLogLines.isNotEmpty
-            ? _recentLogLines.last
-            : 'bridge helper exited with code $code';
-        _lastExitSummary = 'bridge helper exited with code $code. $summary';
-      }),
-    );
+    try {
+      final bridgeBinaryPath = _binaryResolver.resolveBridgeBinaryPath();
+      final codexBinaryPath = _binaryResolver.resolveCodexBinaryPath();
 
-    _managedProcess = process;
-    return RuntimeLaunchSnapshot(
-      statusLabel: 'Launching bridge',
-      detail:
-          'Linux shell launched the bridge helper (pid ${process.pid ?? 0}). '
-          'Waiting for health on $bridgeHost:$bridgePort…',
-      isLaunching: true,
-    );
+      final arguments = <String>[
+        '--host',
+        bridgeHost,
+        '--port',
+        '$bridgePort',
+        '--admin-port',
+        '$adminPort',
+        '--state-directory',
+        stateDirectory.path,
+        '--codex-mode',
+        'auto',
+        if (codexBinaryPath != null) ...['--codex-command', codexBinaryPath],
+      ];
+
+      await _appendSupervisorLog(
+        'launching bridge helper: $bridgeBinaryPath ${arguments.join(' ')}',
+      );
+
+      final process = await _processLauncher.start(
+        executable: bridgeBinaryPath,
+        arguments: arguments,
+        environment: buildCodexProcessEnvironment(
+          _processEnvironment,
+          codexBinaryPath: codexBinaryPath,
+        ),
+        workingDirectory: stateDirectory.path,
+      );
+
+      _wireLogs(process.stdoutLines, source: 'stdout');
+      _wireLogs(process.stderrLines, source: 'stderr');
+      unawaited(
+        process.exitCode.then((code) async {
+          final summary = _buildExitSummary(code);
+          _lastExitSummary = summary;
+          await _appendSupervisorLog(summary);
+        }),
+      );
+
+      _managedProcess = process;
+      await _appendSupervisorLog(
+        'bridge helper launched (pid ${process.pid ?? 0}); waiting for health on $bridgeHost:$bridgePort',
+      );
+      return RuntimeLaunchSnapshot(
+        statusLabel: 'Launching bridge',
+        detail:
+            'Linux shell launched the bridge helper (pid ${process.pid ?? 0}). '
+            'Waiting for health on $bridgeHost:$bridgePort…',
+        isLaunching: true,
+      );
+    } on RuntimeSupervisorException catch (error) {
+      await _appendSupervisorLog('bridge launch failed: ${error.message}');
+      rethrow;
+    } catch (error) {
+      await _appendSupervisorLog('bridge launch failed: $error');
+      rethrow;
+    }
   }
 
   void _wireLogs(Stream<String> lines, {required String source}) {
@@ -1044,9 +1072,60 @@ class RuntimeSupervisor {
         if (_recentLogLines.length > 25) {
           _recentLogLines.removeAt(0);
         }
+        unawaited(_appendLogLine(entry));
         debugPrint('bridge-server $entry');
       }).asFuture<void>(),
     );
+  }
+
+  Directory _resolveStateDirectory() {
+    return _resolvedStateDirectory ??= _stateDirectoryProvider
+        .resolveStateDirectory();
+  }
+
+  String _buildExitSummary(int code) {
+    final tail = _recentLogTail();
+    final detail = tail.isEmpty
+        ? 'bridge helper exited with code $code'
+        : 'bridge helper exited with code $code. Recent logs: $tail';
+    final logPath =
+        _bridgeSupervisorLogFile?.path ??
+        '${_resolveStateDirectory().path}/bridge-supervisor.log';
+    return '$detail. Full log: $logPath';
+  }
+
+  String _recentLogTail() {
+    if (_recentLogLines.isEmpty) {
+      return '';
+    }
+    final start = _recentLogLines.length > 4 ? _recentLogLines.length - 4 : 0;
+    return _recentLogLines.sublist(start).join(' | ');
+  }
+
+  Future<void> _appendSupervisorLog(String message) {
+    return _appendLogLine('[supervisor] $message');
+  }
+
+  Future<void> _appendLogLine(String message) async {
+    final writeFuture = _logWriteChain.then((_) async {
+      try {
+        final file =
+            _bridgeSupervisorLogFile ??
+            File('${_resolveStateDirectory().path}/bridge-supervisor.log');
+        _bridgeSupervisorLogFile = file;
+        await file.parent.create(recursive: true);
+        final timestamp = DateTime.now().toUtc().toIso8601String();
+        await file.writeAsString(
+          '[$timestamp] $message\n',
+          mode: FileMode.append,
+          flush: true,
+        );
+      } catch (_) {
+        // Ignore log persistence failures so supervision can keep running.
+      }
+    });
+    _logWriteChain = writeFuture.catchError((_) {});
+    await writeFuture;
   }
 
   String? _tryResolveBridgeBinaryPath() {

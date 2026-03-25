@@ -126,6 +126,15 @@ impl PairingSessionService {
         request: PairingFinalizeRequest,
         bridge_api_routes: Vec<BridgeApiRouteDto>,
     ) -> Result<PairingFinalizeResponse, PairingFinalizeError> {
+        eprintln!(
+            "pairing-finalize-request bridge_id={} phone_id={} phone_name={} session_id={} trusted_phone_present={} active_session_present={}",
+            self.bridge_id,
+            request.phone_id,
+            request.phone_name,
+            request.session_id,
+            self.trust_registry.state.trusted_phone.is_some(),
+            self.trust_registry.state.active_session.is_some(),
+        );
         if request.bridge_id != self.bridge_id {
             return Err(PairingFinalizeError::BridgeIdentityMismatch);
         }
@@ -190,6 +199,11 @@ impl PairingSessionService {
         self.trust_registry
             .persist()
             .map_err(PairingFinalizeError::Storage)?;
+
+        eprintln!(
+            "pairing-finalize-success bridge_id={} trusted_device_count=1 active_session_count=1 trusted_phone_id={} session_id={}",
+            self.bridge_id, request.phone_id, request.session_id,
+        );
 
         Ok(PairingFinalizeResponse {
             contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
@@ -261,6 +275,13 @@ impl PairingSessionService {
         &mut self,
         request: PairingRevokeRequest,
     ) -> Result<PairingRevokeResponse, String> {
+        eprintln!(
+            "pairing-revoke-request bridge_id={} requested_phone_id={:?} trusted_phone_present={} active_session_present={}",
+            self.bridge_id,
+            request.phone_id,
+            self.trust_registry.state.trusted_phone.is_some(),
+            self.trust_registry.state.active_session.is_some(),
+        );
         let mut revoked = false;
 
         if let Some(active_session) = &self.trust_registry.state.active_session {
@@ -282,6 +303,14 @@ impl PairingSessionService {
         }
 
         self.trust_registry.persist()?;
+
+        eprintln!(
+            "pairing-revoke-result bridge_id={} revoked={} trusted_device_count={} active_session_count={}",
+            self.bridge_id,
+            revoked,
+            usize::from(self.trust_registry.state.trusted_phone.is_some()),
+            usize::from(self.trust_registry.state.active_session.is_some()),
+        );
 
         Ok(PairingRevokeResponse {
             contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
@@ -311,6 +340,20 @@ impl PairingSessionService {
                 session_id: record.session_id.clone(),
                 finalized_at_epoch_seconds: record.finalized_at_epoch_seconds,
             });
+
+        eprintln!(
+            "pairing-trust-snapshot bridge_id={} registry_path={} trusted_device_count={} active_session_count={} trusted_phone_id={:?} active_session_id={:?}",
+            self.bridge_id,
+            self.trust_registry.path.display(),
+            usize::from(trusted_phone.is_some()),
+            usize::from(active_session.is_some()),
+            trusted_phone
+                .as_ref()
+                .map(|record| record.phone_id.as_str()),
+            active_session
+                .as_ref()
+                .map(|record| record.session_id.as_str()),
+        );
 
         PairingTrustSnapshot {
             trusted_phone,
