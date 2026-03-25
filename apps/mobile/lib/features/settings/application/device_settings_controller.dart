@@ -1,9 +1,9 @@
 import 'dart:async';
 
-import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
 import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
 import 'package:codex_mobile_companion/features/settings/data/settings_bridge_api.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:codex_mobile_companion/foundation/session/current_bridge_session.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -132,27 +132,45 @@ class DeviceSettingsController extends StateNotifier<DeviceSettingsState> {
 
   Future<bool> setAccessMode({
     required AccessMode accessMode,
-    required TrustedBridgeIdentity trustedBridge,
+    required AppBridgeSession session,
   }) async {
     if (state.isAccessModeUpdating) {
       return false;
     }
 
-    final phoneId = await _secureStore.readSecret(
-      SecureValueKey.pairingPrivateKey,
-    );
-    final sessionToken = await _secureStore.readSecret(
-      SecureValueKey.sessionToken,
-    );
-    if (phoneId == null ||
-        phoneId.trim().isEmpty ||
-        sessionToken == null ||
-        sessionToken.trim().isEmpty) {
-      state = state.copyWith(
-        accessModeErrorMessage:
-            'Trusted session data is missing. Re-pair this device from the host bridge.',
-      );
-      return false;
+    String? phoneId;
+    String? bridgeId;
+    String? sessionToken;
+    String? localSessionKind;
+
+    if (session.isPaired) {
+      final trustedBridge = session.trustedBridge;
+      if (trustedBridge == null) {
+        state = state.copyWith(
+          accessModeErrorMessage:
+              'Trusted bridge data is missing. Re-pair this device from the host bridge.',
+        );
+        return false;
+      }
+
+      phoneId = await _secureStore.readSecret(SecureValueKey.pairingPrivateKey);
+      sessionToken = await _secureStore.readSecret(SecureValueKey.sessionToken);
+      if (phoneId == null ||
+          phoneId.trim().isEmpty ||
+          sessionToken == null ||
+          sessionToken.trim().isEmpty) {
+        state = state.copyWith(
+          accessModeErrorMessage:
+              'Trusted session data is missing. Re-pair this device from the host bridge.',
+        );
+        return false;
+      }
+
+      bridgeId = trustedBridge.bridgeId;
+      phoneId = phoneId.trim();
+      sessionToken = sessionToken.trim();
+    } else {
+      localSessionKind = session.localSessionKind;
     }
 
     state = state.copyWith(
@@ -164,10 +182,11 @@ class DeviceSettingsController extends StateNotifier<DeviceSettingsState> {
       final updatedMode = await _bridgeApi.setAccessMode(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
         accessMode: accessMode,
-        phoneId: phoneId.trim(),
-        bridgeId: trustedBridge.bridgeId,
-        sessionToken: sessionToken.trim(),
-        actor: 'mobile-settings',
+        phoneId: phoneId,
+        bridgeId: bridgeId,
+        sessionToken: sessionToken,
+        localSessionKind: localSessionKind,
+        actor: session.isLocalLoopback ? 'local-settings' : 'mobile-settings',
       );
 
       _onAccessModeChanged(updatedMode);

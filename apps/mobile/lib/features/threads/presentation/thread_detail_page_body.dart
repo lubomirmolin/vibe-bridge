@@ -112,9 +112,11 @@ class _ThreadDetailBody extends StatelessWidget {
                 constraints: const BoxConstraints(
                   maxWidth: _ThreadDetailPageState._sessionContentMaxWidth,
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+                child: SizedBox(
+                  width: double.infinity,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                     const SizedBox(height: 16),
                     if (!controlsEnabled) ...[
                       const SizedBox(height: 12),
@@ -224,6 +226,7 @@ class _ThreadDetailBody extends StatelessWidget {
                       const SizedBox(height: 12),
                     ],
                   ],
+                  ),
                 ),
               ),
             ),

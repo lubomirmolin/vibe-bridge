@@ -1,6 +1,6 @@
 use axum::extract::{Json as ExtractJson, Multipart, Path, Query, State, WebSocketUpgrade};
-use axum::http::header::{ACCEPT, CONTENT_TYPE};
-use axum::http::{HeaderValue, Method, StatusCode};
+use axum::http::header::{ACCEPT, CONTENT_TYPE, HOST};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -238,6 +238,7 @@ async fn get_access_mode(State(state): State<BridgeAppState>) -> Json<AccessMode
 
 async fn set_access_mode(
     State(state): State<BridgeAppState>,
+    headers: HeaderMap,
     Query(query): Query<AccessModeMutationQuery>,
 ) -> Result<Json<AccessModeResponse>, (StatusCode, Json<ErrorEnvelope>)> {
     let Some(access_mode) = parse_access_mode(&query.mode) else {
@@ -253,28 +254,53 @@ async fn set_access_mode(
         .clone()
         .unwrap_or_else(|| "mobile-device".to_string());
 
-    let auth_request = PairingHandshakeRequest {
-        phone_id: query.phone_id.clone(),
-        bridge_id: query.bridge_id.clone(),
-        session_token: query.session_token.clone(),
-    };
+    if let Some(local_session_kind) = query.local_session.as_deref() {
+        if !is_allowed_local_session_request(&headers, local_session_kind) {
+            state
+                .record_security_audit(
+                    "warn",
+                    "policy",
+                    "policy",
+                    SecurityAuditEventDto {
+                        actor,
+                        action: "set_access_mode".to_string(),
+                        target: "policy.access_mode".to_string(),
+                        outcome: "denied".to_string(),
+                        reason: "local_session_not_allowed".to_string(),
+                    },
+                )
+                .await;
+            return Err(error_response(
+                StatusCode::FORBIDDEN,
+                "policy_access_mode_denied",
+                "local_session_not_allowed",
+                "Local session access-mode changes are only allowed over a loopback bridge connection.",
+            ));
+        }
+    } else {
+        let auth_request = PairingHandshakeRequest {
+            phone_id: query.phone_id.clone().unwrap_or_default(),
+            bridge_id: query.bridge_id.clone().unwrap_or_default(),
+            session_token: query.session_token.clone().unwrap_or_default(),
+        };
 
-    if let Err(error) = state.authorize_trusted_session(auth_request) {
-        state
-            .record_security_audit(
-                "warn",
-                "policy",
-                "policy",
-                SecurityAuditEventDto {
-                    actor,
-                    action: "set_access_mode".to_string(),
-                    target: "policy.access_mode".to_string(),
-                    outcome: "denied".to_string(),
-                    reason: error.code().to_string(),
-                },
-            )
-            .await;
-        return Err(pairing_handshake_error_response(error));
+        if let Err(error) = state.authorize_trusted_session(auth_request) {
+            state
+                .record_security_audit(
+                    "warn",
+                    "policy",
+                    "policy",
+                    SecurityAuditEventDto {
+                        actor,
+                        action: "set_access_mode".to_string(),
+                        target: "policy.access_mode".to_string(),
+                        outcome: "denied".to_string(),
+                        reason: error.code().to_string(),
+                    },
+                )
+                .await;
+            return Err(pairing_handshake_error_response(error));
+        }
     }
 
     state.set_access_mode(access_mode).await;
@@ -288,7 +314,11 @@ async fn set_access_mode(
                 action: "set_access_mode".to_string(),
                 target: "policy.access_mode".to_string(),
                 outcome: "allowed".to_string(),
-                reason: format!("mode={}", query.mode),
+                reason: if let Some(local_session_kind) = query.local_session.as_deref() {
+                    format!("mode={};auth={local_session_kind}", query.mode)
+                } else {
+                    format!("mode={};auth=paired_session", query.mode)
+                },
             },
         )
         .await;
@@ -337,10 +367,37 @@ struct PairingRevokeQuery {
 #[derive(Debug, Deserialize)]
 struct AccessModeMutationQuery {
     mode: String,
-    phone_id: String,
-    bridge_id: String,
-    session_token: String,
+    phone_id: Option<String>,
+    bridge_id: Option<String>,
+    session_token: Option<String>,
+    local_session: Option<String>,
     actor: Option<String>,
+}
+
+fn is_allowed_local_session_request(headers: &HeaderMap, local_session_kind: &str) -> bool {
+    matches!(local_session_kind, "browser_local" | "desktop_local")
+        && is_loopback_host_header(headers)
+}
+
+fn is_loopback_host_header(headers: &HeaderMap) -> bool {
+    let Some(host_header) = headers.get(HOST) else {
+        return false;
+    };
+    let Ok(host_value) = host_header.to_str() else {
+        return false;
+    };
+    let host = host_value.trim();
+
+    if host.eq_ignore_ascii_case("localhost") || host.eq_ignore_ascii_case("127.0.0.1") {
+        return true;
+    }
+
+    if host.starts_with("[::1]") {
+        return true;
+    }
+
+    let without_port = host.split_once(':').map(|(value, _)| value).unwrap_or(host);
+    matches!(without_port, "localhost" | "127.0.0.1" | "::1")
 }
 
 #[derive(Debug, Deserialize)]

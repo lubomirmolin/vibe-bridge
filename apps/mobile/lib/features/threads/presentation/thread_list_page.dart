@@ -33,6 +33,9 @@ class ThreadListPage extends ConsumerStatefulWidget {
 
 class _ThreadListPageState extends ConsumerState<ThreadListPage> {
   static const int _defaultVisibleThreadsPerGroup = 3;
+  static const double _widePaneMinWidth = 200;
+  static const double _wideDetailMinWidth = 320;
+  static const double _wideResizeHandleWidth = 14;
 
   late final TextEditingController _searchController;
   late final ProviderSubscription<ThreadListState> _threadListSubscription;
@@ -41,6 +44,10 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
   bool _didRestoreInitialSelectedThread = false;
   bool _isWideThreadListHidden = false;
   bool _isWideDiffPaneVisible = false;
+  bool _wasWideThreadListHiddenBeforeDiff = false;
+  double? _wideThreadListPaneWidth;
+  double? _wideDiffPaneWidth;
+  bool _isWidePaneResizing = false;
   _WideThreadWorkspaceSelection? _wideSelection;
 
   @override
@@ -242,6 +249,51 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
     });
   }
 
+  double _defaultWideThreadListPaneWidth({
+    required AdaptiveLayoutInfo layout,
+    required double bodyWidth,
+  }) {
+    if (layout.hasSeparatingFold) {
+      return layout.verticalFoldBounds!.left;
+    }
+    return math.min(math.max(bodyWidth * 0.34, 340), 430).toDouble();
+  }
+
+  double _defaultWideDiffPaneWidth({required double bodyWidth}) {
+    return math.min(math.max(bodyWidth * 0.34, 360), 560).toDouble();
+  }
+
+  double _clampWideThreadListPaneWidth({
+    required double requestedWidth,
+    required double bodyWidth,
+    required AdaptiveLayoutInfo layout,
+    required double reservedDiffWidth,
+    required double defaultWidth,
+  }) {
+    if (layout.hasSeparatingFold) {
+      final maxWidth = layout.verticalFoldBounds!.left;
+      return requestedWidth.clamp(_widePaneMinWidth, maxWidth).toDouble();
+    }
+
+    final maxWidth = math.max(
+      _widePaneMinWidth,
+      bodyWidth - reservedDiffWidth - _wideDetailMinWidth,
+    );
+    return requestedWidth.clamp(_widePaneMinWidth, maxWidth).toDouble();
+  }
+
+  double _clampWideDiffPaneWidth({
+    required double requestedWidth,
+    required double bodyWidth,
+    required double reservedListWidth,
+  }) {
+    final maxWidth = math.max(
+      _widePaneMinWidth,
+      bodyWidth - reservedListWidth - _wideDetailMinWidth,
+    );
+    return requestedWidth.clamp(_widePaneMinWidth, maxWidth).toDouble();
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(
@@ -321,11 +373,46 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
             final bodyWidth = useFullWidth
                 ? constraints.maxWidth
                 : layout.constrainedContentWidth(constraints.maxWidth);
-            final persistentPaneWidth = layout.hasSeparatingFold
-                ? layout.verticalFoldBounds!.left
-                : math.min(math.max(bodyWidth * 0.34, 340), 430).toDouble();
+            final defaultThreadListPaneWidth = _defaultWideThreadListPaneWidth(
+              layout: layout,
+              bodyWidth: bodyWidth,
+            );
+            final defaultDiffPaneWidth = _defaultWideDiffPaneWidth(
+              bodyWidth: bodyWidth,
+            );
+            final requestedThreadListPaneWidth =
+                _wideThreadListPaneWidth ?? defaultThreadListPaneWidth;
+            final requestedDiffPaneWidth =
+                _wideDiffPaneWidth ?? defaultDiffPaneWidth;
+            final provisionalThreadListPaneWidth = _isWideThreadListHidden
+                ? 0.0
+                : _clampWideThreadListPaneWidth(
+                    requestedWidth: requestedThreadListPaneWidth,
+                    bodyWidth: bodyWidth,
+                    layout: layout,
+                    reservedDiffWidth: _isWideDiffPaneVisible
+                        ? requestedDiffPaneWidth
+                        : 0,
+                    defaultWidth: defaultThreadListPaneWidth,
+                  );
+            final resolvedDiffPaneWidth = _isWideDiffPaneVisible
+                ? _clampWideDiffPaneWidth(
+                    requestedWidth: requestedDiffPaneWidth,
+                    bodyWidth: bodyWidth,
+                    reservedListWidth: provisionalThreadListPaneWidth,
+                  )
+                : 0.0;
+            final resolvedThreadListPaneWidth = _isWideThreadListHidden
+                ? 0.0
+                : _clampWideThreadListPaneWidth(
+                    requestedWidth: requestedThreadListPaneWidth,
+                    bodyWidth: bodyWidth,
+                    layout: layout,
+                    reservedDiffWidth: resolvedDiffPaneWidth,
+                    defaultWidth: defaultThreadListPaneWidth,
+                  );
             final paneGap = layout.hasSeparatingFold
-                ? layout.verticalFoldBounds!.width
+                ? layout.verticalFoldBounds!.right - resolvedThreadListPaneWidth
                 : 1.0;
 
             return Align(
@@ -336,7 +423,7 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                   children: [
                     SizedBox(
                       key: const Key('thread-wide-left-pane'),
-                      width: _isWideThreadListHidden ? 0 : persistentPaneWidth,
+                      width: resolvedThreadListPaneWidth,
                       child: _isWideThreadListHidden
                           ? const SizedBox.shrink()
                           : ClipRect(
@@ -381,6 +468,36 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                               ),
                             ),
                     ),
+                    if (!_isWideThreadListHidden)
+                      _WidePaneResizeHandle(
+                        key: const Key('thread-wide-sidebar-resize-handle'),
+                        accentColor: layout.hasSeparatingFold
+                            ? AppTheme.amber
+                            : AppTheme.emerald,
+                        onDragStart: () {
+                          setState(() {
+                            _isWidePaneResizing = true;
+                          });
+                        },
+                        onDragUpdate: (delta) {
+                          setState(() {
+                            _wideThreadListPaneWidth =
+                                _clampWideThreadListPaneWidth(
+                                  requestedWidth:
+                                      resolvedThreadListPaneWidth + delta,
+                                  bodyWidth: bodyWidth,
+                                  layout: layout,
+                                  reservedDiffWidth: resolvedDiffPaneWidth,
+                                  defaultWidth: defaultThreadListPaneWidth,
+                                );
+                          });
+                        },
+                        onDragEnd: () {
+                          setState(() {
+                            _isWidePaneResizing = false;
+                          });
+                        },
+                      ),
                     SizedBox(
                       key: const Key('thread-wide-gap'),
                       width: _isWideThreadListHidden ? 0 : paneGap,
@@ -392,8 +509,16 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                         selectedThreadId: selectedThreadId,
                         onOpenDiff: () {
                           setState(() {
-                            _isWideDiffPaneVisible = !_isWideDiffPaneVisible;
-                            _isWideThreadListHidden = _isWideDiffPaneVisible;
+                            if (_isWideDiffPaneVisible) {
+                              _isWideDiffPaneVisible = false;
+                              _isWideThreadListHidden =
+                                  _wasWideThreadListHiddenBeforeDiff;
+                            } else {
+                              _wasWideThreadListHiddenBeforeDiff =
+                                  _isWideThreadListHidden;
+                              _isWideDiffPaneVisible = true;
+                              _isWideThreadListHidden = true;
+                            }
                           });
                         },
                         onToggleSidebar: () {
@@ -401,6 +526,7 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                             if (_isWideDiffPaneVisible) {
                               _isWideDiffPaneVisible = false;
                               _isWideThreadListHidden = false;
+                              _wasWideThreadListHiddenBeforeDiff = false;
                             } else {
                               _isWideThreadListHidden =
                                   !_isWideThreadListHidden;
@@ -415,6 +541,27 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                                 _WideThreadWorkspaceSelection.createdThread(
                                   transition,
                                 );
+                          });
+                        },
+                        diffPaneWidth: resolvedDiffPaneWidth,
+                        isResizing: _isWidePaneResizing,
+                        onResizeDiffStart: () {
+                          setState(() {
+                            _isWidePaneResizing = true;
+                          });
+                        },
+                        onResizeDiff: (delta) {
+                          setState(() {
+                            _wideDiffPaneWidth = _clampWideDiffPaneWidth(
+                              requestedWidth: resolvedDiffPaneWidth - delta,
+                              bodyWidth: bodyWidth,
+                              reservedListWidth: resolvedThreadListPaneWidth,
+                            );
+                          });
+                        },
+                        onResizeDiffEnd: () {
+                          setState(() {
+                            _isWidePaneResizing = false;
                           });
                         },
                       ),
@@ -809,6 +956,11 @@ class _WideThreadWorkspacePane extends StatelessWidget {
     required this.isSidebarVisible,
     required this.isDiffVisible,
     required this.onDraftCreated,
+    required this.diffPaneWidth,
+    required this.isResizing,
+    required this.onResizeDiffStart,
+    required this.onResizeDiff,
+    required this.onResizeDiffEnd,
   });
 
   final String bridgeApiBaseUrl;
@@ -819,15 +971,14 @@ class _WideThreadWorkspacePane extends StatelessWidget {
   final bool isSidebarVisible;
   final bool isDiffVisible;
   final ValueChanged<ThreadDraftCreatedTransition> onDraftCreated;
+  final double diffPaneWidth;
+  final bool isResizing;
+  final VoidCallback onResizeDiffStart;
+  final ValueChanged<double> onResizeDiff;
+  final VoidCallback onResizeDiffEnd;
 
   @override
   Widget build(BuildContext context) {
-    final availableWidth = MediaQuery.of(context).size.width;
-    final diffPaneWidth = math.min(
-      math.max(availableWidth * 0.34, 360.0),
-      560.0,
-    );
-
     return Row(
       children: [
         Expanded(
@@ -842,9 +993,19 @@ class _WideThreadWorkspacePane extends StatelessWidget {
             onDraftCreated: onDraftCreated,
           ),
         ),
+        if (isDiffVisible && (selectedThreadId?.isNotEmpty ?? false))
+          _WidePaneResizeHandle(
+            key: const Key('thread-wide-diff-resize-handle'),
+            accentColor: AppTheme.emerald,
+            onDragStart: onResizeDiffStart,
+            onDragUpdate: onResizeDiff,
+            onDragEnd: onResizeDiffEnd,
+          ),
         AnimatedContainer(
           key: const Key('thread-wide-right-diff-pane'),
-          duration: const Duration(milliseconds: 240),
+          duration: isResizing
+              ? Duration.zero
+              : const Duration(milliseconds: 240),
           curve: Curves.easeInOutCubic,
           width: isDiffVisible && (selectedThreadId?.isNotEmpty ?? false)
               ? diffPaneWidth
@@ -852,23 +1013,127 @@ class _WideThreadWorkspacePane extends StatelessWidget {
           child: ClipRect(
             child: IgnorePointer(
               ignoring: !isDiffVisible,
-              child: DecoratedBox(
-                decoration: const BoxDecoration(
-                  border: Border(left: BorderSide(color: Colors.white10)),
-                ),
-                child: (selectedThreadId?.isNotEmpty ?? false)
-                    ? ThreadGitDiffPane(
-                        key: ValueKey('thread-wide-diff-$selectedThreadId'),
-                        bridgeApiBaseUrl: bridgeApiBaseUrl,
-                        threadId: selectedThreadId!,
-                        onClose: onOpenDiff,
-                      )
-                    : const SizedBox.shrink(),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final hasUsableWidth =
+                      constraints.maxWidth >=
+                      _ThreadListPageState._widePaneMinWidth;
+                  if (!hasUsableWidth ||
+                      !(selectedThreadId?.isNotEmpty ?? false)) {
+                    return const SizedBox.shrink();
+                  }
+
+                  return DecoratedBox(
+                    decoration: const BoxDecoration(
+                      border: Border(left: BorderSide(color: Colors.white10)),
+                    ),
+                    child: ThreadGitDiffPane(
+                      key: ValueKey('thread-wide-diff-$selectedThreadId'),
+                      bridgeApiBaseUrl: bridgeApiBaseUrl,
+                      threadId: selectedThreadId!,
+                      showBackButton: false,
+                      onClose: onOpenDiff,
+                    ),
+                  );
+                },
               ),
             ),
           ),
         ),
       ],
+    );
+  }
+}
+
+class _WidePaneResizeHandle extends StatefulWidget {
+  const _WidePaneResizeHandle({
+    super.key,
+    required this.accentColor,
+    required this.onDragStart,
+    required this.onDragUpdate,
+    required this.onDragEnd,
+  });
+
+  final Color accentColor;
+  final VoidCallback onDragStart;
+  final ValueChanged<double> onDragUpdate;
+  final VoidCallback onDragEnd;
+
+  @override
+  State<_WidePaneResizeHandle> createState() => _WidePaneResizeHandleState();
+}
+
+class _WidePaneResizeHandleState extends State<_WidePaneResizeHandle> {
+  bool _isHovering = false;
+  bool _isDragging = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final isActive = _isHovering || _isDragging;
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      onEnter: (_) {
+        setState(() {
+          _isHovering = true;
+        });
+      },
+      onExit: (_) {
+        setState(() {
+          _isHovering = false;
+        });
+      },
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragStart: (_) {
+          setState(() {
+            _isDragging = true;
+          });
+          widget.onDragStart();
+        },
+        onHorizontalDragUpdate: (details) {
+          widget.onDragUpdate(details.delta.dx);
+        },
+        onHorizontalDragEnd: (_) {
+          setState(() {
+            _isDragging = false;
+          });
+          widget.onDragEnd();
+        },
+        onHorizontalDragCancel: () {
+          setState(() {
+            _isDragging = false;
+          });
+          widget.onDragEnd();
+        },
+        child: SizedBox(
+          width: _ThreadListPageState._wideResizeHandleWidth,
+          child: Center(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              width: isActive ? 8 : 6,
+              height: isActive ? 88 : 64,
+              decoration: BoxDecoration(
+                color: isActive
+                    ? widget.accentColor.withValues(alpha: 0.78)
+                    : Colors.white24,
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: isActive ? Colors.white30 : Colors.white12,
+                ),
+                boxShadow: isActive
+                    ? [
+                        BoxShadow(
+                          color: widget.accentColor.withValues(alpha: 0.24),
+                          blurRadius: 12,
+                          spreadRadius: 1,
+                        ),
+                      ]
+                    : null,
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

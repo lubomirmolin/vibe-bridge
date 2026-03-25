@@ -5,8 +5,6 @@ import 'dart:math' as math;
 
 import 'package:codex_mobile_companion/features/approvals/application/approvals_queue_controller.dart';
 import 'package:codex_mobile_companion/features/approvals/presentation/approval_presenter.dart';
-import 'package:codex_mobile_companion/features/pairing/application/pairing_controller.dart';
-import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
 import 'package:codex_mobile_companion/features/settings/application/desktop_integration_controller.dart';
 import 'package:codex_mobile_companion/features/settings/application/device_settings_controller.dart';
 import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
@@ -18,6 +16,8 @@ import 'package:codex_mobile_companion/features/threads/domain/thread_timeline_b
 import 'package:codex_mobile_companion/features/threads/presentation/thread_git_diff_page.dart';
 import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:codex_mobile_companion/foundation/layout/adaptive_layout.dart';
+import 'package:codex_mobile_companion/foundation/session/current_bridge_session.dart';
 import 'package:codex_ui/codex_ui.dart';
 
 import 'package:codex_mobile_companion/shared/widgets/badges.dart';
@@ -187,6 +187,8 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   Future<void> Function()? _loadEarlierHistory;
   String? _draftThreadErrorMessage;
   final Map<String, bool> _timelineExpansionState = <String, bool>{};
+  bool? _lastObservedWideLayout;
+  bool _isWideLayoutExitScheduled = false;
 
   double _lastScrollOffset = 0;
   double _scrollOffsetOnDirectionChange = 0;
@@ -550,6 +552,20 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final isWideLayout = AdaptiveLayoutInfo.fromMediaQuery(
+      MediaQuery.of(context),
+    ).isWideLayout;
+    final previousWideLayout = _lastObservedWideLayout;
+    _lastObservedWideLayout = isWideLayout;
+
+    if (previousWideLayout == false && isWideLayout) {
+      _maybeExitStandaloneDetailForWideLayout();
+    }
+  }
+
+  @override
   void dispose() {
     if (_isSpeechRecording) {
       unawaited(_audioRecorder.stop());
@@ -617,6 +633,46 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         duration: const Duration(milliseconds: 250),
         curve: Curves.easeOutCubic,
       );
+    });
+  }
+
+  void _maybeExitStandaloneDetailForWideLayout() {
+    if (_isWideLayoutExitScheduled ||
+        !widget.embedInScaffold ||
+        _isDraftMode ||
+        (widget.onBack == null && !Navigator.of(context).canPop())) {
+      return;
+    }
+
+    _isWideLayoutExitScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      final isWideLayout = AdaptiveLayoutInfo.fromMediaQuery(
+        MediaQuery.of(context),
+      ).isWideLayout;
+      if (!isWideLayout) {
+        _isWideLayoutExitScheduled = false;
+        return;
+      }
+
+      final onBack = widget.onBack;
+      if (onBack != null) {
+        onBack();
+        if (mounted) {
+          _isWideLayoutExitScheduled = false;
+        }
+        return;
+      }
+
+      final navigator = Navigator.of(context);
+      if (!navigator.canPop()) {
+        _isWideLayoutExitScheduled = false;
+        return;
+      }
+      navigator.pop();
     });
   }
 
@@ -1212,7 +1268,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     final runtimeAccessMode = ref.watch(
       runtimeAccessModeProvider(widget.bridgeApiBaseUrl),
     );
-    final pairingState = ref.watch(pairingControllerProvider);
+    final currentSession = ref.watch(
+      currentBridgeSessionProvider(widget.bridgeApiBaseUrl),
+    );
     final deviceSettingsState = ref.watch(
       deviceSettingsControllerProvider(widget.bridgeApiBaseUrl),
     );
@@ -1221,14 +1279,13 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     );
 
     Future<void> changeAccessMode(AccessMode mode) async {
-      final trustedBridge = pairingState.trustedBridge;
-      if (trustedBridge == null) {
+      if (currentSession == null || !currentSession.canMutateAccessMode) {
         return;
       }
 
       await deviceSettingsController.setAccessMode(
         accessMode: mode,
-        trustedBridge: trustedBridge,
+        session: currentSession,
       );
     }
 
@@ -1306,7 +1363,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                           selectedModel: _selectedModel,
                           selectedReasoning: _selectedReasoning,
                           accessMode: effectiveAccessMode,
-                          trustedBridge: pairingState.trustedBridge,
+                          session: currentSession,
                           isAccessModeUpdating:
                               deviceSettingsState.isAccessModeUpdating,
                           accessModeErrorMessage:
@@ -1638,7 +1695,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                               selectedModel: _selectedModel,
                               selectedReasoning: _selectedReasoning,
                               accessMode: effectiveAccessMode,
-                              trustedBridge: pairingState.trustedBridge,
+                              session: currentSession,
                               isAccessModeUpdating:
                                   deviceSettingsState.isAccessModeUpdating,
                               accessModeErrorMessage:

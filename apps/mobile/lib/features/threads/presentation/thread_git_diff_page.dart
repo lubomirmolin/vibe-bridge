@@ -28,7 +28,7 @@ class ThreadGitDiffPage extends StatelessWidget {
         child: ThreadGitDiffPane(
           bridgeApiBaseUrl: bridgeApiBaseUrl,
           threadId: threadId,
-          showAppBarClose: true,
+          showBackButton: true,
           onClose: () => Navigator.of(context).maybePop(),
         ),
       ),
@@ -41,13 +41,13 @@ class ThreadGitDiffPane extends ConsumerWidget {
     super.key,
     required this.bridgeApiBaseUrl,
     required this.threadId,
-    this.showAppBarClose = false,
+    this.showBackButton = false,
     this.onClose,
   });
 
   final String bridgeApiBaseUrl;
   final String threadId;
-  final bool showAppBarClose;
+  final bool showBackButton;
   final VoidCallback? onClose;
 
   @override
@@ -82,7 +82,7 @@ class ThreadGitDiffPane extends ConsumerWidget {
             liveConnectionState: state.liveConnectionState,
             onModeChanged: controller.setMode,
             onRefresh: controller.refreshNow,
-            showCloseButton: showAppBarClose || onClose != null,
+            showBackButton: showBackButton,
             onClose: onClose,
           ),
           Expanded(
@@ -122,7 +122,7 @@ class _DiffHeader extends StatelessWidget {
     required this.liveConnectionState,
     required this.onModeChanged,
     required this.onRefresh,
-    required this.showCloseButton,
+    required this.showBackButton,
     required this.onClose,
   });
 
@@ -132,7 +132,7 @@ class _DiffHeader extends StatelessWidget {
   final LiveConnectionState liveConnectionState;
   final Future<void> Function(ThreadGitDiffMode mode) onModeChanged;
   final Future<void> Function() onRefresh;
-  final bool showCloseButton;
+  final bool showBackButton;
   final VoidCallback? onClose;
 
   @override
@@ -152,9 +152,10 @@ class _DiffHeader extends StatelessWidget {
         children: [
           Row(
             children: [
-              if (showCloseButton)
+              if (showBackButton)
                 IconButton(
                   onPressed: onClose,
+                  key: const Key('thread-git-diff-back-button'),
                   icon: PhosphorIcon(
                     PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
                     color: AppTheme.textMuted,
