@@ -430,7 +430,7 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
   }
 }
 
-class _ThreadListSurface extends StatelessWidget {
+class _ThreadListSurface extends StatefulWidget {
   const _ThreadListSurface({
     required this.bridgeApiBaseUrl,
     required this.state,
@@ -462,16 +462,36 @@ class _ThreadListSurface extends StatelessWidget {
   final String? selectedThreadId;
 
   @override
+  State<_ThreadListSurface> createState() => _ThreadListSurfaceState();
+}
+
+class _ThreadListSurfaceState extends State<_ThreadListSurface> {
+  bool _showHeaderBorder = false;
+
+  bool _handleScrollNotification(ScrollNotification notification) {
+    final shouldShowBorder = notification.metrics.extentBefore > 0;
+    if (shouldShowBorder != _showHeaderBorder) {
+      setState(() {
+        _showHeaderBorder = shouldShowBorder;
+      });
+    }
+    return false;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final leadingInset = onBack != null ? 36.0 : 16.0;
+    final leadingInset = widget.onBack != null ? 36.0 : 16.0;
 
     return Column(
       children: [
         Container(
+          key: const Key('thread-list-header'),
           padding: const EdgeInsets.only(top: 0, right: 16, bottom: 8),
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             color: AppTheme.background,
-            border: Border(bottom: BorderSide(color: Colors.white10)),
+            border: _showHeaderBorder
+                ? const Border(bottom: BorderSide(color: Colors.white10))
+                : null,
           ),
           child: Align(
             alignment: Alignment.topCenter,
@@ -484,10 +504,10 @@ class _ThreadListSurface extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      if (onBack != null)
+                      if (widget.onBack != null)
                         IconButton(
                           key: const Key('thread-list-back-button'),
-                          onPressed: onBack,
+                          onPressed: widget.onBack,
                           icon: PhosphorIcon(
                             PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
                             size: 20,
@@ -515,7 +535,7 @@ class _ThreadListSurface extends StatelessWidget {
                         onPressed: () => Navigator.of(context).push(
                           MaterialPageRoute<void>(
                             builder: (context) => ApprovalsQueuePage(
-                              bridgeApiBaseUrl: bridgeApiBaseUrl,
+                              bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
                             ),
                           ),
                         ),
@@ -529,7 +549,7 @@ class _ThreadListSurface extends StatelessWidget {
                       ),
                       IconButton(
                         key: const Key('thread-list-create-button'),
-                        onPressed: onCreateThread,
+                        onPressed: widget.onCreateThread,
                         icon: PhosphorIcon(
                           PhosphorIcons.plus(PhosphorIconsStyle.bold),
                           size: 20,
@@ -540,9 +560,9 @@ class _ThreadListSurface extends StatelessWidget {
                   ),
                   ConnectionStatusBanner(
                     state: _threadListConnectionBannerState(
-                      state.liveConnectionState,
+                      widget.state.liveConnectionState,
                     ),
-                    detail: _threadListConnectionBannerDetail(state),
+                    detail: _threadListConnectionBannerDetail(widget.state),
                     compact: true,
                     margin: EdgeInsets.fromLTRB(leadingInset, 12, 0, 0),
                   ),
@@ -558,8 +578,8 @@ class _ThreadListSurface extends StatelessWidget {
                       ),
                       child: TextField(
                         key: const Key('thread-search-input'),
-                        controller: searchController,
-                        onChanged: controller.updateSearchQuery,
+                        controller: widget.searchController,
+                        onChanged: widget.controller.updateSearchQuery,
                         style: const TextStyle(
                           color: AppTheme.textMain,
                           fontSize: 14,
@@ -577,11 +597,11 @@ class _ThreadListSurface extends StatelessWidget {
                               color: AppTheme.textSubtle,
                             ),
                           ),
-                          suffixIcon: state.hasQuery
+                          suffixIcon: widget.state.hasQuery
                               ? IconButton(
                                   onPressed: () {
-                                    searchController.clear();
-                                    controller.clearSearchQuery();
+                                    widget.searchController.clear();
+                                    widget.controller.clearSearchQuery();
                                   },
                                   icon: PhosphorIcon(
                                     PhosphorIcons.x(),
@@ -605,16 +625,19 @@ class _ThreadListSurface extends StatelessWidget {
           ),
         ),
         Expanded(
-          child: _ThreadListBody(
-            state: state,
-            controller: controller,
-            visibleThreadsPerGroup: visibleThreadsPerGroup,
-            isGroupCollapsed: isGroupCollapsed,
-            isGroupThreadListExpanded: isGroupThreadListExpanded,
-            onToggleGroupCollapsed: onToggleGroupCollapsed,
-            onToggleGroupThreadExpansion: onToggleGroupThreadExpansion,
-            onOpenThread: onOpenThread,
-            selectedThreadId: selectedThreadId,
+          child: NotificationListener<ScrollNotification>(
+            onNotification: _handleScrollNotification,
+            child: _ThreadListBody(
+              state: widget.state,
+              controller: widget.controller,
+              visibleThreadsPerGroup: widget.visibleThreadsPerGroup,
+              isGroupCollapsed: widget.isGroupCollapsed,
+              isGroupThreadListExpanded: widget.isGroupThreadListExpanded,
+              onToggleGroupCollapsed: widget.onToggleGroupCollapsed,
+              onToggleGroupThreadExpansion: widget.onToggleGroupThreadExpansion,
+              onOpenThread: widget.onOpenThread,
+              selectedThreadId: widget.selectedThreadId,
+            ),
           ),
         ),
       ],

@@ -1,5 +1,6 @@
 use axum::extract::{Json as ExtractJson, Multipart, Path, Query, State, WebSocketUpgrade};
-use axum::http::StatusCode;
+use axum::http::header::{ACCEPT, CONTENT_TYPE};
+use axum::http::{HeaderValue, Method, StatusCode};
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -12,6 +13,7 @@ use shared_contracts::{
     SpeechTranscriptionResultDto, ThreadGitDiffDto, ThreadGitDiffMode, ThreadSnapshotDto,
     ThreadSummaryDto, ThreadTimelinePageDto, TurnMutationAcceptedDto,
 };
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::pairing::{
     PairingFinalizeError, PairingFinalizeRequest, PairingHandshakeError, PairingHandshakeRequest,
@@ -73,7 +75,37 @@ pub fn router(state: BridgeAppState) -> Router {
         .route("/approvals/:approval_id/reject", post(reject_approval))
         .route("/security/events", get(list_security_events))
         .route("/events", get(events))
+        .layer(browser_localhost_cors_layer())
         .with_state(state)
+}
+
+fn browser_localhost_cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(
+            |origin: &HeaderValue, _request_parts| is_loopback_browser_origin(origin),
+        ))
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([ACCEPT, CONTENT_TYPE])
+}
+
+fn is_loopback_browser_origin(origin: &HeaderValue) -> bool {
+    let Ok(origin_value) = origin.to_str() else {
+        return false;
+    };
+    let Ok(parsed_origin) = origin_value.parse::<axum::http::Uri>() else {
+        return false;
+    };
+
+    matches!(
+        parsed_origin.host(),
+        Some("localhost") | Some("127.0.0.1") | Some("[::1]") | Some("::1")
+    )
 }
 
 async fn healthz() -> Json<serde_json::Value> {

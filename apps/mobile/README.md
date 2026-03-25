@@ -1,10 +1,13 @@
 # Mobile App
 
-Flutter companion app for Codex on iOS simulators and Android emulators.
+Flutter companion app for Codex on iOS simulators, Android emulators, desktop
+Flutter targets, and a browser-localhost shell.
 
 ## Features
 
 - QR/manual pairing with trusted Mac bridge
+- Localhost startup that connects directly to the current machine over
+  `http://127.0.0.1:3210` when the bridge is available
 - Thread list/detail, live updates, offline cache, and reconnect recovery
 - Turn controls, approvals, git actions, and settings
 - Foreground notification routing and deduplication
@@ -19,6 +22,23 @@ flutter pub get
 flutter devices
 flutter run -d <simulator-or-emulator-id>
 ```
+
+On desktop (`macos`, `linux`, or `windows` Flutter targets) and in the browser,
+the app probes the local bridge first and opens the current-machine thread UI
+directly when
+`http://127.0.0.1:3210` is reachable. Override the default with
+`--dart-define=CODEX_LOCAL_BRIDGE_BASE_URL=http://127.0.0.1:3110` or disable
+the localhost shortcut with
+`--dart-define=CODEX_LOCAL_DESKTOP_ENABLED=false`.
+
+For Flutter web:
+
+```bash
+flutter run -d chrome
+```
+
+The current browser implementation is a localhost-first thread shell. It skips
+QR pairing and expects the bridge server to allow loopback browser origins.
 
 If Android debug builds fail inside Rust-backed Flutter plugins, use the repo
 wrapper so `flutter run` always gets the expected Rust environment:

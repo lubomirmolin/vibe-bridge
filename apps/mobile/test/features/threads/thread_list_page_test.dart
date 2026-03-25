@@ -238,6 +238,38 @@ void main() {
     },
   );
 
+  testWidgets('thread list header border appears only after scrolling', (
+    tester,
+  ) async {
+    await _setDisplaySize(tester, const Size(430, 640));
+    final cacheRepository = _newCacheRepository();
+    final bridgeApi = FakeThreadListBridgeApi(
+      scriptedResults: [_manyThreadGroups()],
+    );
+
+    await _pumpThreadListPage(
+      tester,
+      bridgeApi: bridgeApi,
+      cacheRepository: cacheRepository,
+    );
+    await tester.pumpAndSettle();
+
+    BoxDecoration headerDecoration() {
+      final container = tester.widget<Container>(
+        find.byKey(const Key('thread-list-header')),
+      );
+      return container.decoration! as BoxDecoration;
+    }
+
+    expect(headerDecoration().border, isNull);
+
+    await tester.drag(find.byType(ListView), const Offset(0, -300));
+    await tester.pumpAndSettle();
+
+    final border = headerDecoration().border! as Border;
+    expect(border.bottom.color, Colors.white10);
+  });
+
   test('adaptive layout treats a vertical hinge as a wide split workspace', () {
     const layout = AdaptiveLayoutInfo(
       windowSize: Size(1280, 900),
@@ -1167,6 +1199,22 @@ List<ThreadSummaryDto> _overflowGroupedThreads() {
       updatedAt: '2026-03-17T16:00:00Z',
     ),
   ];
+}
+
+List<ThreadSummaryDto> _manyThreadGroups() {
+  return List<ThreadSummaryDto>.generate(8, (index) {
+    final number = index + 1;
+    return ThreadSummaryDto(
+      contractVersion: contractVersion,
+      threadId: 'thread-$number',
+      title: 'Thread $number',
+      status: ThreadStatus.running,
+      workspace: '/workspace/project-$number',
+      repository: 'project-$number',
+      branch: 'main',
+      updatedAt: '2026-03-17T18:00:00Z',
+    );
+  });
 }
 
 class FakeThreadListBridgeApi implements ThreadListBridgeApi {
