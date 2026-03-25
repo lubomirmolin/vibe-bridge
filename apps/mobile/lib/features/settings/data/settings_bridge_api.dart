@@ -15,9 +15,10 @@ abstract class SettingsBridgeApi {
   Future<AccessMode> setAccessMode({
     required String bridgeApiBaseUrl,
     required AccessMode accessMode,
-    required String phoneId,
-    required String bridgeId,
-    required String sessionToken,
+    String? phoneId,
+    String? bridgeId,
+    String? sessionToken,
+    String? localSessionKind,
     String actor,
   });
 
@@ -105,22 +106,34 @@ class HttpSettingsBridgeApi implements SettingsBridgeApi {
   Future<AccessMode> setAccessMode({
     required String bridgeApiBaseUrl,
     required AccessMode accessMode,
-    required String phoneId,
-    required String bridgeId,
-    required String sessionToken,
+    String? phoneId,
+    String? bridgeId,
+    String? sessionToken,
+    String? localSessionKind,
     String actor = 'mobile-device',
   }) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
 
     try {
+      final queryParameters = <String, String>{
+        'mode': accessMode.wireValue,
+        'actor': actor,
+      };
+      if (phoneId != null && phoneId.trim().isNotEmpty) {
+        queryParameters['phone_id'] = phoneId.trim();
+      }
+      if (bridgeId != null && bridgeId.trim().isNotEmpty) {
+        queryParameters['bridge_id'] = bridgeId.trim();
+      }
+      if (sessionToken != null && sessionToken.trim().isNotEmpty) {
+        queryParameters['session_token'] = sessionToken.trim();
+      }
+      if (localSessionKind != null && localSessionKind.trim().isNotEmpty) {
+        queryParameters['local_session'] = localSessionKind.trim();
+      }
+
       final request = await client.postUrl(
-        _buildUri(bridgeApiBaseUrl, '/policy/access-mode', <String, String>{
-          'mode': accessMode.wireValue,
-          'phone_id': phoneId,
-          'bridge_id': bridgeId,
-          'session_token': sessionToken,
-          'actor': actor,
-        }),
+        _buildUri(bridgeApiBaseUrl, '/policy/access-mode', queryParameters),
       );
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       final response = await request.close();

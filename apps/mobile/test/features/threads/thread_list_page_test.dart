@@ -148,6 +148,160 @@ void main() {
     );
   });
 
+  testWidgets('wide layout sidebar can be resized by dragging the handle', (
+    tester,
+  ) async {
+    await _setDisplaySize(tester, const Size(1400, 900));
+    final cacheRepository = _newCacheRepository();
+    final bridgeApi = FakeThreadListBridgeApi(
+      scriptedResults: [_sampleThreads()],
+    );
+
+    await _pumpThreadListPage(
+      tester,
+      bridgeApi: bridgeApi,
+      cacheRepository: cacheRepository,
+    );
+    await tester.pumpAndSettle();
+
+    final sidebarFinder = find.byKey(const Key('thread-wide-left-pane'));
+    final handleFinder = find.byKey(
+      const Key('thread-wide-sidebar-resize-handle'),
+    );
+
+    final initialWidth = tester.getSize(sidebarFinder).width;
+
+    await tester.drag(handleFinder, const Offset(96, 0));
+    await tester.pumpAndSettle();
+
+    final expandedWidth = tester.getSize(sidebarFinder).width;
+    expect(expandedWidth, greaterThan(initialWidth));
+
+    await tester.drag(handleFinder, const Offset(-160, 0));
+    await tester.pumpAndSettle();
+
+    final reducedWidth = tester.getSize(sidebarFinder).width;
+    expect(reducedWidth, lessThan(expandedWidth));
+    expect(reducedWidth, greaterThan(0));
+  });
+
+  testWidgets(
+    'closing diff restores the prior sidebar visibility instead of forcing it open',
+    (tester) async {
+      await _setDisplaySize(tester, const Size(1400, 900));
+      final cacheRepository = _newCacheRepository();
+      final bridgeApi = FakeThreadListBridgeApi(
+        scriptedResults: [_sampleThreads()],
+      );
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+      );
+
+      await _pumpThreadListPage(
+        tester,
+        bridgeApi: bridgeApi,
+        detailApi: detailApi,
+        cacheRepository: cacheRepository,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('thread-detail-sidebar-toggle')));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.getSize(find.byKey(const Key('thread-wide-left-pane'))).width,
+        0,
+      );
+
+      await tester.tap(find.byKey(const Key('thread-detail-diff-toggle')));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .getSize(find.byKey(const Key('thread-wide-right-diff-pane')))
+            .width,
+        greaterThan(0),
+      );
+      expect(
+        tester.getSize(find.byKey(const Key('thread-wide-left-pane'))).width,
+        0,
+      );
+
+      await tester.tap(find.byKey(const Key('thread-detail-diff-toggle')));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .getSize(find.byKey(const Key('thread-wide-right-diff-pane')))
+            .width,
+        0,
+      );
+      expect(
+        tester.getSize(find.byKey(const Key('thread-wide-left-pane'))).width,
+        0,
+      );
+    },
+  );
+
+  testWidgets('wide layout diff pane can be resized by dragging the handle', (
+    tester,
+  ) async {
+    await _setDisplaySize(tester, const Size(1400, 900));
+    final cacheRepository = _newCacheRepository();
+    final bridgeApi = FakeThreadListBridgeApi(
+      scriptedResults: [_sampleThreads()],
+    );
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+    );
+
+    await _pumpThreadListPage(
+      tester,
+      bridgeApi: bridgeApi,
+      detailApi: detailApi,
+      cacheRepository: cacheRepository,
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('thread-detail-diff-toggle')));
+    await tester.pumpAndSettle();
+
+    final diffFinder = find.byKey(const Key('thread-wide-right-diff-pane'));
+    final handleFinder = find.byKey(
+      const Key('thread-wide-diff-resize-handle'),
+    );
+    final initialWidth = tester.getSize(diffFinder).width;
+
+    await tester.drag(handleFinder, const Offset(-96, 0));
+    await tester.pumpAndSettle();
+
+    final expandedWidth = tester.getSize(diffFinder).width;
+    expect(expandedWidth, greaterThan(initialWidth));
+
+    await tester.drag(handleFinder, const Offset(160, 0));
+    await tester.pumpAndSettle();
+
+    final reducedWidth = tester.getSize(diffFinder).width;
+    expect(reducedWidth, lessThan(expandedWidth));
+    expect(reducedWidth, greaterThan(0));
+  });
+
   testWidgets('narrow layout still pushes to the full-screen detail route', (
     tester,
   ) async {
@@ -180,6 +334,57 @@ void main() {
     expect(find.byKey(const Key('thread-detail-back-button')), findsOneWidget);
     expect(find.byKey(const Key('thread-wide-left-pane')), findsNothing);
   });
+
+  testWidgets(
+    'detail route returns to wide split view when the display becomes wide',
+    (tester) async {
+      await _setDisplaySize(tester, const Size(430, 900));
+      final cacheRepository = _newCacheRepository();
+      final bridgeApi = FakeThreadListBridgeApi(
+        scriptedResults: [_sampleThreads()],
+      );
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail(), _thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            <ThreadTimelineEntryDto>[],
+            <ThreadTimelineEntryDto>[],
+          ],
+        },
+      );
+
+      await _pumpThreadListPage(
+        tester,
+        bridgeApi: bridgeApi,
+        detailApi: detailApi,
+        cacheRepository: cacheRepository,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('thread-detail-back-button')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('thread-wide-left-pane')), findsNothing);
+
+      await _setDisplaySize(tester, const Size(1400, 900));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
+      expect(find.byKey(const Key('thread-detail-back-button')), findsNothing);
+      expect(find.byKey(const Key('thread-wide-left-pane')), findsOneWidget);
+      expect(
+        find.byKey(const Key('thread-summary-card-thread-123')),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets(
     'narrow layout keeps active threads header aligned with detail header',

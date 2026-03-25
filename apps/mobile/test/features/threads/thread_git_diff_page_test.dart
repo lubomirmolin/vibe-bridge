@@ -9,6 +9,64 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('embedded diff pane keeps the back button hidden', (
+    tester,
+  ) async {
+    final bridgeApi = FakeThreadDiffBridgeApi(
+      diffsByMode: <ThreadGitDiffMode, ThreadGitDiffDto>{
+        ThreadGitDiffMode.workspace: _buildDiffDto(
+          mode: ThreadGitDiffMode.workspace,
+          files: const <GitDiffFileSummaryDto>[],
+          unifiedDiff: '',
+        ),
+      },
+    );
+
+    await tester.pumpWidget(
+      _buildTestApp(
+        bridgeApi: bridgeApi,
+        liveStream: FakeThreadLiveStream(),
+        child: ThreadGitDiffPane(
+          bridgeApiBaseUrl: 'http://127.0.0.1:33210',
+          threadId: 'thread-123',
+          onClose: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('thread-git-diff-back-button')), findsNothing);
+  });
+
+  testWidgets('full-screen diff page shows the back button', (tester) async {
+    final bridgeApi = FakeThreadDiffBridgeApi(
+      diffsByMode: <ThreadGitDiffMode, ThreadGitDiffDto>{
+        ThreadGitDiffMode.workspace: _buildDiffDto(
+          mode: ThreadGitDiffMode.workspace,
+          files: const <GitDiffFileSummaryDto>[],
+          unifiedDiff: '',
+        ),
+      },
+    );
+
+    await tester.pumpWidget(
+      _buildTestApp(
+        bridgeApi: bridgeApi,
+        liveStream: FakeThreadLiveStream(),
+        child: const ThreadGitDiffPage(
+          bridgeApiBaseUrl: 'http://127.0.0.1:33210',
+          threadId: 'thread-123',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('thread-git-diff-back-button')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('renders all parsed diff files in one stacked document', (
     tester,
   ) async {
@@ -126,18 +184,21 @@ index 1111111..2222222 100644
 Widget _buildTestApp({
   required ThreadDiffBridgeApi bridgeApi,
   required ThreadLiveStream liveStream,
+  Widget? child,
 }) {
   return ProviderScope(
     overrides: <Override>[
       threadDiffBridgeApiProvider.overrideWithValue(bridgeApi),
       threadLiveStreamProvider.overrideWithValue(liveStream),
     ],
-    child: const MaterialApp(
+    child: MaterialApp(
       home: Scaffold(
-        body: ThreadGitDiffPane(
-          bridgeApiBaseUrl: 'http://127.0.0.1:33210',
-          threadId: 'thread-123',
-        ),
+        body:
+            child ??
+            const ThreadGitDiffPane(
+              bridgeApiBaseUrl: 'http://127.0.0.1:33210',
+              threadId: 'thread-123',
+            ),
       ),
     ),
   );

@@ -147,8 +147,7 @@ void main() {
   );
 }
 
-class _PassthroughHttpOverrides extends HttpOverrides {
-}
+class _PassthroughHttpOverrides extends HttpOverrides {}
 
 String _resolveBridgeApiBaseUrl() {
   const configured = String.fromEnvironment('LIVE_THREAD_UI_BRIDGE_BASE_URL');
@@ -218,9 +217,10 @@ class _FakeSettingsBridgeApi implements SettingsBridgeApi {
   Future<AccessMode> setAccessMode({
     required String bridgeApiBaseUrl,
     required AccessMode accessMode,
-    required String phoneId,
-    required String bridgeId,
-    required String sessionToken,
+    String? phoneId,
+    String? bridgeId,
+    String? sessionToken,
+    String? localSessionKind,
     String actor = 'mobile-device',
   }) async {
     return accessMode;

@@ -321,9 +321,10 @@ class _ProbeSettingsBridgeApi implements SettingsBridgeApi {
   Future<AccessMode> setAccessMode({
     required String bridgeApiBaseUrl,
     required AccessMode accessMode,
-    required String phoneId,
-    required String bridgeId,
-    required String sessionToken,
+    String? phoneId,
+    String? bridgeId,
+    String? sessionToken,
+    String? localSessionKind,
     String actor = 'mobile-device',
   }) async {
     return accessMode;

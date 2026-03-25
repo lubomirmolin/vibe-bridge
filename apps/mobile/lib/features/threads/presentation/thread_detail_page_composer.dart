@@ -21,7 +21,7 @@ class _PinnedTurnComposer extends StatelessWidget {
     required this.selectedModel,
     required this.selectedReasoning,
     required this.accessMode,
-    required this.trustedBridge,
+    required this.session,
     required this.isAccessModeUpdating,
     required this.accessModeErrorMessage,
     required this.onPickImages,
@@ -52,7 +52,7 @@ class _PinnedTurnComposer extends StatelessWidget {
   final String selectedModel;
   final String selectedReasoning;
   final AccessMode accessMode;
-  final TrustedBridgeIdentity? trustedBridge;
+  final AppBridgeSession? session;
   final bool isAccessModeUpdating;
   final String? accessModeErrorMessage;
   final Future<void> Function() onPickImages;
@@ -177,7 +177,7 @@ class _PinnedTurnComposer extends StatelessWidget {
                                                       selectedReasoning,
                                                   selectedAccessMode:
                                                       accessMode,
-                                                  trustedBridge: trustedBridge,
+                                                  session: session,
                                                   isAccessModeUpdating:
                                                       isAccessModeUpdating,
                                                   onModelChanged:
@@ -393,7 +393,7 @@ class _PinnedTurnComposer extends StatelessWidget {
                   ),
                 ],
               ),
-              if (trustedBridge == null) ...[
+              if (session == null) ...[
                 const SizedBox(height: 10),
                 Align(
                   alignment: Alignment.centerLeft,
@@ -479,7 +479,7 @@ class _ComposerModelSheet extends StatefulWidget {
     required this.initialModel,
     required this.initialReasoning,
     required this.selectedAccessMode,
-    required this.trustedBridge,
+    required this.session,
     required this.isAccessModeUpdating,
     required this.onModelChanged,
     required this.onReasoningChanged,
@@ -491,7 +491,7 @@ class _ComposerModelSheet extends StatefulWidget {
   final String initialModel;
   final String initialReasoning;
   final AccessMode selectedAccessMode;
-  final TrustedBridgeIdentity? trustedBridge;
+  final AppBridgeSession? session;
   final bool isAccessModeUpdating;
   final ValueChanged<String> onModelChanged;
   final ValueChanged<String> onReasoningChanged;
@@ -613,8 +613,10 @@ class _ComposerModelSheetState extends State<_ComposerModelSheet> {
                 const SizedBox(height: 18),
                 _ComposerSheetSection(
                   title: 'Approval',
-                  subtitle: widget.trustedBridge == null
-                      ? 'Pair with a host bridge to change access mode.'
+                  subtitle: widget.session == null
+                      ? 'Connect to a bridge session to change access mode.'
+                      : widget.session!.isLocalLoopback
+                      ? 'This control changes the access mode for the bridge running on the current machine.'
                       : null,
                   children: AccessMode.values
                       .map(
@@ -623,7 +625,7 @@ class _ComposerModelSheetState extends State<_ComposerModelSheet> {
                           label: _accessModeChipLabel(mode),
                           selected: _selectedAccessMode == mode,
                           leading:
-                              widget.trustedBridge == null &&
+                              widget.session?.canMutateAccessMode != true &&
                                   _selectedAccessMode != mode
                               ? PhosphorIcons.lock()
                               : _composerAccessModeVisual(mode).icon,
@@ -639,7 +641,7 @@ class _ComposerModelSheetState extends State<_ComposerModelSheet> {
                                   ),
                                 )
                               : null,
-                          onTap: widget.trustedBridge == null
+                          onTap: widget.session?.canMutateAccessMode != true
                               ? () {}
                               : () {
                                   setState(() {

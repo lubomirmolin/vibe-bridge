@@ -2,6 +2,7 @@ import 'package:codex_mobile_companion/features/pairing/application/pairing_cont
 import 'package:codex_mobile_companion/features/pairing/data/pairing_bridge_api.dart';
 import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
 import 'package:codex_mobile_companion/features/settings/data/settings_bridge_api.dart';
+import 'package:codex_mobile_companion/foundation/platform/app_platform.dart';
 import 'package:codex_mobile_companion/features/settings/presentation/settings_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
@@ -348,6 +349,50 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('localhost desktop session changes access mode without pairing secrets', (
+    tester,
+  ) async {
+    final settingsApi = FakeSettingsBridgeApi(
+      accessMode: AccessMode.controlWithApprovals,
+      events: const <SecurityEventRecordDto>[],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          appPlatformProvider.overrideWithValue(
+            const AppPlatform(isWeb: false, isDesktop: true),
+          ),
+          secureStoreProvider.overrideWithValue(InMemorySecureStore()),
+          pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
+          settingsBridgeApiProvider.overrideWithValue(settingsApi),
+        ],
+        child: const MaterialApp(
+          home: SettingsPage(bridgeApiBaseUrl: 'http://127.0.0.1:3210'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'This app is connected directly to the bridge running on the current machine.',
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Full'));
+    await tester.pumpAndSettle();
+
+    expect(settingsApi.setModeCalls, hasLength(1));
+    expect(settingsApi.setModeCalls.single.phoneId, isNull);
+    expect(settingsApi.setModeCalls.single.sessionToken, isNull);
+    expect(
+      settingsApi.setModeCalls.single.localSessionKind,
+      'desktop_local',
+    );
+  });
 }
 
 class FakePairingBridgeApi implements PairingBridgeApi {
@@ -387,15 +432,17 @@ class FakePairingBridgeApi implements PairingBridgeApi {
 class SetModeCall {
   const SetModeCall({
     required this.accessMode,
-    required this.phoneId,
-    required this.bridgeId,
-    required this.sessionToken,
+    this.phoneId,
+    this.bridgeId,
+    this.sessionToken,
+    this.localSessionKind,
   });
 
   final AccessMode accessMode;
-  final String phoneId;
-  final String bridgeId;
-  final String sessionToken;
+  final String? phoneId;
+  final String? bridgeId;
+  final String? sessionToken;
+  final String? localSessionKind;
 }
 
 class FakeSettingsBridgeApi implements SettingsBridgeApi {
@@ -421,9 +468,10 @@ class FakeSettingsBridgeApi implements SettingsBridgeApi {
   Future<AccessMode> setAccessMode({
     required String bridgeApiBaseUrl,
     required AccessMode accessMode,
-    required String phoneId,
-    required String bridgeId,
-    required String sessionToken,
+    String? phoneId,
+    String? bridgeId,
+    String? sessionToken,
+    String? localSessionKind,
     String actor = 'mobile-device',
   }) async {
     setModeCalls.add(
@@ -432,6 +480,7 @@ class FakeSettingsBridgeApi implements SettingsBridgeApi {
         phoneId: phoneId,
         bridgeId: bridgeId,
         sessionToken: sessionToken,
+        localSessionKind: localSessionKind,
       ),
     );
     this.accessMode = accessMode;

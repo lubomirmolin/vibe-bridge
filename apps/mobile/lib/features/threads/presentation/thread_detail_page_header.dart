@@ -133,9 +133,11 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
           constraints: const BoxConstraints(
             maxWidth: _ThreadDetailPageState._sessionContentMaxWidth,
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+          child: SizedBox(
+            width: double.infinity,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
               Row(
                 children: [
                   if (showBackButton)
@@ -391,7 +393,8 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
                   ],
                 ),
               ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -435,8 +438,10 @@ class _UnavailableThreadDetailHeader extends StatelessWidget {
           constraints: const BoxConstraints(
             maxWidth: _ThreadDetailPageState._sessionContentMaxWidth,
           ),
-          child: Column(
-            children: [
+          child: SizedBox(
+            width: double.infinity,
+            child: Column(
+              children: [
               Row(
                 children: [
                   if (showBackButton)
@@ -499,7 +504,8 @@ class _UnavailableThreadDetailHeader extends StatelessWidget {
                 compact: true,
                 margin: const EdgeInsets.only(top: 8),
               ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
