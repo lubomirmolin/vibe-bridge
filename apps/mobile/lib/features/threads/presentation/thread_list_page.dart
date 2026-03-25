@@ -461,112 +461,145 @@ class _ThreadListSurface extends StatelessWidget {
   final VoidCallback? onBack;
   final String? selectedThreadId;
 
-  bool get _isWidePane => onBack == null;
-
   @override
   Widget build(BuildContext context) {
+    final leadingInset = onBack != null ? 36.0 : 16.0;
+
     return Column(
       children: [
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-          color: AppTheme.background.withValues(alpha: 0.8),
-          child: Row(
-            children: [
-              if (onBack != null)
-                IconButton(
-                  onPressed: onBack,
-                  icon: PhosphorIcon(
-                    PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
-                    size: 20,
-                    color: AppTheme.textMuted,
-                  ),
-                ),
-              IconButton(
-                key: const Key('open-approvals-queue'),
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (context) =>
-                        ApprovalsQueuePage(bridgeApiBaseUrl: bridgeApiBaseUrl),
-                  ),
-                ),
-                icon: PhosphorIcon(
-                  PhosphorIcons.shieldWarning(PhosphorIconsStyle.duotone),
-                  size: 20,
-                  color: AppTheme.amber,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'ACTIVE THREADS',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: 1.0,
-                    color: AppTheme.textMain,
-                  ),
-                ),
-              ),
-              IconButton(
-                key: const Key('thread-list-create-button'),
-                onPressed: onCreateThread,
-                icon: PhosphorIcon(
-                  PhosphorIcons.plus(PhosphorIconsStyle.bold),
-                  size: 20,
-                  color: AppTheme.textMain,
-                ),
-              ),
-            ],
+          padding: const EdgeInsets.only(top: 0, right: 16, bottom: 8),
+          decoration: const BoxDecoration(
+            color: AppTheme.background,
+            border: Border(bottom: BorderSide(color: Colors.white10)),
           ),
-        ),
-        ConnectionStatusBanner(
-          state: _threadListConnectionBannerState(state.liveConnectionState),
-          detail: _threadListConnectionBannerDetail(state),
-          compact: true,
-          margin: EdgeInsets.fromLTRB(24, 0, 24, _isWidePane ? 8 : 4),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
-          child: Container(
-            decoration: BoxDecoration(
-              color: AppTheme.surfaceZinc800.withValues(alpha: 0.5),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
-            ),
-            child: TextField(
-              key: const Key('thread-search-input'),
-              controller: searchController,
-              onChanged: controller.updateSearchQuery,
-              style: const TextStyle(color: AppTheme.textMain, fontSize: 14),
-              decoration: InputDecoration(
-                hintText: 'Search threads...',
-                hintStyle: const TextStyle(color: AppTheme.textSubtle),
-                prefixIcon: Padding(
-                  padding: const EdgeInsets.all(12.0),
-                  child: PhosphorIcon(
-                    PhosphorIcons.magnifyingGlass(),
-                    size: 20,
-                    color: AppTheme.textSubtle,
-                  ),
-                ),
-                suffixIcon: state.hasQuery
-                    ? IconButton(
-                        onPressed: () {
-                          searchController.clear();
-                          controller.clearSearchQuery();
-                        },
-                        icon: PhosphorIcon(
-                          PhosphorIcons.x(),
-                          size: 16,
-                          color: AppTheme.textSubtle,
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxWidth: threadSessionContentMaxWidth,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      if (onBack != null)
+                        IconButton(
+                          key: const Key('thread-list-back-button'),
+                          onPressed: onBack,
+                          icon: PhosphorIcon(
+                            PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
+                            size: 20,
+                            color: AppTheme.textMuted,
+                          ),
+                        )
+                      else
+                        const SizedBox(width: 16),
+                      Expanded(
+                        child: Text(
+                          'Active Threads',
+                          key: const Key('thread-list-title'),
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(
+                                fontWeight: FontWeight.w500,
+                                letterSpacing: -0.5,
+                                fontSize: 18,
+                              ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                      )
-                    : null,
-                border: InputBorder.none,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 14,
-                ),
+                      ),
+                      IconButton(
+                        key: const Key('open-approvals-queue'),
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (context) => ApprovalsQueuePage(
+                              bridgeApiBaseUrl: bridgeApiBaseUrl,
+                            ),
+                          ),
+                        ),
+                        icon: PhosphorIcon(
+                          PhosphorIcons.shieldWarning(
+                            PhosphorIconsStyle.duotone,
+                          ),
+                          size: 20,
+                          color: AppTheme.amber,
+                        ),
+                      ),
+                      IconButton(
+                        key: const Key('thread-list-create-button'),
+                        onPressed: onCreateThread,
+                        icon: PhosphorIcon(
+                          PhosphorIcons.plus(PhosphorIconsStyle.bold),
+                          size: 20,
+                          color: AppTheme.textMain,
+                        ),
+                      ),
+                    ],
+                  ),
+                  ConnectionStatusBanner(
+                    state: _threadListConnectionBannerState(
+                      state.liveConnectionState,
+                    ),
+                    detail: _threadListConnectionBannerDetail(state),
+                    compact: true,
+                    margin: EdgeInsets.fromLTRB(leadingInset, 12, 0, 0),
+                  ),
+                  Padding(
+                    padding: EdgeInsets.only(left: leadingInset, top: 12),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: AppTheme.surfaceZinc800.withValues(alpha: 0.5),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.05),
+                        ),
+                      ),
+                      child: TextField(
+                        key: const Key('thread-search-input'),
+                        controller: searchController,
+                        onChanged: controller.updateSearchQuery,
+                        style: const TextStyle(
+                          color: AppTheme.textMain,
+                          fontSize: 14,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: 'Search threads...',
+                          hintStyle: const TextStyle(
+                            color: AppTheme.textSubtle,
+                          ),
+                          prefixIcon: Padding(
+                            padding: const EdgeInsets.all(12.0),
+                            child: PhosphorIcon(
+                              PhosphorIcons.magnifyingGlass(),
+                              size: 20,
+                              color: AppTheme.textSubtle,
+                            ),
+                          ),
+                          suffixIcon: state.hasQuery
+                              ? IconButton(
+                                  onPressed: () {
+                                    searchController.clear();
+                                    controller.clearSearchQuery();
+                                  },
+                                  icon: PhosphorIcon(
+                                    PhosphorIcons.x(),
+                                    size: 16,
+                                    color: AppTheme.textSubtle,
+                                  ),
+                                )
+                              : null,
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 14,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -1195,6 +1228,7 @@ class _ThreadSummaryCard extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
         curve: Curves.easeOutCubic,
+        width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
         decoration: BoxDecoration(
           color: isSelected

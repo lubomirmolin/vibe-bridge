@@ -117,6 +117,44 @@ void main() {
       expect(processLauncher.calls, isEmpty);
     });
 
+    test('persists bridge crash logs and surfaces recent log tail', () async {
+      healthProbe.reachable = false;
+      final process = FakeManagedProcessHandle(pid: 4242, running: true);
+      processLauncher.nextProcess = process;
+
+      await supervisor.prepareBridgeForConnection();
+      process.emitStdout('bridge booted');
+      process.emitStderr('panic: bind failed');
+      process.completeExit(101);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      await expectLater(
+        supervisor.prepareBridgeForConnection(),
+        throwsA(
+          isA<RuntimeLaunchFailedException>().having(
+            (error) => error.message,
+            'message',
+            allOf([
+              contains('bridge helper exited with code 101'),
+              contains('[stdout] bridge booted'),
+              contains('[stderr] panic: bind failed'),
+              contains('bridge-supervisor.log'),
+            ]),
+          ),
+        ),
+      );
+
+      final logFile = File(
+        '${stateDirectoryProvider.directory.path}/bridge-supervisor.log',
+      );
+      expect(logFile.existsSync(), isTrue);
+      final contents = await logFile.readAsString();
+      expect(contents, contains('[supervisor] bridge helper launched'));
+      expect(contents, contains('[stdout] bridge booted'));
+      expect(contents, contains('[stderr] panic: bind failed'));
+      expect(contents, contains('bridge helper exited with code 101'));
+    });
+
     test('codex resolver discovers nvm installs automatically', () async {
       final home = Directory.systemTemp.createTempSync('linux-shell-home-');
       addTearDown(() {
@@ -256,24 +294,41 @@ class FakeManagedProcessHandle implements ManagedProcessHandle {
 
   final List<ProcessSignal> killSignals = <ProcessSignal>[];
   bool _running;
-  final Completer<int> _exitCode = Completer<int>()..complete(0);
+  final Completer<int> _exitCode = Completer<int>();
+  final StreamController<String> _stdoutController = StreamController<String>();
+  final StreamController<String> _stderrController = StreamController<String>();
 
   @override
   bool get isRunning => _running;
 
   @override
-  Stream<String> get stdoutLines => const Stream<String>.empty();
+  Stream<String> get stdoutLines => _stdoutController.stream;
 
   @override
-  Stream<String> get stderrLines => const Stream<String>.empty();
+  Stream<String> get stderrLines => _stderrController.stream;
 
   @override
   Future<int> get exitCode => _exitCode.future;
 
+  void emitStdout(String line) {
+    _stdoutController.add(line);
+  }
+
+  void emitStderr(String line) {
+    _stderrController.add(line);
+  }
+
+  void completeExit(int code) {
+    _running = false;
+    if (!_exitCode.isCompleted) {
+      _exitCode.complete(code);
+    }
+  }
+
   @override
   bool kill([ProcessSignal signal = ProcessSignal.sigterm]) {
     killSignals.add(signal);
-    _running = false;
+    completeExit(signal == ProcessSignal.sigkill ? -9 : 0);
     return true;
   }
 }

@@ -1,6 +1,83 @@
 import Darwin
 import Foundation
 
+struct BridgeTerminationSummary {
+    static func make(
+        reason: Process.TerminationReason,
+        status: Int32,
+        recentLogLines: [String],
+        logPath: String
+    ) -> String {
+        let baseMessage: String
+        switch reason {
+        case .exit:
+            baseMessage = "bridge helper exited with status \(status)"
+        case .uncaughtSignal:
+            baseMessage = "bridge helper crashed from signal \(status)"
+        @unknown default:
+            baseMessage = "bridge helper terminated for an unknown reason (\(status))"
+        }
+
+        let tail = recentLogLines.suffix(4).joined(separator: " | ")
+        if tail.isEmpty {
+            return "\(baseMessage). Full log: \(logPath)"
+        }
+
+        return "\(baseMessage). Recent logs: \(tail). Full log: \(logPath)"
+    }
+}
+
+final class BridgeSupervisorLogWriter {
+    private let fileManager: FileManager
+    let logFileURL: URL
+    private let now: () -> Date
+    private let lock = NSLock()
+    private let formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    init(
+        fileManager: FileManager = .default,
+        logFileURL: URL,
+        now: @escaping () -> Date = Date.init
+    ) {
+        self.fileManager = fileManager
+        self.logFileURL = logFileURL
+        self.now = now
+    }
+
+    func append(_ line: String) {
+        let entry = "[\(formatter.string(from: now()))] \(line)\n"
+        guard let data = entry.data(using: .utf8) else {
+            return
+        }
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        do {
+            try fileManager.createDirectory(
+                at: logFileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+
+            if !fileManager.fileExists(atPath: logFileURL.path) {
+                fileManager.createFile(atPath: logFileURL.path, contents: Data())
+            }
+
+            let handle = try FileHandle(forWritingTo: logFileURL)
+            try handle.seekToEnd()
+            try handle.write(contentsOf: data)
+            try handle.close()
+        } catch {
+            fputs("bridge supervisor log write failed: \(error.localizedDescription)\n", stderr)
+        }
+    }
+}
+
 protocol DesktopRuntimeSupervisorClient: AnyObject {
     func prepareBridgeForConnection() async throws -> DesktopRuntimeLaunchSnapshot
     func restartBridge() async throws -> DesktopRuntimeLaunchSnapshot
@@ -35,6 +112,7 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
     private let codexCommandOverride: String?
     private let stateDirectoryURL: URL
     private let currentProcessID: Int32
+    private let logWriter: BridgeSupervisorLogWriter
 
     private var managedProcess: Process?
     private var recentLogLines: [String] = []
@@ -51,7 +129,8 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
         adminPort: Int = 3111,
         codexCommandOverride: String? = ProcessInfo.processInfo.environment["CODEX_MOBILE_COMPANION_CODEX_BINARY"],
         stateDirectoryURL: URL = DesktopRuntimeSupervisor.defaultStateDirectoryURL(),
-        currentProcessID: Int32 = Int32(ProcessInfo.processInfo.processIdentifier)
+        currentProcessID: Int32 = Int32(ProcessInfo.processInfo.processIdentifier),
+        logWriter: BridgeSupervisorLogWriter? = nil
     ) {
         self.healthProbe = healthProbe
         self.pathResolver = pathResolver
@@ -64,6 +143,10 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
         self.codexCommandOverride = codexCommandOverride
         self.stateDirectoryURL = stateDirectoryURL
         self.currentProcessID = currentProcessID
+        self.logWriter = logWriter ?? BridgeSupervisorLogWriter(
+            fileManager: fileManager,
+            logFileURL: stateDirectoryURL.appending(path: "bridge-supervisor.log")
+        )
     }
 
     func prepareBridgeForConnection() async throws -> DesktopRuntimeLaunchSnapshot {
@@ -187,6 +270,9 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
                 "failed to prepare bridge state directory at \(stateDirectoryURL.path): \(error.localizedDescription)"
             )
         }
+        logWriter.append("[supervisor] launching bridge helper: \(bridgeBinaryURL.path) \(bridgeArguments().joined(separator: " "))")
+        recentLogLines.removeAll()
+        lastExitSummary = nil
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -205,12 +291,16 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
         do {
             try process.run()
         } catch {
+            logWriter.append("[supervisor] failed to launch bridge helper at \(bridgeBinaryURL.path): \(error.localizedDescription)")
             throw DesktopRuntimeSupervisorError.launchFailed(
                 "failed to launch bridge helper at \(bridgeBinaryURL.path): \(error.localizedDescription)"
             )
         }
 
         managedProcess = process
+        logWriter.append(
+            "[supervisor] bridge helper launched (pid \(process.processIdentifier)); waiting for health on \(bridgeHost):\(bridgePort)"
+        )
         return DesktopRuntimeLaunchSnapshot(
             statusLabel: "Launching bridge",
             detail: "Desktop shell launched the bridge helper (pid \(process.processIdentifier)). Waiting for health on \(bridgeHost):\(bridgePort)…",
@@ -330,11 +420,21 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
         if recentLogLines.count > 20 {
             recentLogLines.removeFirst(recentLogLines.count - 20)
         }
+
+        for line in lines {
+            logWriter.append(line)
+        }
     }
 
     private func handleTermination(_ process: Process) {
-        let summary = "bridge helper exited with status \(process.terminationStatus). \(recentLogTail())"
+        let summary = BridgeTerminationSummary.make(
+            reason: process.terminationReason,
+            status: process.terminationStatus,
+            recentLogLines: recentLogLines,
+            logPath: logWriter.logFileURL.path
+        )
         lastExitSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        logWriter.append("[supervisor] \(summary)")
 
         if managedProcess === process {
             managedProcess = nil
@@ -347,6 +447,8 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
             lastExitSummary = nil
             return
         }
+
+        logWriter.append("[supervisor] stopping managed bridge helper (pid \(process.processIdentifier))")
 
         if process.isRunning {
             process.terminate()

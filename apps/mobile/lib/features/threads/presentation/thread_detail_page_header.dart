@@ -760,6 +760,7 @@ class _GitBranchSheetState extends State<_GitBranchSheet> {
                 ),
                 onPressed: commitEnabled
                     ? () async {
+                        final navigator = Navigator.of(context);
                         setState(() {
                           _isCommitSubmitting = true;
                         });
@@ -771,7 +772,7 @@ class _GitBranchSheetState extends State<_GitBranchSheet> {
                           _isCommitSubmitting = false;
                         });
                         if (success) {
-                          Navigator.of(context).pop();
+                          navigator.pop();
                         }
                       }
                     : null,

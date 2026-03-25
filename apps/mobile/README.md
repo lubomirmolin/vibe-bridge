@@ -31,6 +31,7 @@ wrapper so `flutter run` always gets the expected Rust environment:
 
 ```bash
 flutter test --concurrency=5
+
 ```
 
 Integration tests should be pinned to an explicit simulator or emulator:
