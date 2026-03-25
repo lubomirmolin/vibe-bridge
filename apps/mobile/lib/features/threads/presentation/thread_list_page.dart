@@ -1096,23 +1096,52 @@ class _ThreadWorkspaceSection extends StatelessWidget {
                   color: AppTheme.emerald,
                 ),
                 const SizedBox(width: 10),
-                Flexible(
-                  child: Text(
-                    group.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.jetBrainsMono(
-                      color: AppTheme.textMuted,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 16),
                 Expanded(
-                  child: Container(
-                    height: 1,
-                    color: Colors.white.withValues(alpha: 0.05),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      const dividerGap = 12.0;
+                      const minDividerWidth = 32.0;
+                      final labelStyle = GoogleFonts.jetBrainsMono(
+                        color: AppTheme.textMuted,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      );
+                      final showDivider =
+                          constraints.maxWidth > dividerGap + minDividerWidth;
+                      final labelMaxWidth = showDivider
+                          ? math.max(
+                              0.0,
+                              constraints.maxWidth -
+                                  dividerGap -
+                                  minDividerWidth,
+                            )
+                          : constraints.maxWidth;
+
+                      return Row(
+                        children: [
+                          ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxWidth: labelMaxWidth,
+                            ),
+                            child: Text(
+                              group.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: labelStyle,
+                            ),
+                          ),
+                          if (showDivider) ...[
+                            const SizedBox(width: dividerGap),
+                            Expanded(
+                              child: Container(
+                                height: 1,
+                                color: Colors.white.withValues(alpha: 0.05),
+                              ),
+                            ),
+                          ],
+                        ],
+                      );
+                    },
                   ),
                 ),
                 const SizedBox(width: 16),
