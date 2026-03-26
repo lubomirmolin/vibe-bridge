@@ -10,6 +10,18 @@ class MainFlutterWindow: NSWindow {
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 
+    titleVisibility = .hidden
+    titlebarAppearsTransparent = true
+    styleMask.insert(.fullSizeContentView)
+    isMovableByWindowBackground = true
+
+    if #available(macOS 11.0, *) {
+      let unifiedToolbar = NSToolbar(identifier: NSToolbar.Identifier("CodexWindowToolbar"))
+      unifiedToolbar.showsBaselineSeparator = false
+      toolbar = unifiedToolbar
+      toolbarStyle = .unifiedCompact
+    }
+
     super.awakeFromNib()
   }
 }

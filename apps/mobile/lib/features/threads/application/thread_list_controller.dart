@@ -227,7 +227,7 @@ class ThreadListController extends StateNotifier<ThreadListState> {
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
       );
       final threads = _mergeFetchedThreadsPreservingNewerState(fetchedThreads);
-      await _cacheRepository.saveThreadList(threads);
+      await _persistThreadListBestEffort(threads);
       if (!_canMutateState) {
         return;
       }
@@ -562,7 +562,7 @@ class ThreadListController extends StateNotifier<ThreadListState> {
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
       );
       final threads = _mergeFetchedThreadsPreservingNewerState(fetchedThreads);
-      await _cacheRepository.saveThreadList(threads);
+      await _persistThreadListBestEffort(threads);
       if (!_canMutateState) {
         return false;
       }
@@ -628,6 +628,16 @@ class ThreadListController extends StateNotifier<ThreadListState> {
       await subscription.close();
     } catch (_) {
       // Ignore already-closed websocket teardown failures.
+    }
+  }
+
+  Future<void> _persistThreadListBestEffort(
+    List<ThreadSummaryDto> threads,
+  ) async {
+    try {
+      await _cacheRepository.saveThreadList(threads);
+    } catch (_) {
+      // Keep the live thread list usable even if local persistence is unavailable.
     }
   }
 

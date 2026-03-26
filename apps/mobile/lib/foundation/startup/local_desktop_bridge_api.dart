@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:codex_mobile_companion/foundation/network/bridge_transport.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 const String defaultLocalDesktopBridgeBaseUrl = 'http://127.0.0.1:3110';
@@ -37,15 +38,11 @@ abstract class LocalDesktopBridgeApi {
 }
 
 final localDesktopConfigProvider = Provider<LocalDesktopConfig>((ref) {
-  return const LocalDesktopConfig(
-    enabled: bool.fromEnvironment(
-      'CODEX_LOCAL_DESKTOP_ENABLED',
-      defaultValue: true,
-    ),
-    bridgeApiBaseUrl: String.fromEnvironment(
-      'CODEX_LOCAL_BRIDGE_BASE_URL',
-      defaultValue: defaultLocalDesktopBridgeBaseUrl,
-    ),
+  final isMacOS = !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
+
+  return LocalDesktopConfig(
+    enabled: kIsWeb || isMacOS,
+    bridgeApiBaseUrl: defaultLocalDesktopBridgeBaseUrl,
   );
 });
 

@@ -23,13 +23,9 @@ flutter devices
 flutter run -d <simulator-or-emulator-id>
 ```
 
-On desktop (`macos`, `linux`, or `windows` Flutter targets) and in the browser,
-the app probes the local bridge first and opens the current-machine thread UI
-directly when
-`http://127.0.0.1:3110` is reachable. Override the default with
-`--dart-define=CODEX_LOCAL_BRIDGE_BASE_URL=http://127.0.0.1:3210` or disable
-the localhost shortcut with
-`--dart-define=CODEX_LOCAL_DESKTOP_ENABLED=false`.
+On macOS and in the browser, the app probes the local bridge first and opens
+the current-machine thread UI directly when `http://127.0.0.1:3110` is
+reachable.
 
 For Flutter web:
 

@@ -1,5 +1,6 @@
 import 'package:codex_mobile_companion/app_startup_page.dart';
 import 'package:codex_mobile_companion/foundation/navigation/app_navigator.dart';
+import 'package:codex_mobile_companion/foundation/platform/macos_window_chrome.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:codex_ui/codex_ui.dart';
@@ -17,6 +18,8 @@ class CodexMobileApp extends StatelessWidget {
       navigatorKey: appNavigatorKey,
       title: 'Codex Mobile Companion',
       theme: AppTheme.darkTheme,
+      builder: (context, child) =>
+          MacosWindowChromeFrame(child: child ?? const SizedBox.shrink()),
       home: const AppStartupPage(),
     );
   }

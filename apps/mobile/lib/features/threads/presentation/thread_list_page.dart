@@ -8,6 +8,7 @@ import 'package:codex_mobile_companion/features/threads/presentation/thread_git_
 import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/layout/adaptive_layout.dart';
+import 'package:codex_mobile_companion/foundation/platform/macos_window_chrome.dart';
 import 'package:codex_ui/codex_ui.dart';
 import 'package:codex_mobile_companion/shared/widgets/badges.dart';
 import 'package:codex_mobile_companion/shared/widgets/connection_status_banner.dart';
@@ -36,6 +37,10 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
   static const double _widePaneMinWidth = 200;
   static const double _wideDetailMinWidth = 320;
   static const double _wideResizeHandleWidth = 14;
+  static const Duration _widePaneAnimationDuration = Duration(
+    milliseconds: 240,
+  );
+  static const Curve _widePaneAnimationCurve = Curves.easeInOutCubic;
 
   late final TextEditingController _searchController;
   late final ProviderSubscription<ThreadListState> _threadListSubscription;
@@ -215,6 +220,68 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
     await _openDraftThread(selectedGroup);
   }
 
+  Future<void> _openApprovalsQueue() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) =>
+            ApprovalsQueuePage(bridgeApiBaseUrl: widget.bridgeApiBaseUrl),
+      ),
+    );
+  }
+
+  void _toggleWideSidebar() {
+    setState(() {
+      if (_isWideDiffPaneVisible) {
+        _isWideDiffPaneVisible = false;
+        _isWideThreadListHidden = false;
+        _wasWideThreadListHiddenBeforeDiff = false;
+      } else {
+        _isWideThreadListHidden = !_isWideThreadListHidden;
+      }
+    });
+  }
+
+  MacosWindowChromeConfiguration _windowChromeConfiguration(
+    ThreadListState state,
+    AdaptiveLayoutInfo layout,
+  ) {
+    if (!isMacosWindowChromeEnabled || !layout.isWideLayout) {
+      return const MacosWindowChromeConfiguration();
+    }
+
+    return MacosWindowChromeConfiguration(
+      leadingActions: [
+        MacosWindowChromeAction(
+          key: const Key('thread-window-sidebar-toggle'),
+          icon: PhosphorIcons.sidebarSimple(
+            _isWideThreadListHidden
+                ? PhosphorIconsStyle.regular
+                : PhosphorIconsStyle.fill,
+          ),
+          onPressed: _toggleWideSidebar,
+          tooltip: _isWideThreadListHidden ? 'Show sidebar' : 'Hide sidebar',
+          isActive: !_isWideThreadListHidden,
+        ),
+        MacosWindowChromeAction(
+          key: const Key('thread-list-create-button'),
+          icon: PhosphorIcons.plus(PhosphorIconsStyle.bold),
+          onPressed: state.isLoading ? null : () => _startNewThread(state),
+          tooltip: 'New thread',
+          tintColor: AppTheme.textMain,
+        ),
+      ],
+      trailingActions: [
+        MacosWindowChromeAction(
+          key: const Key('open-approvals-queue'),
+          icon: PhosphorIcons.shieldWarning(PhosphorIconsStyle.duotone),
+          onPressed: _openApprovalsQueue,
+          tooltip: 'Approvals',
+          tintColor: AppTheme.amber,
+        ),
+      ],
+    );
+  }
+
   bool _isGroupCollapsed(ThreadListState state, String groupId) {
     if (state.hasQuery) {
       return false;
@@ -303,27 +370,32 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
       threadListControllerProvider(widget.bridgeApiBaseUrl).notifier,
     );
     final layout = AdaptiveLayoutInfo.fromMediaQuery(MediaQuery.of(context));
+    final chromeConfiguration = _windowChromeConfiguration(state, layout);
 
     if (!layout.isWideLayout) {
-      return Scaffold(
-        backgroundColor: AppTheme.background,
-        body: SafeArea(
-          child: _ThreadListSurface(
-            bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
-            state: state,
-            controller: controller,
-            searchController: _searchController,
-            visibleThreadsPerGroup: _defaultVisibleThreadsPerGroup,
-            isGroupCollapsed: (groupId) => _isGroupCollapsed(state, groupId),
-            isGroupThreadListExpanded: (groupId) =>
-                _isGroupThreadListExpanded(state, groupId),
-            onToggleGroupCollapsed: _toggleGroupCollapsed,
-            onToggleGroupThreadExpansion: _toggleGroupThreadExpansion,
-            onOpenThread: (threadId) => _openThreadDetail(controller, threadId),
-            onCreateThread: state.isLoading
-                ? null
-                : () => _startNewThread(state),
-            onBack: () => Navigator.of(context).pop(),
+      return MacosWindowChromeScope(
+        configuration: chromeConfiguration,
+        child: Scaffold(
+          backgroundColor: AppTheme.background,
+          body: SafeArea(
+            child: _ThreadListSurface(
+              bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+              state: state,
+              controller: controller,
+              searchController: _searchController,
+              visibleThreadsPerGroup: _defaultVisibleThreadsPerGroup,
+              isGroupCollapsed: (groupId) => _isGroupCollapsed(state, groupId),
+              isGroupThreadListExpanded: (groupId) =>
+                  _isGroupThreadListExpanded(state, groupId),
+              onToggleGroupCollapsed: _toggleGroupCollapsed,
+              onToggleGroupThreadExpansion: _toggleGroupThreadExpansion,
+              onOpenThread: (threadId) =>
+                  _openThreadDetail(controller, threadId),
+              onCreateThread: state.isLoading
+                  ? null
+                  : () => _startNewThread(state),
+              onBack: () => Navigator.of(context).pop(),
+            ),
           ),
         ),
       );
@@ -331,103 +403,114 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
 
     final selectedThreadId =
         _wideSelection?.threadId ?? state.selectedThreadId?.trim();
-    return Scaffold(
-      backgroundColor: AppTheme.background,
-      drawerEdgeDragWidth: 24,
-      drawer: Drawer(
+    return MacosWindowChromeScope(
+      configuration: chromeConfiguration,
+      child: Scaffold(
         backgroundColor: AppTheme.background,
-        width: math.min(MediaQuery.of(context).size.width * 0.68, 420),
-        child: SafeArea(
-          child: _ThreadListSurface(
-            bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
-            state: state,
-            controller: controller,
-            searchController: _searchController,
-            visibleThreadsPerGroup: _defaultVisibleThreadsPerGroup,
-            isGroupCollapsed: (groupId) => _isGroupCollapsed(state, groupId),
-            isGroupThreadListExpanded: (groupId) =>
-                _isGroupThreadListExpanded(state, groupId),
-            onToggleGroupCollapsed: _toggleGroupCollapsed,
-            onToggleGroupThreadExpansion: _toggleGroupThreadExpansion,
-            onOpenThread: (threadId) async {
-              Navigator.of(context).pop();
-              await _openThreadDetail(
-                controller,
-                threadId,
-                forceWideSelection: true,
-              );
-            },
-            onCreateThread: state.isLoading
-                ? null
-                : () async {
-                    Navigator.of(context).pop();
-                    await _startNewThread(state);
-                  },
+        drawerEdgeDragWidth: 24,
+        drawer: Drawer(
+          backgroundColor: AppTheme.background,
+          width: math.min(MediaQuery.of(context).size.width * 0.68, 420),
+          child: SafeArea(
+            child: _ThreadListSurface(
+              bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+              state: state,
+              controller: controller,
+              searchController: _searchController,
+              visibleThreadsPerGroup: _defaultVisibleThreadsPerGroup,
+              isGroupCollapsed: (groupId) => _isGroupCollapsed(state, groupId),
+              isGroupThreadListExpanded: (groupId) =>
+                  _isGroupThreadListExpanded(state, groupId),
+              onToggleGroupCollapsed: _toggleGroupCollapsed,
+              onToggleGroupThreadExpansion: _toggleGroupThreadExpansion,
+              onOpenThread: (threadId) async {
+                Navigator.of(context).pop();
+                await _openThreadDetail(
+                  controller,
+                  threadId,
+                  forceWideSelection: true,
+                );
+              },
+              onCreateThread: state.isLoading
+                  ? null
+                  : () async {
+                      Navigator.of(context).pop();
+                      await _startNewThread(state);
+                    },
+            ),
           ),
         ),
-      ),
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final useFullWidth = layout.hasSeparatingFold;
-            final bodyWidth = useFullWidth
-                ? constraints.maxWidth
-                : layout.constrainedContentWidth(constraints.maxWidth);
-            final defaultThreadListPaneWidth = _defaultWideThreadListPaneWidth(
-              layout: layout,
-              bodyWidth: bodyWidth,
-            );
-            final defaultDiffPaneWidth = _defaultWideDiffPaneWidth(
-              bodyWidth: bodyWidth,
-            );
-            final requestedThreadListPaneWidth =
-                _wideThreadListPaneWidth ?? defaultThreadListPaneWidth;
-            final requestedDiffPaneWidth =
-                _wideDiffPaneWidth ?? defaultDiffPaneWidth;
-            final provisionalThreadListPaneWidth = _isWideThreadListHidden
-                ? 0.0
-                : _clampWideThreadListPaneWidth(
-                    requestedWidth: requestedThreadListPaneWidth,
-                    bodyWidth: bodyWidth,
+        body: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final bodyWidth = constraints.maxWidth;
+              final defaultThreadListPaneWidth =
+                  _defaultWideThreadListPaneWidth(
                     layout: layout,
-                    reservedDiffWidth: _isWideDiffPaneVisible
-                        ? requestedDiffPaneWidth
-                        : 0,
-                    defaultWidth: defaultThreadListPaneWidth,
-                  );
-            final resolvedDiffPaneWidth = _isWideDiffPaneVisible
-                ? _clampWideDiffPaneWidth(
-                    requestedWidth: requestedDiffPaneWidth,
                     bodyWidth: bodyWidth,
-                    reservedListWidth: provisionalThreadListPaneWidth,
-                  )
-                : 0.0;
-            final resolvedThreadListPaneWidth = _isWideThreadListHidden
-                ? 0.0
-                : _clampWideThreadListPaneWidth(
-                    requestedWidth: requestedThreadListPaneWidth,
-                    bodyWidth: bodyWidth,
-                    layout: layout,
-                    reservedDiffWidth: resolvedDiffPaneWidth,
-                    defaultWidth: defaultThreadListPaneWidth,
                   );
-            final paneGap = layout.hasSeparatingFold
-                ? layout.verticalFoldBounds!.width
-                : 1.0;
+              final defaultDiffPaneWidth = _defaultWideDiffPaneWidth(
+                bodyWidth: bodyWidth,
+              );
+              final requestedThreadListPaneWidth =
+                  _wideThreadListPaneWidth ?? defaultThreadListPaneWidth;
+              final requestedDiffPaneWidth =
+                  _wideDiffPaneWidth ?? defaultDiffPaneWidth;
+              final provisionalThreadListPaneWidth = _isWideThreadListHidden
+                  ? 0.0
+                  : _clampWideThreadListPaneWidth(
+                      requestedWidth: requestedThreadListPaneWidth,
+                      bodyWidth: bodyWidth,
+                      layout: layout,
+                      reservedDiffWidth: _isWideDiffPaneVisible
+                          ? requestedDiffPaneWidth
+                          : 0,
+                      defaultWidth: defaultThreadListPaneWidth,
+                    );
+              final resolvedDiffPaneWidth = _isWideDiffPaneVisible
+                  ? _clampWideDiffPaneWidth(
+                      requestedWidth: requestedDiffPaneWidth,
+                      bodyWidth: bodyWidth,
+                      reservedListWidth: provisionalThreadListPaneWidth,
+                    )
+                  : 0.0;
+              final resolvedThreadListPaneWidth = _isWideThreadListHidden
+                  ? 0.0
+                  : _clampWideThreadListPaneWidth(
+                      requestedWidth: requestedThreadListPaneWidth,
+                      bodyWidth: bodyWidth,
+                      layout: layout,
+                      reservedDiffWidth: resolvedDiffPaneWidth,
+                      defaultWidth: defaultThreadListPaneWidth,
+                    );
+              final paneGap = layout.hasSeparatingFold
+                  ? layout.verticalFoldBounds!.width
+                  : 1.0;
+              final widePaneAnimationDuration = _isWidePaneResizing
+                  ? Duration.zero
+                  : _widePaneAnimationDuration;
 
-            return Align(
-              alignment: Alignment.topCenter,
-              child: SizedBox(
-                width: bodyWidth,
-                child: Row(
-                  children: [
-                    SizedBox(
-                      key: const Key('thread-wide-left-pane'),
-                      width: resolvedThreadListPaneWidth,
-                      child: _isWideThreadListHidden
-                          ? const SizedBox.shrink()
-                          : ClipRect(
-                              child: IgnorePointer(
+              return Align(
+                alignment: Alignment.topCenter,
+                child: SizedBox(
+                  width: bodyWidth,
+                  child: Row(
+                    children: [
+                      AnimatedContainer(
+                        key: const Key('thread-wide-left-pane'),
+                        duration: widePaneAnimationDuration,
+                        curve: _widePaneAnimationCurve,
+                        width: resolvedThreadListPaneWidth,
+                        child: ClipRect(
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final hasUsableWidth =
+                                  constraints.maxWidth >= _widePaneMinWidth;
+                              if (!hasUsableWidth) {
+                                return const SizedBox.shrink();
+                              }
+
+                              return IgnorePointer(
                                 ignoring: _isWideThreadListHidden,
                                 child: DecoratedBox(
                                   decoration: const BoxDecoration(
@@ -462,115 +545,111 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                                     onCreateThread: state.isLoading
                                         ? null
                                         : () => _startNewThread(state),
+                                    movePrimaryActionsToWindowChrome:
+                                        isMacosWindowChromeEnabled,
                                     selectedThreadId: selectedThreadId,
                                   ),
                                 ),
-                              ),
-                            ),
-                    ),
-                    if (!_isWideThreadListHidden)
-                      _WidePaneResizeHandle(
-                        key: const Key('thread-wide-sidebar-resize-handle'),
-                        accentColor: layout.hasSeparatingFold
-                            ? AppTheme.amber
-                            : AppTheme.emerald,
-                        onDragStart: () {
-                          setState(() {
-                            _isWidePaneResizing = true;
-                          });
-                        },
-                        onDragUpdate: (delta) {
-                          setState(() {
-                            _wideThreadListPaneWidth =
-                                _clampWideThreadListPaneWidth(
-                                  requestedWidth:
-                                      resolvedThreadListPaneWidth + delta,
-                                  bodyWidth: bodyWidth,
-                                  layout: layout,
-                                  reservedDiffWidth: resolvedDiffPaneWidth,
-                                  defaultWidth: defaultThreadListPaneWidth,
-                                );
-                          });
-                        },
-                        onDragEnd: () {
-                          setState(() {
-                            _isWidePaneResizing = false;
-                          });
-                        },
+                              );
+                            },
+                          ),
+                        ),
                       ),
-                    SizedBox(
-                      key: const Key('thread-wide-gap'),
-                      width: _isWideThreadListHidden ? 0 : paneGap,
-                    ),
-                    Expanded(
-                      child: _WideThreadWorkspacePane(
-                        bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
-                        selection: _wideSelection,
-                        selectedThreadId: selectedThreadId,
-                        onOpenDiff: () {
-                          setState(() {
-                            if (_isWideDiffPaneVisible) {
-                              _isWideDiffPaneVisible = false;
-                              _isWideThreadListHidden =
-                                  _wasWideThreadListHiddenBeforeDiff;
-                            } else {
-                              _wasWideThreadListHiddenBeforeDiff =
-                                  _isWideThreadListHidden;
-                              _isWideDiffPaneVisible = true;
-                              _isWideThreadListHidden = true;
-                            }
-                          });
-                        },
-                        onToggleSidebar: () {
-                          setState(() {
-                            if (_isWideDiffPaneVisible) {
-                              _isWideDiffPaneVisible = false;
-                              _isWideThreadListHidden = false;
-                              _wasWideThreadListHiddenBeforeDiff = false;
-                            } else {
-                              _isWideThreadListHidden =
-                                  !_isWideThreadListHidden;
-                            }
-                          });
-                        },
-                        isSidebarVisible: !_isWideThreadListHidden,
-                        isDiffVisible: _isWideDiffPaneVisible,
-                        onDraftCreated: (transition) {
-                          setState(() {
-                            _wideSelection =
-                                _WideThreadWorkspaceSelection.createdThread(
-                                  transition,
-                                );
-                          });
-                        },
-                        diffPaneWidth: resolvedDiffPaneWidth,
-                        isResizing: _isWidePaneResizing,
-                        onResizeDiffStart: () {
-                          setState(() {
-                            _isWidePaneResizing = true;
-                          });
-                        },
-                        onResizeDiff: (delta) {
-                          setState(() {
-                            _wideDiffPaneWidth = _clampWideDiffPaneWidth(
-                              requestedWidth: resolvedDiffPaneWidth - delta,
-                              bodyWidth: bodyWidth,
-                              reservedListWidth: resolvedThreadListPaneWidth,
-                            );
-                          });
-                        },
-                        onResizeDiffEnd: () {
-                          setState(() {
-                            _isWidePaneResizing = false;
-                          });
-                        },
+                      if (!_isWideThreadListHidden)
+                        _WidePaneResizeHandle(
+                          key: const Key('thread-wide-sidebar-resize-handle'),
+                          accentColor: layout.hasSeparatingFold
+                              ? AppTheme.amber
+                              : AppTheme.emerald,
+                          onDragStart: () {
+                            setState(() {
+                              _isWidePaneResizing = true;
+                            });
+                          },
+                          onDragUpdate: (delta) {
+                            setState(() {
+                              _wideThreadListPaneWidth =
+                                  _clampWideThreadListPaneWidth(
+                                    requestedWidth:
+                                        resolvedThreadListPaneWidth + delta,
+                                    bodyWidth: bodyWidth,
+                                    layout: layout,
+                                    reservedDiffWidth: resolvedDiffPaneWidth,
+                                    defaultWidth: defaultThreadListPaneWidth,
+                                  );
+                            });
+                          },
+                          onDragEnd: () {
+                            setState(() {
+                              _isWidePaneResizing = false;
+                            });
+                          },
+                        ),
+                      AnimatedContainer(
+                        key: const Key('thread-wide-gap'),
+                        duration: widePaneAnimationDuration,
+                        curve: _widePaneAnimationCurve,
+                        width: _isWideThreadListHidden ? 0 : paneGap,
                       ),
-                    ),
-                  ],
+                      Expanded(
+                        child: _WideThreadWorkspacePane(
+                          bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+                          selection: _wideSelection,
+                          selectedThreadId: selectedThreadId,
+                          onOpenDiff: () {
+                            setState(() {
+                              if (_isWideDiffPaneVisible) {
+                                _isWideDiffPaneVisible = false;
+                                _isWideThreadListHidden =
+                                    _wasWideThreadListHiddenBeforeDiff;
+                              } else {
+                                _wasWideThreadListHiddenBeforeDiff =
+                                    _isWideThreadListHidden;
+                                _isWideDiffPaneVisible = true;
+                                _isWideThreadListHidden = true;
+                              }
+                            });
+                          },
+                          onToggleSidebar: _toggleWideSidebar,
+                          isSidebarVisible: !_isWideThreadListHidden,
+                          isDiffVisible: _isWideDiffPaneVisible,
+                          onDraftCreated: (transition) {
+                            setState(() {
+                              _wideSelection =
+                                  _WideThreadWorkspaceSelection.createdThread(
+                                    transition,
+                                  );
+                            });
+                          },
+                          diffPaneWidth: resolvedDiffPaneWidth,
+                          isResizing: _isWidePaneResizing,
+                          onResizeDiffStart: () {
+                            setState(() {
+                              _isWidePaneResizing = true;
+                            });
+                          },
+                          onResizeDiff: (delta) {
+                            setState(() {
+                              _wideDiffPaneWidth = _clampWideDiffPaneWidth(
+                                requestedWidth: resolvedDiffPaneWidth - delta,
+                                bodyWidth: bodyWidth,
+                                reservedListWidth: resolvedThreadListPaneWidth,
+                              );
+                            });
+                          },
+                          onResizeDiffEnd: () {
+                            setState(() {
+                              _isWidePaneResizing = false;
+                            });
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ),
     );
@@ -590,6 +669,7 @@ class _ThreadListSurface extends StatefulWidget {
     required this.onToggleGroupThreadExpansion,
     required this.onOpenThread,
     required this.onCreateThread,
+    this.movePrimaryActionsToWindowChrome = false,
     this.onBack,
     this.selectedThreadId,
   });
@@ -605,6 +685,7 @@ class _ThreadListSurface extends StatefulWidget {
   final ValueChanged<String> onToggleGroupThreadExpansion;
   final ValueChanged<String> onOpenThread;
   final VoidCallback? onCreateThread;
+  final bool movePrimaryActionsToWindowChrome;
   final VoidCallback? onBack;
   final String? selectedThreadId;
 
@@ -627,6 +708,8 @@ class _ThreadListSurfaceState extends State<_ThreadListSurface> {
 
   @override
   Widget build(BuildContext context) {
+    final movedToWindowChrome =
+        widget.movePrimaryActionsToWindowChrome && widget.onBack == null;
     final leadingInset = widget.onBack != null ? 36.0 : 16.0;
 
     return Column(
@@ -649,72 +732,81 @@ class _ThreadListSurfaceState extends State<_ThreadListSurface> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      if (widget.onBack != null)
-                        IconButton(
-                          key: const Key('thread-list-back-button'),
-                          onPressed: widget.onBack,
-                          icon: PhosphorIcon(
-                            PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
-                            size: 20,
-                            color: AppTheme.textMuted,
+                  if (!movedToWindowChrome)
+                    Row(
+                      children: [
+                        if (widget.onBack != null)
+                          IconButton(
+                            key: const Key('thread-list-back-button'),
+                            onPressed: widget.onBack,
+                            icon: PhosphorIcon(
+                              PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
+                              size: 20,
+                              color: AppTheme.textMuted,
+                            ),
+                          )
+                        else
+                          const SizedBox(width: 16),
+                        Expanded(
+                          child: Text(
+                            'Active Threads',
+                            key: const Key('thread-list-title'),
+                            style: Theme.of(context).textTheme.titleLarge
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w500,
+                                  letterSpacing: -0.5,
+                                  fontSize: 18,
+                                ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                        )
-                      else
-                        const SizedBox(width: 16),
-                      Expanded(
-                        child: Text(
-                          'Active Threads',
-                          key: const Key('thread-list-title'),
-                          style: Theme.of(context).textTheme.titleLarge
-                              ?.copyWith(
-                                fontWeight: FontWeight.w500,
-                                letterSpacing: -0.5,
-                                fontSize: 18,
-                              ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                         ),
-                      ),
-                      IconButton(
-                        key: const Key('open-approvals-queue'),
-                        onPressed: () => Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (context) => ApprovalsQueuePage(
-                              bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+                        IconButton(
+                          key: const Key('open-approvals-queue'),
+                          onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (context) => ApprovalsQueuePage(
+                                bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+                              ),
                             ),
                           ),
-                        ),
-                        icon: PhosphorIcon(
-                          PhosphorIcons.shieldWarning(
-                            PhosphorIconsStyle.duotone,
+                          icon: PhosphorIcon(
+                            PhosphorIcons.shieldWarning(
+                              PhosphorIconsStyle.duotone,
+                            ),
+                            size: 20,
+                            color: AppTheme.amber,
                           ),
-                          size: 20,
-                          color: AppTheme.amber,
                         ),
-                      ),
-                      IconButton(
-                        key: const Key('thread-list-create-button'),
-                        onPressed: widget.onCreateThread,
-                        icon: PhosphorIcon(
-                          PhosphorIcons.plus(PhosphorIconsStyle.bold),
-                          size: 20,
-                          color: AppTheme.textMain,
+                        IconButton(
+                          key: const Key('thread-list-create-button'),
+                          onPressed: widget.onCreateThread,
+                          icon: PhosphorIcon(
+                            PhosphorIcons.plus(PhosphorIconsStyle.bold),
+                            size: 20,
+                            color: AppTheme.textMain,
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    ),
                   ConnectionStatusBanner(
                     state: _threadListConnectionBannerState(
                       widget.state.liveConnectionState,
                     ),
                     detail: _threadListConnectionBannerDetail(widget.state),
                     compact: true,
-                    margin: EdgeInsets.fromLTRB(leadingInset, 12, 0, 0),
+                    margin: EdgeInsets.fromLTRB(
+                      movedToWindowChrome ? 16 : leadingInset,
+                      movedToWindowChrome ? 8 : 12,
+                      0,
+                      0,
+                    ),
                   ),
                   Padding(
-                    padding: EdgeInsets.only(left: leadingInset, top: 12),
+                    padding: EdgeInsets.only(
+                      left: movedToWindowChrome ? 16 : leadingInset,
+                      top: 12,
+                    ),
                     child: Container(
                       decoration: BoxDecoration(
                         color: AppTheme.surfaceZinc800.withValues(alpha: 0.5),
@@ -1005,8 +1097,8 @@ class _WideThreadWorkspacePane extends StatelessWidget {
           key: const Key('thread-wide-right-diff-pane'),
           duration: isResizing
               ? Duration.zero
-              : const Duration(milliseconds: 240),
-          curve: Curves.easeInOutCubic,
+              : _ThreadListPageState._widePaneAnimationDuration,
+          curve: _ThreadListPageState._widePaneAnimationCurve,
           width: isDiffVisible && (selectedThreadId?.isNotEmpty ?? false)
               ? diffPaneWidth
               : 0,
@@ -1161,6 +1253,7 @@ class _WideThreadDetailPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final inlineSidebarToggleEnabled = !isMacosWindowChromeEnabled;
     final draftGroup = selection?.draftGroup;
     if (draftGroup != null) {
       return ThreadDetailPage.draft(
@@ -1171,7 +1264,7 @@ class _WideThreadDetailPane extends StatelessWidget {
         showBackButton: false,
         embedInScaffold: false,
         onDraftThreadCreated: onDraftCreated,
-        onToggleSidebar: onToggleSidebar,
+        onToggleSidebar: inlineSidebarToggleEnabled ? onToggleSidebar : null,
         isSidebarVisible: isSidebarVisible,
       );
     }
@@ -1192,7 +1285,7 @@ class _WideThreadDetailPane extends StatelessWidget {
         showBackButton: false,
         embedInScaffold: false,
         onOpenDiff: onOpenDiff,
-        onToggleSidebar: onToggleSidebar,
+        onToggleSidebar: inlineSidebarToggleEnabled ? onToggleSidebar : null,
         isSidebarVisible: isSidebarVisible,
         onToggleDiff: onOpenDiff,
         isDiffVisible: isDiffVisible,
