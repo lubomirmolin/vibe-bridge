@@ -1,5 +1,6 @@
 import 'package:codex_mobile_companion/foundation/storage/persistence_boundary.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -43,6 +44,27 @@ void main() {
     expect(await thirdStore.readSecret(SecureValueKey.sessionToken), isNull);
   });
 
+  test(
+    'persisted secure store falls back when macOS entitlement is missing',
+    () async {
+      final store = PersistedSecureStore(
+        storage: _ThrowingFlutterSecureStorage(
+          PlatformException(
+            code: '-34018',
+            message: "A required entitlement isn't present.",
+          ),
+        ),
+      );
+
+      await store.writeSecret(SecureValueKey.selectedThreadId, 'thread-123');
+
+      expect(
+        await store.readSecret(SecureValueKey.selectedThreadId),
+        'thread-123',
+      );
+    },
+  );
+
   test('secure key names align to shared contract metadata', () {
     expect(SecureValueKey.pairingPrivateKey.wireValue, 'pairing_private_key');
     expect(SecureValueKey.sessionToken.wireValue, 'session_token');
@@ -82,4 +104,50 @@ void main() {
       isFalse,
     );
   });
+}
+
+class _ThrowingFlutterSecureStorage extends FlutterSecureStorage {
+  _ThrowingFlutterSecureStorage(this.error);
+
+  final PlatformException error;
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    WindowsOptions? wOptions,
+    MacOsOptions? mOptions,
+  }) async {
+    throw error;
+  }
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    WindowsOptions? wOptions,
+    MacOsOptions? mOptions,
+  }) async {
+    throw error;
+  }
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    WindowsOptions? wOptions,
+    MacOsOptions? mOptions,
+  }) async {
+    throw error;
+  }
 }

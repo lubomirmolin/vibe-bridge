@@ -690,6 +690,42 @@ void main() {
     expect(bridgeApi.fetchCallCount, 2);
   });
 
+  testWidgets(
+    'successful thread fetch still renders when cache persistence fails',
+    (tester) async {
+      final bridgeApi = FakeThreadListBridgeApi(
+        scriptedResults: [_sampleThreads()],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+            approvalBridgeApiProvider.overrideWithValue(
+              EmptyApprovalBridgeApi(),
+            ),
+            threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+            threadCacheRepositoryProvider.overrideWithValue(
+              ThrowingThreadCacheRepository(
+                onSaveThreadList: () => throw Exception('cache write failed'),
+              ),
+            ),
+          ],
+          child: const MaterialApp(
+            home: ThreadListPage(
+              bridgeApiBaseUrl: 'https://bridge.ts.net',
+              autoOpenPreviouslySelectedThread: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Implement shared contracts'), findsOneWidget);
+      expect(find.text("Couldn't load threads"), findsNothing);
+    },
+  );
+
   testWidgets('search narrows and clearing search restores full list', (
     tester,
   ) async {
@@ -1220,6 +1256,33 @@ ThreadCacheRepository _newCacheRepository() {
     secureStore: InMemorySecureStore(),
     nowUtc: () => DateTime.utc(2026, 3, 18, 10, 0),
   );
+}
+
+class ThrowingThreadCacheRepository implements ThreadCacheRepository {
+  ThrowingThreadCacheRepository({this.onSaveThreadList});
+
+  final Future<void> Function()? onSaveThreadList;
+
+  @override
+  Future<CachedThreadListSnapshot?> readThreadList() async {
+    return null;
+  }
+
+  @override
+  Future<String?> readSelectedThreadId() async {
+    return null;
+  }
+
+  @override
+  Future<void> saveSelectedThreadId(String threadId) async {}
+
+  @override
+  Future<void> saveThreadList(List<ThreadSummaryDto> threads) async {
+    final handler = onSaveThreadList;
+    if (handler != null) {
+      await handler();
+    }
+  }
 }
 
 Future<void> _setDisplaySize(WidgetTester tester, Size size) async {

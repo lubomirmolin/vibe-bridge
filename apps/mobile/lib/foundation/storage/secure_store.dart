@@ -142,8 +142,12 @@ class PersistedSecureStore implements SecureStore {
 
     return normalizedCode == 'missing_plugin_exception' ||
         normalizedCode == 'missing_plugin' ||
+        normalizedCode == '-34018' ||
         normalizedCode == 'channel-error' ||
         normalizedMessage.contains('missingpluginexception') ||
-        normalizedMessage.contains('unable to establish connection on channel');
+        normalizedMessage.contains(
+          'unable to establish connection on channel',
+        ) ||
+        normalizedMessage.contains("a required entitlement isn't present");
   }
 }
