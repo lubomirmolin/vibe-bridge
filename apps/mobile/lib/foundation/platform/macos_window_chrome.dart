@@ -176,6 +176,7 @@ class _MacosWindowChromeBar extends StatelessWidget {
       builder: (context, configuration, _) {
         return Stack(
           fit: StackFit.expand,
+          clipBehavior: Clip.none,
           children: [
             IgnorePointer(
               child: DecoratedBox(
@@ -289,10 +290,80 @@ class _MacosWindowChromeButton extends StatelessWidget {
       return button;
     }
 
-    return Tooltip(
-      message: action.tooltip!,
-      waitDuration: const Duration(milliseconds: 350),
-      child: button,
+    return _MacosWindowChromeTooltip(message: action.tooltip!, child: button);
+  }
+}
+
+class _MacosWindowChromeTooltip extends StatefulWidget {
+  const _MacosWindowChromeTooltip({required this.message, required this.child});
+
+  final String message;
+  final Widget child;
+
+  @override
+  State<_MacosWindowChromeTooltip> createState() =>
+      _MacosWindowChromeTooltipState();
+}
+
+class _MacosWindowChromeTooltipState extends State<_MacosWindowChromeTooltip> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.center,
+        children: [
+          widget.child,
+          Positioned(
+            top: _macosWindowChromeButtonSize + 8,
+            child: IgnorePointer(
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 140),
+                curve: Curves.easeOut,
+                opacity: _hovered ? 1 : 0,
+                child: AnimatedSlide(
+                  duration: const Duration(milliseconds: 140),
+                  curve: Curves.easeOut,
+                  offset: _hovered ? Offset.zero : const Offset(0, -0.12),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: AppTheme.surfaceZinc800,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.1),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.28),
+                          blurRadius: 14,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      child: Text(
+                        widget.message,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: AppTheme.textMain,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
