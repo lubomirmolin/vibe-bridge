@@ -125,6 +125,78 @@ index 3333333..4444444 100644
     expect(_findRichTextContaining('newSecond'), findsOneWidget);
   });
 
+  testWidgets('builds off-screen diff files lazily as the list scrolls', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(480, 420));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final files = List<GitDiffFileSummaryDto>.generate(40, (index) {
+      final path = 'lib/file_$index.dart';
+      return GitDiffFileSummaryDto(
+        path: path,
+        oldPath: path,
+        newPath: path,
+        changeType: GitDiffChangeType.modified,
+        additions: 1,
+        deletions: 1,
+        isBinary: false,
+      );
+    });
+    final unifiedDiff = List<String>.generate(40, (index) {
+      final path = 'lib/file_$index.dart';
+      return '''
+diff --git a/$path b/$path
+index 1111111..2222222 100644
+--- a/$path
++++ b/$path
+@@ -1 +1 @@
+-old$index
++new$index
+''';
+    }).join();
+    final bridgeApi = FakeThreadDiffBridgeApi(
+      diffsByMode: <ThreadGitDiffMode, ThreadGitDiffDto>{
+        ThreadGitDiffMode.workspace: _buildDiffDto(
+          mode: ThreadGitDiffMode.workspace,
+          files: files,
+          unifiedDiff: unifiedDiff,
+        ),
+      },
+    );
+
+    await tester.pumpWidget(
+      _buildTestApp(bridgeApi: bridgeApi, liveStream: FakeThreadLiveStream()),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('thread-git-diff-file-file_0.dart')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('thread-git-diff-file-file_39.dart')),
+      findsNothing,
+    );
+
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('thread-git-diff-file-file_39.dart')),
+      500,
+      scrollable: find
+          .descendant(
+            of: find.byKey(const Key('thread-git-diff-list')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('thread-git-diff-file-file_39.dart')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets(
     'clears stale workspace diff when latest thread change is empty',
     (tester) async {
