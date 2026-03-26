@@ -185,6 +185,49 @@ void main() {
     expect(reducedWidth, greaterThan(0));
   });
 
+  testWidgets('resizing active threads expands the session detail content', (
+    tester,
+  ) async {
+    await _setDisplaySize(tester, const Size(1400, 900));
+    final cacheRepository = _newCacheRepository();
+    final bridgeApi = FakeThreadListBridgeApi(
+      scriptedResults: [_sampleThreads()],
+    );
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+    );
+
+    await _pumpThreadListPage(
+      tester,
+      bridgeApi: bridgeApi,
+      detailApi: detailApi,
+      cacheRepository: cacheRepository,
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('thread-summary-card-thread-123')));
+    await tester.pumpAndSettle();
+
+    final detailContentFinder = find.byKey(
+      const Key('thread-detail-session-content'),
+    );
+    final handleFinder = find.byKey(
+      const Key('thread-wide-sidebar-resize-handle'),
+    );
+    final initialWidth = tester.getSize(detailContentFinder).width;
+
+    await tester.drag(handleFinder, const Offset(-160, 0));
+    await tester.pumpAndSettle();
+
+    final expandedWidth = tester.getSize(detailContentFinder).width;
+    expect(expandedWidth, greaterThan(initialWidth));
+  });
+
   testWidgets(
     'closing diff restores the prior sidebar visibility instead of forcing it open',
     (tester) async {
