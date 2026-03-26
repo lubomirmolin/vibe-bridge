@@ -204,30 +204,41 @@ class _ThreadDiffFileSection extends StatelessWidget {
               ],
             ),
           ),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: IntrinsicWidth(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: visibleLines
-                      .map(
-                        (line) => _ThreadDiffLineRow(
-                          line: line,
-                          language: language,
-                          highlighterSet: highlighterSet,
-                          displayLineNumber: _displayLineNumber(
-                            line,
-                            file.changeType,
-                          ),
-                          gutterWidth: gutterWidth,
-                        ),
-                      )
-                      .toList(growable: false),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                    child: IntrinsicWidth(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          for (
+                            var index = 0;
+                            index < visibleLines.length;
+                            index += 1
+                          )
+                            _ThreadDiffLineRow(
+                              key: Key('thread-diff-line-$fileName-$index'),
+                              line: visibleLines[index],
+                              language: language,
+                              highlighterSet: highlighterSet,
+                              displayLineNumber: _displayLineNumber(
+                                visibleLines[index],
+                                file.changeType,
+                              ),
+                              gutterWidth: gutterWidth,
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
         ],
       ),
@@ -272,6 +283,7 @@ class _ThreadDiffFileSection extends StatelessWidget {
 
 class _ThreadDiffLineRow extends StatelessWidget {
   const _ThreadDiffLineRow({
+    super.key,
     required this.line,
     required this.language,
     required this.highlighterSet,
@@ -295,34 +307,42 @@ class _ThreadDiffLineRow extends StatelessWidget {
       height: 1.4,
     );
 
-    return Container(
-      constraints: const BoxConstraints(minWidth: 420),
-      color: backgroundColor,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(width: 3, height: 24, color: accentColor),
-          _DiffLineNumberCell(number: displayLineNumber, width: gutterWidth),
-          Container(
-            width: 1,
-            height: 24,
-            color: Colors.white.withValues(alpha: 0.06),
+    return SizedBox(
+      width: double.infinity,
+      child: DecoratedBox(
+        decoration: BoxDecoration(color: backgroundColor),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 420),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(width: 3, height: 24, color: accentColor),
+              _DiffLineNumberCell(
+                number: displayLineNumber,
+                width: gutterWidth,
+              ),
+              Container(
+                width: 1,
+                height: 24,
+                color: Colors.white.withValues(alpha: 0.06),
+              ),
+              const SizedBox(width: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 8),
+                child: line.kind == ParsedDiffLineKind.hunk
+                    ? Text(
+                        line.text,
+                        style: GoogleFonts.jetBrainsMono(
+                          color: AppTheme.textSubtle,
+                          fontSize: 10.5,
+                          height: 1.4,
+                        ),
+                      )
+                    : RichText(text: _highlightedLine(textStyle)),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 8),
-            child: line.kind == ParsedDiffLineKind.hunk
-                ? Text(
-                    line.text,
-                    style: GoogleFonts.jetBrainsMono(
-                      color: AppTheme.textSubtle,
-                      fontSize: 10.5,
-                      height: 1.4,
-                    ),
-                  )
-                : RichText(text: _highlightedLine(textStyle)),
-          ),
-        ],
+        ),
       ),
     );
   }

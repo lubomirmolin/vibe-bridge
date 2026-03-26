@@ -125,6 +125,55 @@ index 3333333..4444444 100644
     expect(_findRichTextContaining('newSecond'), findsOneWidget);
   });
 
+  testWidgets('changed rows span the full diff width instead of text width', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(480, 720));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final bridgeApi = FakeThreadDiffBridgeApi(
+      diffsByMode: <ThreadGitDiffMode, ThreadGitDiffDto>{
+        ThreadGitDiffMode.workspace: _buildDiffDto(
+          mode: ThreadGitDiffMode.workspace,
+          files: const <GitDiffFileSummaryDto>[
+            GitDiffFileSummaryDto(
+              path: 'lib/highlight.dart',
+              oldPath: 'lib/highlight.dart',
+              newPath: 'lib/highlight.dart',
+              changeType: GitDiffChangeType.modified,
+              additions: 2,
+              deletions: 0,
+              isBinary: false,
+            ),
+          ],
+          unifiedDiff: '''
+diff --git a/lib/highlight.dart b/lib/highlight.dart
+index 1111111..2222222 100644
+--- a/lib/highlight.dart
++++ b/lib/highlight.dart
+@@ -1,0 +1,2 @@
++tiny
++thisIsAnIntentionallyVeryLongChangedLineThatShouldDriveTheSharedRowWidthAcrossTheWholeCodePane
+''',
+        ),
+      },
+    );
+
+    await tester.pumpWidget(
+      _buildTestApp(bridgeApi: bridgeApi, liveStream: FakeThreadLiveStream()),
+    );
+    await tester.pumpAndSettle();
+
+    final firstRow = find.byKey(const Key('thread-diff-line-highlight.dart-0'));
+    final secondRow = find.byKey(
+      const Key('thread-diff-line-highlight.dart-1'),
+    );
+
+    expect(firstRow, findsOneWidget);
+    expect(secondRow, findsOneWidget);
+    expect(tester.getSize(firstRow).width, tester.getSize(secondRow).width);
+  });
+
   testWidgets('builds off-screen diff files lazily as the list scrolls', (
     tester,
   ) async {
