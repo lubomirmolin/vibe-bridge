@@ -16,8 +16,8 @@ void main() {
       });
 
       final bridgeApiBaseUrl = _resolveBridgeApiBaseUrl();
-      final listApi = const HttpThreadListBridgeApi();
-      final detailApi = const HttpThreadDetailBridgeApi();
+      final listApi = HttpThreadListBridgeApi();
+      final detailApi = HttpThreadDetailBridgeApi();
 
       final threads = await listApi
           .fetchThreads(bridgeApiBaseUrl: bridgeApiBaseUrl)
@@ -97,8 +97,7 @@ void main() {
   );
 }
 
-class _PassthroughHttpOverrides extends HttpOverrides {
-}
+class _PassthroughHttpOverrides extends HttpOverrides {}
 
 String _resolveBridgeApiBaseUrl() {
   const configured = String.fromEnvironment(

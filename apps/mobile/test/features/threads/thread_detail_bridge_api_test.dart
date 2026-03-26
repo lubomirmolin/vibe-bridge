@@ -36,7 +36,7 @@ void main() {
         await request.response.close();
       });
 
-      const bridgeApi = HttpThreadDetailBridgeApi();
+      final bridgeApi = HttpThreadDetailBridgeApi();
       final result = await bridgeApi.startTurn(
         bridgeApiBaseUrl:
             'http://${InternetAddress.loopbackIPv4.address}:${server.port}',

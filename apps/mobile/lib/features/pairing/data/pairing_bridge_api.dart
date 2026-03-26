@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
+import 'package:codex_mobile_companion/foundation/network/bridge_transport.dart';
 
 abstract class PairingBridgeApi {
   Future<PairingFinalizeResult> finalizeTrust({
@@ -24,7 +24,10 @@ abstract class PairingBridgeApi {
 }
 
 class HttpPairingBridgeApi implements PairingBridgeApi {
-  const HttpPairingBridgeApi();
+  HttpPairingBridgeApi({BridgeTransport? transport})
+    : _transport = transport ?? createDefaultBridgeTransport();
+
+  final BridgeTransport _transport;
 
   @override
   Future<PairingFinalizeResult> finalizeTrust({
@@ -85,13 +88,7 @@ class HttpPairingBridgeApi implements PairingBridgeApi {
             _readOptionalString(response.jsonBody, 'message') ??
             'Could not complete trust confirmation. Please try again.';
         return PairingFinalizeResult.failure(code: code, message: message);
-      } on SocketException {
-        continue;
-      } on HandshakeException {
-        continue;
-      } on HttpException {
-        continue;
-      } on TimeoutException {
+      } on BridgeTransportConnectionException {
         continue;
       } on FormatException {
         return const PairingFinalizeResult.failure(
@@ -150,13 +147,7 @@ class HttpPairingBridgeApi implements PairingBridgeApi {
             _readOptionalString(response.jsonBody, 'message') ??
             'Stored trust is no longer accepted by the bridge.';
         return PairingHandshakeResult.untrusted(code: code, message: message);
-      } on SocketException {
-        continue;
-      } on HandshakeException {
-        continue;
-      } on HttpException {
-        continue;
-      } on TimeoutException {
+      } on BridgeTransportConnectionException {
         continue;
       } on FormatException {
         return const PairingHandshakeResult.untrusted(
@@ -202,13 +193,7 @@ class HttpPairingBridgeApi implements PairingBridgeApi {
               _readOptionalString(response.jsonBody, 'message') ??
               'Couldn’t revoke bridge trust from mobile right now.',
         );
-      } on SocketException {
-        continue;
-      } on HandshakeException {
-        continue;
-      } on HttpException {
-        continue;
-      } on TimeoutException {
+      } on BridgeTransportConnectionException {
         continue;
       } on FormatException {
         return const PairingRevokeResult.failure(
@@ -225,18 +210,14 @@ class HttpPairingBridgeApi implements PairingBridgeApi {
   }
 
   Future<_HttpJsonResponse> _post(Uri uri) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
-    try {
-      final request = await client.postUrl(uri);
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      final bodyText = await utf8.decodeStream(response);
-      final decoded = _decodeJsonObject(bodyText);
-      return _HttpJsonResponse(response.statusCode, decoded);
-    } finally {
-      client.close();
-    }
+    final response = await _transport.post(
+      uri,
+      headers: const <String, String>{'accept': 'application/json'},
+    );
+    return _HttpJsonResponse(
+      response.statusCode,
+      _decodeJsonObject(response.bodyText),
+    );
   }
 }
 

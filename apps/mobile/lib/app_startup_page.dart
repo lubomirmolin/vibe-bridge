@@ -6,9 +6,7 @@ import 'package:codex_ui/codex_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'app_startup_destinations.dart'
-    if (dart.library.html) 'app_startup_destinations_web.dart'
-    as startup_destinations;
+import 'app_startup_destinations.dart' as startup_destinations;
 
 class AppStartupPage extends ConsumerStatefulWidget {
   const AppStartupPage({super.key});

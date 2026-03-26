@@ -23,8 +23,8 @@ void main() {
       });
 
       final bridgeApiBaseUrl = _resolveBridgeApiBaseUrl();
-      final listApi = const HttpThreadListBridgeApi();
-      final detailApi = const HttpThreadDetailBridgeApi();
+      final listApi = HttpThreadListBridgeApi();
+      final detailApi = HttpThreadDetailBridgeApi();
       final threads = await listApi
           .fetchThreads(bridgeApiBaseUrl: bridgeApiBaseUrl)
           .timeout(

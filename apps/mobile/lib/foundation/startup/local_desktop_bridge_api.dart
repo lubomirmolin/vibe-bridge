@@ -1,9 +1,7 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'dart:convert';
 
-import 'local_desktop_bridge_api_stub.dart'
-    if (dart.library.html) 'local_desktop_bridge_api_web.dart'
-    if (dart.library.io) 'local_desktop_bridge_api_io.dart'
-    as impl;
+import 'package:codex_mobile_companion/foundation/network/bridge_transport.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 const String defaultLocalDesktopBridgeBaseUrl = 'http://127.0.0.1:3110';
 
@@ -52,5 +50,67 @@ final localDesktopConfigProvider = Provider<LocalDesktopConfig>((ref) {
 });
 
 final localDesktopBridgeApiProvider = Provider<LocalDesktopBridgeApi>((ref) {
-  return impl.createLocalDesktopBridgeApi();
+  return HttpLocalDesktopBridgeApi(
+    transport: ref.watch(bridgeTransportProvider),
+  );
 });
+
+class HttpLocalDesktopBridgeApi implements LocalDesktopBridgeApi {
+  HttpLocalDesktopBridgeApi({BridgeTransport? transport})
+    : _transport = transport ?? createDefaultBridgeTransport();
+
+  final BridgeTransport _transport;
+
+  @override
+  Future<LocalDesktopBridgeProbeResult> probe({
+    required String bridgeApiBaseUrl,
+  }) async {
+    try {
+      final response = await _transport.get(
+        _buildHealthUri(bridgeApiBaseUrl),
+        headers: const <String, String>{'accept': 'application/json'},
+        timeout: const Duration(seconds: 2),
+      );
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return LocalDesktopBridgeProbeResult.unreachable(
+          errorMessage:
+              'Local bridge responded with ${response.statusCode}. Start the bridge on this machine and retry.',
+        );
+      }
+
+      final body = response.bodyText.trim().isEmpty
+          ? const <String, dynamic>{}
+          : jsonDecode(response.bodyText);
+      if (body is! Map<String, dynamic> || body['status'] != 'ok') {
+        return const LocalDesktopBridgeProbeResult.unreachable(
+          errorMessage:
+              'Local bridge health check returned an unexpected response.',
+        );
+      }
+
+      return const LocalDesktopBridgeProbeResult.reachable();
+    } on BridgeTransportConnectionException {
+      return const LocalDesktopBridgeProbeResult.unreachable(
+        errorMessage:
+            'Couldn’t reach the local bridge at 127.0.0.1. Start the bridge on this machine and retry.',
+      );
+    } on FormatException {
+      return const LocalDesktopBridgeProbeResult.unreachable(
+        errorMessage: 'The local bridge health response was not valid JSON.',
+      );
+    }
+  }
+}
+
+Uri _buildHealthUri(String baseUrl) {
+  final baseUri = Uri.parse(baseUrl);
+  final normalizedBasePath = baseUri.path.endsWith('/')
+      ? baseUri.path.substring(0, baseUri.path.length - 1)
+      : baseUri.path;
+
+  return baseUri.replace(
+    path: '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/healthz',
+    queryParameters: null,
+  );
+}

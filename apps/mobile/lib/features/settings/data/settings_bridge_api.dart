@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:codex_mobile_companion/foundation/network/bridge_transport.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final settingsBridgeApiProvider = Provider<SettingsBridgeApi>((ref) {
-  return const HttpSettingsBridgeApi();
+  return HttpSettingsBridgeApi(transport: ref.watch(bridgeTransportProvider));
 });
 
 abstract class SettingsBridgeApi {
@@ -28,15 +28,16 @@ abstract class SettingsBridgeApi {
 }
 
 class HttpSettingsBridgeApi implements SettingsBridgeApi {
-  const HttpSettingsBridgeApi();
+  HttpSettingsBridgeApi({BridgeTransport? transport})
+    : _transport = transport ?? createDefaultBridgeTransport();
+
+  final BridgeTransport _transport;
 
   @override
   Future<AccessMode> fetchAccessMode({required String bridgeApiBaseUrl}) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
     try {
       final policyResult = await _fetchJson(
-        client: client,
+        transport: _transport,
         uri: _buildUri(bridgeApiBaseUrl, '/policy/access-mode'),
       );
 
@@ -45,7 +46,7 @@ class HttpSettingsBridgeApi implements SettingsBridgeApi {
         if (accessMode is String) {
           return accessModeFromWire(accessMode);
         }
-      } else if (policyResult.statusCode != HttpStatus.notFound) {
+      } else if (policyResult.statusCode != 404) {
         throw SettingsBridgeException(
           message:
               _readOptionalString(policyResult.json, 'message') ??
@@ -54,7 +55,7 @@ class HttpSettingsBridgeApi implements SettingsBridgeApi {
       }
 
       final bootstrapResult = await _fetchJson(
-        client: client,
+        transport: _transport,
         uri: _buildUri(bridgeApiBaseUrl, '/bootstrap'),
       );
       if (bootstrapResult.statusCode >= 200 &&
@@ -73,22 +74,7 @@ class HttpSettingsBridgeApi implements SettingsBridgeApi {
             _readOptionalString(bootstrapResult.json, 'message') ??
             'Couldn’t load the access mode right now.',
       );
-    } on SocketException {
-      throw const SettingsBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const SettingsBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const SettingsBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
+    } on BridgeTransportConnectionException {
       throw const SettingsBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
         isConnectivityError: true,
@@ -97,8 +83,6 @@ class HttpSettingsBridgeApi implements SettingsBridgeApi {
       throw const SettingsBridgeException(
         message: 'Bridge returned an invalid access-mode response.',
       );
-    } finally {
-      client.close();
     }
   }
 
@@ -112,8 +96,6 @@ class HttpSettingsBridgeApi implements SettingsBridgeApi {
     String? localSessionKind,
     String actor = 'mobile-device',
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
     try {
       final queryParameters = <String, String>{
         'mode': accessMode.wireValue,
@@ -132,12 +114,11 @@ class HttpSettingsBridgeApi implements SettingsBridgeApi {
         queryParameters['local_session'] = localSessionKind.trim();
       }
 
-      final request = await client.postUrl(
+      final response = await _transport.post(
         _buildUri(bridgeApiBaseUrl, '/policy/access-mode', queryParameters),
+        headers: const <String, String>{'accept': 'application/json'},
       );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      final decoded = _decodeJsonObject(await utf8.decodeStream(response));
+      final decoded = _decodeJsonObject(response.bodyText);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final rawMode = decoded['access_mode'];
@@ -155,22 +136,7 @@ class HttpSettingsBridgeApi implements SettingsBridgeApi {
             'Couldn’t update access mode right now.',
         statusCode: response.statusCode,
       );
-    } on SocketException {
-      throw const SettingsBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const SettingsBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const SettingsBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
+    } on BridgeTransportConnectionException {
       throw const SettingsBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
         isConnectivityError: true,
@@ -179,8 +145,6 @@ class HttpSettingsBridgeApi implements SettingsBridgeApi {
       throw const SettingsBridgeException(
         message: 'Bridge returned an invalid access-mode response.',
       );
-    } finally {
-      client.close();
     }
   }
 
@@ -188,15 +152,12 @@ class HttpSettingsBridgeApi implements SettingsBridgeApi {
   Future<List<SecurityEventRecordDto>> fetchSecurityEvents({
     required String bridgeApiBaseUrl,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
     try {
-      final request = await client.getUrl(
+      final response = await _transport.get(
         _buildUri(bridgeApiBaseUrl, '/security/events'),
+        headers: const <String, String>{'accept': 'application/json'},
       );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      final decoded = _decodeJsonObject(await utf8.decodeStream(response));
+      final decoded = _decodeJsonObject(response.bodyText);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final eventsJson = decoded['events'];
@@ -223,22 +184,7 @@ class HttpSettingsBridgeApi implements SettingsBridgeApi {
             _readOptionalString(decoded, 'message') ??
             'Couldn’t load recent security events right now.',
       );
-    } on SocketException {
-      throw const SettingsBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const SettingsBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const SettingsBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
+    } on BridgeTransportConnectionException {
       throw const SettingsBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
         isConnectivityError: true,
@@ -247,8 +193,6 @@ class HttpSettingsBridgeApi implements SettingsBridgeApi {
       throw const SettingsBridgeException(
         message: 'Bridge returned an invalid security-events response.',
       );
-    } finally {
-      client.close();
     }
   }
 }
@@ -304,15 +248,16 @@ Map<String, dynamic> _decodeJsonObject(String bodyText) {
 }
 
 Future<_JsonResponse> _fetchJson({
-  required HttpClient client,
+  required BridgeTransport transport,
   required Uri uri,
 }) async {
-  final request = await client.getUrl(uri);
-  request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-  final response = await request.close();
+  final response = await transport.get(
+    uri,
+    headers: const <String, String>{'accept': 'application/json'},
+  );
   return _JsonResponse(
     statusCode: response.statusCode,
-    json: _decodeJsonObject(await utf8.decodeStream(response)),
+    json: _decodeJsonObject(response.bodyText),
   );
 }
 

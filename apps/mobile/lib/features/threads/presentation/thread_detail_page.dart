@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:codex_mobile_companion/features/approvals/application/approvals_queue_controller.dart';
@@ -17,6 +16,7 @@ import 'package:codex_mobile_companion/features/threads/presentation/thread_git_
 import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_mobile_companion/foundation/layout/adaptive_layout.dart';
+import 'package:codex_mobile_companion/foundation/media/speech_capture.dart';
 import 'package:codex_mobile_companion/foundation/session/current_bridge_session.dart';
 import 'package:codex_ui/codex_ui.dart';
 
@@ -30,7 +30,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
-import 'package:record/record.dart';
 import 'package:syntax_highlight/syntax_highlight.dart';
 
 import '../application/thread_list_controller.dart';
@@ -81,7 +80,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
     this.initialSelectedModel,
     this.initialSelectedReasoningEffort,
     this.pickImagesOverride,
-    this.speechRecorder,
+    this.speechCaptureOverride,
     this.showBackButton = true,
     this.embedInScaffold = true,
     this.onBack,
@@ -101,7 +100,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
     required String this.draftWorkspaceLabel,
     this.initialVisibleTimelineEntries = 80,
     this.pickImagesOverride,
-    this.speechRecorder,
+    this.speechCaptureOverride,
     this.showBackButton = true,
     this.embedInScaffold = true,
     this.onBack,
@@ -125,7 +124,7 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
   final String? initialSelectedModel;
   final String? initialSelectedReasoningEffort;
   final Future<List<XFile>> Function()? pickImagesOverride;
-  final AudioRecorder? speechRecorder;
+  final SpeechCapture? speechCaptureOverride;
   final bool showBackButton;
   final bool embedInScaffold;
   final VoidCallback? onBack;
@@ -155,7 +154,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   late final ValueNotifier<bool> _isHeaderCollapsed;
   late final ValueNotifier<bool> _showNewMessagePill;
   final ImagePicker _imagePicker = ImagePicker();
-  late final AudioRecorder _audioRecorder;
+  SpeechCapture? _speechCapture;
 
   List<ModelOptionDto> _availableModelOptions = fallbackModelCatalog.models;
   List<String> _availableReasoningOptions = const <String>[];
@@ -173,7 +172,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   bool _speechMessageIsError = false;
   bool _isSpeechRecording = false;
   bool _isSpeechTranscribing = false;
-  String? _speechRecordingPath;
   Timer? _speechRecordingTimer;
   int _speechDurationSeconds = 0;
   ThreadDraftCreatedTransition? _localDraftTransition;
@@ -214,6 +212,19 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         _effectiveInitialAttachedImages.isNotEmpty;
   }
 
+  SpeechCapture get _resolvedSpeechCapture {
+    final speechCapture = _speechCapture;
+    if (speechCapture != null) {
+      return speechCapture;
+    }
+
+    final createdCapture =
+        (widget.speechCaptureOverride ?? ref.read(speechCaptureProvider))
+            as SpeechCapture;
+    _speechCapture = createdCapture;
+    return createdCapture;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -233,7 +244,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     _timelineScrollController = ScrollController();
     _isHeaderCollapsed = ValueNotifier(false);
     _showNewMessagePill = ValueNotifier(false);
-    _audioRecorder = widget.speechRecorder ?? AudioRecorder();
     _composerFocusNode.addListener(_handleComposerFocusChange);
     _timelineScrollController.addListener(_onScroll);
     _setComposerSelectionsFromCatalog(_availableModelOptions);
@@ -568,10 +578,13 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   @override
   void dispose() {
     if (_isSpeechRecording) {
-      unawaited(_audioRecorder.stop());
+      unawaited(_resolvedSpeechCapture.stop());
     }
     _speechRecordingTimer?.cancel();
-    _audioRecorder.dispose();
+    final speechCapture = _speechCapture;
+    if (speechCapture != null) {
+      unawaited(speechCapture.dispose());
+    }
     _composerController.dispose();
     _composerFocusNode
       ..removeListener(_handleComposerFocusChange)
@@ -708,36 +721,23 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       return;
     }
 
-    final hasPermission = await _audioRecorder.hasPermission();
-    if (!hasPermission) {
-      _setSpeechMessage(
-        'Microphone permission is required to record a voice message.',
-        isError: true,
-      );
-      return;
-    }
-
-    final recordingDirectory = await Directory.systemTemp.createTemp(
-      'codex-mobile-companion-speech-',
-    );
-    final recordingPath = '${recordingDirectory.path}/voice-message.wav';
-
     try {
-      await _audioRecorder.start(
-        const RecordConfig(
-          encoder: AudioEncoder.wav,
-          sampleRate: 16000,
-          numChannels: 1,
-        ),
-        path: recordingPath,
-      );
+      final hasPermission = await _resolvedSpeechCapture.hasPermission();
+      if (!hasPermission) {
+        _setSpeechMessage(
+          'Microphone permission is required to record a voice message.',
+          isError: true,
+        );
+        return;
+      }
+
+      await _resolvedSpeechCapture.start();
       if (!mounted) {
         return;
       }
       setState(() {
         _isSpeechRecording = true;
         _speechDurationSeconds = 0;
-        _speechRecordingPath = recordingPath;
         _speechMessage = 'Recording voice message… tap the mic again to stop.';
         _speechMessageIsError = false;
         _speechRecordingTimer?.cancel();
@@ -749,6 +749,8 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
           }
         });
       });
+    } on SpeechCaptureException catch (error) {
+      _setSpeechMessage(_speechCaptureErrorMessageFor(error), isError: true);
     } catch (_) {
       _setSpeechMessage(
         'Couldn’t start recording right now. Please try again.',
@@ -760,7 +762,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   Future<void> _stopSpeechRecordingAndTranscribe() async {
     _speechRecordingTimer?.cancel();
     _speechRecordingTimer = null;
-    final previousRecordingPath = _speechRecordingPath;
     _SpeechUnavailableDialogContent? pendingSpeechDialog;
     setState(() {
       _isSpeechRecording = false;
@@ -770,19 +771,12 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     });
 
     try {
-      final resolvedPath = await _audioRecorder.stop() ?? previousRecordingPath;
-      if (resolvedPath == null || resolvedPath.trim().isEmpty) {
-        throw const ThreadSpeechBridgeException(
-          message: 'No audio was captured for transcription.',
-          code: 'speech_invalid_audio',
-        );
-      }
-
-      final audioBytes = await File(resolvedPath).readAsBytes();
+      final captureResult = await _resolvedSpeechCapture.stop();
       final bridgeApi = ref.read(threadDetailBridgeApiProvider);
       final result = await bridgeApi.transcribeAudio(
         bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
-        audioBytes: audioBytes,
+        audioBytes: captureResult.bytes,
+        fileName: captureResult.fileName,
       );
       if (!mounted) {
         return;
@@ -805,19 +799,12 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       } else {
         _setSpeechMessage(_speechErrorMessageFor(error), isError: true);
       }
-    } on FileSystemException {
-      _setSpeechMessage(
-        'Couldn’t read the recording for transcription.',
-        isError: true,
-      );
+    } on SpeechCaptureException catch (error) {
+      _setSpeechMessage(_speechCaptureErrorMessageFor(error), isError: true);
     } finally {
-      await _cleanupSpeechRecording(
-        previousRecordingPath ?? _speechRecordingPath,
-      );
       if (mounted) {
         setState(() {
           _isSpeechTranscribing = false;
-          _speechRecordingPath = null;
         });
       }
     }
@@ -825,17 +812,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     final speechDialog = pendingSpeechDialog;
     if (speechDialog != null) {
       await _showSpeechUnavailableDialog(speechDialog);
-    }
-  }
-
-  Future<void> _cleanupSpeechRecording(String? recordingPath) async {
-    if (recordingPath == null || recordingPath.trim().isEmpty) {
-      return;
-    }
-
-    final directory = File(recordingPath).parent;
-    if (await directory.exists()) {
-      await directory.delete(recursive: true);
     }
   }
 
@@ -1011,6 +987,17 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
         return 'The host speech helper is unavailable right now.';
       case 'speech_invalid_audio':
         return 'That recording could not be processed as WAV audio.';
+      default:
+        return error.message;
+    }
+  }
+
+  String _speechCaptureErrorMessageFor(SpeechCaptureException error) {
+    switch (error.code) {
+      case 'speech_capture_unsupported':
+        return 'Voice capture is unavailable in this browser.';
+      case 'speech_capture_read_failed':
+        return 'Couldn’t read the recording for transcription.';
       default:
         return error.message;
     }
@@ -1350,7 +1337,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                           isSpeechTranscribing: _isSpeechTranscribing,
                           speechDurationSeconds: _speechDurationSeconds,
                           speechAmplitudeStream: _isSpeechRecording
-                              ? _audioRecorder.onAmplitudeChanged(
+                              ? _resolvedSpeechCapture.amplitudeStream(
                                   const Duration(milliseconds: 50),
                                 )
                               : null,
@@ -1682,7 +1669,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                               isSpeechTranscribing: _isSpeechTranscribing,
                               speechDurationSeconds: _speechDurationSeconds,
                               speechAmplitudeStream: _isSpeechRecording
-                                  ? _audioRecorder.onAmplitudeChanged(
+                                  ? _resolvedSpeechCapture.amplitudeStream(
                                       const Duration(milliseconds: 50),
                                     )
                                   : null,

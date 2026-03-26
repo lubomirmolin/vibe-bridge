@@ -44,7 +44,7 @@ void main() {
       });
       addTearDown(server.close);
 
-      final api = const HttpSettingsBridgeApi();
+      final api = HttpSettingsBridgeApi();
       final mode = await api.fetchAccessMode(
         bridgeApiBaseUrl: 'http://127.0.0.1:${server.port}',
       );
@@ -80,7 +80,7 @@ void main() {
       });
       addTearDown(server.close);
 
-      final api = const HttpApprovalBridgeApi();
+      final api = HttpApprovalBridgeApi();
       final approvals = await api.fetchApprovals(
         bridgeApiBaseUrl: 'http://127.0.0.1:${server.port}',
       );

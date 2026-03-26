@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:codex_mobile_companion/foundation/network/bridge_transport.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final threadListBridgeApiProvider = Provider<ThreadListBridgeApi>((ref) {
-  return const HttpThreadListBridgeApi();
+  return HttpThreadListBridgeApi(transport: ref.watch(bridgeTransportProvider));
 });
 
 abstract class ThreadListBridgeApi {
@@ -16,23 +16,21 @@ abstract class ThreadListBridgeApi {
 }
 
 class HttpThreadListBridgeApi implements ThreadListBridgeApi {
-  const HttpThreadListBridgeApi();
+  HttpThreadListBridgeApi({BridgeTransport? transport})
+    : _transport = transport ?? createDefaultBridgeTransport();
+
+  final BridgeTransport _transport;
 
   @override
   Future<List<ThreadSummaryDto>> fetchThreads({
     required String bridgeApiBaseUrl,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
     try {
-      final request = await client.getUrl(
+      final response = await _transport.get(
         _buildThreadListUri(bridgeApiBaseUrl),
+        headers: const <String, String>{'accept': 'application/json'},
       );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-
-      final response = await request.close();
-      final bodyText = await utf8.decodeStream(response);
-      final decoded = _decodeJsonValue(bodyText);
+      final decoded = _decodeJsonValue(response.bodyText);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final threadItems = decoded is List
@@ -63,22 +61,7 @@ class HttpThreadListBridgeApi implements ThreadListBridgeApi {
         _readOptionalString(decoded, 'message') ??
             'Couldn’t load threads from the bridge.',
       );
-    } on SocketException {
-      throw const ThreadListBridgeException(
-        'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const ThreadListBridgeException(
-        'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const ThreadListBridgeException(
-        'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
+    } on BridgeTransportConnectionException {
       throw const ThreadListBridgeException(
         'Cannot reach the bridge. Check your private route.',
         isConnectivityError: true,
@@ -87,8 +70,6 @@ class HttpThreadListBridgeApi implements ThreadListBridgeApi {
       throw const ThreadListBridgeException(
         'Bridge returned an invalid thread list response.',
       );
-    } finally {
-      client.close();
     }
   }
 }
