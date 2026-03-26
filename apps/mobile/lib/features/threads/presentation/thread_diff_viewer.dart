@@ -5,10 +5,16 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:syntax_highlight/syntax_highlight.dart';
 
 class ThreadDiffViewer extends StatelessWidget {
-  const ThreadDiffViewer({super.key, required this.document, this.fileFilter});
+  const ThreadDiffViewer({
+    super.key,
+    required this.document,
+    this.fileFilter,
+    this.controller,
+  });
 
   final ParsedDiffDocument document;
   final String? fileFilter;
+  final ScrollController? controller;
 
   @override
   Widget build(BuildContext context) {
@@ -20,17 +26,16 @@ class ThreadDiffViewer extends StatelessWidget {
       future: ThreadCodeHighlighterSet.load(),
       builder: (context, snapshot) {
         final highlighterSet = snapshot.data;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            for (var index = 0; index < filteredFiles.length; index++) ...[
-              if (index > 0) const SizedBox(height: 12),
-              _ThreadDiffFileSection(
-                file: filteredFiles[index],
-                highlighterSet: highlighterSet,
-              ),
-            ],
-          ],
+        return ListView.separated(
+          key: const Key('thread-git-diff-list'),
+          controller: controller,
+          padding: EdgeInsets.zero,
+          itemCount: filteredFiles.length,
+          itemBuilder: (context, index) => _ThreadDiffFileSection(
+            file: filteredFiles[index],
+            highlighterSet: highlighterSet,
+          ),
+          separatorBuilder: (context, index) => const SizedBox(height: 12),
         );
       },
     );
@@ -165,6 +170,7 @@ class _ThreadDiffFileSection extends StatelessWidget {
               children: [
                 Text(
                   fileName,
+                  key: Key('thread-git-diff-file-$fileName'),
                   style: GoogleFonts.jetBrainsMono(
                     color: AppTheme.textMain,
                     fontSize: 12,

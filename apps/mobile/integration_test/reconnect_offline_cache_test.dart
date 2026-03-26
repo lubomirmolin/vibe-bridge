@@ -35,8 +35,8 @@ void main() {
 
       final bridgeApiBaseUrl = _resolveLiveBridgeApiBaseUrl();
       const threadId = _liveTargetThreadId;
-      const threadApi = HttpThreadDetailBridgeApi();
-      const approvalApi = HttpApprovalBridgeApi();
+      final threadApi = HttpThreadDetailBridgeApi();
+      final approvalApi = HttpApprovalBridgeApi();
 
       final initialDetail = await threadApi.fetchThreadDetail(
         bridgeApiBaseUrl: bridgeApiBaseUrl,

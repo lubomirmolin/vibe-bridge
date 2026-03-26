@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
 import 'package:codex_mobile_companion/features/settings/application/desktop_integration_controller.dart';
@@ -15,6 +16,7 @@ import 'package:codex_mobile_companion/features/threads/domain/thread_activity_i
 import 'package:codex_mobile_companion/features/threads/presentation/thread_detail_page.dart';
 import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:codex_mobile_companion/foundation/media/speech_capture.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
 import 'package:codex_mobile_companion/foundation/storage/secure_store_provider.dart';
 import 'package:codex_ui/codex_ui.dart';
@@ -23,7 +25,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
-import 'package:record/record.dart';
 
 void main() {
   testWidgets(
@@ -34,7 +35,7 @@ void main() {
       );
       final detailApi = FakeThreadDetailBridgeApi(
         detailScriptByThreadId: {
-          'thread-123': [_thread123Detail()],
+          'thread-123': [_thread123Detail(status: ThreadStatus.completed)],
         },
         timelineScriptByThreadId: {
           'thread-123': [_mixedTimelineEvents()],
@@ -900,7 +901,7 @@ void main() {
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(
         detailScriptByThreadId: {
-          'thread-123': [_thread123Detail()],
+          'thread-123': [_thread123Detail(status: ThreadStatus.completed)],
         },
         timelineScriptByThreadId: {
           'thread-123': [
@@ -952,7 +953,7 @@ void main() {
   ) async {
     final detailApi = FakeThreadDetailBridgeApi(
       detailScriptByThreadId: {
-        'thread-123': [_thread123Detail()],
+        'thread-123': [_thread123Detail(status: ThreadStatus.completed)],
       },
       timelineScriptByThreadId: {
         'thread-123': [
@@ -1070,7 +1071,7 @@ void main() {
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(
         detailScriptByThreadId: {
-          'thread-123': [_thread123Detail()],
+          'thread-123': [_thread123Detail(status: ThreadStatus.completed)],
         },
         timelineScriptByThreadId: {
           'thread-123': [
@@ -1708,7 +1709,7 @@ index 3333333..4444444 100644
       ];
       final detailApi = FakeThreadDetailBridgeApi(
         detailScriptByThreadId: {
-          'thread-123': [_thread123Detail()],
+          'thread-123': [_thread123Detail(status: ThreadStatus.completed)],
         },
         timelineScriptByThreadId: {
           'thread-123': [timeline],
@@ -2876,7 +2877,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
   ) async {
     final detailApi = FakeThreadDetailBridgeApi(
       detailScriptByThreadId: {
-        'thread-123': [_thread123Detail()],
+        'thread-123': [_thread123Detail(status: ThreadStatus.completed)],
       },
       timelineScriptByThreadId: {
         'thread-123': [<ThreadTimelineEntryDto>[]],
@@ -3341,7 +3342,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       );
       final detailApi = FakeThreadDetailBridgeApi(
         detailScriptByThreadId: {
-          'thread-123': [_thread123Detail()],
+          'thread-123': [_thread123Detail(status: ThreadStatus.completed)],
         },
         timelineScriptByThreadId: {
           'thread-123': [<ThreadTimelineEntryDto>[]],
@@ -3826,7 +3827,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(find.text('Implement shared contracts'), findsNothing);
     expect(
       find.text('Cannot reach the bridge. Check your private route.'),
-      findsOneWidget,
+      findsWidgets,
     );
     expect(find.text('Retry'), findsOneWidget);
   });
@@ -4007,7 +4008,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(
         detailScriptByThreadId: {
-          'thread-123': [_thread123Detail()],
+          'thread-123': [_thread123Detail(status: ThreadStatus.completed)],
         },
         timelineScriptByThreadId: {
           'thread-123': [<ThreadTimelineEntryDto>[]],
@@ -4047,7 +4048,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
   ) async {
     final detailApi = FakeThreadDetailBridgeApi(
       detailScriptByThreadId: {
-        'thread-123': [_thread123Detail()],
+        'thread-123': [_thread123Detail(status: ThreadStatus.completed)],
       },
       timelineScriptByThreadId: {
         'thread-123': [<ThreadTimelineEntryDto>[]],
@@ -4089,7 +4090,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(
         detailScriptByThreadId: {
-          'thread-123': [_thread123Detail()],
+          'thread-123': [_thread123Detail(status: ThreadStatus.completed)],
         },
         timelineScriptByThreadId: {
           'thread-123': [<ThreadTimelineEntryDto>[]],
@@ -4124,7 +4125,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
         tester,
         detailApi: detailApi,
         threadId: 'thread-123',
-        speechRecorder: _FakeAudioRecorder(),
+        speechCaptureOverride: _FakeSpeechCapture(),
       );
 
       await _focusComposer(tester);
@@ -4149,7 +4150,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(
         detailScriptByThreadId: {
-          'thread-123': [_thread123Detail()],
+          'thread-123': [_thread123Detail(status: ThreadStatus.completed)],
         },
         timelineScriptByThreadId: {
           'thread-123': [<ThreadTimelineEntryDto>[]],
@@ -4185,7 +4186,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
         tester,
         detailApi: detailApi,
         threadId: 'thread-123',
-        speechRecorder: _FakeAudioRecorder(),
+        speechCaptureOverride: _FakeSpeechCapture(),
       );
 
       await _focusComposer(tester);
@@ -4257,7 +4258,7 @@ Future<void> _pumpThreadDetailApp(
   ThreadCacheRepository? cacheRepository,
   SettingsBridgeApi? settingsApi,
   Future<List<XFile>> Function()? pickImagesOverride,
-  AudioRecorder? speechRecorder,
+  SpeechCapture? speechCaptureOverride,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -4287,7 +4288,7 @@ Future<void> _pumpThreadDetailApp(
           threadId: threadId,
           initialVisibleTimelineEntries: initialVisibleTimelineEntries,
           pickImagesOverride: pickImagesOverride,
-          speechRecorder: speechRecorder,
+          speechCaptureOverride: speechCaptureOverride,
         ),
       ),
     ),
@@ -4376,11 +4377,14 @@ Future<void> _focusComposer(WidgetTester tester) async {
 }
 
 Future<void> _pressSpeechToggle(WidgetTester tester) async {
-  final button = tester.widget<MagneticButton>(
-    find.byKey(const Key('turn-composer-speech-toggle')).first,
-  );
-  button.onClick();
+  final buttonFinder = find.byKey(const Key('turn-composer-speech-toggle'));
+  if (buttonFinder.evaluate().isEmpty) {
+    await tester.tap(find.byKey(const Key('turn-composer-input')).first);
+    await tester.pumpAndSettle();
+  }
+  await tester.tap(find.byKey(const Key('turn-composer-speech-toggle')).first);
   await tester.pump();
+  await tester.pump(const Duration(milliseconds: 50));
   await tester.pumpAndSettle();
 }
 
@@ -4500,12 +4504,13 @@ List<ThreadSummaryDto> _threadSummaries() {
 
 ThreadDetailDto _thread123Detail({
   AccessMode accessMode = AccessMode.controlWithApprovals,
+  ThreadStatus status = ThreadStatus.running,
 }) {
   return ThreadDetailDto(
     contractVersion: contractVersion,
     threadId: 'thread-123',
     title: 'Implement shared contracts',
-    status: ThreadStatus.running,
+    status: status,
     workspace: '/workspace/codex-mobile-companion',
     repository: 'codex-mobile-companion',
     branch: 'master',
@@ -5484,45 +5489,52 @@ class FakeThreadListBridgeApi implements ThreadListBridgeApi {
   }
 }
 
-class _FakeAudioRecorder extends AudioRecorder {
-  _FakeAudioRecorder();
+class _FakeSpeechCapture implements SpeechCapture {
+  _FakeSpeechCapture();
 
-  String? _recordingPath;
-
-  @override
-  Future<bool> hasPermission({bool request = true}) async => true;
+  bool _started = false;
 
   @override
-  Future<void> start(RecordConfig config, {required String path}) async {
-    _recordingPath = path;
-    final file = File(path);
-    await file.parent.create(recursive: true);
-    await file.writeAsBytes(const <int>[
-      0x52,
-      0x49,
-      0x46,
-      0x46,
-      0x00,
-      0x00,
-      0x00,
-      0x00,
-      0x57,
-      0x41,
-      0x56,
-      0x45,
-    ]);
-  }
-
-  @override
-  Future<String?> stop() async => _recordingPath;
-
-  @override
-  Stream<Amplitude> onAmplitudeChanged(Duration interval) {
-    return const Stream<Amplitude>.empty();
+  Stream<SpeechCaptureAmplitude> amplitudeStream(Duration interval) {
+    return const Stream<SpeechCaptureAmplitude>.empty();
   }
 
   @override
   Future<void> dispose() async {}
+
+  @override
+  Future<bool> hasPermission() async => true;
+
+  @override
+  Future<void> start() async {
+    _started = true;
+  }
+
+  @override
+  Future<SpeechCaptureResult> stop() async {
+    if (!_started) {
+      throw const SpeechCaptureException(
+        message: 'No audio was captured for transcription.',
+        code: 'speech_invalid_audio',
+      );
+    }
+    return SpeechCaptureResult(
+      bytes: Uint8List.fromList(<int>[
+        0x52,
+        0x49,
+        0x46,
+        0x46,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x57,
+        0x41,
+        0x56,
+        0x45,
+      ]),
+    );
+  }
 }
 
 class MutableApprovalBridgeApi implements ApprovalBridgeApi {

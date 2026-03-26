@@ -176,10 +176,10 @@ const String _integrationPhoneName = 'Integration Test Phone';
 
 Future<_LiveTestHarness> _bootstrapLiveTestHarness() async {
   final bridgeApiBaseUrl = _resolveBridgeApiBaseUrl();
-  final threadApi = const HttpThreadDetailBridgeApi();
-  final threadListApi = const HttpThreadListBridgeApi();
-  final approvalApi = const HttpApprovalBridgeApi();
-  final settingsApi = const HttpSettingsBridgeApi();
+  final threadApi = HttpThreadDetailBridgeApi();
+  final threadListApi = HttpThreadListBridgeApi();
+  final approvalApi = HttpApprovalBridgeApi();
+  final settingsApi = HttpSettingsBridgeApi();
 
   await _resetTrustedSession(bridgeApiBaseUrl);
   final trustedSession = await _createTrustedSession(bridgeApiBaseUrl);

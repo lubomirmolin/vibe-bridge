@@ -275,26 +275,50 @@ class _ModeChip extends StatelessWidget {
   }
 }
 
-class _DiffDocumentView extends StatelessWidget {
+class _DiffDocumentView extends StatefulWidget {
   const _DiffDocumentView({required this.document, required this.errorMessage});
 
   final ParsedDiffDocument document;
   final String? errorMessage;
 
   @override
+  State<_DiffDocumentView> createState() => _DiffDocumentViewState();
+}
+
+class _DiffDocumentViewState extends State<_DiffDocumentView> {
+  late final ScrollController _scrollController;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController = ScrollController();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (errorMessage != null) ...[
-          _InlineDiffNotice(color: AppTheme.amber, message: errorMessage!),
+        if (widget.errorMessage != null) ...[
+          _InlineDiffNotice(
+            color: AppTheme.amber,
+            message: widget.errorMessage!,
+          ),
           const SizedBox(height: 12),
         ],
         Expanded(
           child: Scrollbar(
+            controller: _scrollController,
             thumbVisibility: true,
-            child: SingleChildScrollView(
-              child: ThreadDiffViewer(document: document),
+            child: ThreadDiffViewer(
+              document: widget.document,
+              controller: _scrollController,
             ),
           ),
         ),

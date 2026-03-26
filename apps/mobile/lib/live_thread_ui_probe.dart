@@ -167,13 +167,13 @@ class _LiveThreadUiProbePageState
       final response = await request.close();
       final body = await response.transform(SystemEncoding().decoder).join();
       final preview = body.length > 120 ? body.substring(0, 120) : body;
-      print(
+      debugPrint(
         'REWRITE_LIVE_THREAD_UI_PROBE_CONNECTIVITY '
         'status=${response.statusCode} '
         'body_preview=${preview.replaceAll('\n', ' ')}',
       );
     } catch (error) {
-      print(
+      debugPrint(
         'REWRITE_LIVE_THREAD_UI_PROBE_CONNECTIVITY '
         'error=$error '
         'type=${error.runtimeType}',
@@ -202,7 +202,6 @@ class _LiveThreadUiProbePageState
         'loading_expected=${_runningMs != null && (_assistantVisibleMs == null || _runningMs! <= _assistantVisibleMs!)} '
         'token=${widget.promptToken}';
     debugPrint(result);
-    print(result);
 
     Future<void>.delayed(const Duration(milliseconds: 300), () async {
       await SystemNavigator.pop();

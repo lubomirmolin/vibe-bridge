@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:codex_mobile_companion/foundation/network/bridge_transport.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final threadDiffBridgeApiProvider = Provider<ThreadDiffBridgeApi>((ref) {
-  return const HttpThreadDiffBridgeApi();
+  return HttpThreadDiffBridgeApi(transport: ref.watch(bridgeTransportProvider));
 });
 
 abstract class ThreadDiffBridgeApi {
@@ -19,7 +19,10 @@ abstract class ThreadDiffBridgeApi {
 }
 
 class HttpThreadDiffBridgeApi implements ThreadDiffBridgeApi {
-  const HttpThreadDiffBridgeApi();
+  HttpThreadDiffBridgeApi({BridgeTransport? transport})
+    : _transport = transport ?? createDefaultBridgeTransport();
+
+  final BridgeTransport _transport;
 
   @override
   Future<ThreadGitDiffDto> fetchThreadGitDiff({
@@ -28,20 +31,17 @@ class HttpThreadDiffBridgeApi implements ThreadDiffBridgeApi {
     required ThreadGitDiffMode mode,
     String? path,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
     try {
-      final request = await client.getUrl(
+      final response = await _transport.get(
         _buildThreadGitDiffUri(
           bridgeApiBaseUrl,
           threadId,
           mode: mode,
           path: path,
         ),
+        headers: const <String, String>{'accept': 'application/json'},
       );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      final decoded = _decodeJsonObject(await utf8.decodeStream(response));
+      final decoded = _decodeJsonObject(response.bodyText);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
@@ -60,22 +60,7 @@ class HttpThreadDiffBridgeApi implements ThreadDiffBridgeApi {
         statusCode: response.statusCode,
         code: _readOptionalString(decoded, 'code'),
       );
-    } on SocketException {
-      throw const ThreadGitDiffBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const ThreadGitDiffBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const ThreadGitDiffBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
+    } on BridgeTransportConnectionException {
       throw const ThreadGitDiffBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
         isConnectivityError: true,
@@ -84,8 +69,6 @@ class HttpThreadDiffBridgeApi implements ThreadDiffBridgeApi {
       throw const ThreadGitDiffBridgeException(
         message: 'Bridge returned an invalid git diff response.',
       );
-    } finally {
-      client.close();
     }
   }
 }

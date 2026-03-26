@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:codex_mobile_companion/foundation/network/bridge_transport.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final threadDetailBridgeApiProvider = Provider<ThreadDetailBridgeApi>((ref) {
-  return const HttpThreadDetailBridgeApi();
+  return HttpThreadDetailBridgeApi(
+    transport: ref.watch(bridgeTransportProvider),
+  );
 });
 
 const ModelCatalogDto fallbackModelCatalog = ModelCatalogDto(
@@ -168,7 +170,10 @@ abstract class ThreadDetailBridgeApi {
 }
 
 class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
-  const HttpThreadDetailBridgeApi();
+  HttpThreadDetailBridgeApi({BridgeTransport? transport})
+    : _transport = transport ?? createDefaultBridgeTransport();
+
+  final BridgeTransport _transport;
 
   @override
   Future<ThreadSnapshotDto> createThread({
@@ -176,24 +181,19 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String workspace,
     String? model,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
     try {
-      final request = await client.postUrl(
+      final response = await _transport.post(
         _buildCreateThreadUri(bridgeApiBaseUrl),
-      );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
-      request.write(
-        jsonEncode(<String, dynamic>{
+        headers: const <String, String>{
+          'accept': 'application/json',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(<String, dynamic>{
           'workspace': workspace,
           if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
         }),
       );
-
-      final response = await request.close();
-      final bodyText = await utf8.decodeStream(response);
-      final decoded = _decodeJsonObject(bodyText);
+      final decoded = _decodeJsonObject(response.bodyText);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
@@ -210,22 +210,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
             _readOptionalString(decoded, 'message') ??
             'Couldn’t create a new thread right now.',
       );
-    } on SocketException {
-      throw const ThreadCreateBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const ThreadCreateBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const ThreadCreateBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
+    } on BridgeTransportConnectionException {
       throw const ThreadCreateBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
         isConnectivityError: true,
@@ -234,8 +219,6 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       throw const ThreadCreateBridgeException(
         message: 'Bridge returned an invalid thread creation response.',
       );
-    } finally {
-      client.close();
     }
   }
 
@@ -243,7 +226,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   Future<ModelCatalogDto> fetchModelCatalog({
     required String bridgeApiBaseUrl,
   }) async {
-    final bootstrap = await _getBootstrap(bridgeApiBaseUrl);
+    final bootstrap = await _getBootstrap(_transport, bridgeApiBaseUrl);
     if (bootstrap?.models.isNotEmpty == true) {
       return ModelCatalogDto(
         contractVersion: bootstrap!.contractVersion,
@@ -251,7 +234,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       );
     }
 
-    final catalog = await _getModelCatalog(bridgeApiBaseUrl);
+    final catalog = await _getModelCatalog(_transport, bridgeApiBaseUrl);
     return catalog?.models.isNotEmpty == true ? catalog! : fallbackModelCatalog;
   }
 
@@ -260,15 +243,12 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
     try {
-      final request = await client.getUrl(
+      final response = await _transport.get(
         _buildThreadGitStatusUri(bridgeApiBaseUrl, threadId),
+        headers: const <String, String>{'accept': 'application/json'},
       );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      final decoded = _decodeJsonObject(await utf8.decodeStream(response));
+      final decoded = _decodeJsonObject(response.bodyText);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
@@ -287,22 +267,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
         statusCode: response.statusCode,
         code: _readOptionalString(decoded, 'code'),
       );
-    } on SocketException {
-      throw const ThreadGitBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const ThreadGitBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const ThreadGitBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
+    } on BridgeTransportConnectionException {
       throw const ThreadGitBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
         isConnectivityError: true,
@@ -311,8 +276,6 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       throw const ThreadGitBridgeException(
         message: 'Bridge returned an invalid git status response.',
       );
-    } finally {
-      client.close();
     }
   }
 
@@ -463,16 +426,12 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
     try {
-      final request = await client.getUrl(
+      final response = await _transport.get(
         _buildThreadSnapshotUri(bridgeApiBaseUrl, threadId),
+        headers: const <String, String>{'accept': 'application/json'},
       );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      final bodyText = await utf8.decodeStream(response);
-      final decoded = _decodeJsonObject(bodyText);
+      final decoded = _decodeJsonObject(response.bodyText);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
@@ -490,22 +449,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
             'Couldn’t load this thread right now.',
         isUnavailable: response.statusCode == 404,
       );
-    } on SocketException {
-      throw const ThreadDetailBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const ThreadDetailBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const ThreadDetailBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
+    } on BridgeTransportConnectionException {
       throw const ThreadDetailBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
         isConnectivityError: true,
@@ -514,8 +458,6 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       throw const ThreadDetailBridgeException(
         message: 'Bridge returned an invalid thread snapshot response.',
       );
-    } finally {
-      client.close();
     }
   }
 
@@ -526,21 +468,17 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     String? before,
     int limit = 50,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
     try {
-      final request = await client.getUrl(
+      final response = await _transport.get(
         _buildThreadHistoryUri(
           bridgeApiBaseUrl,
           threadId,
           before: before,
           limit: limit,
         ),
+        headers: const <String, String>{'accept': 'application/json'},
       );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      final bodyText = await utf8.decodeStream(response);
-      final decoded = _decodeJsonObject(bodyText);
+      final decoded = _decodeJsonObject(response.bodyText);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
@@ -558,22 +496,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
             'Couldn’t load thread history right now.',
         isUnavailable: response.statusCode == 404,
       );
-    } on SocketException {
-      throw const ThreadDetailBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const ThreadDetailBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const ThreadDetailBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
+    } on BridgeTransportConnectionException {
       throw const ThreadDetailBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
         isConnectivityError: true,
@@ -582,8 +505,6 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       throw const ThreadDetailBridgeException(
         message: 'Bridge returned an invalid thread timeline response.',
       );
-    } finally {
-      client.close();
     }
   }
 
@@ -657,16 +578,16 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required Uri uri,
     required Map<String, dynamic> body,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
     try {
-      final request = await client.postUrl(uri);
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
-      request.write(jsonEncode(body));
-      final response = await request.close();
-      final bodyText = await utf8.decodeStream(response);
-      final decoded = _decodeJsonObject(bodyText);
+      final response = await _transport.post(
+        uri,
+        headers: const <String, String>{
+          'accept': 'application/json',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(body),
+      );
+      final decoded = _decodeJsonObject(response.bodyText);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
@@ -693,22 +614,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
             _readOptionalString(decoded, 'message') ??
             'Couldn’t update turn state right now.',
       );
-    } on SocketException {
-      throw const ThreadTurnBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const ThreadTurnBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const ThreadTurnBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
+    } on BridgeTransportConnectionException {
       throw const ThreadTurnBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
         isConnectivityError: true,
@@ -717,8 +623,6 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       throw const ThreadTurnBridgeException(
         message: 'Bridge returned an invalid turn control response.',
       );
-    } finally {
-      client.close();
     }
   }
 
@@ -728,19 +632,18 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String routeSegment,
     required Map<String, dynamic> body,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
     try {
-      final request = await client.postUrl(
+      final response = await _transport.post(
         _buildThreadGitMutationUri(bridgeApiBaseUrl, threadId, routeSegment),
+        headers: const <String, String>{
+          'accept': 'application/json',
+          'content-type': 'application/json',
+        },
+        body: jsonEncode(body),
       );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
-      request.write(jsonEncode(body));
-      final response = await request.close();
-      final decoded = _decodeJsonObject(await utf8.decodeStream(response));
+      final decoded = _decodeJsonObject(response.bodyText);
 
-      if (response.statusCode == HttpStatus.accepted) {
+      if (response.statusCode == 202) {
         try {
           final gate = ApprovalGateResponseDto.fromJson(decoded);
           throw ThreadGitApprovalRequiredException(
@@ -752,7 +655,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
         } on FormatException {
           throw const ThreadGitMutationBridgeException(
             message: 'Bridge returned an invalid approval response.',
-            statusCode: HttpStatus.accepted,
+            statusCode: 202,
             code: 'approval_required',
           );
         }
@@ -777,22 +680,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       );
     } on ThreadGitApprovalRequiredException {
       rethrow;
-    } on SocketException {
-      throw const ThreadGitMutationBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const ThreadGitMutationBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const ThreadGitMutationBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
+    } on BridgeTransportConnectionException {
       throw const ThreadGitMutationBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
         isConnectivityError: true,
@@ -801,8 +689,6 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       throw const ThreadGitMutationBridgeException(
         message: 'Bridge returned an invalid git mutation response.',
       );
-    } finally {
-      client.close();
     }
   }
 
@@ -810,15 +696,12 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   Future<SpeechModelStatusDto> fetchSpeechStatus({
     required String bridgeApiBaseUrl,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
     try {
-      final request = await client.getUrl(
+      final response = await _transport.get(
         _buildSpeechModelUri(bridgeApiBaseUrl),
+        headers: const <String, String>{'accept': 'application/json'},
       );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      final decoded = _decodeJsonObject(await utf8.decodeStream(response));
+      final decoded = _decodeJsonObject(response.bodyText);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
@@ -837,22 +720,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
         statusCode: response.statusCode,
         code: _readOptionalString(decoded, 'code'),
       );
-    } on SocketException {
-      throw const ThreadSpeechBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const ThreadSpeechBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const ThreadSpeechBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
+    } on BridgeTransportConnectionException {
       throw const ThreadSpeechBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
         isConnectivityError: true,
@@ -861,8 +729,6 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       throw const ThreadSpeechBridgeException(
         message: 'Bridge returned an invalid speech status response.',
       );
-    } finally {
-      client.close();
     }
   }
 
@@ -872,30 +738,20 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required List<int> audioBytes,
     String fileName = 'voice-message.wav',
   }) async {
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 20);
-    final boundary =
-        'codex-mobile-companion-${DateTime.now().microsecondsSinceEpoch}';
-
     try {
-      final request = await client.postUrl(
+      final response = await _transport.multipartPost(
         _buildSpeechTranscriptionUri(bridgeApiBaseUrl),
+        headers: const <String, String>{'accept': 'application/json'},
+        fields: <BridgeMultipartField>[
+          BridgeMultipartField(
+            name: 'audio',
+            bytes: audioBytes,
+            fileName: fileName,
+            contentType: 'audio/wav',
+          ),
+        ],
       );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      request.headers.set(
-        HttpHeaders.contentTypeHeader,
-        'multipart/form-data; boundary=$boundary',
-      );
-      request.write('--$boundary\r\n');
-      request.write(
-        'Content-Disposition: form-data; name="audio"; filename="$fileName"\r\n',
-      );
-      request.write('Content-Type: audio/wav\r\n\r\n');
-      request.add(audioBytes);
-      request.write('\r\n--$boundary--\r\n');
-
-      final response = await request.close();
-      final decoded = _decodeJsonObject(await utf8.decodeStream(response));
+      final decoded = _decodeJsonObject(response.bodyText);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
@@ -914,22 +770,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
         statusCode: response.statusCode,
         code: _readOptionalString(decoded, 'code'),
       );
-    } on SocketException {
-      throw const ThreadSpeechBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const ThreadSpeechBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const ThreadSpeechBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
+    } on BridgeTransportConnectionException {
       throw const ThreadSpeechBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
         isConnectivityError: true,
@@ -938,8 +779,6 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       throw const ThreadSpeechBridgeException(
         message: 'Bridge returned an invalid transcription response.',
       );
-    } finally {
-      client.close();
     }
   }
 }
@@ -1101,15 +940,16 @@ class TurnMutationResult {
   }
 }
 
-Future<BootstrapDto?> _getBootstrap(String bridgeApiBaseUrl) async {
-  final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
+Future<BootstrapDto?> _getBootstrap(
+  BridgeTransport transport,
+  String bridgeApiBaseUrl,
+) async {
   try {
-    final request = await client.getUrl(_buildBootstrapUri(bridgeApiBaseUrl));
-    request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-    final response = await request.close();
-    final bodyText = await utf8.decodeStream(response);
-    final decoded = _decodeJsonObject(bodyText);
+    final response = await transport.get(
+      _buildBootstrapUri(bridgeApiBaseUrl),
+      headers: const <String, String>{'accept': 'application/json'},
+    );
+    final decoded = _decodeJsonObject(response.bodyText);
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
       try {
@@ -1120,30 +960,23 @@ Future<BootstrapDto?> _getBootstrap(String bridgeApiBaseUrl) async {
     }
 
     return null;
-  } on SocketException {
-    return null;
-  } on HandshakeException {
-    return null;
-  } on HttpException {
-    return null;
-  } on TimeoutException {
+  } on BridgeTransportConnectionException {
     return null;
   } on FormatException {
     return null;
-  } finally {
-    client.close();
   }
 }
 
-Future<ModelCatalogDto?> _getModelCatalog(String bridgeApiBaseUrl) async {
-  final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
+Future<ModelCatalogDto?> _getModelCatalog(
+  BridgeTransport transport,
+  String bridgeApiBaseUrl,
+) async {
   try {
-    final request = await client.getUrl(_buildModelsUri(bridgeApiBaseUrl));
-    request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-    final response = await request.close();
-    final bodyText = await utf8.decodeStream(response);
-    final decoded = _decodeJsonObject(bodyText);
+    final response = await transport.get(
+      _buildModelsUri(bridgeApiBaseUrl),
+      headers: const <String, String>{'accept': 'application/json'},
+    );
+    final decoded = _decodeJsonObject(response.bodyText);
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
       try {
@@ -1154,18 +987,10 @@ Future<ModelCatalogDto?> _getModelCatalog(String bridgeApiBaseUrl) async {
     }
 
     return null;
-  } on SocketException {
-    return null;
-  } on HandshakeException {
-    return null;
-  } on HttpException {
-    return null;
-  } on TimeoutException {
+  } on BridgeTransportConnectionException {
     return null;
   } on FormatException {
     return null;
-  } finally {
-    client.close();
   }
 }
 

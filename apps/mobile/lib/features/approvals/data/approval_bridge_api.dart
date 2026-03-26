@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:codex_mobile_companion/foundation/network/bridge_transport.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final approvalBridgeApiProvider = Provider<ApprovalBridgeApi>((ref) {
-  return const HttpApprovalBridgeApi();
+  return HttpApprovalBridgeApi(transport: ref.watch(bridgeTransportProvider));
 });
 
 abstract class ApprovalBridgeApi {
@@ -28,15 +28,16 @@ abstract class ApprovalBridgeApi {
 }
 
 class HttpApprovalBridgeApi implements ApprovalBridgeApi {
-  const HttpApprovalBridgeApi();
+  HttpApprovalBridgeApi({BridgeTransport? transport})
+    : _transport = transport ?? createDefaultBridgeTransport();
+
+  final BridgeTransport _transport;
 
   @override
   Future<AccessMode> fetchAccessMode({required String bridgeApiBaseUrl}) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
     try {
       final policyResult = await _fetchJsonResponse(
-        client: client,
+        transport: _transport,
         uri: _buildAccessModeUri(bridgeApiBaseUrl),
       );
 
@@ -45,7 +46,7 @@ class HttpApprovalBridgeApi implements ApprovalBridgeApi {
         if (accessMode is String) {
           return accessModeFromWire(accessMode);
         }
-      } else if (policyResult.statusCode != HttpStatus.notFound) {
+      } else if (policyResult.statusCode != 404) {
         throw ApprovalBridgeException(
           message:
               _readOptionalString(policyResult.object, 'message') ??
@@ -54,7 +55,7 @@ class HttpApprovalBridgeApi implements ApprovalBridgeApi {
       }
 
       final bootstrapResult = await _fetchJsonResponse(
-        client: client,
+        transport: _transport,
         uri: _buildBootstrapUri(bridgeApiBaseUrl),
       );
       if (bootstrapResult.statusCode >= 200 &&
@@ -73,22 +74,7 @@ class HttpApprovalBridgeApi implements ApprovalBridgeApi {
             _readOptionalString(bootstrapResult.object, 'message') ??
             'Couldn’t read access mode right now.',
       );
-    } on SocketException {
-      throw const ApprovalBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const ApprovalBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const ApprovalBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
+    } on BridgeTransportConnectionException {
       throw const ApprovalBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
         isConnectivityError: true,
@@ -97,8 +83,6 @@ class HttpApprovalBridgeApi implements ApprovalBridgeApi {
       throw const ApprovalBridgeException(
         message: 'Bridge returned an invalid policy response.',
       );
-    } finally {
-      client.close();
     }
   }
 
@@ -106,13 +90,12 @@ class HttpApprovalBridgeApi implements ApprovalBridgeApi {
   Future<List<ApprovalRecordDto>> fetchApprovals({
     required String bridgeApiBaseUrl,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
     try {
-      final request = await client.getUrl(_buildApprovalsUri(bridgeApiBaseUrl));
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      final decoded = _decodeJson(await utf8.decodeStream(response));
+      final response = await _transport.get(
+        _buildApprovalsUri(bridgeApiBaseUrl),
+        headers: const <String, String>{'accept': 'application/json'},
+      );
+      final decoded = _decodeJson(response.bodyText);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final approvalsJson = switch (decoded) {
@@ -148,22 +131,7 @@ class HttpApprovalBridgeApi implements ApprovalBridgeApi {
             ) ??
             'Couldn’t load approvals right now.',
       );
-    } on SocketException {
-      throw const ApprovalBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const ApprovalBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const ApprovalBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
+    } on BridgeTransportConnectionException {
       throw const ApprovalBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
         isConnectivityError: true,
@@ -172,8 +140,6 @@ class HttpApprovalBridgeApi implements ApprovalBridgeApi {
       throw const ApprovalBridgeException(
         message: 'Bridge returned an invalid approvals response.',
       );
-    } finally {
-      client.close();
     }
   }
 
@@ -206,15 +172,12 @@ class HttpApprovalBridgeApi implements ApprovalBridgeApi {
     required String approvalId,
     required String action,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-
     try {
-      final request = await client.postUrl(
+      final response = await _transport.post(
         _buildApprovalResolutionUri(bridgeApiBaseUrl, approvalId, action),
+        headers: const <String, String>{'accept': 'application/json'},
       );
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
-      final decoded = _decodeJsonObject(await utf8.decodeStream(response));
+      final decoded = _decodeJsonObject(response.bodyText);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return ApprovalResolutionResponseDto.fromJson(decoded);
@@ -227,22 +190,7 @@ class HttpApprovalBridgeApi implements ApprovalBridgeApi {
         statusCode: response.statusCode,
         code: _readOptionalString(decoded, 'code'),
       );
-    } on SocketException {
-      throw const ApprovalResolutionBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HandshakeException {
-      throw const ApprovalResolutionBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on HttpException {
-      throw const ApprovalResolutionBridgeException(
-        message: 'Cannot reach the bridge. Check your private route.',
-        isConnectivityError: true,
-      );
-    } on TimeoutException {
+    } on BridgeTransportConnectionException {
       throw const ApprovalResolutionBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
         isConnectivityError: true,
@@ -251,8 +199,6 @@ class HttpApprovalBridgeApi implements ApprovalBridgeApi {
       throw const ApprovalResolutionBridgeException(
         message: 'Bridge returned an invalid approval resolution response.',
       );
-    } finally {
-      client.close();
     }
   }
 }
@@ -367,15 +313,16 @@ Map<String, dynamic> _decodeJsonObject(String bodyText) {
 }
 
 Future<_JsonObjectResponse> _fetchJsonResponse({
-  required HttpClient client,
+  required BridgeTransport transport,
   required Uri uri,
 }) async {
-  final request = await client.getUrl(uri);
-  request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-  final response = await request.close();
+  final response = await transport.get(
+    uri,
+    headers: const <String, String>{'accept': 'application/json'},
+  );
   return _JsonObjectResponse(
     statusCode: response.statusCode,
-    object: _decodeJsonObject(await utf8.decodeStream(response)),
+    object: _decodeJsonObject(response.bodyText),
   );
 }
 

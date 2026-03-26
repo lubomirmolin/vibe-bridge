@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart'
     as bridge_contracts;
@@ -423,26 +422,18 @@ bool isPrivateBridgeApiBaseUrl(String rawBaseUrl) {
     return false;
   }
 
-  final parsedAddress = InternetAddress.tryParse(host);
-  if (parsedAddress != null) {
-    if (parsedAddress.isLoopback ||
-        parsedAddress.type == InternetAddressType.IPv6) {
+  final parsedIpv4Address = _tryParseIpv4Address(host);
+  if (parsedIpv4Address != null) {
+    if (_isLoopbackIpv4(parsedIpv4Address)) {
       return false;
     }
 
-    final octets = parsedAddress.rawAddress;
-    if (octets.length == 4) {
-      final first = octets[0];
-      final second = octets[1];
-      final isPrivateRange =
-          first == 10 ||
-          (first == 172 && second >= 16 && second <= 31) ||
-          (first == 192 && second == 168) ||
-          (first == 169 && second == 254);
-      if (isPrivateRange) {
-        return false;
-      }
+    if (_isPrivateIpv4(parsedIpv4Address) ||
+        _isLinkLocalIpv4(parsedIpv4Address)) {
+      return false;
     }
+  } else if (host.contains(':')) {
+    return false;
   }
 
   return host.endsWith('.ts.net') || host.endsWith('.tailscale.net');
@@ -454,23 +445,48 @@ bool isLocalNetworkBridgeApiBaseUrl(String rawBaseUrl) {
     return false;
   }
 
-  final parsedAddress = InternetAddress.tryParse(uri.host);
-  if (parsedAddress == null || parsedAddress.type != InternetAddressType.IPv4) {
+  final parsedAddress = _tryParseIpv4Address(uri.host);
+  if (parsedAddress == null) {
     return false;
   }
 
-  if (parsedAddress.isLoopback) {
+  if (_isLoopbackIpv4(parsedAddress)) {
     return false;
   }
 
-  final octets = parsedAddress.rawAddress;
-  if (octets.length != 4) {
-    return false;
+  return _isPrivateIpv4(parsedAddress);
+}
+
+List<int>? _tryParseIpv4Address(String rawHost) {
+  final segments = rawHost.split('.');
+  if (segments.length != 4) {
+    return null;
   }
 
+  final octets = <int>[];
+  for (final segment in segments) {
+    if (segment.isEmpty || !RegExp(r'^\d+$').hasMatch(segment)) {
+      return null;
+    }
+    final parsed = int.tryParse(segment);
+    if (parsed == null || parsed < 0 || parsed > 255) {
+      return null;
+    }
+    octets.add(parsed);
+  }
+  return octets;
+}
+
+bool _isLoopbackIpv4(List<int> octets) => octets.first == 127;
+
+bool _isPrivateIpv4(List<int> octets) {
   final first = octets[0];
   final second = octets[1];
   return first == 10 ||
       (first == 172 && second >= 16 && second <= 31) ||
       (first == 192 && second == 168);
+}
+
+bool _isLinkLocalIpv4(List<int> octets) {
+  return octets[0] == 169 && octets[1] == 254;
 }

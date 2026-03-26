@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:codex_mobile_companion/foundation/network/bridge_transport.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final threadLiveStreamProvider = Provider<ThreadLiveStream>((ref) {
-  return const HttpThreadLiveStream();
+  return HttpThreadLiveStream(transport: ref.watch(bridgeTransportProvider));
 });
 
 abstract class ThreadLiveStream {
@@ -29,7 +29,10 @@ class ThreadLiveSubscription {
 }
 
 class HttpThreadLiveStream implements ThreadLiveStream {
-  const HttpThreadLiveStream();
+  const HttpThreadLiveStream({required BridgeTransport transport})
+    : _transport = transport;
+
+  final BridgeTransport _transport;
 
   @override
   Future<ThreadLiveSubscription> subscribe({
@@ -37,20 +40,13 @@ class HttpThreadLiveStream implements ThreadLiveStream {
     String? threadId,
   }) async {
     final uri = _buildStreamUri(bridgeApiBaseUrl, threadId);
-    final socket = await WebSocket.connect(
-      uri.toString(),
-    ).timeout(const Duration(seconds: 5));
-
+    final connection = await _transport.openEventStream(uri);
     final controller =
         StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();
 
-    late final StreamSubscription<dynamic> socketSubscription;
-    socketSubscription = socket.listen(
+    late final StreamSubscription<String> socketSubscription;
+    socketSubscription = connection.messages.listen(
       (frame) {
-        if (frame is! String) {
-          return;
-        }
-
         try {
           final decoded = jsonDecode(frame);
           if (decoded is! Map<String, dynamic>) {
@@ -83,7 +79,7 @@ class HttpThreadLiveStream implements ThreadLiveStream {
       events: controller.stream,
       close: () async {
         await socketSubscription.cancel();
-        await socket.close();
+        await connection.close();
         if (!controller.isClosed) {
           await controller.close();
         }
