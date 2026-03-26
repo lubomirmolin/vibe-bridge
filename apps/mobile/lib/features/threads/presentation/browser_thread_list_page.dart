@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:codex_mobile_companion/features/threads/data/browser_thread_list_api.dart';
 import 'package:codex_mobile_companion/features/threads/data/browser_thread_list_api_stub.dart';
+import 'package:codex_mobile_companion/features/threads/presentation/browser_thread_detail_page.dart';
 import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_ui/codex_ui.dart';
 import 'package:flutter/material.dart';
@@ -140,52 +141,65 @@ class _BrowserThreadListPageState extends ConsumerState<BrowserThreadListPage> {
                         separatorBuilder: (_, _) => const SizedBox(height: 12),
                         itemBuilder: (context, index) {
                           final thread = _threads[index];
-                          return DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: AppTheme.surfaceZinc800.withValues(
-                                alpha: 0.72,
+                          return InkWell(
+                            borderRadius: BorderRadius.circular(16),
+                            onTap: () async {
+                              await Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) => BrowserThreadDetailPage(
+                                    bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+                                    threadId: thread.threadId,
+                                  ),
+                                ),
+                              );
+                            },
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: AppTheme.surfaceZinc800.withValues(
+                                  alpha: 0.72,
+                                ),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.08),
+                                ),
                               ),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                color: Colors.white.withValues(alpha: 0.08),
-                              ),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    thread.title,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.w600,
+                              child: Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      thread.title,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    '${thread.repository} · ${thread.branch}',
-                                    style: const TextStyle(
-                                      color: AppTheme.textMuted,
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      '${thread.repository} · ${thread.branch}',
+                                      style: const TextStyle(
+                                        color: AppTheme.textMuted,
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    thread.workspace,
-                                    style: const TextStyle(
-                                      color: AppTheme.textSubtle,
-                                      fontFamily: 'JetBrainsMono',
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      thread.workspace,
+                                      style: const TextStyle(
+                                        color: AppTheme.textSubtle,
+                                        fontFamily: 'JetBrainsMono',
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 10),
-                                  Text(
-                                    'Updated ${thread.updatedAt}',
-                                    style: const TextStyle(
-                                      color: AppTheme.textSubtle,
+                                    const SizedBox(height: 10),
+                                    Text(
+                                      'Updated ${thread.updatedAt}',
+                                      style: const TextStyle(
+                                        color: AppTheme.textSubtle,
+                                      ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ),
                           );

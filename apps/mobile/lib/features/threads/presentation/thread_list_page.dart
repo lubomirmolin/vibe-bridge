@@ -412,7 +412,7 @@ class _ThreadListPageState extends ConsumerState<ThreadListPage> {
                     defaultWidth: defaultThreadListPaneWidth,
                   );
             final paneGap = layout.hasSeparatingFold
-                ? layout.verticalFoldBounds!.right - resolvedThreadListPaneWidth
+                ? layout.verticalFoldBounds!.width
                 : 1.0;
 
             return Align(
@@ -1668,51 +1668,68 @@ class _NewThreadWorkspaceSheet extends StatelessWidget {
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'New Thread',
-              style: TextStyle(
-                color: AppTheme.textMain,
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Choose the workspace for the new session.',
-              style: TextStyle(color: AppTheme.textMuted, fontSize: 14),
-            ),
-            const SizedBox(height: 16),
-            for (final group in groups) ...[
-              ListTile(
-                key: Key('thread-list-workspace-option-${group.groupId}'),
-                contentPadding: EdgeInsets.zero,
-                leading: PhosphorIcon(
-                  PhosphorIcons.folderSimple(),
-                  color: AppTheme.textMuted,
-                ),
-                title: Text(
-                  group.label,
-                  style: const TextStyle(color: AppTheme.textMain),
-                ),
-                subtitle: Text(
-                  group.workspacePath,
-                  style: GoogleFonts.jetBrainsMono(
-                    color: AppTheme.textSubtle,
-                    fontSize: 11,
+        child: LayoutBuilder(
+          builder: (context, constraints) => ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: constraints.maxHeight),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'New Thread',
+                  style: TextStyle(
+                    color: AppTheme.textMain,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
-                onTap: () => Navigator.of(context).pop(group),
-              ),
-              if (group != groups.last)
-                Divider(color: Colors.white.withValues(alpha: 0.06)),
-            ],
-          ],
+                const SizedBox(height: 8),
+                const Text(
+                  'Choose the workspace for the new session.',
+                  style: TextStyle(color: AppTheme.textMuted, fontSize: 14),
+                ),
+                const SizedBox(height: 16),
+                Flexible(
+                  child: Scrollbar(
+                    thumbVisibility: groups.length > 4,
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: groups.length,
+                      itemBuilder: (context, index) {
+                        final group = groups[index];
+                        return ListTile(
+                          key: Key(
+                            'thread-list-workspace-option-${group.groupId}',
+                          ),
+                          contentPadding: EdgeInsets.zero,
+                          leading: PhosphorIcon(
+                            PhosphorIcons.folderSimple(),
+                            color: AppTheme.textMuted,
+                          ),
+                          title: Text(
+                            group.label,
+                            style: const TextStyle(color: AppTheme.textMain),
+                          ),
+                          subtitle: Text(
+                            group.workspacePath,
+                            style: GoogleFonts.jetBrainsMono(
+                              color: AppTheme.textSubtle,
+                              fontSize: 11,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          onTap: () => Navigator.of(context).pop(group),
+                        );
+                      },
+                      separatorBuilder: (context, index) =>
+                          Divider(color: Colors.white.withValues(alpha: 0.06)),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

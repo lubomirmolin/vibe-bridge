@@ -39,27 +39,12 @@ class _ThreadDetailHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (state.thread == null) {
-      return _UnavailableThreadDetailHeader(
-        onBack: onBackWhenUnavailable,
-        connectionState: state.liveConnectionState,
-        connectionDetail: state.errorMessage == null
-            ? _threadDetailConnectionBannerDetail(state)
-            : null,
-        showBackButton: showBackButton,
-        onToggleSidebar: onToggleSidebar,
-        isSidebarVisible: isSidebarVisible,
-        onToggleDiff: onToggleDiff,
-        isDiffVisible: isDiffVisible,
-      );
-    }
-
     return _LoadedThreadDetailHeader(
       state: state,
       hasPendingApprovals: hasPendingApprovals,
       gitControls: gitControls,
       canOpenOnMac: canOpenOnMac,
-      onBack: onBackWhenLoaded,
+      onBack: state.thread == null ? onBackWhenUnavailable : onBackWhenLoaded,
       onOpenGitBranchSheet: onOpenGitBranchSheet,
       onOpenGitSyncSheet: onOpenGitSyncSheet,
       onOpenOnMac: onOpenOnMac,
@@ -117,10 +102,17 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final thread = state.thread!;
+    final thread = state.thread;
+    final hasThread = thread != null;
     final showSidebarToggle = onToggleSidebar != null;
     final leadingInset = showBackButton || showSidebarToggle ? 36.0 : 16.0;
-
+    final title = thread?.title ?? 'Session Details';
+    final repositoryLabel = thread?.repository ?? 'Repository unavailable';
+    final statusLabel = hasThread ? _threadStatusLabel(thread.status) : 'Idle';
+    final branchLabel = hasThread
+        ? gitControls.repositoryContext.branch
+        : 'Branch unavailable';
+    final syncLabel = hasThread ? gitControls.syncLabel : 'Sync';
     return Container(
       padding: const EdgeInsets.only(top: 0, right: 16, bottom: 8),
       decoration: const BoxDecoration(
@@ -138,372 +130,282 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-              Row(
-                children: [
-                  if (showBackButton)
-                    IconButton(
-                      key: const Key('thread-detail-back-button'),
-                      onPressed: onBack,
-                      icon: PhosphorIcon(
-                        PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
-                        size: 20,
-                        color: AppTheme.textMuted,
-                      ),
-                    )
-                  else if (showSidebarToggle)
-                    IconButton(
-                      key: const Key('thread-detail-sidebar-toggle'),
-                      onPressed: onToggleSidebar,
-                      icon: PhosphorIcon(
-                        PhosphorIcons.sidebarSimple(
-                          isSidebarVisible
-                              ? PhosphorIconsStyle.fill
-                              : PhosphorIconsStyle.regular,
+                Row(
+                  children: [
+                    if (showBackButton)
+                      IconButton(
+                        key: const Key('thread-detail-back-button'),
+                        onPressed: onBack,
+                        icon: PhosphorIcon(
+                          PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
+                          size: 20,
+                          color: AppTheme.textMuted,
                         ),
-                        size: 20,
-                        color: AppTheme.textMuted,
-                      ),
-                    )
-                  else
-                    const SizedBox(width: 16),
-                  Expanded(
-                    child: Text(
-                      thread.title,
-                      key: const Key('thread-detail-title'),
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w500,
-                        letterSpacing: -0.5,
-                        fontSize: 18,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (onToggleDiff != null)
-                    IconButton(
-                      key: const Key('thread-detail-diff-toggle'),
-                      onPressed: onToggleDiff,
-                      icon: PhosphorIcon(
-                        PhosphorIcons.gitDiff(
-                          isDiffVisible
-                              ? PhosphorIconsStyle.fill
-                              : PhosphorIconsStyle.regular,
+                      )
+                    else if (showSidebarToggle)
+                      IconButton(
+                        key: const Key('thread-detail-sidebar-toggle'),
+                        onPressed: onToggleSidebar,
+                        icon: PhosphorIcon(
+                          PhosphorIcons.sidebarSimple(
+                            isSidebarVisible
+                                ? PhosphorIconsStyle.fill
+                                : PhosphorIconsStyle.regular,
+                          ),
+                          size: 20,
+                          color: AppTheme.textMuted,
                         ),
-                        size: 20,
-                        color: isDiffVisible
-                            ? AppTheme.emerald
-                            : AppTheme.textMuted,
+                      )
+                    else
+                      const SizedBox(width: 16),
+                    Expanded(
+                      child: Text(
+                        title,
+                        key: const Key('thread-detail-title'),
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: -0.5,
+                          fontSize: 18,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                ],
-              ),
-              Padding(
-                padding: EdgeInsets.only(left: leadingInset),
-                child: SingleChildScrollView(
-                  key: const Key('thread-detail-metadata-scroll'),
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      PhosphorIcon(
-                        PhosphorIcons.folderSimple(),
-                        size: 14,
-                        color: AppTheme.textSubtle,
+                    if (onToggleDiff != null)
+                      IconButton(
+                        key: const Key('thread-detail-diff-toggle'),
+                        onPressed: onToggleDiff,
+                        icon: PhosphorIcon(
+                          PhosphorIcons.gitDiff(
+                            isDiffVisible
+                                ? PhosphorIconsStyle.fill
+                                : PhosphorIconsStyle.regular,
+                          ),
+                          size: 20,
+                          color: isDiffVisible
+                              ? AppTheme.emerald
+                              : AppTheme.textMuted,
+                        ),
                       ),
-                      const SizedBox(width: 6),
-                      Text(
-                        thread.repository,
-                        style: GoogleFonts.jetBrainsMono(
+                  ],
+                ),
+                Padding(
+                  padding: EdgeInsets.only(left: leadingInset),
+                  child: SingleChildScrollView(
+                    key: const Key('thread-detail-metadata-scroll'),
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        PhosphorIcon(
+                          PhosphorIcons.folderSimple(),
+                          size: 14,
                           color: AppTheme.textSubtle,
-                          fontSize: 12,
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        '•',
-                        style: TextStyle(color: AppTheme.textSubtle),
-                      ),
-                      const SizedBox(width: 8),
-                      StatusBadge(
-                        text: _threadStatusLabel(thread.status),
-                        variant: thread.status == ThreadStatus.running
-                            ? BadgeVariant.active
-                            : BadgeVariant.defaultVariant,
-                      ),
-                      if (hasPendingApprovals) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          repositoryLabel,
+                          style: GoogleFonts.jetBrainsMono(
+                            color: AppTheme.textSubtle,
+                            fontSize: 12,
+                          ),
+                        ),
                         const SizedBox(width: 8),
                         const Text(
                           '•',
                           style: TextStyle(color: AppTheme.textSubtle),
                         ),
                         const SizedBox(width: 8),
-                        PhosphorIcon(
-                          PhosphorIcons.shieldWarning(),
-                          size: 14,
-                          color: AppTheme.amber,
+                        StatusBadge(
+                          text: statusLabel,
+                          variant: thread?.status == ThreadStatus.running
+                              ? BadgeVariant.active
+                              : BadgeVariant.defaultVariant,
                         ),
-                        const SizedBox(width: 6),
-                        Text(
-                          'Approvals Req.',
-                          style: GoogleFonts.jetBrainsMono(
-                            color: AppTheme.amber,
-                            fontSize: 12,
+                        if (hasThread && hasPendingApprovals) ...[
+                          const SizedBox(width: 8),
+                          const Text(
+                            '•',
+                            style: TextStyle(color: AppTheme.textSubtle),
                           ),
-                        ),
+                          const SizedBox(width: 8),
+                          PhosphorIcon(
+                            PhosphorIcons.shieldWarning(),
+                            size: 14,
+                            color: AppTheme.amber,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Approvals Req.',
+                            style: GoogleFonts.jetBrainsMono(
+                              color: AppTheme.amber,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
                       ],
+                    ),
+                  ),
+                ),
+                ConnectionStatusBanner(
+                  state: _threadDetailConnectionBannerState(connectionState),
+                  detail: connectionDetail,
+                  compact: true,
+                  margin: EdgeInsets.fromLTRB(leadingInset, 12, 0, 0),
+                ),
+                ValueListenableBuilder<bool>(
+                  valueListenable: isHeaderCollapsed,
+                  builder: (context, isCollapsed, child) {
+                    return AnimatedSize(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeInOut,
+                      alignment: Alignment.topCenter,
+                      child: isCollapsed
+                          ? const SizedBox(width: double.infinity)
+                          : child!,
+                    );
+                  },
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 16),
+                      Padding(
+                        padding: EdgeInsets.only(left: leadingInset),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              flex: 3,
+                              child: FilledButton.tonalIcon(
+                                key: const Key('git-header-branch-button'),
+                                style: FilledButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  backgroundColor: AppTheme.surfaceZinc800
+                                      .withValues(alpha: 0.5),
+                                  disabledBackgroundColor: AppTheme
+                                      .surfaceZinc800
+                                      .withValues(alpha: 0.5),
+                                  foregroundColor: AppTheme.textMain,
+                                  disabledForegroundColor: AppTheme.textMain,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    side: BorderSide(
+                                      color: Colors.white.withValues(
+                                        alpha: 0.05,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                onPressed: hasThread
+                                    ? () async {
+                                        await onOpenGitBranchSheet();
+                                      }
+                                    : null,
+                                icon: PhosphorIcon(
+                                  PhosphorIcons.gitBranch(),
+                                  size: 16,
+                                  color:
+                                      hasThread &&
+                                          gitControls.hasDirtyWorkingTree
+                                      ? AppTheme.amber
+                                      : AppTheme.textSubtle,
+                                ),
+                                label: Text(
+                                  branchLabel,
+                                  style: const TextStyle(fontSize: 13),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              flex: 2,
+                              child: FilledButton.tonalIcon(
+                                key: const Key('git-header-sync-button'),
+                                style: FilledButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  backgroundColor: AppTheme.surfaceZinc800
+                                      .withValues(alpha: 0.5),
+                                  disabledBackgroundColor: AppTheme
+                                      .surfaceZinc800
+                                      .withValues(alpha: 0.5),
+                                  foregroundColor: AppTheme.textMain,
+                                  disabledForegroundColor: AppTheme.textMain,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                    side: BorderSide(
+                                      color: Colors.white.withValues(
+                                        alpha: 0.05,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                onPressed: hasThread
+                                    ? () async {
+                                        await onOpenGitSyncSheet();
+                                      }
+                                    : null,
+                                icon: PhosphorIcon(
+                                  PhosphorIcons.arrowsClockwise(),
+                                  size: 16,
+                                  color: AppTheme.textSubtle,
+                                ),
+                                label: Text(
+                                  syncLabel,
+                                  style: const TextStyle(fontSize: 13),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            FilledButton.tonal(
+                              key: const Key('open-on-mac-button'),
+                              style: FilledButton.styleFrom(
+                                minimumSize: const Size(44, 44),
+                                padding: const EdgeInsets.all(10),
+                                backgroundColor: AppTheme.surfaceZinc800
+                                    .withValues(alpha: 0.5),
+                                disabledBackgroundColor: AppTheme.surfaceZinc800
+                                    .withValues(alpha: 0.5),
+                                foregroundColor: AppTheme.textMain,
+                                disabledForegroundColor: AppTheme.textMain,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  side: BorderSide(
+                                    color: Colors.white.withValues(alpha: 0.05),
+                                  ),
+                                ),
+                              ),
+                              onPressed: hasThread && canOpenOnMac
+                                  ? () async {
+                                      await onOpenOnMac();
+                                    }
+                                  : null,
+                              child: hasThread && state.isOpenOnMacInFlight
+                                  ? const SizedBox.square(
+                                      dimension: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: AppTheme.textMain,
+                                      ),
+                                    )
+                                  : PhosphorIcon(
+                                      PhosphorIcons.monitor(),
+                                      size: 18,
+                                      color: AppTheme.textMain,
+                                    ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                 ),
-              ),
-              ConnectionStatusBanner(
-                state: _threadDetailConnectionBannerState(connectionState),
-                detail: connectionDetail,
-                compact: true,
-                margin: EdgeInsets.fromLTRB(leadingInset, 12, 0, 0),
-              ),
-              ValueListenableBuilder<bool>(
-                valueListenable: isHeaderCollapsed,
-                builder: (context, isCollapsed, child) {
-                  return AnimatedSize(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeInOut,
-                    alignment: Alignment.topCenter,
-                    child: isCollapsed
-                        ? const SizedBox(width: double.infinity)
-                        : child!,
-                  );
-                },
-                child: Column(
-                  children: [
-                    const SizedBox(height: 16),
-                    Padding(
-                      padding: EdgeInsets.only(left: leadingInset),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            flex: 3,
-                            child: FilledButton.tonalIcon(
-                              key: const Key('git-header-branch-button'),
-                              style: FilledButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 10,
-                                ),
-                                backgroundColor: AppTheme.surfaceZinc800
-                                    .withValues(alpha: 0.5),
-                                foregroundColor: AppTheme.textMain,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  side: BorderSide(
-                                    color: Colors.white.withValues(alpha: 0.05),
-                                  ),
-                                ),
-                              ),
-                              onPressed: () async {
-                                await onOpenGitBranchSheet();
-                              },
-                              icon: PhosphorIcon(
-                                PhosphorIcons.gitBranch(),
-                                size: 16,
-                                color: gitControls.hasDirtyWorkingTree
-                                    ? AppTheme.amber
-                                    : AppTheme.textSubtle,
-                              ),
-                              label: Text(
-                                gitControls.repositoryContext.branch,
-                                style: const TextStyle(fontSize: 13),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            flex: 2,
-                            child: FilledButton.tonalIcon(
-                              key: const Key('git-header-sync-button'),
-                              style: FilledButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 10,
-                                ),
-                                backgroundColor: AppTheme.surfaceZinc800
-                                    .withValues(alpha: 0.5),
-                                foregroundColor: AppTheme.textMain,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  side: BorderSide(
-                                    color: Colors.white.withValues(alpha: 0.05),
-                                  ),
-                                ),
-                              ),
-                              onPressed: () async {
-                                await onOpenGitSyncSheet();
-                              },
-                              icon: PhosphorIcon(
-                                PhosphorIcons.arrowsClockwise(),
-                                size: 16,
-                                color: AppTheme.textSubtle,
-                              ),
-                              label: Text(
-                                gitControls.syncLabel,
-                                style: const TextStyle(fontSize: 13),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          FilledButton.tonal(
-                            key: const Key('open-on-mac-button'),
-                            style: FilledButton.styleFrom(
-                              minimumSize: const Size(44, 44),
-                              padding: const EdgeInsets.all(10),
-                              backgroundColor: AppTheme.surfaceZinc800
-                                  .withValues(alpha: 0.5),
-                              foregroundColor: AppTheme.textMain,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                side: BorderSide(
-                                  color: Colors.white.withValues(alpha: 0.05),
-                                ),
-                              ),
-                            ),
-                            onPressed: canOpenOnMac
-                                ? () async {
-                                    await onOpenOnMac();
-                                  }
-                                : null,
-                            child: state.isOpenOnMacInFlight
-                                ? const SizedBox.square(
-                                    dimension: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: AppTheme.textMain,
-                                    ),
-                                  )
-                                : PhosphorIcon(
-                                    PhosphorIcons.monitor(),
-                                    size: 18,
-                                    color: AppTheme.textMain,
-                                  ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _UnavailableThreadDetailHeader extends StatelessWidget {
-  const _UnavailableThreadDetailHeader({
-    required this.onBack,
-    required this.connectionState,
-    required this.connectionDetail,
-    required this.showBackButton,
-    required this.onToggleSidebar,
-    required this.isSidebarVisible,
-    required this.onToggleDiff,
-    required this.isDiffVisible,
-  });
-
-  final VoidCallback onBack;
-  final LiveConnectionState connectionState;
-  final String? connectionDetail;
-  final bool showBackButton;
-  final VoidCallback? onToggleSidebar;
-  final bool isSidebarVisible;
-  final VoidCallback? onToggleDiff;
-  final bool isDiffVisible;
-
-  @override
-  Widget build(BuildContext context) {
-    final showSidebarToggle = onToggleSidebar != null;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      decoration: const BoxDecoration(
-        color: AppTheme.background,
-        border: Border(bottom: BorderSide(color: Colors.white10)),
-      ),
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(
-            maxWidth: _ThreadDetailPageState._sessionContentMaxWidth,
-          ),
-          child: SizedBox(
-            width: double.infinity,
-            child: Column(
-              children: [
-              Row(
-                children: [
-                  if (showBackButton)
-                    IconButton(
-                      key: const Key('thread-detail-back-button'),
-                      onPressed: onBack,
-                      icon: PhosphorIcon(
-                        PhosphorIcons.caretLeft(PhosphorIconsStyle.bold),
-                        size: 20,
-                        color: AppTheme.textMuted,
-                      ),
-                    )
-                  else if (showSidebarToggle)
-                    IconButton(
-                      key: const Key('thread-detail-sidebar-toggle'),
-                      onPressed: onToggleSidebar,
-                      icon: PhosphorIcon(
-                        PhosphorIcons.sidebarSimple(
-                          isSidebarVisible
-                              ? PhosphorIconsStyle.fill
-                              : PhosphorIconsStyle.regular,
-                        ),
-                        size: 20,
-                        color: AppTheme.textMuted,
-                      ),
-                    )
-                  else
-                    const SizedBox(width: 8),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Session Details',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w500,
-                        letterSpacing: -0.5,
-                      ),
-                    ),
-                  ),
-                  if (onToggleDiff != null)
-                    IconButton(
-                      key: const Key('thread-detail-diff-toggle'),
-                      onPressed: onToggleDiff,
-                      icon: PhosphorIcon(
-                        PhosphorIcons.gitDiff(
-                          isDiffVisible
-                              ? PhosphorIconsStyle.fill
-                              : PhosphorIconsStyle.regular,
-                        ),
-                        size: 20,
-                        color: isDiffVisible
-                            ? AppTheme.emerald
-                            : AppTheme.textMuted,
-                      ),
-                    ),
-                ],
-              ),
-              ConnectionStatusBanner(
-                state: _threadDetailConnectionBannerState(connectionState),
-                detail: connectionDetail,
-                compact: true,
-                margin: const EdgeInsets.only(top: 8),
-              ),
               ],
             ),
           ),

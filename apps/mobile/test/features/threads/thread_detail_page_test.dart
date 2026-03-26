@@ -3831,6 +3831,82 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(find.text('Retry'), findsOneWidget);
   });
 
+  testWidgets(
+    'offline mode without a loaded thread keeps the full header layout disabled',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            const ThreadDetailBridgeException(
+              message: 'Cannot reach the bridge. Check your private route.',
+              isConnectivityError: true,
+            ),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            const ThreadDetailBridgeException(
+              message: 'Cannot reach the bridge. Check your private route.',
+              isConnectivityError: true,
+            ),
+          ],
+        },
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            threadListBridgeApiProvider.overrideWithValue(
+              FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]),
+            ),
+            approvalBridgeApiProvider.overrideWithValue(
+              EmptyApprovalBridgeApi(),
+            ),
+            threadDetailBridgeApiProvider.overrideWithValue(detailApi),
+            threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+            threadCacheRepositoryProvider.overrideWithValue(
+              _newCacheRepository(),
+            ),
+          ],
+          child: const MaterialApp(
+            home: ThreadDetailPage(
+              bridgeApiBaseUrl: _bridgeApiBaseUrl,
+              threadId: 'thread-123',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
+      expect(
+        tester.widget<Text>(find.byKey(const Key('thread-detail-title'))).data,
+        'Session Details',
+      );
+      expect(
+        find.byKey(const Key('thread-detail-metadata-scroll')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('git-header-branch-button')), findsOneWidget);
+      expect(find.byKey(const Key('git-header-sync-button')), findsOneWidget);
+      expect(find.byKey(const Key('open-on-mac-button')), findsOneWidget);
+
+      final branchButton = tester.widget<ButtonStyleButton>(
+        find.byKey(const Key('git-header-branch-button')),
+      );
+      final syncButton = tester.widget<ButtonStyleButton>(
+        find.byKey(const Key('git-header-sync-button')),
+      );
+      final openOnMacButton = tester.widget<ButtonStyleButton>(
+        find.byKey(const Key('open-on-mac-button')),
+      );
+
+      expect(branchButton.onPressed, isNull);
+      expect(syncButton.onPressed, isNull);
+      expect(openOnMacButton.onPressed, isNull);
+    },
+  );
+
   testWidgets('disconnect reconnects and keeps items deduplicated', (
     tester,
   ) async {
