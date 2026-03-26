@@ -49,7 +49,7 @@ void main() {
           localDesktopConfigProvider.overrideWithValue(
             const LocalDesktopConfig(
               enabled: true,
-              bridgeApiBaseUrl: 'http://127.0.0.1:3210',
+              bridgeApiBaseUrl: 'http://127.0.0.1:3110',
             ),
           ),
           localDesktopBridgeApiProvider.overrideWithValue(
@@ -97,7 +97,7 @@ void main() {
             localDesktopConfigProvider.overrideWithValue(
               const LocalDesktopConfig(
                 enabled: true,
-                bridgeApiBaseUrl: 'http://127.0.0.1:3210',
+                bridgeApiBaseUrl: 'http://127.0.0.1:3110',
               ),
             ),
             localDesktopBridgeApiProvider.overrideWithValue(

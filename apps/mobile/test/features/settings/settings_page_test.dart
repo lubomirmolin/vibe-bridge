@@ -350,49 +350,47 @@ void main() {
     );
   });
 
-  testWidgets('localhost desktop session changes access mode without pairing secrets', (
-    tester,
-  ) async {
-    final settingsApi = FakeSettingsBridgeApi(
-      accessMode: AccessMode.controlWithApprovals,
-      events: const <SecurityEventRecordDto>[],
-    );
+  testWidgets(
+    'localhost desktop session changes access mode without pairing secrets',
+    (tester) async {
+      final settingsApi = FakeSettingsBridgeApi(
+        accessMode: AccessMode.controlWithApprovals,
+        events: const <SecurityEventRecordDto>[],
+      );
 
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          appPlatformProvider.overrideWithValue(
-            const AppPlatform(isWeb: false, isDesktop: true),
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appPlatformProvider.overrideWithValue(
+              const AppPlatform(isWeb: false, isDesktop: true),
+            ),
+            secureStoreProvider.overrideWithValue(InMemorySecureStore()),
+            pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
+            settingsBridgeApiProvider.overrideWithValue(settingsApi),
+          ],
+          child: const MaterialApp(
+            home: SettingsPage(bridgeApiBaseUrl: 'http://127.0.0.1:3110'),
           ),
-          secureStoreProvider.overrideWithValue(InMemorySecureStore()),
-          pairingBridgeApiProvider.overrideWithValue(FakePairingBridgeApi()),
-          settingsBridgeApiProvider.overrideWithValue(settingsApi),
-        ],
-        child: const MaterialApp(
-          home: SettingsPage(bridgeApiBaseUrl: 'http://127.0.0.1:3210'),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    expect(
-      find.text(
-        'This app is connected directly to the bridge running on the current machine.',
-      ),
-      findsOneWidget,
-    );
+      expect(
+        find.text(
+          'This app is connected directly to the bridge running on the current machine.',
+        ),
+        findsOneWidget,
+      );
 
-    await tester.tap(find.text('Full'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('Full'));
+      await tester.pumpAndSettle();
 
-    expect(settingsApi.setModeCalls, hasLength(1));
-    expect(settingsApi.setModeCalls.single.phoneId, isNull);
-    expect(settingsApi.setModeCalls.single.sessionToken, isNull);
-    expect(
-      settingsApi.setModeCalls.single.localSessionKind,
-      'desktop_local',
-    );
-  });
+      expect(settingsApi.setModeCalls, hasLength(1));
+      expect(settingsApi.setModeCalls.single.phoneId, isNull);
+      expect(settingsApi.setModeCalls.single.sessionToken, isNull);
+      expect(settingsApi.setModeCalls.single.localSessionKind, 'desktop_local');
+    },
+  );
 }
 
 class FakePairingBridgeApi implements PairingBridgeApi {

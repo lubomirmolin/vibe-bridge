@@ -84,6 +84,7 @@ fn browser_localhost_cors_layer() -> CorsLayer {
         .allow_origin(AllowOrigin::predicate(
             |origin: &HeaderValue, _request_parts| is_loopback_browser_origin(origin),
         ))
+        .allow_private_network(true)
         .allow_methods([
             Method::GET,
             Method::POST,
