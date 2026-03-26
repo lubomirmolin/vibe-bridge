@@ -5,7 +5,7 @@ import 'local_desktop_bridge_api_stub.dart'
     if (dart.library.io) 'local_desktop_bridge_api_io.dart'
     as impl;
 
-const String defaultLocalDesktopBridgeBaseUrl = 'http://127.0.0.1:3210';
+const String defaultLocalDesktopBridgeBaseUrl = 'http://127.0.0.1:3110';
 
 class LocalDesktopConfig {
   const LocalDesktopConfig({
