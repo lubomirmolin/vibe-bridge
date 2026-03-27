@@ -98,7 +98,7 @@ void main() {
     await tester.tap(
       find.byKey(
         const Key(
-          'thread-list-workspace-option-/workspace/codex-mobile-companion',
+          'thread-list-workspace-option-/workspace/vibe-bridge-companion',
         ),
       ),
     );
@@ -565,7 +565,7 @@ void main() {
       expect(find.text('COMPLETED'), findsOneWidget);
       expect(
         find.byKey(
-          const Key('thread-folder-group-/workspace/codex-mobile-companion'),
+          const Key('thread-folder-group-/workspace/vibe-bridge-companion'),
         ),
         findsOneWidget,
       );
@@ -598,7 +598,7 @@ void main() {
     final groupWidth = tester
         .getSize(
           find.byKey(
-            const Key('thread-folder-group-/workspace/codex-mobile-companion'),
+            const Key('thread-folder-group-/workspace/vibe-bridge-companion'),
           ),
         )
         .width;
@@ -1040,7 +1040,7 @@ void main() {
 
     expect(
       find.byKey(
-        const Key('thread-folder-group-/workspace/codex-mobile-companion'),
+        const Key('thread-folder-group-/workspace/vibe-bridge-companion'),
       ),
       findsOneWidget,
     );
@@ -1051,7 +1051,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(
-          const Key('thread-folder-group-/workspace/codex-mobile-companion'),
+          const Key('thread-folder-group-/workspace/vibe-bridge-companion'),
         ),
         matching: find.text('Investigate reconnect dedup'),
       ),
@@ -1060,7 +1060,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(
-          const Key('thread-folder-group-/workspace/codex-mobile-companion'),
+          const Key('thread-folder-group-/workspace/vibe-bridge-companion'),
         ),
         matching: find.text('Implement shared contracts'),
       ),
@@ -1079,7 +1079,7 @@ void main() {
 
     expect(
       find.byKey(
-        const Key('thread-folder-group-/workspace/codex-mobile-companion'),
+        const Key('thread-folder-group-/workspace/vibe-bridge-companion'),
       ),
       findsNothing,
     );
@@ -1125,7 +1125,7 @@ void main() {
 
     await tester.tap(
       find.byKey(
-        const Key('thread-folder-toggle-/workspace/codex-mobile-companion'),
+        const Key('thread-folder-toggle-/workspace/vibe-bridge-companion'),
       ),
     );
     await tester.pumpAndSettle();
@@ -1181,7 +1181,7 @@ void main() {
       expect(find.text('Tune timeline chunking'), findsNothing);
       expect(
         find.byKey(
-          const Key('thread-group-show-more-/workspace/codex-mobile-companion'),
+          const Key('thread-group-show-more-/workspace/vibe-bridge-companion'),
         ),
         findsOneWidget,
       );
@@ -1189,7 +1189,7 @@ void main() {
 
       await tester.tap(
         find.byKey(
-          const Key('thread-group-show-more-/workspace/codex-mobile-companion'),
+          const Key('thread-group-show-more-/workspace/vibe-bridge-companion'),
         ),
       );
       await tester.pumpAndSettle();
@@ -1236,7 +1236,7 @@ void main() {
       expect(
         find.byKey(
           const Key(
-            'thread-list-workspace-option-/workspace/codex-mobile-companion',
+            'thread-list-workspace-option-/workspace/vibe-bridge-companion',
           ),
         ),
         findsOneWidget,
@@ -1351,8 +1351,8 @@ ThreadDetailDto _thread123Detail() {
     threadId: 'thread-123',
     title: 'Implement shared contracts',
     status: ThreadStatus.running,
-    workspace: '/workspace/codex-mobile-companion',
-    repository: 'codex-mobile-companion',
+    workspace: '/workspace/vibe-bridge-companion',
+    repository: 'vibe-bridge-companion',
     branch: 'master',
     createdAt: '2026-03-18T09:45:00Z',
     updatedAt: '2026-03-18T10:00:00Z',
@@ -1369,8 +1369,8 @@ List<ThreadSummaryDto> _sampleThreads() {
       threadId: 'thread-123',
       title: 'Implement shared contracts',
       status: ThreadStatus.running,
-      workspace: '/workspace/codex-mobile-companion',
-      repository: 'codex-mobile-companion',
+      workspace: '/workspace/vibe-bridge-companion',
+      repository: 'vibe-bridge-companion',
       branch: 'master',
       updatedAt: '2026-03-17T18:00:00Z',
     ),
@@ -1394,8 +1394,8 @@ List<ThreadSummaryDto> _groupedThreads() {
       threadId: 'thread-123',
       title: 'Implement shared contracts',
       status: ThreadStatus.running,
-      workspace: '/workspace/codex-mobile-companion',
-      repository: 'codex-mobile-companion',
+      workspace: '/workspace/vibe-bridge-companion',
+      repository: 'vibe-bridge-companion',
       branch: 'master',
       updatedAt: '2026-03-17T18:00:00Z',
     ),
@@ -1404,8 +1404,8 @@ List<ThreadSummaryDto> _groupedThreads() {
       threadId: 'thread-456',
       title: 'Investigate reconnect dedup',
       status: ThreadStatus.completed,
-      workspace: '/workspace/codex-mobile-companion',
-      repository: 'codex-mobile-companion',
+      workspace: '/workspace/vibe-bridge-companion',
+      repository: 'vibe-bridge-companion',
       branch: 'develop',
       updatedAt: '2026-03-17T17:30:00Z',
     ),
@@ -1439,8 +1439,8 @@ List<ThreadSummaryDto> _threadsWithMissingWorkspace() {
       threadId: 'thread-123',
       title: 'Implement shared contracts',
       status: ThreadStatus.running,
-      workspace: '/workspace/codex-mobile-companion',
-      repository: 'codex-mobile-companion',
+      workspace: '/workspace/vibe-bridge-companion',
+      repository: 'vibe-bridge-companion',
       branch: 'master',
       updatedAt: '2026-03-17T18:00:00Z',
     ),
@@ -1464,8 +1464,8 @@ List<ThreadSummaryDto> _overflowGroupedThreads() {
       threadId: 'thread-123',
       title: 'Implement shared contracts',
       status: ThreadStatus.running,
-      workspace: '/workspace/codex-mobile-companion',
-      repository: 'codex-mobile-companion',
+      workspace: '/workspace/vibe-bridge-companion',
+      repository: 'vibe-bridge-companion',
       branch: 'master',
       updatedAt: '2026-03-17T18:00:00Z',
     ),
@@ -1474,8 +1474,8 @@ List<ThreadSummaryDto> _overflowGroupedThreads() {
       threadId: 'thread-456',
       title: 'Investigate reconnect dedup',
       status: ThreadStatus.completed,
-      workspace: '/workspace/codex-mobile-companion',
-      repository: 'codex-mobile-companion',
+      workspace: '/workspace/vibe-bridge-companion',
+      repository: 'vibe-bridge-companion',
       branch: 'develop',
       updatedAt: '2026-03-17T17:30:00Z',
     ),
@@ -1484,8 +1484,8 @@ List<ThreadSummaryDto> _overflowGroupedThreads() {
       threadId: 'thread-457',
       title: 'Ship bridge offline banner',
       status: ThreadStatus.idle,
-      workspace: '/workspace/codex-mobile-companion',
-      repository: 'codex-mobile-companion',
+      workspace: '/workspace/vibe-bridge-companion',
+      repository: 'vibe-bridge-companion',
       branch: 'feature/offline-banner',
       updatedAt: '2026-03-17T17:00:00Z',
     ),
@@ -1494,8 +1494,8 @@ List<ThreadSummaryDto> _overflowGroupedThreads() {
       threadId: 'thread-458',
       title: 'Tune timeline chunking',
       status: ThreadStatus.failed,
-      workspace: '/workspace/codex-mobile-companion',
-      repository: 'codex-mobile-companion',
+      workspace: '/workspace/vibe-bridge-companion',
+      repository: 'vibe-bridge-companion',
       branch: 'feature/timeline-chunking',
       updatedAt: '2026-03-17T16:30:00Z',
     ),

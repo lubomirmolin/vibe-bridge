@@ -65,7 +65,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(const Key('thread-detail-metadata-scroll')),
-          matching: find.text('codex-mobile-companion'),
+          matching: find.text('vibe-bridge-companion'),
         ),
         findsOneWidget,
       );
@@ -281,8 +281,8 @@ void main() {
         threadId: 'thread-new',
         title: 'Fresh session',
         status: ThreadStatus.idle,
-        workspace: '/workspace/codex-mobile-companion',
-        repository: 'codex-mobile-companion',
+        workspace: '/workspace/vibe-bridge-companion',
+        repository: 'vibe-bridge-companion',
         branch: 'main',
         createdAt: '2026-03-18T12:00:00Z',
         updatedAt: '2026-03-18T12:00:00Z',
@@ -323,7 +323,7 @@ void main() {
       await tester.tap(
         find.byKey(
           const Key(
-            'thread-list-workspace-option-/workspace/codex-mobile-companion',
+            'thread-list-workspace-option-/workspace/vibe-bridge-companion',
           ),
         ),
       );
@@ -347,7 +347,7 @@ void main() {
       expect(detailApi.createThreadCallCount, 1);
       expect(
         detailApi.createdThreadWorkspaces,
-        contains('/workspace/codex-mobile-companion'),
+        contains('/workspace/vibe-bridge-companion'),
       );
       expect(
         detailApi.startTurnPromptsByThreadId['thread-new'],
@@ -365,8 +365,8 @@ void main() {
         threadId: 'thread-123',
         title: 'New Thread',
         status: ThreadStatus.running,
-        workspace: '/workspace/codex-mobile-companion',
-        repository: 'codex-mobile-companion',
+        workspace: '/workspace/vibe-bridge-companion',
+        repository: 'vibe-bridge-companion',
         branch: 'master',
         createdAt: '2026-03-18T09:45:00Z',
         updatedAt: '2026-03-18T10:00:00Z',
@@ -379,8 +379,8 @@ void main() {
         threadId: 'thread-123',
         title: 'Implement shared contracts',
         status: ThreadStatus.running,
-        workspace: '/workspace/codex-mobile-companion',
-        repository: 'codex-mobile-companion',
+        workspace: '/workspace/vibe-bridge-companion',
+        repository: 'vibe-bridge-companion',
         branch: 'master',
         createdAt: '2026-03-18T09:45:00Z',
         updatedAt: '2026-03-18T10:00:02Z',
@@ -396,8 +396,8 @@ void main() {
               threadId: 'thread-123',
               title: 'New Thread',
               status: ThreadStatus.running,
-              workspace: '/workspace/codex-mobile-companion',
-              repository: 'codex-mobile-companion',
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
               branch: 'master',
               updatedAt: '2026-03-18T10:00:00Z',
             ),
@@ -461,8 +461,8 @@ void main() {
         threadId: 'thread-new',
         title: 'Fresh session',
         status: ThreadStatus.idle,
-        workspace: '/workspace/codex-mobile-companion',
-        repository: 'codex-mobile-companion',
+        workspace: '/workspace/vibe-bridge-companion',
+        repository: 'vibe-bridge-companion',
         branch: 'main',
         createdAt: '2026-03-18T12:00:00Z',
         updatedAt: '2026-03-18T12:00:00Z',
@@ -504,7 +504,7 @@ void main() {
       await tester.tap(
         find.byKey(
           const Key(
-            'thread-list-workspace-option-/workspace/codex-mobile-companion',
+            'thread-list-workspace-option-/workspace/vibe-bridge-companion',
           ),
         ),
       );
@@ -1023,7 +1023,7 @@ void main() {
               payload: {
                 'type': 'agentMessage',
                 'text':
-                    'See [apps/mobile/pubspec.yaml](/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile/pubspec.yaml#L33) for details.',
+                    'See [apps/mobile/pubspec.yaml](/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/apps/mobile/pubspec.yaml#L33) for details.',
               },
               occurredAt: '2026-03-18T10:02:00Z',
             ),
@@ -1525,7 +1525,7 @@ Output:
               payload: {
                 'command': 'exec_command',
                 'arguments':
-                    '{"cmd":"flutter test --concurrency=5","workdir":"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile","yield_time_ms":1000}',
+                    '{"cmd":"flutter test --concurrency=5","workdir":"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/apps/mobile","yield_time_ms":1000}',
               },
               occurredAt: '2026-03-18T10:02:00Z',
             ),
@@ -1569,7 +1569,7 @@ Output:
               payload: {
                 'output': '''
 *** Begin Patch
-*** Update File: /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile/lib/features/threads/presentation/thread_detail_page.dart
+*** Update File: /Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/apps/mobile/lib/features/threads/presentation/thread_detail_page.dart
 @@
 -    return oldValue;
 +    return newValue;
@@ -1697,7 +1697,7 @@ index 3333333..4444444 100644
           payload: {
             'output': '''
 *** Begin Patch
-*** Update File: /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile/lib/features/threads/presentation/thread_detail_page.dart
+*** Update File: /Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/apps/mobile/lib/features/threads/presentation/thread_detail_page.dart
 @@
 -    return oldValue;
 +    return newValue;
@@ -1820,7 +1820,7 @@ index 1111111..2222222 100644
               payload: {
                 'change': '''
 *** Begin Patch
-*** Delete File: /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile/test/features/threads/thread_live_timeline_regression_test.dart
+*** Delete File: /Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/apps/mobile/test/features/threads/thread_live_timeline_regression_test.dart
 *** End Patch
 ''',
                 'resolved_unified_diff': '''
@@ -1879,7 +1879,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
                     'Command: dart format apps/mobile/lib/features/threads/presentation/thread_detail_page.dart\n'
                     'Output:\n'
                     'Background terminal finished with dart format apps/mobile/lib/features/threads/presentation/thread_detail_page.dart\n'
-                    'Working directory: /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion',
+                    'Working directory: /Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion',
               },
               occurredAt: '2026-03-18T10:02:00Z',
             ),
@@ -1914,7 +1914,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     );
     expect(
       find.textContaining(
-        'Working directory: /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion',
+        'Working directory: /Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion',
       ),
       findsOneWidget,
     );
@@ -2793,7 +2793,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       );
 
       await _openGitBranchSheet(tester);
-      expect(find.text('Repository: codex-mobile-companion'), findsOneWidget);
+      expect(find.text('Repository: vibe-bridge-companion'), findsOneWidget);
       expect(find.text('Branch: master'), findsOneWidget);
       expect(find.text('Remote: origin'), findsOneWidget);
       expect(find.text('Status: Clean • Ahead 0 • Behind 0'), findsOneWidget);
@@ -2839,7 +2839,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
             threadId: 'thread-123',
             operation: 'git_branch_switch',
             message: 'Switched branch to release/2026',
-            repository: 'codex-mobile-companion',
+            repository: 'vibe-bridge-companion',
             branch: 'release/2026',
             remote: 'origin',
             threadStatus: ThreadStatus.idle,
@@ -3039,8 +3039,8 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
             threadId: 'thread-123',
             title: 'Implement shared contracts',
             status: ThreadStatus.idle,
-            workspace: '/workspace/codex-mobile-companion',
-            repository: 'codex-mobile-companion',
+            workspace: '/workspace/vibe-bridge-companion',
+            repository: 'vibe-bridge-companion',
             branch: 'master',
             createdAt: '2026-03-18T09:45:00Z',
             updatedAt: '2026-03-18T10:00:00Z',
@@ -3278,7 +3278,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     await tester.pumpAndSettle();
 
     await _openGitBranchSheet(tester);
-    expect(find.text('Repository: codex-mobile-companion'), findsOneWidget);
+    expect(find.text('Repository: vibe-bridge-companion'), findsOneWidget);
     await _closeModalSheet(tester);
 
     await _tapThreadDetailBackButton(tester);
@@ -4561,8 +4561,8 @@ List<ThreadSummaryDto> _threadSummaries() {
       threadId: 'thread-123',
       title: 'Implement shared contracts',
       status: ThreadStatus.running,
-      workspace: '/workspace/codex-mobile-companion',
-      repository: 'codex-mobile-companion',
+      workspace: '/workspace/vibe-bridge-companion',
+      repository: 'vibe-bridge-companion',
       branch: 'master',
       updatedAt: '2026-03-18T10:00:00Z',
     ),
@@ -4588,8 +4588,8 @@ ThreadDetailDto _thread123Detail({
     threadId: 'thread-123',
     title: 'Implement shared contracts',
     status: status,
-    workspace: '/workspace/codex-mobile-companion',
-    repository: 'codex-mobile-companion',
+    workspace: '/workspace/vibe-bridge-companion',
+    repository: 'vibe-bridge-companion',
     branch: 'master',
     createdAt: '2026-03-18T09:45:00Z',
     updatedAt: '2026-03-18T10:00:00Z',
@@ -4711,8 +4711,8 @@ TurnMutationResult _turnMutationResult({
 
 GitStatusResponseDto _gitStatus({
   required String threadId,
-  String workspace = '/workspace/codex-mobile-companion',
-  String repository = 'codex-mobile-companion',
+  String workspace = '/workspace/vibe-bridge-companion',
+  String repository = 'vibe-bridge-companion',
   String branch = 'master',
   String remote = 'origin',
   bool dirty = false,
@@ -4739,7 +4739,7 @@ MutationResultResponseDto _gitMutationResult({
   required String repository,
   required String branch,
   required String remote,
-  String workspace = '/workspace/codex-mobile-companion',
+  String workspace = '/workspace/vibe-bridge-companion',
   bool dirty = false,
   int aheadBy = 0,
   int behindBy = 0,
@@ -4924,8 +4924,8 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
           threadId: 'thread-created',
           title: 'New Thread',
           status: ThreadStatus.idle,
-          workspace: '/workspace/codex-mobile-companion',
-          repository: 'codex-mobile-companion',
+          workspace: '/workspace/vibe-bridge-companion',
+          repository: 'vibe-bridge-companion',
           branch: 'main',
           createdAt: '2026-03-18T12:00:00Z',
           updatedAt: '2026-03-18T12:00:00Z',

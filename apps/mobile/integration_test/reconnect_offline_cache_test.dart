@@ -1005,13 +1005,13 @@ void main() {
       );
       expect(
         detailState.gitStatus?.repository.repository,
-        'codex-mobile-companion',
+        'vibe-bridge-companion',
       );
       expect(detailState.gitStatus?.repository.branch, 'master');
       expect(detailState.gitStatus?.repository.remote, 'origin');
       expect(
         detailState.gitStatus?.repository.workspace,
-        '/workspace/codex-mobile-companion',
+        '/workspace/vibe-bridge-companion',
       );
 
       final approvalsState = container.read(
@@ -1259,8 +1259,8 @@ List<ThreadSummaryDto> _threadSummaries() {
       threadId: 'thread-123',
       title: 'Implement shared contracts',
       status: ThreadStatus.running,
-      workspace: '/workspace/codex-mobile-companion',
-      repository: 'codex-mobile-companion',
+      workspace: '/workspace/vibe-bridge-companion',
+      repository: 'vibe-bridge-companion',
       branch: 'master',
       updatedAt: '2026-03-18T10:00:00Z',
     ),
@@ -1287,8 +1287,8 @@ ThreadDetailDto _threadDetail({
     threadId: threadId,
     title: title,
     status: status,
-    workspace: '/workspace/codex-mobile-companion',
-    repository: 'codex-mobile-companion',
+    workspace: '/workspace/vibe-bridge-companion',
+    repository: 'vibe-bridge-companion',
     branch: 'master',
     createdAt: '2026-03-18T09:45:00Z',
     updatedAt: '2026-03-18T10:00:00Z',
@@ -1325,8 +1325,8 @@ ApprovalRecordDto _pendingApprovalRecord({required String threadId}) {
     requestedAt: '2026-03-18T10:03:00Z',
     resolvedAt: null,
     repository: const RepositoryContextDto(
-      workspace: '/workspace/codex-mobile-companion',
-      repository: 'codex-mobile-companion',
+      workspace: '/workspace/vibe-bridge-companion',
+      repository: 'vibe-bridge-companion',
       branch: 'master',
       remote: 'origin',
     ),

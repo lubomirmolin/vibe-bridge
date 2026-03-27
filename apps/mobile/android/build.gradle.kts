@@ -28,7 +28,7 @@ val patchCargokitRunScripts =
                 return@doLast
             }
 
-            val marker = "# codex-mobile-companion rust env"
+            val marker = "# vibe-bridge-companion rust env"
             val snippet =
                 """
 $marker
@@ -48,7 +48,7 @@ esac
                     val updatedWithSnippet =
                         if (original.contains(marker)) {
                             original.replace(
-                                Regex("""(?ms)^# codex-mobile-companion rust env\n.*?^esac\n"""),
+                                Regex("""(?ms)^# vibe-bridge-companion rust env\n.*?^esac\n"""),
                             ) {
                                 "$snippet\n"
                             }

@@ -212,8 +212,8 @@ List<ThreadSummaryDto> _sampleThreads() {
       threadId: 'thread-123',
       title: 'Implement shared contracts',
       status: ThreadStatus.completed,
-      workspace: '/workspace/codex-mobile-companion',
-      repository: 'codex-mobile-companion',
+      workspace: '/workspace/vibe-bridge-companion',
+      repository: 'vibe-bridge-companion',
       branch: 'main',
       updatedAt: '2026-03-18T10:00:00Z',
     ),
@@ -226,8 +226,8 @@ ThreadDetailDto _threadDetail({ThreadStatus status = ThreadStatus.completed}) {
     threadId: 'thread-123',
     title: 'Implement shared contracts',
     status: status,
-    workspace: '/workspace/codex-mobile-companion',
-    repository: 'codex-mobile-companion',
+    workspace: '/workspace/vibe-bridge-companion',
+    repository: 'vibe-bridge-companion',
     branch: 'main',
     createdAt: '2026-03-18T09:45:00Z',
     updatedAt: '2026-03-18T10:00:00Z',
@@ -611,8 +611,8 @@ class _UnsupportedSpeechCapture implements SpeechCapture {
 }
 
 const ThreadGitStatusDto _threadGitStatus = ThreadGitStatusDto(
-  workspace: '/workspace/codex-mobile-companion',
-  repository: 'codex-mobile-companion',
+  workspace: '/workspace/vibe-bridge-companion',
+  repository: 'vibe-bridge-companion',
   branch: 'main',
   remote: 'origin',
   dirty: false,
@@ -621,8 +621,8 @@ const ThreadGitStatusDto _threadGitStatus = ThreadGitStatusDto(
 );
 
 const RepositoryContextDto _repositoryContext = RepositoryContextDto(
-  workspace: '/workspace/codex-mobile-companion',
-  repository: 'codex-mobile-companion',
+  workspace: '/workspace/vibe-bridge-companion',
+  repository: 'vibe-bridge-companion',
   branch: 'main',
   remote: 'origin',
 );

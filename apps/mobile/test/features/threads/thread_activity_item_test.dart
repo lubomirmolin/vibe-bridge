@@ -74,7 +74,7 @@ index 1111111..2222222 100644
       payload: <String, dynamic>{
         'output': '''
 *** Begin Patch
-*** Update File: /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile/lib/features/threads/presentation/thread_detail_page.dart
+*** Update File: /Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/apps/mobile/lib/features/threads/presentation/thread_detail_page.dart
 @@
 -    return oldValue;
 +    return newValue;
@@ -193,7 +193,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       payload: <String, dynamic>{
         'command': 'exec_command',
         'arguments':
-            '{"cmd":"dart format apps/mobile/lib/features/threads/presentation/thread_detail_page.dart","workdir":"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion","yield_time_ms":1000}',
+            '{"cmd":"dart format apps/mobile/lib/features/threads/presentation/thread_detail_page.dart","workdir":"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion","yield_time_ms":1000}',
       },
     );
 
@@ -208,7 +208,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(
       item.parsedCommandOutput!.terminalDisplayBody,
       contains(
-        'Working directory: /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion',
+        'Working directory: /Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion',
       ),
     );
   });
@@ -222,7 +222,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       payload: <String, dynamic>{
         'command': 'exec_command',
         'arguments':
-            '{"cmd":"git diff -- apps/mobile/lib/features/threads/application/thread_detail_controller.dart apps/mobile/test/features/threads/thread_detail_cache_failure_test.dart","workdir":"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion","yield_time_ms":1000,"max_output_tokens":12000}',
+            '{"cmd":"git diff -- apps/mobile/lib/features/threads/application/thread_detail_controller.dart apps/mobile/test/features/threads/thread_detail_cache_failure_test.dart","workdir":"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion","yield_time_ms":1000,"max_output_tokens":12000}',
       },
     );
 
@@ -241,7 +241,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(
       item.parsedCommandOutput!.terminalDisplayBody,
       contains(
-        'Working directory: /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion',
+        'Working directory: /Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion',
       ),
     );
   });
