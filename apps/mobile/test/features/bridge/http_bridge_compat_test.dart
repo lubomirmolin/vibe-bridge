@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
-import 'package:codex_mobile_companion/features/settings/data/settings_bridge_api.dart';
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/features/approvals/data/approval_bridge_api.dart';
+import 'package:vibe_bridge/features/settings/data/settings_bridge_api.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

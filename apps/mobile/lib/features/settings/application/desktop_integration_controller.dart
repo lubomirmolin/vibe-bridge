@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
-import 'package:codex_mobile_companion/foundation/storage/secure_store_provider.dart';
+import 'package:vibe_bridge/foundation/storage/secure_store.dart';
+import 'package:vibe_bridge/foundation/storage/secure_store_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final desktopIntegrationControllerProvider =

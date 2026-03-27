@@ -1,13 +1,13 @@
-import 'package:codex_mobile_companion/features/approvals/application/approvals_queue_controller.dart';
-import 'package:codex_mobile_companion/features/approvals/presentation/approval_presenter.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
-import 'package:codex_mobile_companion/features/threads/presentation/thread_detail_page.dart';
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/features/approvals/application/approvals_queue_controller.dart';
+import 'package:vibe_bridge/features/approvals/presentation/approval_presenter.dart';
+import 'package:vibe_bridge/features/threads/data/thread_detail_bridge_api.dart';
+import 'package:vibe_bridge/features/threads/presentation/thread_detail_page.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:codex_ui/codex_ui.dart';
 
-import 'package:codex_mobile_companion/shared/widgets/badges.dart';
+import 'package:vibe_bridge/shared/widgets/badges.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 

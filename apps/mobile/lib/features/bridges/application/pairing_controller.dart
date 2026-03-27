@@ -2,12 +2,12 @@ import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:convert';
 
-import 'package:codex_mobile_companion/features/pairing/data/pairing_bridge_api.dart';
-import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
-import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_validator.dart';
-import 'package:codex_mobile_companion/foundation/network/bridge_transport.dart';
-import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
-import 'package:codex_mobile_companion/foundation/storage/secure_store_provider.dart';
+import 'package:vibe_bridge/features/bridges/data/pairing_bridge_api.dart';
+import 'package:vibe_bridge/features/bridges/domain/pairing_qr_payload.dart';
+import 'package:vibe_bridge/features/bridges/domain/pairing_qr_validator.dart';
+import 'package:vibe_bridge/foundation/network/bridge_transport.dart';
+import 'package:vibe_bridge/foundation/storage/secure_store.dart';
+import 'package:vibe_bridge/foundation/storage/secure_store_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final secureStoreProvider = appSecureStoreProvider;
@@ -21,7 +21,7 @@ final pairingBridgeApiProvider = Provider<PairingBridgeApi>((ref) {
 });
 
 final phoneDisplayNameProvider = Provider<String>((ref) {
-  return 'Codex Mobile Companion Phone';
+  return 'Vibe bridge companion Phone';
 });
 
 final pairingControllerProvider =
@@ -132,6 +132,11 @@ class PairingState {
 }
 
 class PairingController extends StateNotifier<PairingState> {
+  static const _unpairedMessage =
+      'This device was unpaired. Scan a fresh pairing QR to reconnect.';
+  static const _switchedBridgeMessage =
+      'This device was removed. Reconnected to another saved bridge.';
+
   PairingController({
     required SecureStore secureStore,
     required PairingBridgeApi bridgeApi,
@@ -152,6 +157,8 @@ class PairingController extends StateNotifier<PairingState> {
   Timer? _reconnectTimer;
   bool _isReconnectInProgress = false;
   bool _isDisposed = false;
+
+  int get _currentEpochSeconds => _nowUtc().millisecondsSinceEpoch ~/ 1000;
 
   Future<void> _restoreTrustedBridge() async {
     _logDiagnostic(
@@ -205,7 +212,7 @@ class PairingController extends StateNotifier<PairingState> {
         final migratedRegistry = _SavedBridgeRegistry.single(
           trustedBridge: trustedBridge,
           sessionToken: sessionToken.trim(),
-          selectedAtEpochSeconds: _nowUtc().millisecondsSinceEpoch ~/ 1000,
+          selectedAtEpochSeconds: _currentEpochSeconds,
         );
         _logDiagnostic(
           'restore_migrating_legacy_trust',
@@ -401,15 +408,7 @@ class PairingController extends StateNotifier<PairingState> {
     );
     if (activeConnection == null) {
       await _clearLocalTrust(clearCachedThreadState: true);
-      state = state.copyWith(
-        step: PairingStep.unpaired,
-        clearTrustedBridge: true,
-        clearPendingPayload: true,
-        bridgeConnectionState: BridgeConnectionState.connected,
-        rePairRequiredForSecurity: false,
-        savedBridges: const <TrustedBridgeIdentity>[],
-        clearActiveBridgeId: true,
-      );
+      state = _buildUnpairedState();
       return;
     }
 
@@ -492,14 +491,8 @@ class PairingController extends StateNotifier<PairingState> {
     }
 
     await _clearLocalTrust(clearCachedThreadState: true);
-    state = state.copyWith(
-      step: PairingStep.unpaired,
-      clearTrustedBridge: true,
-      clearPendingPayload: true,
-      bridgeConnectionState: BridgeConnectionState.connected,
+    state = _buildUnpairedState(
       rePairRequiredForSecurity: requiresRePairForSecurity,
-      savedBridges: const <TrustedBridgeIdentity>[],
-      clearActiveBridgeId: true,
       errorMessage: _resolveUntrustedHandshakeMessage(handshake),
     );
   }
@@ -601,14 +594,8 @@ class PairingController extends StateNotifier<PairingState> {
     final savedBridgeRegistry = await _readSavedBridgeRegistry();
     if (savedBridgeRegistry == null || !savedBridgeRegistry.hasConnections) {
       await _clearLocalTrust(clearCachedThreadState: true);
-      state = state.copyWith(
-        step: PairingStep.unpaired,
-        clearTrustedBridge: true,
-        clearPendingPayload: true,
-        bridgeConnectionState: BridgeConnectionState.connected,
+      state = _buildUnpairedState(
         rePairRequiredForSecurity: true,
-        savedBridges: const <TrustedBridgeIdentity>[],
-        clearActiveBridgeId: true,
         errorMessage:
             'Stored trust is incomplete. Re-pair from the host bridge.',
       );
@@ -657,19 +644,10 @@ class PairingController extends StateNotifier<PairingState> {
         savedBridgeRegistry == null ||
         !savedBridgeRegistry.hasConnections) {
       await _clearLocalTrust(clearCachedThreadState: true);
-      state = state.copyWith(
-        step: PairingStep.unpaired,
-        clearTrustedBridge: true,
-        clearPendingPayload: true,
-        bridgeConnectionState: BridgeConnectionState.connected,
-        rePairRequiredForSecurity: false,
-        savedBridges: const <TrustedBridgeIdentity>[],
-        clearActiveBridgeId: true,
+      state = _buildUnpairedState(
         consumedSessionIds: const <String>{},
         isPersistingTrust: false,
-        errorMessage:
-            warningMessage ??
-            'This device was unpaired. Scan a fresh pairing QR to reconnect.',
+        errorMessage: warningMessage ?? _unpairedMessage,
       );
       return;
     }
@@ -677,19 +655,10 @@ class PairingController extends StateNotifier<PairingState> {
     final updatedRegistry = savedBridgeRegistry.remove(trustedBridge.bridgeId);
     if (!updatedRegistry.hasConnections) {
       await _clearLocalTrust(clearCachedThreadState: true);
-      state = state.copyWith(
-        step: PairingStep.unpaired,
-        clearTrustedBridge: true,
-        clearPendingPayload: true,
-        bridgeConnectionState: BridgeConnectionState.connected,
-        rePairRequiredForSecurity: false,
-        savedBridges: const <TrustedBridgeIdentity>[],
-        clearActiveBridgeId: true,
+      state = _buildUnpairedState(
         consumedSessionIds: const <String>{},
         isPersistingTrust: false,
-        errorMessage:
-            warningMessage ??
-            'This device was unpaired. Scan a fresh pairing QR to reconnect.',
+        errorMessage: warningMessage ?? _unpairedMessage,
       );
       return;
     }
@@ -708,9 +677,7 @@ class PairingController extends StateNotifier<PairingState> {
       rePairRequiredForSecurity: false,
       consumedSessionIds: const <String>{},
       isPersistingTrust: false,
-      errorMessage:
-          warningMessage ??
-          'This device was removed. Reconnected to another saved bridge.',
+      errorMessage: warningMessage ?? _switchedBridgeMessage,
     );
     await _restoreSavedBridgeRegistry(updatedRegistry);
   }
@@ -749,7 +716,7 @@ class PairingController extends StateNotifier<PairingState> {
 
     final updatedRegistry = savedBridgeRegistry.setActive(
       bridgeId,
-      selectedAtEpochSeconds: _nowUtc().millisecondsSinceEpoch ~/ 1000,
+      selectedAtEpochSeconds: _currentEpochSeconds,
     );
     await _writeSavedBridgeRegistry(
       updatedRegistry,
@@ -842,6 +809,26 @@ class PairingController extends StateNotifier<PairingState> {
     Map<String, Object?> details = const <String, Object?>{},
   }) {
     developer.log('$event ${jsonEncode(details)}', name: 'PairingController');
+  }
+
+  PairingState _buildUnpairedState({
+    bool rePairRequiredForSecurity = false,
+    String? errorMessage,
+    Set<String>? consumedSessionIds,
+    bool? isPersistingTrust,
+  }) {
+    return state.copyWith(
+      step: PairingStep.unpaired,
+      clearTrustedBridge: true,
+      clearPendingPayload: true,
+      bridgeConnectionState: BridgeConnectionState.connected,
+      rePairRequiredForSecurity: rePairRequiredForSecurity,
+      savedBridges: const <TrustedBridgeIdentity>[],
+      clearActiveBridgeId: true,
+      errorMessage: errorMessage,
+      consumedSessionIds: consumedSessionIds,
+      isPersistingTrust: isPersistingTrust,
+    );
   }
 }
 

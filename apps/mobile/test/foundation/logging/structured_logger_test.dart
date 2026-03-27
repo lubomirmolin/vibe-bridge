@@ -1,5 +1,5 @@
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
-import 'package:codex_mobile_companion/foundation/logging/structured_logger.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/foundation/logging/structured_logger.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

@@ -1,9 +1,9 @@
 import 'dart:convert';
 
-import 'package:codex_mobile_companion/features/pairing/application/pairing_controller.dart';
-import 'package:codex_mobile_companion/features/pairing/data/pairing_bridge_api.dart';
-import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
-import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
+import 'package:vibe_bridge/features/bridges/application/pairing_controller.dart';
+import 'package:vibe_bridge/features/bridges/data/pairing_bridge_api.dart';
+import 'package:vibe_bridge/features/bridges/domain/pairing_qr_payload.dart';
+import 'package:vibe_bridge/foundation/storage/secure_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -28,7 +28,7 @@ void main() {
       expect(controller.state.step, PairingStep.review);
       expect(
         controller.state.pendingPayload?.bridgeName,
-        'Codex Mobile Companion',
+        'Vibe bridge companion',
       );
 
       await controller.confirmTrust();
@@ -71,7 +71,7 @@ void main() {
       await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
 {
   "bridge_id": "bridge-a1",
-  "bridge_name": "Codex Mobile Companion",
+  "bridge_name": "Vibe bridge companion",
   "bridge_api_base_url": "https://bridge.ts.net",
   "session_id": "session-1",
   "paired_at_epoch_seconds": 100

@@ -1,7 +1,7 @@
 import 'dart:io';
 
-import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
+import 'package:vibe_bridge/features/threads/data/thread_detail_bridge_api.dart';
+import 'package:vibe_bridge/features/threads/data/thread_list_bridge_api.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 

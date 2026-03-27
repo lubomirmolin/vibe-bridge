@@ -1,11 +1,11 @@
 {
-    "name": "codex_mobile_companion",
-    "short_name": "codex_mobile_companion",
+    "name": "Vibe bridge companion",
+    "short_name": "Vibe bridge companion",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Vibe bridge companion mobile app.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

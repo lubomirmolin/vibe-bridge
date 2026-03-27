@@ -1,4 +1,4 @@
-import 'package:codex_mobile_companion/features/threads/domain/thread_activity_item.dart';
+import 'package:vibe_bridge/features/threads/domain/thread_activity_item.dart';
 
 class ThreadTimelineBlock {
   const ThreadTimelineBlock._({this.item, this.exploration, this.workSummary});

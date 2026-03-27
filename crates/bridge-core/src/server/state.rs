@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
+use std::sync::mpsc;
 
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -49,16 +50,23 @@ struct BridgeAppStateInner {
     codex_health: RwLock<ServiceHealthDto>,
     available_models: RwLock<Vec<ModelOptionDto>>,
     active_turn_ids: RwLock<HashMap<String, String>>,
+    resumed_notification_threads: RwLock<HashSet<String>>,
     pending_user_message_images: RwLock<HashMap<String, Vec<String>>>,
     pending_synthetic_user_messages: RwLock<HashMap<String, String>>,
     access_mode: RwLock<AccessMode>,
     security_events: RwLock<Vec<SecurityEventRecordDto>>,
     gateway: CodexGateway,
     event_hub: EventHub,
+    notification_control_tx: Mutex<Option<mpsc::Sender<NotificationControlMessage>>>,
     pairing_sessions: Mutex<PairingSessionService>,
     pairing_route: PairingRouteState,
     git_controls: Mutex<GitControlState>,
     speech: SpeechService,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NotificationControlMessage {
+    ResumeThread(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -166,12 +174,14 @@ impl BridgeAppState {
                 }),
                 available_models: RwLock::new(Vec::new()),
                 active_turn_ids: RwLock::new(HashMap::new()),
+                resumed_notification_threads: RwLock::new(HashSet::new()),
                 pending_user_message_images: RwLock::new(HashMap::new()),
                 pending_synthetic_user_messages: RwLock::new(HashMap::new()),
                 access_mode: RwLock::new(AccessMode::ControlWithApprovals),
                 security_events: RwLock::new(Vec::new()),
                 gateway: CodexGateway::new(config),
                 event_hub: EventHub::new(512),
+                notification_control_tx: Mutex::new(None),
                 pairing_sessions: Mutex::new(pairing_sessions),
                 pairing_route,
                 git_controls: Mutex::new(GitControlState::default()),
@@ -361,12 +371,14 @@ impl BridgeAppState {
 
     pub async fn ensure_snapshot(&self, thread_id: &str) -> Result<ThreadSnapshotDto, String> {
         if let Some(snapshot) = self.projections().snapshot(thread_id).await {
+            self.request_notification_thread_resume(thread_id).await;
             return Ok(snapshot);
         }
 
         let mut snapshot = self.inner.gateway.fetch_thread_snapshot(thread_id).await?;
         snapshot.thread.access_mode = self.access_mode().await;
         self.projections().put_snapshot(snapshot.clone()).await;
+        self.request_notification_thread_resume(thread_id).await;
         Ok(snapshot)
     }
 
@@ -624,6 +636,34 @@ impl BridgeAppState {
         *self.inner.available_models.write().await = models;
     }
 
+    async fn request_notification_thread_resume(&self, thread_id: &str) {
+        let normalized_thread_id = thread_id.trim();
+        if normalized_thread_id.is_empty() {
+            return;
+        }
+
+        let next_thread_id = normalized_thread_id.to_string();
+        let is_new = self
+            .inner
+            .resumed_notification_threads
+            .write()
+            .await
+            .insert(next_thread_id.clone());
+        if !is_new {
+            return;
+        }
+
+        let sender = self
+            .inner
+            .notification_control_tx
+            .lock()
+            .expect("notification control lock should not be poisoned")
+            .clone();
+        if let Some(sender) = sender {
+            let _ = sender.send(NotificationControlMessage::ResumeThread(next_thread_id));
+        }
+    }
+
     async fn execute_pending_approval_action(
         &self,
         record: &PendingApprovalRecord,
@@ -726,6 +766,12 @@ impl BridgeAppState {
     pub fn start_notification_forwarder(&self) {
         let state = self.clone();
         let handle = tokio::runtime::Handle::current();
+        let (control_tx, control_rx) = mpsc::channel();
+        *self
+            .inner
+            .notification_control_tx
+            .lock()
+            .expect("notification control lock should not be poisoned") = Some(control_tx);
         std::thread::spawn(move || {
             let mut compactor = LiveDeltaCompactor::default();
             loop {
@@ -760,7 +806,34 @@ impl BridgeAppState {
                     }
                 };
 
+                let resumed_threads = handle.block_on(async {
+                    state
+                        .inner
+                        .resumed_notification_threads
+                        .read()
+                        .await
+                        .clone()
+                });
+                if let Err(error) =
+                    resume_notification_threads(resumed_threads.iter(), |thread_id| {
+                        notifications.resume_thread(thread_id)
+                    })
+                {
+                    eprintln!("bridge notification resume sync failed: {error}");
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    continue;
+                }
+
                 loop {
+                    if let Err(error) =
+                        drain_notification_control_messages(&control_rx, |thread_id| {
+                            notifications.resume_thread(thread_id)
+                        })
+                    {
+                        eprintln!("bridge notification control failed: {error}");
+                        break;
+                    }
+
                     match notifications.next_event() {
                         Ok(Some(event)) => {
                             let normalized = compactor.compact(event);
@@ -1778,12 +1851,47 @@ After you finish, respond with a short summary of the commit split you made, inc
         .to_string()
 }
 
+fn resume_notification_threads<'a, I, F>(thread_ids: I, mut resume_thread: F) -> Result<(), String>
+where
+    I: IntoIterator<Item = &'a String>,
+    F: FnMut(&str) -> Result<(), String>,
+{
+    for thread_id in thread_ids {
+        resume_thread(thread_id)?;
+    }
+    Ok(())
+}
+
+fn drain_notification_control_messages<F>(
+    control_rx: &mpsc::Receiver<NotificationControlMessage>,
+    mut resume_thread: F,
+) -> Result<(), String>
+where
+    F: FnMut(&str) -> Result<(), String>,
+{
+    loop {
+        match control_rx.try_recv() {
+            Ok(NotificationControlMessage::ResumeThread(thread_id)) => {
+                resume_thread(&thread_id)?;
+            }
+            Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => {
+                return Ok(());
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc;
+
     use serde_json::json;
     use shared_contracts::{BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION};
 
-    use super::is_duplicate_synthetic_user_message;
+    use super::{
+        NotificationControlMessage, drain_notification_control_messages,
+        is_duplicate_synthetic_user_message, resume_notification_threads,
+    };
 
     #[test]
     fn duplicate_synthetic_user_message_matches_trimmed_user_delta() {
@@ -1841,5 +1949,54 @@ mod tests {
             "hello",
             &mismatched_text_event
         ));
+    }
+
+    #[test]
+    fn resume_notification_threads_replays_all_requested_threads() {
+        let requested = [
+            "thread-from-mobile".to_string(),
+            "thread-from-desktop".to_string(),
+        ];
+        let mut resumed = Vec::new();
+
+        resume_notification_threads(requested.iter(), |thread_id| {
+            resumed.push(thread_id.to_string());
+            Ok(())
+        })
+        .expect("resume replay should succeed");
+
+        assert_eq!(
+            resumed,
+            vec![
+                "thread-from-mobile".to_string(),
+                "thread-from-desktop".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn drain_notification_control_messages_resumes_new_threads_until_queue_is_empty() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(NotificationControlMessage::ResumeThread(
+            "thread-123".to_string(),
+        ))
+        .expect("control message should enqueue");
+        tx.send(NotificationControlMessage::ResumeThread(
+            "thread-456".to_string(),
+        ))
+        .expect("control message should enqueue");
+        drop(tx);
+
+        let mut resumed = Vec::new();
+        drain_notification_control_messages(&rx, |thread_id| {
+            resumed.push(thread_id.to_string());
+            Ok(())
+        })
+        .expect("draining control messages should succeed");
+
+        assert_eq!(
+            resumed,
+            vec!["thread-123".to_string(), "thread-456".to_string()]
+        );
     }
 }

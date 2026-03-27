@@ -1,6 +1,6 @@
-import 'package:codex_mobile_companion/features/pairing/application/pairing_controller.dart';
-import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
-import 'package:codex_mobile_companion/foundation/platform/app_platform.dart';
+import 'package:vibe_bridge/features/bridges/application/pairing_controller.dart';
+import 'package:vibe_bridge/features/bridges/domain/pairing_qr_payload.dart';
+import 'package:vibe_bridge/foundation/platform/app_platform.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 enum AppBridgeSessionKind { paired, localLoopback }

@@ -1,5 +1,5 @@
-import 'package:codex_mobile_companion/features/pairing/presentation/bridge_home_page.dart';
-import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
+import 'package:vibe_bridge/features/bridges/presentation/bridge_home_page.dart';
+import 'package:vibe_bridge/features/threads/presentation/thread_list_page.dart';
 import 'package:flutter/widgets.dart';
 
 Widget buildPairingStartupDestination() {

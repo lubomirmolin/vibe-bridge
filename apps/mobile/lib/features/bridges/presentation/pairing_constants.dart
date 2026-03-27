@@ -24,17 +24,31 @@ class PairingConstants {
 }
 
 /// Represents different types of scanner issues that can occur during pairing.
-enum PairingScannerIssueType { permissionDenied, scannerFailure }
+enum PairingScannerIssueType {
+  permissionDenied(
+    headline: 'Camera permission blocked',
+    body: 'Enable camera access in system settings, then retry scanning.',
+  ),
+  scannerFailure(
+    headline: 'Scanner unavailable',
+    body: 'Camera feed could not be read. Retry scanning.',
+  );
+
+  const PairingScannerIssueType({required this.headline, required this.body});
+
+  final String headline;
+  final String body;
+}
 
 /// Immutable class representing a scanner issue with details.
 class PairingScannerIssue {
   const PairingScannerIssue._(this.type, {this.details});
 
   const PairingScannerIssue.permissionDenied()
-      : this._(PairingScannerIssueType.permissionDenied);
+    : this._(PairingScannerIssueType.permissionDenied);
 
   const PairingScannerIssue.failure({String? details})
-      : this._(PairingScannerIssueType.scannerFailure, details: details);
+    : this._(PairingScannerIssueType.scannerFailure, details: details);
 
   factory PairingScannerIssue.fromScannerException(
     MobileScannerException error,

@@ -1,7 +1,7 @@
-import 'package:codex_mobile_companion/features/threads/domain/parsed_command_output.dart';
-import 'package:codex_mobile_companion/features/threads/domain/thread_activity_item.dart';
-import 'package:codex_mobile_companion/features/threads/domain/thread_timeline_block.dart';
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/features/threads/domain/parsed_command_output.dart';
+import 'package:vibe_bridge/features/threads/domain/thread_activity_item.dart';
+import 'package:vibe_bridge/features/threads/domain/thread_timeline_block.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

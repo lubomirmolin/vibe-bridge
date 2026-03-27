@@ -1,10 +1,10 @@
-import 'package:codex_mobile_companion/features/threads/application/thread_diff_controller.dart';
-import 'package:codex_mobile_companion/features/threads/domain/parsed_command_output.dart';
-import 'package:codex_mobile_companion/features/threads/presentation/thread_diff_viewer.dart';
-import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/features/threads/application/thread_diff_controller.dart';
+import 'package:vibe_bridge/features/threads/domain/parsed_command_output.dart';
+import 'package:vibe_bridge/features/threads/presentation/thread_diff_viewer.dart';
+import 'package:vibe_bridge/foundation/connectivity/live_connection_state.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
 import 'package:codex_ui/codex_ui.dart';
-import 'package:codex_mobile_companion/shared/widgets/connection_status_banner.dart';
+import 'package:vibe_bridge/shared/widgets/connection_status_banner.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';

@@ -1,4 +1,4 @@
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
 
 String approvalActionLabel(String action) {
   switch (action) {

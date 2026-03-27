@@ -1,4 +1,4 @@
-import 'package:codex_mobile_companion/shared/widgets/connection_status_banner.dart';
+import 'package:vibe_bridge/shared/widgets/connection_status_banner.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 

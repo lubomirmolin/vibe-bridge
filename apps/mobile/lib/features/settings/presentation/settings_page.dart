@@ -1,14 +1,14 @@
-import 'package:codex_mobile_companion/features/pairing/application/pairing_controller.dart';
-import 'package:codex_mobile_companion/features/settings/application/desktop_integration_controller.dart';
-import 'package:codex_mobile_companion/features/settings/application/device_settings_controller.dart';
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
-import 'package:codex_mobile_companion/foundation/session/current_bridge_session.dart';
+import 'package:vibe_bridge/features/bridges/application/pairing_controller.dart';
+import 'package:vibe_bridge/features/settings/application/desktop_integration_controller.dart';
+import 'package:vibe_bridge/features/settings/application/device_settings_controller.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/foundation/session/current_bridge_session.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:codex_ui/codex_ui.dart';
 
-import 'package:codex_mobile_companion/shared/widgets/badges.dart';
-import 'package:codex_mobile_companion/shared/widgets/connection_status_banner.dart';
+import 'package:vibe_bridge/shared/widgets/badges.dart';
+import 'package:vibe_bridge/shared/widgets/connection_status_banner.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 

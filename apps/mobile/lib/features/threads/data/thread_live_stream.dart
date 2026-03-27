@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
-import 'package:codex_mobile_companion/foundation/network/bridge_transport.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/foundation/network/bridge_transport.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final threadLiveStreamProvider = Provider<ThreadLiveStream>((ref) {
@@ -43,8 +43,33 @@ class HttpThreadLiveStream implements ThreadLiveStream {
     final connection = await _transport.openEventStream(uri);
     final controller =
         StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();
+    Future<void>? closeFuture;
+
+    void closeController() {
+      if (!controller.isClosed) {
+        unawaited(controller.close());
+      }
+    }
 
     late final StreamSubscription<String> socketSubscription;
+    Future<void> closeSubscription() {
+      return closeFuture ??= () async {
+        try {
+          await socketSubscription.cancel();
+        } catch (_) {
+          // Ignore duplicate or late subscription cancellation failures.
+        }
+        try {
+          await connection.close();
+        } catch (_) {
+          // Ignore already-closed connection teardown failures.
+        }
+        if (!controller.isClosed) {
+          await controller.close();
+        }
+      }();
+    }
+
     socketSubscription = connection.messages.listen(
       (frame) {
         try {
@@ -61,29 +86,26 @@ class HttpThreadLiveStream implements ThreadLiveStream {
             decoded,
             (payload) => payload,
           );
-          controller.add(event);
+          if (!controller.isClosed) {
+            controller.add(event);
+          }
         } on FormatException {
           // Ignore malformed frames to keep the stream alive.
         }
       },
-      onError: controller.addError,
-      onDone: () {
+      onError: (Object error, StackTrace stackTrace) {
         if (!controller.isClosed) {
-          controller.close();
+          controller.addError(error, stackTrace);
         }
+        closeController();
       },
+      onDone: closeController,
       cancelOnError: false,
     );
 
     return ThreadLiveSubscription(
       events: controller.stream,
-      close: () async {
-        await socketSubscription.cancel();
-        await connection.close();
-        if (!controller.isClosed) {
-          await controller.close();
-        }
-      },
+      close: closeSubscription,
     );
   }
 }

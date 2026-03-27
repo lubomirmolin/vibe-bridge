@@ -36,7 +36,7 @@ class IoSpeechCapture implements SpeechCapture {
   @override
   Future<void> start() async {
     final recordingDirectory = await Directory.systemTemp.createTemp(
-      'codex-mobile-companion-speech-',
+      'vibe-bridge-speech-',
     );
     final recordingPath = '${recordingDirectory.path}/voice-message.wav';
     _recordingPath = recordingPath;
