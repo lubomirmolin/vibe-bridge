@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:codex_mobile_companion/foundation/network/bridge_transport.dart';
+import 'package:vibe_bridge/foundation/network/bridge_transport.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 

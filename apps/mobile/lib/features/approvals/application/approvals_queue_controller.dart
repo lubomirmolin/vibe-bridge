@@ -1,10 +1,10 @@
 import 'dart:async';
 
-import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
-import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
-import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/foundation/connectivity/live_connection_state.dart';
+import 'package:vibe_bridge/features/settings/application/runtime_access_mode.dart';
+import 'package:vibe_bridge/features/approvals/data/approval_bridge_api.dart';
+import 'package:vibe_bridge/features/threads/data/thread_live_stream.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final approvalsQueueControllerProvider =

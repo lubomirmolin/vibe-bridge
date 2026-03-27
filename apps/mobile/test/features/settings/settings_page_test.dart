@@ -1,11 +1,11 @@
-import 'package:codex_mobile_companion/features/pairing/application/pairing_controller.dart';
-import 'package:codex_mobile_companion/features/pairing/data/pairing_bridge_api.dart';
-import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
-import 'package:codex_mobile_companion/features/settings/data/settings_bridge_api.dart';
-import 'package:codex_mobile_companion/foundation/platform/app_platform.dart';
-import 'package:codex_mobile_companion/features/settings/presentation/settings_page.dart';
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
-import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
+import 'package:vibe_bridge/features/bridges/application/pairing_controller.dart';
+import 'package:vibe_bridge/features/bridges/data/pairing_bridge_api.dart';
+import 'package:vibe_bridge/features/bridges/domain/pairing_qr_payload.dart';
+import 'package:vibe_bridge/features/settings/data/settings_bridge_api.dart';
+import 'package:vibe_bridge/foundation/platform/app_platform.dart';
+import 'package:vibe_bridge/features/settings/presentation/settings_page.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/foundation/storage/secure_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -18,7 +18,7 @@ void main() {
       await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
 {
   "bridge_id": "bridge-a1",
-  "bridge_name": "Codex Mobile Companion",
+  "bridge_name": "Vibe bridge companion",
   "bridge_api_base_url": "https://bridge.ts.net",
   "session_id": "session-abc",
   "paired_at_epoch_seconds": 100
@@ -66,7 +66,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Active Bridge'), findsOneWidget);
-      expect(find.text('Codex Mobile Companion'), findsAtLeastNWidgets(1));
+      expect(find.text('Vibe bridge companion'), findsAtLeastNWidgets(1));
       expect(find.textContaining('Session: session-abc'), findsOneWidget);
       expect(
         find.byKey(const Key('settings-add-another-bridge')),
@@ -97,7 +97,7 @@ void main() {
     await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
 {
   "bridge_id": "bridge-a1",
-  "bridge_name": "Codex Mobile Companion",
+  "bridge_name": "Vibe bridge companion",
   "bridge_api_base_url": "https://bridge.ts.net",
   "session_id": "session-abc",
   "paired_at_epoch_seconds": 100
@@ -143,7 +143,7 @@ void main() {
     await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
 {
   "bridge_id": "bridge-a1",
-  "bridge_name": "Codex Mobile Companion",
+  "bridge_name": "Vibe bridge companion",
   "bridge_api_base_url": "https://bridge.ts.net",
   "session_id": "session-abc",
   "paired_at_epoch_seconds": 100
@@ -215,7 +215,7 @@ void main() {
     await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
 {
   "bridge_id": "bridge-a1",
-  "bridge_name": "Codex Mobile Companion",
+  "bridge_name": "Vibe bridge companion",
   "bridge_api_base_url": "https://bridge.ts.net",
   "session_id": "session-abc",
   "paired_at_epoch_seconds": 100
@@ -278,7 +278,7 @@ void main() {
     await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
 {
   "bridge_id": "bridge-a1",
-  "bridge_name": "Codex Mobile Companion",
+  "bridge_name": "Vibe bridge companion",
   "bridge_api_base_url": "https://bridge.ts.net",
   "session_id": "session-abc",
   "paired_at_epoch_seconds": 100

@@ -1,16 +1,16 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
-import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
-import 'package:codex_mobile_companion/features/settings/data/settings_bridge_api.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
-import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
-import 'package:codex_mobile_companion/foundation/storage/secure_store_provider.dart';
+import 'package:vibe_bridge/features/approvals/data/approval_bridge_api.dart';
+import 'package:vibe_bridge/features/bridges/domain/pairing_qr_payload.dart';
+import 'package:vibe_bridge/features/settings/data/settings_bridge_api.dart';
+import 'package:vibe_bridge/features/threads/data/thread_detail_bridge_api.dart';
+import 'package:vibe_bridge/features/threads/data/thread_list_bridge_api.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/foundation/storage/secure_store.dart';
+import 'package:vibe_bridge/foundation/storage/secure_store_provider.dart';
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:codex_mobile_companion/main.dart';
+import 'package:vibe_bridge/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -214,7 +214,7 @@ Future<void> _launchTrustedBridgeApp(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [appSecureStoreProvider.overrideWithValue(secureStore)],
-      child: const CodexMobileApp(),
+      child: const VibeBridgeApp(),
     ),
   );
   await _pumpForTransition(tester);

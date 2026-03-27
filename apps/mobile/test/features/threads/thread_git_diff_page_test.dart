@@ -1,9 +1,9 @@
 import 'dart:async';
 
-import 'package:codex_mobile_companion/features/threads/data/thread_diff_bridge_api.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
-import 'package:codex_mobile_companion/features/threads/presentation/thread_git_diff_page.dart';
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/features/threads/data/thread_diff_bridge_api.dart';
+import 'package:vibe_bridge/features/threads/data/thread_live_stream.dart';
+import 'package:vibe_bridge/features/threads/presentation/thread_git_diff_page.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';

@@ -3,22 +3,22 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
-import 'package:codex_mobile_companion/features/settings/application/desktop_integration_controller.dart';
-import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
-import 'package:codex_mobile_companion/features/settings/data/settings_bridge_api.dart';
-import 'package:codex_mobile_companion/features/threads/application/thread_detail_controller.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
-import 'package:codex_mobile_companion/features/threads/domain/thread_activity_item.dart';
-import 'package:codex_mobile_companion/features/threads/presentation/thread_detail_page.dart';
-import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
-import 'package:codex_mobile_companion/foundation/media/speech_capture.dart';
-import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
-import 'package:codex_mobile_companion/foundation/storage/secure_store_provider.dart';
+import 'package:vibe_bridge/features/approvals/data/approval_bridge_api.dart';
+import 'package:vibe_bridge/features/settings/application/desktop_integration_controller.dart';
+import 'package:vibe_bridge/features/settings/application/runtime_access_mode.dart';
+import 'package:vibe_bridge/features/settings/data/settings_bridge_api.dart';
+import 'package:vibe_bridge/features/threads/application/thread_detail_controller.dart';
+import 'package:vibe_bridge/features/threads/data/thread_cache_repository.dart';
+import 'package:vibe_bridge/features/threads/data/thread_detail_bridge_api.dart';
+import 'package:vibe_bridge/features/threads/data/thread_list_bridge_api.dart';
+import 'package:vibe_bridge/features/threads/data/thread_live_stream.dart';
+import 'package:vibe_bridge/features/threads/domain/thread_activity_item.dart';
+import 'package:vibe_bridge/features/threads/presentation/thread_detail_page.dart';
+import 'package:vibe_bridge/features/threads/presentation/thread_list_page.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/foundation/media/speech_capture.dart';
+import 'package:vibe_bridge/foundation/storage/secure_store.dart';
+import 'package:vibe_bridge/foundation/storage/secure_store_provider.dart';
 import 'package:codex_ui/codex_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -3628,6 +3628,83 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       await tester.pumpAndSettle();
       await _scrollUntilVisible(tester, find.text('Visible on thread 456'));
       expect(find.text('Visible on thread 456'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'open thread detail streams an upstream turn started outside mobile',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail(status: ThreadStatus.idle)],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+      );
+      final liveStream = FakeThreadLiveStream();
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+        liveStream: liveStream,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Idle'), findsOneWidget);
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-upstream-running',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.threadStatusChanged,
+          occurredAt: '2026-03-18T10:30:00Z',
+          payload: {'status': 'running', 'reason': 'upstream_notification'},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Running'), findsOneWidget);
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-upstream-msg-1',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:30:01Z',
+          payload: {
+            'type': 'agentMessage',
+            'text': 'Streaming from a turn started in Codex.app',
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await _scrollUntilVisible(
+        tester,
+        find.text('Streaming from a turn started in Codex.app'),
+      );
+      expect(
+        find.text('Streaming from a turn started in Codex.app'),
+        findsOneWidget,
+      );
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-upstream-completed',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.threadStatusChanged,
+          occurredAt: '2026-03-18T10:30:02Z',
+          payload: {'status': 'completed', 'reason': 'upstream_notification'},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Completed'), findsOneWidget);
     },
   );
 

@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'package:codex_mobile_companion/foundation/platform/app_platform.dart';
-import 'package:codex_mobile_companion/foundation/startup/local_desktop_bridge_api.dart';
+import 'package:vibe_bridge/foundation/platform/app_platform.dart';
+import 'package:vibe_bridge/foundation/startup/local_desktop_bridge_api.dart';
 import 'package:codex_ui/codex_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';

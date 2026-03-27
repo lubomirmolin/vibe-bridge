@@ -1,9 +1,9 @@
 import 'dart:convert';
 
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart'
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart'
     as bridge_contracts;
 
-const String _defaultBridgeDisplayName = 'Codex Mobile Companion';
+const String _defaultBridgeDisplayName = 'Vibe bridge companion';
 
 class PairingQrPayload {
   const PairingQrPayload({
@@ -28,46 +28,14 @@ class PairingQrPayload {
   final int? issuedAtEpochSeconds;
   final int? expiresAtEpochSeconds;
 
-  List<BridgeApiRoute> get orderedReachableRoutes {
-    final candidates = bridgeApiRoutes
-        .where((route) => route.reachable)
-        .toList(growable: false);
-    if (candidates.isNotEmpty) {
-      final sorted = candidates.toList(growable: true)
-        ..sort(compareBridgeApiRoutes);
-      return List<BridgeApiRoute>.unmodifiable(sorted);
-    }
+  List<BridgeApiRoute> get orderedReachableRoutes => _orderedReachableRoutes(
+    bridgeApiRoutes,
+    fallbackBaseUrl: bridgeApiBaseUrl,
+  );
 
-    final fallbackRoute = bridgeApiRoutes.firstWhere(
-      (route) => route.baseUrl == bridgeApiBaseUrl,
-      orElse: () => BridgeApiRoute.legacy(baseUrl: bridgeApiBaseUrl),
-    );
-    return List<BridgeApiRoute>.unmodifiable(<BridgeApiRoute>[fallbackRoute]);
-  }
+  DateTime? get issuedAtUtc => _epochSecondsToUtc(issuedAtEpochSeconds);
 
-  DateTime? get issuedAtUtc {
-    final issuedAtEpochSeconds = this.issuedAtEpochSeconds;
-    if (issuedAtEpochSeconds == null) {
-      return null;
-    }
-
-    return DateTime.fromMillisecondsSinceEpoch(
-      issuedAtEpochSeconds * 1000,
-      isUtc: true,
-    );
-  }
-
-  DateTime? get expiresAtUtc {
-    final expiresAtEpochSeconds = this.expiresAtEpochSeconds;
-    if (expiresAtEpochSeconds == null) {
-      return null;
-    }
-
-    return DateTime.fromMillisecondsSinceEpoch(
-      expiresAtEpochSeconds * 1000,
-      isUtc: true,
-    );
-  }
+  DateTime? get expiresAtUtc => _epochSecondsToUtc(expiresAtEpochSeconds);
 
   factory PairingQrPayload.fromJson(Map<String, dynamic> json) {
     final bridgeApiBaseUrl = _readRequiredStringAny(json, [
@@ -157,18 +125,10 @@ class TrustedBridgeIdentity {
   final String sessionId;
   final int pairedAtEpochSeconds;
 
-  List<BridgeApiRoute> get orderedReachableRoutes {
-    final candidates = bridgeApiRoutes
-        .where((route) => route.reachable)
-        .toList(growable: false);
-    if (candidates.isEmpty) {
-      return <BridgeApiRoute>[BridgeApiRoute.legacy(baseUrl: bridgeApiBaseUrl)];
-    }
-
-    final sorted = candidates.toList(growable: true)
-      ..sort(compareBridgeApiRoutes);
-    return List<BridgeApiRoute>.unmodifiable(sorted);
-  }
+  List<BridgeApiRoute> get orderedReachableRoutes => _orderedReachableRoutes(
+    bridgeApiRoutes,
+    fallbackBaseUrl: bridgeApiBaseUrl,
+  );
 
   factory TrustedBridgeIdentity.fromPayload(
     PairingQrPayload payload, {
@@ -393,6 +353,31 @@ int _bridgeApiRouteSortScore(BridgeApiRoute route) {
     return 1;
   }
   return 0;
+}
+
+List<BridgeApiRoute> _orderedReachableRoutes(
+  List<BridgeApiRoute> routes, {
+  required String fallbackBaseUrl,
+}) {
+  final reachableRoutes = routes.where((route) => route.reachable).toList();
+  if (reachableRoutes.isEmpty) {
+    final fallbackRoute = routes.firstWhere(
+      (route) => route.baseUrl == fallbackBaseUrl,
+      orElse: () => BridgeApiRoute.legacy(baseUrl: fallbackBaseUrl),
+    );
+    return List<BridgeApiRoute>.unmodifiable(<BridgeApiRoute>[fallbackRoute]);
+  }
+
+  reachableRoutes.sort(compareBridgeApiRoutes);
+  return List<BridgeApiRoute>.unmodifiable(reachableRoutes);
+}
+
+DateTime? _epochSecondsToUtc(int? epochSeconds) {
+  if (epochSeconds == null) {
+    return null;
+  }
+
+  return DateTime.fromMillisecondsSinceEpoch(epochSeconds * 1000, isUtc: true);
 }
 
 bool isSupportedBridgeApiRouteBaseUrl(

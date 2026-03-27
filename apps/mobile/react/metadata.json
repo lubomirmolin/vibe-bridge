@@ -1,5 +1,5 @@
 {
-  "name": "Codex Bridge Console",
-  "description": "Secure mobile companion app for monitoring and controlling a Mac-hosted OpenAI Codex bridge session.",
+  "name": "Vibe bridge companion",
+  "description": "Secure Vibe bridge companion mobile app for monitoring and controlling a Mac-hosted OpenAI Codex bridge session.",
   "requestFramePermissions": []
 }

@@ -1,16 +1,16 @@
 import 'dart:async';
 
-import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
-import 'package:codex_mobile_companion/features/approvals/presentation/approval_detail_page.dart';
-import 'package:codex_mobile_companion/features/approvals/presentation/approvals_queue_page.dart';
-import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
-import 'package:codex_mobile_companion/features/threads/presentation/thread_list_page.dart';
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
-import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
+import 'package:vibe_bridge/features/approvals/data/approval_bridge_api.dart';
+import 'package:vibe_bridge/features/approvals/presentation/approval_detail_page.dart';
+import 'package:vibe_bridge/features/approvals/presentation/approvals_queue_page.dart';
+import 'package:vibe_bridge/features/settings/application/runtime_access_mode.dart';
+import 'package:vibe_bridge/features/threads/data/thread_cache_repository.dart';
+import 'package:vibe_bridge/features/threads/data/thread_detail_bridge_api.dart';
+import 'package:vibe_bridge/features/threads/data/thread_list_bridge_api.dart';
+import 'package:vibe_bridge/features/threads/data/thread_live_stream.dart';
+import 'package:vibe_bridge/features/threads/presentation/thread_list_page.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/foundation/storage/secure_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';

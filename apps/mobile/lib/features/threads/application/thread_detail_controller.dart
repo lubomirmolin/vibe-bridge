@@ -1,12 +1,12 @@
 import 'dart:async';
 
-import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
-import 'package:codex_mobile_companion/foundation/connectivity/reconnect_scheduler.dart';
-import 'package:codex_mobile_companion/features/threads/application/thread_list_controller.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
-import 'package:codex_mobile_companion/features/threads/domain/thread_activity_item.dart';
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/foundation/connectivity/live_connection_state.dart';
+import 'package:vibe_bridge/foundation/connectivity/reconnect_scheduler.dart';
+import 'package:vibe_bridge/features/threads/application/thread_list_controller.dart';
+import 'package:vibe_bridge/features/threads/data/thread_detail_bridge_api.dart';
+import 'package:vibe_bridge/features/threads/data/thread_live_stream.dart';
+import 'package:vibe_bridge/features/threads/domain/thread_activity_item.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 

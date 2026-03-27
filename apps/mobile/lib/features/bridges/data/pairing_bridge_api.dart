@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
-import 'package:codex_mobile_companion/foundation/network/bridge_transport.dart';
+import 'package:vibe_bridge/features/bridges/domain/pairing_qr_payload.dart';
+import 'package:vibe_bridge/foundation/network/bridge_transport.dart';
 
 abstract class PairingBridgeApi {
   Future<PairingFinalizeResult> finalizeTrust({

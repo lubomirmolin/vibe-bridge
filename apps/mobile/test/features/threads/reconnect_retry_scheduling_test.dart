@@ -1,14 +1,14 @@
 import 'dart:async';
 
-import 'package:codex_mobile_companion/features/threads/application/thread_detail_controller.dart';
-import 'package:codex_mobile_companion/features/threads/application/thread_list_controller.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_detail_bridge_api.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
-import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
-import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
+import 'package:vibe_bridge/features/threads/application/thread_detail_controller.dart';
+import 'package:vibe_bridge/features/threads/application/thread_list_controller.dart';
+import 'package:vibe_bridge/features/threads/data/thread_cache_repository.dart';
+import 'package:vibe_bridge/features/threads/data/thread_detail_bridge_api.dart';
+import 'package:vibe_bridge/features/threads/data/thread_list_bridge_api.dart';
+import 'package:vibe_bridge/features/threads/data/thread_live_stream.dart';
+import 'package:vibe_bridge/foundation/connectivity/live_connection_state.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/foundation/storage/secure_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

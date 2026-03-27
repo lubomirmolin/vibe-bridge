@@ -1,11 +1,11 @@
 import 'dart:async';
 
-import 'package:codex_mobile_companion/features/settings/application/runtime_access_mode.dart';
-import 'package:codex_mobile_companion/features/settings/data/settings_bridge_api.dart';
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
-import 'package:codex_mobile_companion/foundation/session/current_bridge_session.dart';
-import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
-import 'package:codex_mobile_companion/foundation/storage/secure_store_provider.dart';
+import 'package:vibe_bridge/features/settings/application/runtime_access_mode.dart';
+import 'package:vibe_bridge/features/settings/data/settings_bridge_api.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/foundation/session/current_bridge_session.dart';
+import 'package:vibe_bridge/foundation/storage/secure_store.dart';
+import 'package:vibe_bridge/foundation/storage/secure_store_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final deviceSettingsControllerProvider = StateNotifierProvider.autoDispose

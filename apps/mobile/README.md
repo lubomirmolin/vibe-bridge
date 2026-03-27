@@ -1,6 +1,6 @@
 # Mobile App
 
-Flutter companion app for Codex on iOS simulators, Android emulators, desktop
+Flutter Vibe bridge companion app for Codex on iOS simulators, Android emulators, desktop
 Flutter targets, and a browser-localhost shell.
 
 ## Features

@@ -1,5 +1,5 @@
-import 'package:codex_mobile_companion/foundation/storage/persistence_boundary.dart';
-import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
+import 'package:vibe_bridge/foundation/storage/persistence_boundary.dart';
+import 'package:vibe_bridge/foundation/storage/secure_store.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';

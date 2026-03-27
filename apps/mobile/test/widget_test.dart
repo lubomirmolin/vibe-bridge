@@ -1,6 +1,6 @@
-import 'package:codex_mobile_companion/main.dart';
-import 'package:codex_mobile_companion/features/pairing/application/pairing_controller.dart';
-import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
+import 'package:vibe_bridge/main.dart';
+import 'package:vibe_bridge/features/bridges/application/pairing_controller.dart';
+import 'package:vibe_bridge/foundation/storage/secure_store.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -13,7 +13,7 @@ void main() {
           overrides: [
             secureStoreProvider.overrideWithValue(InMemorySecureStore()),
           ],
-          child: const CodexMobileApp(),
+          child: const VibeBridgeApp(),
         ),
       );
       await tester.pump();

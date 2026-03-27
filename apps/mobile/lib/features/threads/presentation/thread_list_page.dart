@@ -1,17 +1,17 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:codex_mobile_companion/features/approvals/presentation/approvals_queue_page.dart';
-import 'package:codex_mobile_companion/features/threads/application/thread_list_controller.dart';
-import 'package:codex_mobile_companion/features/threads/presentation/thread_detail_page.dart';
-import 'package:codex_mobile_companion/features/threads/presentation/thread_git_diff_page.dart';
-import 'package:codex_mobile_companion/foundation/connectivity/live_connection_state.dart';
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
-import 'package:codex_mobile_companion/foundation/layout/adaptive_layout.dart';
-import 'package:codex_mobile_companion/foundation/platform/macos_window_chrome.dart';
+import 'package:vibe_bridge/features/approvals/presentation/approvals_queue_page.dart';
+import 'package:vibe_bridge/features/threads/application/thread_list_controller.dart';
+import 'package:vibe_bridge/features/threads/presentation/thread_detail_page.dart';
+import 'package:vibe_bridge/features/threads/presentation/thread_git_diff_page.dart';
+import 'package:vibe_bridge/foundation/connectivity/live_connection_state.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/foundation/layout/adaptive_layout.dart';
+import 'package:vibe_bridge/foundation/platform/macos_window_chrome.dart';
 import 'package:codex_ui/codex_ui.dart';
-import 'package:codex_mobile_companion/shared/widgets/badges.dart';
-import 'package:codex_mobile_companion/shared/widgets/connection_status_banner.dart';
+import 'package:vibe_bridge/shared/widgets/badges.dart';
+import 'package:vibe_bridge/shared/widgets/connection_status_banner.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';

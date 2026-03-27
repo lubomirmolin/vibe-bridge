@@ -81,7 +81,7 @@ class IoBridgeTransport implements BridgeTransport {
   }) async {
     final client = HttpClient()..connectionTimeout = timeout;
     final boundary =
-        'codex-mobile-companion-${DateTime.now().microsecondsSinceEpoch}';
+        'vibe-bridge-companion-${DateTime.now().microsecondsSinceEpoch}';
 
     try {
       final request = await client.postUrl(uri);
@@ -124,14 +124,48 @@ class IoBridgeTransport implements BridgeTransport {
     Duration timeout = const Duration(seconds: 5),
   }) async {
     try {
-      final socket = await WebSocket.connect(
-        uri.toString(),
-      ).timeout(timeout);
+      final socket = await WebSocket.connect(uri.toString()).timeout(timeout);
       final controller = StreamController<String>();
+      Future<void>? closeFuture;
+
+      void closeController() {
+        if (!controller.isClosed) {
+          unawaited(controller.close());
+        }
+      }
+
+      // WebSocket.done may complete with an error after an abrupt remote close.
+      // The stream listener handles reconnect signaling, so suppress the extra
+      // uncaught future error from the socket internals.
+      unawaited(socket.done.catchError((Object _) {}));
 
       late final StreamSubscription<dynamic> socketSubscription;
+      Future<void> closeConnection() {
+        return closeFuture ??= () async {
+          try {
+            await socketSubscription.cancel();
+          } catch (_) {
+            // Ignore duplicate or late subscription cancellation failures.
+          }
+          try {
+            await socket.close();
+          } on SocketException {
+            // Ignore already-closed socket teardown failures.
+          } on WebSocketException {
+            // Ignore already-closed websocket teardown failures.
+          }
+          await socket.done.catchError((Object _) {});
+          if (!controller.isClosed) {
+            await controller.close();
+          }
+        }();
+      }
+
       socketSubscription = socket.listen(
         (message) {
+          if (controller.isClosed) {
+            return;
+          }
           if (message is String) {
             controller.add(message);
             return;
@@ -140,24 +174,19 @@ class IoBridgeTransport implements BridgeTransport {
             controller.add(utf8.decode(message));
           }
         },
-        onError: controller.addError,
-        onDone: () {
+        onError: (Object error, StackTrace stackTrace) {
           if (!controller.isClosed) {
-            controller.close();
+            controller.addError(error, stackTrace);
           }
+          closeController();
         },
+        onDone: closeController,
         cancelOnError: false,
       );
 
       return BridgeEventStreamConnection(
         messages: controller.stream,
-        close: () async {
-          await socketSubscription.cancel();
-          await socket.close();
-          if (!controller.isClosed) {
-            await controller.close();
-          }
-        },
+        close: closeConnection,
       );
     } on SocketException {
       throw const BridgeTransportConnectionException();

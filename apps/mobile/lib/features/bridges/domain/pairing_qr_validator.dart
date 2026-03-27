@@ -1,6 +1,19 @@
-import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_payload.dart';
+import 'package:vibe_bridge/features/bridges/domain/pairing_qr_payload.dart';
 
-enum PairingValidationError { malformed, expired, reused, privateRouteRequired }
+enum PairingValidationError {
+  malformed('This QR code is invalid. Please rescan from the host bridge.'),
+  expired('This pairing QR code expired. Please rescan from the host bridge.'),
+  reused(
+    'This pairing QR code was already used. Please rescan from the host bridge.',
+  ),
+  privateRouteRequired(
+    'This QR does not advertise a supported Tailscale or local-network bridge route. Please rescan from the host bridge.',
+  );
+
+  const PairingValidationError(this.message);
+
+  final String message;
+}
 
 class PairingValidationResult {
   const PairingValidationResult._({
@@ -23,7 +36,7 @@ class PairingValidationResult {
   }
 
   factory PairingValidationResult.invalid(PairingValidationError error) {
-    return PairingValidationResult._(error: error, message: _messageFor(error));
+    return PairingValidationResult._(error: error, message: error.message);
   }
 }
 
@@ -53,18 +66,5 @@ PairingValidationResult validatePairingQrPayload(
     return PairingValidationResult.valid(payload);
   } on FormatException {
     return PairingValidationResult.invalid(PairingValidationError.malformed);
-  }
-}
-
-String _messageFor(PairingValidationError error) {
-  switch (error) {
-    case PairingValidationError.malformed:
-      return 'This QR code is invalid. Please rescan from the host bridge.';
-    case PairingValidationError.expired:
-      return 'This pairing QR code expired. Please rescan from the host bridge.';
-    case PairingValidationError.reused:
-      return 'This pairing QR code was already used. Please rescan from the host bridge.';
-    case PairingValidationError.privateRouteRequired:
-      return 'This QR does not advertise a supported Tailscale or local-network bridge route. Please rescan from the host bridge.';
   }
 }

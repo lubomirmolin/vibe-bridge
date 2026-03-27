@@ -1,4 +1,4 @@
-import 'package:codex_mobile_companion/features/pairing/domain/pairing_qr_validator.dart';
+import 'package:vibe_bridge/features/bridges/domain/pairing_qr_validator.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -22,7 +22,7 @@ void main() {
     );
 
     expect(result.isValid, isTrue);
-    expect(result.payload?.bridgeName, 'Codex Mobile Companion');
+    expect(result.payload?.bridgeName, 'Vibe bridge companion');
     expect(result.payload?.expiresAtEpochSeconds, 200);
   });
 
@@ -99,7 +99,7 @@ String _legacyPayload({
 {
   "contract_version": "2026-03-17",
   "bridge_id": "$bridgeId",
-  "bridge_name": "Codex Mobile Companion",
+  "bridge_name": "Vibe bridge companion",
   "bridge_api_base_url": "$bridgeApiBaseUrl",
   "session_id": "$sessionId",
   "pairing_token": "ptk-abc",

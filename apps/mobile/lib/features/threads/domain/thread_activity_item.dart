@@ -1,7 +1,7 @@
 import 'dart:convert';
 
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
-import 'package:codex_mobile_companion/features/threads/domain/parsed_command_output.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/features/threads/domain/parsed_command_output.dart';
 
 enum ThreadActivityItemType {
   userPrompt,

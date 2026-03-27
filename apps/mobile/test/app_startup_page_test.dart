@@ -1,15 +1,15 @@
 import 'dart:async';
 
-import 'package:codex_mobile_companion/foundation/platform/app_platform.dart';
-import 'package:codex_mobile_companion/foundation/startup/local_desktop_bridge_api.dart';
-import 'package:codex_mobile_companion/features/approvals/data/approval_bridge_api.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_cache_repository.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_list_bridge_api.dart';
-import 'package:codex_mobile_companion/features/threads/data/thread_live_stream.dart';
-import 'package:codex_mobile_companion/foundation/contracts/bridge_contracts.dart';
-import 'package:codex_mobile_companion/foundation/storage/secure_store.dart';
-import 'package:codex_mobile_companion/features/pairing/application/pairing_controller.dart';
-import 'package:codex_mobile_companion/main.dart';
+import 'package:vibe_bridge/foundation/platform/app_platform.dart';
+import 'package:vibe_bridge/foundation/startup/local_desktop_bridge_api.dart';
+import 'package:vibe_bridge/features/approvals/data/approval_bridge_api.dart';
+import 'package:vibe_bridge/features/threads/data/thread_cache_repository.dart';
+import 'package:vibe_bridge/features/threads/data/thread_list_bridge_api.dart';
+import 'package:vibe_bridge/features/threads/data/thread_live_stream.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/foundation/storage/secure_store.dart';
+import 'package:vibe_bridge/features/bridges/application/pairing_controller.dart';
+import 'package:vibe_bridge/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,7 +26,7 @@ void main() {
             ),
             secureStoreProvider.overrideWithValue(InMemorySecureStore()),
           ],
-          child: const CodexMobileApp(),
+          child: const VibeBridgeApp(),
         ),
       );
 
@@ -73,7 +73,7 @@ void main() {
             const _FakeThreadLiveStream(),
           ),
         ],
-        child: const CodexMobileApp(),
+        child: const VibeBridgeApp(),
       ),
     );
 
@@ -108,7 +108,7 @@ void main() {
               ),
             ),
           ],
-          child: const CodexMobileApp(),
+          child: const VibeBridgeApp(),
         ),
       );
 
