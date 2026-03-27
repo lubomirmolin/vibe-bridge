@@ -5,14 +5,14 @@
     "thread_id": "019d0d0c-07df-7632-81fa-a1636651400a",
     "title": "Investigate thread detail sync",
     "status": "completed",
-    "workspace": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion",
-    "repository": "codex-mobile-companion",
+    "workspace": "/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion",
+    "repository": "vibe-bridge-companion",
     "branch": "master",
     "created_at": "2026-03-20T20:59:45.000Z",
     "updated_at": "2026-03-20T21:40:09.107Z",
     "source": "vscode",
     "access_mode": "control_with_approvals",
-    "last_turn_summary": "All of the old local app/server processes are down.\n\nI killed the running `CodexMobileCompanion` app, its `bridge-server`, the attached Xco..."
+    "last_turn_summary": "All of the old local app/server processes are down.\n\nI killed the running `VibeBridgeCompanion` app, its `bridge-server`, the attached Xco..."
   },
   "entries": [
     {
@@ -22,7 +22,7 @@
       "summary": "Command: /bin/zsh -lc 'cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings'\nChunk ID: 5d1871\nWall time: 1.0014...",
       "payload": {
         "call_id": "call_BBugX8SkYsuLQHpKvkONnLV2",
-        "output": "Command: /bin/zsh -lc 'cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings'\nChunk ID: 5d1871\nWall time: 1.0014 seconds\nProcess running with session ID 64609\nOriginal token count: 29\nOutput:\n    Checking bridge-core v0.1.0 (/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core)\n",
+        "output": "Command: /bin/zsh -lc 'cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings'\nChunk ID: 5d1871\nWall time: 1.0014 seconds\nProcess running with session ID 64609\nOriginal token count: 29\nOutput:\n    Checking bridge-core v0.1.0 (/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core)\n",
         "type": "function_call_output"
       }
     },
@@ -61,7 +61,7 @@
       "occurred_at": "2026-03-20T21:36:03.063Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"cargo test --manifest-path Cargo.toml sync_thread_from_upstream_refreshes_only_requested_thread\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":3000}",
+        "arguments": "{\"cmd\":\"cargo test --manifest-path Cargo.toml sync_thread_from_upstream_refreshes_only_requested_thread\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":3000}",
         "command": "exec_command"
       }
     },
@@ -71,7 +71,7 @@
       "occurred_at": "2026-03-20T21:36:03.064Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"cargo test --manifest-path Cargo.toml merge_thread_snapshots_supplements_rpc_with_archive_tool_events\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":3000}",
+        "arguments": "{\"cmd\":\"cargo test --manifest-path Cargo.toml merge_thread_snapshots_supplements_rpc_with_archive_tool_events\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":3000}",
         "command": "exec_command"
       }
     },
@@ -81,7 +81,7 @@
       "occurred_at": "2026-03-20T21:36:03.074Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"cargo test --manifest-path Cargo.toml thread_routes_are_available\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":3000}",
+        "arguments": "{\"cmd\":\"cargo test --manifest-path Cargo.toml thread_routes_are_available\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":3000}",
         "command": "exec_command"
       }
     },
@@ -91,7 +91,7 @@
       "occurred_at": "2026-03-20T21:36:03.075Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"cargo test --manifest-path Cargo.toml thread_timeline_route_supports_before_and_limit_query\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":3000}",
+        "arguments": "{\"cmd\":\"cargo test --manifest-path Cargo.toml thread_timeline_route_supports_before_and_limit_query\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":3000}",
         "command": "exec_command"
       }
     },
@@ -124,7 +124,7 @@
       "summary": "Command: /bin/zsh -lc 'cargo test --manifest-path Cargo.toml merge_thread_snapshots_supplements_rpc_with_archive_tool_events'\nChunk ID: d71...",
       "payload": {
         "call_id": "call_JodbXjH6wdQ8hi4Sr7bPvFER",
-        "output": "Command: /bin/zsh -lc 'cargo test --manifest-path Cargo.toml merge_thread_snapshots_supplements_rpc_with_archive_tool_events'\nChunk ID: d71633\nWall time: 1.0020 seconds\nProcess running with session ID 35030\nOriginal token count: 81\nOutput:\n    Blocking waiting for file lock on package cache\n    Blocking waiting for file lock on package cache\n    Blocking waiting for file lock on package cache\n    Blocking waiting for file lock on package cache\n   Compiling bridge-core v0.1.0 (/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core)\n",
+        "output": "Command: /bin/zsh -lc 'cargo test --manifest-path Cargo.toml merge_thread_snapshots_supplements_rpc_with_archive_tool_events'\nChunk ID: d71633\nWall time: 1.0020 seconds\nProcess running with session ID 35030\nOriginal token count: 81\nOutput:\n    Blocking waiting for file lock on package cache\n    Blocking waiting for file lock on package cache\n    Blocking waiting for file lock on package cache\n    Blocking waiting for file lock on package cache\n   Compiling bridge-core v0.1.0 (/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core)\n",
         "type": "function_call_output"
       }
     },
@@ -176,8 +176,8 @@
       "summary": "Edited files via apply_patch",
       "payload": {
         "call_id": "call_Raga7Ic8hsUj5srCULzpYG9C",
-        "change": "*** Begin Patch\n*** Update File: /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/thread_api.rs\n@@\n     command\n         .split_whitespace()\n         .map(|segment| segment.trim_matches(|ch| ch == '\"' || ch == '\\'' || ch == '`'))\n-        .filter(|segment| segment.contains('/') || segment.contains('.'))\n-        .next_back()\n+        .rfind(|segment| segment.contains('/') || segment.contains('.'))\n         .and_then(|path| path.rsplit('/').next())\n         .map(str::trim)\n         .filter(|value| !value.is_empty())\n*** End Patch\n",
-        "input": "*** Begin Patch\n*** Update File: /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/thread_api.rs\n@@\n     command\n         .split_whitespace()\n         .map(|segment| segment.trim_matches(|ch| ch == '\"' || ch == '\\'' || ch == '`'))\n-        .filter(|segment| segment.contains('/') || segment.contains('.'))\n-        .next_back()\n+        .rfind(|segment| segment.contains('/') || segment.contains('.'))\n         .and_then(|path| path.rsplit('/').next())\n         .map(str::trim)\n         .filter(|value| !value.is_empty())\n*** End Patch\n",
+        "change": "*** Begin Patch\n*** Update File: /Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core/src/thread_api.rs\n@@\n     command\n         .split_whitespace()\n         .map(|segment| segment.trim_matches(|ch| ch == '\"' || ch == '\\'' || ch == '`'))\n-        .filter(|segment| segment.contains('/') || segment.contains('.'))\n-        .next_back()\n+        .rfind(|segment| segment.contains('/') || segment.contains('.'))\n         .and_then(|path| path.rsplit('/').next())\n         .map(str::trim)\n         .filter(|value| !value.is_empty())\n*** End Patch\n",
+        "input": "*** Begin Patch\n*** Update File: /Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core/src/thread_api.rs\n@@\n     command\n         .split_whitespace()\n         .map(|segment| segment.trim_matches(|ch| ch == '\"' || ch == '\\'' || ch == '`'))\n-        .filter(|segment| segment.contains('/') || segment.contains('.'))\n-        .next_back()\n+        .rfind(|segment| segment.contains('/') || segment.contains('.'))\n         .and_then(|path| path.rsplit('/').next())\n         .map(str::trim)\n         .filter(|value| !value.is_empty())\n*** End Patch\n",
         "name": "apply_patch",
         "status": "completed",
         "type": "custom_tool_call"
@@ -187,10 +187,10 @@
       "event_id": "019d0d0c-07df-7632-81fa-a1636651400a-archive-572",
       "kind": "file_change",
       "occurred_at": "2026-03-20T21:36:08.993Z",
-      "summary": "Success. Updated the following files:\nM /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/thread_api.rs",
+      "summary": "Success. Updated the following files:\nM /Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core/src/thread_api.rs",
       "payload": {
         "call_id": "call_Raga7Ic8hsUj5srCULzpYG9C",
-        "output": "Success. Updated the following files:\nM /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/thread_api.rs\n",
+        "output": "Success. Updated the following files:\nM /Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core/src/thread_api.rs\n",
         "type": "custom_tool_call_output"
       }
     },
@@ -200,7 +200,7 @@
       "occurred_at": "2026-03-20T21:36:13.078Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"cargo fmt --manifest-path Cargo.toml --all\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1000}",
+        "arguments": "{\"cmd\":\"cargo fmt --manifest-path Cargo.toml --all\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1000}",
         "command": "exec_command"
       }
     },
@@ -324,7 +324,7 @@
       "occurred_at": "2026-03-20T21:36:19.361Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":2000}",
+        "arguments": "{\"cmd\":\"cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":2000}",
         "command": "exec_command"
       }
     },
@@ -334,7 +334,7 @@
       "occurred_at": "2026-03-20T21:36:19.377Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"git diff -- crates/bridge-core/src/lib.rs crates/bridge-core/src/thread_api.rs\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":5000}",
+        "arguments": "{\"cmd\":\"git diff -- crates/bridge-core/src/lib.rs crates/bridge-core/src/thread_api.rs\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":5000}",
         "command": "exec_command"
       },
       "annotations": {
@@ -349,7 +349,7 @@
       "occurred_at": "2026-03-20T21:36:19.377Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"git status --short\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1000}",
+        "arguments": "{\"cmd\":\"git status --short\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1000}",
         "command": "exec_command"
       },
       "annotations": {
@@ -364,7 +364,7 @@
       "summary": "Command: /bin/zsh -lc 'cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings'\nChunk ID: a2f3b9\nWall time: 1.0025...",
       "payload": {
         "call_id": "call_LL0igtgcIQDh0S1hXMJo09sT",
-        "output": "Command: /bin/zsh -lc 'cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings'\nChunk ID: a2f3b9\nWall time: 1.0025 seconds\nProcess running with session ID 99567\nOriginal token count: 29\nOutput:\n    Checking bridge-core v0.1.0 (/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core)\n",
+        "output": "Command: /bin/zsh -lc 'cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings'\nChunk ID: a2f3b9\nWall time: 1.0025 seconds\nProcess running with session ID 99567\nOriginal token count: 29\nOutput:\n    Checking bridge-core v0.1.0 (/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core)\n",
         "type": "function_call_output"
       }
     },
@@ -436,7 +436,7 @@
       "occurred_at": "2026-03-20T21:36:34.467Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"nl -ba crates/bridge-core/src/lib.rs | sed -n '1624,1644p'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1200}",
+        "arguments": "{\"cmd\":\"nl -ba crates/bridge-core/src/lib.rs | sed -n '1624,1644p'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1200}",
         "command": "exec_command"
       },
       "annotations": {
@@ -451,7 +451,7 @@
       "occurred_at": "2026-03-20T21:36:34.467Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"nl -ba crates/bridge-core/src/thread_api.rs | sed -n '160,210p'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1600}",
+        "arguments": "{\"cmd\":\"nl -ba crates/bridge-core/src/thread_api.rs | sed -n '160,210p'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1600}",
         "command": "exec_command"
       },
       "annotations": {
@@ -466,7 +466,7 @@
       "occurred_at": "2026-03-20T21:36:34.476Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"nl -ba crates/bridge-core/src/thread_api.rs | sed -n '1070,1105p'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1600}",
+        "arguments": "{\"cmd\":\"nl -ba crates/bridge-core/src/thread_api.rs | sed -n '1070,1105p'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1600}",
         "command": "exec_command"
       },
       "annotations": {
@@ -481,7 +481,7 @@
       "occurred_at": "2026-03-20T21:36:34.476Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"nl -ba crates/bridge-core/src/thread_api.rs | sed -n '1276,1300p'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1600}",
+        "arguments": "{\"cmd\":\"nl -ba crates/bridge-core/src/thread_api.rs | sed -n '1276,1300p'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1600}",
         "command": "exec_command"
       },
       "annotations": {
@@ -496,7 +496,7 @@
       "occurred_at": "2026-03-20T21:36:34.476Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"nl -ba crates/bridge-core/src/thread_api.rs | sed -n '4600,4720p'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":2600}",
+        "arguments": "{\"cmd\":\"nl -ba crates/bridge-core/src/thread_api.rs | sed -n '4600,4720p'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":2600}",
         "command": "exec_command"
       },
       "annotations": {
@@ -568,12 +568,12 @@
       "payload": {
         "content": [
           {
-            "text": "The latency fix is in, and it keeps the current data quality path intact.\n\nOpening `/threads/:id` and `/threads/:id/timeline` now refreshes only that thread instead of rebuilding every thread snapshot first in [lib.rs#L1631](/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/lib.rs#L1631) and [lib.rs#L1641](/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/lib.rs#L1641). The new thread-scoped sync lives in [thread_api.rs#L167](/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/thread_api.rs#L167), and it still uses the same RPC+archive merge strategy you now like for detail quality via [thread_api.rs#L1074](/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/thread_api.rs#L1074) and [thread_api.rs#L1280](/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/thread_api.rs#L1280). That means detail opens should be materially faster, but tool calls, file edits, terminal output, and archived-only events still come through the same merged timeline logic.\n\nI added a regression test that proves only the requested thread is refreshed and unrelated cached threads stay untouched in [thread_api.rs#L4604](/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/thread_api.rs#L4604). Verified with `cargo fmt --all`, `cargo check --workspace --all-targets`, and these targeted tests:\n- `cargo test --manifest-path Cargo.toml sync_thread_from_upstream_refreshes_only_requested_thread`\n- `cargo test --manifest-path Cargo.toml merge_thread_snapshots_supplements_rpc_with_archive_tool_events`\n- `cargo test --manifest-path Cargo.toml thread_routes_are_available`\n- `cargo test --manifest-path Cargo.toml thread_timeline_route_supports_before_and_limit_query`\n\n`cargo clippy --workspace --all-targets -- -D warnings` still fails, but only from two pre-existing issues in [codex_transport.rs](/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/codex_transport.rs), not from this change. Rebuild the macOS app and bridge, then thread-open latency should drop without losing the richer activity timeline.",
+            "text": "The latency fix is in, and it keeps the current data quality path intact.\n\nOpening `/threads/:id` and `/threads/:id/timeline` now refreshes only that thread instead of rebuilding every thread snapshot first in [lib.rs#L1631](/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core/src/lib.rs#L1631) and [lib.rs#L1641](/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core/src/lib.rs#L1641). The new thread-scoped sync lives in [thread_api.rs#L167](/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core/src/thread_api.rs#L167), and it still uses the same RPC+archive merge strategy you now like for detail quality via [thread_api.rs#L1074](/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core/src/thread_api.rs#L1074) and [thread_api.rs#L1280](/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core/src/thread_api.rs#L1280). That means detail opens should be materially faster, but tool calls, file edits, terminal output, and archived-only events still come through the same merged timeline logic.\n\nI added a regression test that proves only the requested thread is refreshed and unrelated cached threads stay untouched in [thread_api.rs#L4604](/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core/src/thread_api.rs#L4604). Verified with `cargo fmt --all`, `cargo check --workspace --all-targets`, and these targeted tests:\n- `cargo test --manifest-path Cargo.toml sync_thread_from_upstream_refreshes_only_requested_thread`\n- `cargo test --manifest-path Cargo.toml merge_thread_snapshots_supplements_rpc_with_archive_tool_events`\n- `cargo test --manifest-path Cargo.toml thread_routes_are_available`\n- `cargo test --manifest-path Cargo.toml thread_timeline_route_supports_before_and_limit_query`\n\n`cargo clippy --workspace --all-targets -- -D warnings` still fails, but only from two pre-existing issues in [codex_transport.rs](/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core/src/codex_transport.rs), not from this change. Rebuild the macOS app and bridge, then thread-open latency should drop without losing the richer activity timeline.",
             "text_type": "output_text",
             "type": "text"
           }
         ],
-        "delta": "The latency fix is in, and it keeps the current data quality path intact.\n\nOpening `/threads/:id` and `/threads/:id/timeline` now refreshes only that thread instead of rebuilding every thread snapshot first in [lib.rs#L1631](/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/lib.rs#L1631) and [lib.rs#L1641](/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/lib.rs#L1641). The new thread-scoped sync lives in [thread_api.rs#L167](/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/thread_api.rs#L167), and it still uses the same RPC+archive merge strategy you now like for detail quality via [thread_api.rs#L1074](/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/thread_api.rs#L1074) and [thread_api.rs#L1280](/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/thread_api.rs#L1280). That means detail opens should be materially faster, but tool calls, file edits, terminal output, and archived-only events still come through the same merged timeline logic.\n\nI added a regression test that proves only the requested thread is refreshed and unrelated cached threads stay untouched in [thread_api.rs#L4604](/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/thread_api.rs#L4604). Verified with `cargo fmt --all`, `cargo check --workspace --all-targets`, and these targeted tests:\n- `cargo test --manifest-path Cargo.toml sync_thread_from_upstream_refreshes_only_requested_thread`\n- `cargo test --manifest-path Cargo.toml merge_thread_snapshots_supplements_rpc_with_archive_tool_events`\n- `cargo test --manifest-path Cargo.toml thread_routes_are_available`\n- `cargo test --manifest-path Cargo.toml thread_timeline_route_supports_before_and_limit_query`\n\n`cargo clippy --workspace --all-targets -- -D warnings` still fails, but only from two pre-existing issues in [codex_transport.rs](/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/codex_transport.rs), not from this change. Rebuild the macOS app and bridge, then thread-open latency should drop without losing the richer activity timeline.",
+        "delta": "The latency fix is in, and it keeps the current data quality path intact.\n\nOpening `/threads/:id` and `/threads/:id/timeline` now refreshes only that thread instead of rebuilding every thread snapshot first in [lib.rs#L1631](/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core/src/lib.rs#L1631) and [lib.rs#L1641](/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core/src/lib.rs#L1641). The new thread-scoped sync lives in [thread_api.rs#L167](/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core/src/thread_api.rs#L167), and it still uses the same RPC+archive merge strategy you now like for detail quality via [thread_api.rs#L1074](/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core/src/thread_api.rs#L1074) and [thread_api.rs#L1280](/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core/src/thread_api.rs#L1280). That means detail opens should be materially faster, but tool calls, file edits, terminal output, and archived-only events still come through the same merged timeline logic.\n\nI added a regression test that proves only the requested thread is refreshed and unrelated cached threads stay untouched in [thread_api.rs#L4604](/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core/src/thread_api.rs#L4604). Verified with `cargo fmt --all`, `cargo check --workspace --all-targets`, and these targeted tests:\n- `cargo test --manifest-path Cargo.toml sync_thread_from_upstream_refreshes_only_requested_thread`\n- `cargo test --manifest-path Cargo.toml merge_thread_snapshots_supplements_rpc_with_archive_tool_events`\n- `cargo test --manifest-path Cargo.toml thread_routes_are_available`\n- `cargo test --manifest-path Cargo.toml thread_timeline_route_supports_before_and_limit_query`\n\n`cargo clippy --workspace --all-targets -- -D warnings` still fails, but only from two pre-existing issues in [codex_transport.rs](/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion/crates/bridge-core/src/codex_transport.rs), not from this change. Rebuild the macOS app and bridge, then thread-open latency should drop without losing the richer activity timeline.",
         "role": "assistant",
         "source": "assistant",
         "type": "agentMessage"
@@ -602,16 +602,16 @@
       "event_id": "019d0d0c-07df-7632-81fa-a1636651400a-archive-605",
       "kind": "message_delta",
       "occurred_at": "2026-03-20T21:39:39.363Z",
-      "summary": "I’m checking for any running `CodexMobileCompanion`, `bridge-server`, or related dev server processes from this project, then I’ll terminat...",
+      "summary": "I’m checking for any running `VibeBridgeCompanion`, `bridge-server`, or related dev server processes from this project, then I’ll terminat...",
       "payload": {
         "content": [
           {
-            "text": "I’m checking for any running `CodexMobileCompanion`, `bridge-server`, or related dev server processes from this project, then I’ll terminate the stale ones.",
+            "text": "I’m checking for any running `VibeBridgeCompanion`, `bridge-server`, or related dev server processes from this project, then I’ll terminate the stale ones.",
             "text_type": "output_text",
             "type": "text"
           }
         ],
-        "delta": "I’m checking for any running `CodexMobileCompanion`, `bridge-server`, or related dev server processes from this project, then I’ll terminate the stale ones.",
+        "delta": "I’m checking for any running `VibeBridgeCompanion`, `bridge-server`, or related dev server processes from this project, then I’ll terminate the stale ones.",
         "role": "assistant",
         "source": "assistant",
         "type": "agentMessage"
@@ -623,7 +623,7 @@
       "occurred_at": "2026-03-20T21:39:39.377Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"ps ax -o pid=,command= | rg 'CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0.0.1 --port 3110|flutter run|dart devtools|cargo run.*bridge-server'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":3000}",
+        "arguments": "{\"cmd\":\"ps ax -o pid=,command= | rg 'VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0.0.1 --port 3110|flutter run|dart devtools|cargo run.*bridge-server'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":3000}",
         "command": "exec_command"
       }
     },
@@ -633,7 +633,7 @@
       "occurred_at": "2026-03-20T21:39:39.385Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"lsof -nP -iTCP:3110 -sTCP:LISTEN\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":2000}",
+        "arguments": "{\"cmd\":\"lsof -nP -iTCP:3110 -sTCP:LISTEN\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":2000}",
         "command": "exec_command"
       }
     },
@@ -641,10 +641,10 @@
       "event_id": "019d0d0c-07df-7632-81fa-a1636651400a-archive-608",
       "kind": "command_delta",
       "occurred_at": "2026-03-20T21:39:39.473Z",
-      "summary": "Command: /bin/zsh -lc \"ps ax -o pid=,command= | rg 'CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0...",
+      "summary": "Command: /bin/zsh -lc \"ps ax -o pid=,command= | rg 'VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0...",
       "payload": {
         "call_id": "call_EG0ZGwQ7xT4hm8H8WhS92dqw",
-        "output": "Command: /bin/zsh -lc \"ps ax -o pid=,command= | rg 'CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0.0.1 --port 3110|flutter run|dart devtools|cargo run.*bridge-server'\"\nChunk ID: 4b4111\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 484\nOutput:\n 2691 /Users/lubomirmolin/Flutter/flutter/bin/cache/dart-sdk/bin/dart devtools --machine --dtd-uri=ws://127.0.0.1:60243/2nz0P9DeUjM=\n16103 /Users/lubomirmolin/Library/Developer/Xcode/DerivedData/CodexMobileCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion -NSDocumentRevisionsDebugMode YES\n16139 /Users/lubomirmolin/Library/Developer/Xcode/DerivedData/CodexMobileCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/CodexMobileCompanion.app/Contents/Resources/bin/bridge-server --host 127.0.0.1 --port 3110 --admin-port 3111 --state-directory /Users/lubomirmolin/Library/Application Support/CodexMobileCompanion/bridge-core --codex-mode auto --codex-command /Users/lubomirmolin/.bun/bin/codex\n18168 /Users/lubomirmolin/Flutter/flutter/bin/cache/dart-sdk/bin/dart devtools --machine --dtd-uri=ws://127.0.0.1:62853/UDucvHjdxRc=\n18498 /Users/lubomirmolin/Flutter/flutter/bin/cache/dart-sdk/bin/dart devtools --machine --dtd-uri=ws://127.0.0.1:62870/S2lrCep2QuQ=\n19275 /bin/zsh -c ps ax -o pid=,command= | rg 'CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0.0.1 --port 3110|flutter run|dart devtools|cargo run.*bridge-server'\n19295 rg CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0.0.1 --port 3110|flutter run|dart devtools|cargo run.*bridge-server\n37478 /Users/lubomirmolin/Flutter/flutter/bin/cache/dart-sdk/bin/dart devtools --machine --dtd-uri=ws://127.0.0.1:57103/OqMX9trUPmU=\n68421 /Users/lubomirmolin/Flutter/flutter/bin/cache/dart-sdk/bin/dart devtools --machine --dtd-uri=ws://127.0.0.1:51358/VrteUYd8RL4=\n81085 /Users/lubomirmolin/Flutter/flutter/bin/cache/dart-sdk/bin/dart devtools --machine --dtd-uri=ws://127.0.0.1:52219/RdTf5_lJ_j0=\n81584 /Users/lubomirmolin/Flutter/flutter/bin/cache/dart-sdk/bin/dart devtools --machine --dtd-uri=ws://127.0.0.1:57420/9bZcr4S-G6c=\n",
+        "output": "Command: /bin/zsh -lc \"ps ax -o pid=,command= | rg 'VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0.0.1 --port 3110|flutter run|dart devtools|cargo run.*bridge-server'\"\nChunk ID: 4b4111\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 484\nOutput:\n 2691 /Users/lubomirmolin/Flutter/flutter/bin/cache/dart-sdk/bin/dart devtools --machine --dtd-uri=ws://127.0.0.1:60243/2nz0P9DeUjM=\n16103 /Users/lubomirmolin/Library/Developer/Xcode/DerivedData/VibeBridgeCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion -NSDocumentRevisionsDebugMode YES\n16139 /Users/lubomirmolin/Library/Developer/Xcode/DerivedData/VibeBridgeCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/VibeBridgeCompanion.app/Contents/Resources/bin/bridge-server --host 127.0.0.1 --port 3110 --admin-port 3111 --state-directory /Users/lubomirmolin/Library/Application Support/VibeBridgeCompanion/bridge-core --codex-mode auto --codex-command /Users/lubomirmolin/.bun/bin/codex\n18168 /Users/lubomirmolin/Flutter/flutter/bin/cache/dart-sdk/bin/dart devtools --machine --dtd-uri=ws://127.0.0.1:62853/UDucvHjdxRc=\n18498 /Users/lubomirmolin/Flutter/flutter/bin/cache/dart-sdk/bin/dart devtools --machine --dtd-uri=ws://127.0.0.1:62870/S2lrCep2QuQ=\n19275 /bin/zsh -c ps ax -o pid=,command= | rg 'VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0.0.1 --port 3110|flutter run|dart devtools|cargo run.*bridge-server'\n19295 rg VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0.0.1 --port 3110|flutter run|dart devtools|cargo run.*bridge-server\n37478 /Users/lubomirmolin/Flutter/flutter/bin/cache/dart-sdk/bin/dart devtools --machine --dtd-uri=ws://127.0.0.1:57103/OqMX9trUPmU=\n68421 /Users/lubomirmolin/Flutter/flutter/bin/cache/dart-sdk/bin/dart devtools --machine --dtd-uri=ws://127.0.0.1:51358/VrteUYd8RL4=\n81085 /Users/lubomirmolin/Flutter/flutter/bin/cache/dart-sdk/bin/dart devtools --machine --dtd-uri=ws://127.0.0.1:52219/RdTf5_lJ_j0=\n81584 /Users/lubomirmolin/Flutter/flutter/bin/cache/dart-sdk/bin/dart devtools --machine --dtd-uri=ws://127.0.0.1:57420/9bZcr4S-G6c=\n",
         "type": "function_call_output"
       }
     },
@@ -684,7 +684,7 @@
       "occurred_at": "2026-03-20T21:39:45.001Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"kill 16103 16139 2691 18168 18498 37478 68421 81085 81584\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":2000}",
+        "arguments": "{\"cmd\":\"kill 16103 16139 2691 18168 18498 37478 68421 81085 81584\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":2000}",
         "command": "exec_command"
       }
     },
@@ -694,7 +694,7 @@
       "occurred_at": "2026-03-20T21:39:45.006Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"sleep 1; ps ax -o pid=,command= | rg 'CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0.0.1 --port 3110|dart devtools'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1500,\"max_output_tokens\":3000}",
+        "arguments": "{\"cmd\":\"sleep 1; ps ax -o pid=,command= | rg 'VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0.0.1 --port 3110|dart devtools'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1500,\"max_output_tokens\":3000}",
         "command": "exec_command"
       }
     },
@@ -704,7 +704,7 @@
       "occurred_at": "2026-03-20T21:39:45.011Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"sleep 1; lsof -nP -iTCP:3110 -sTCP:LISTEN\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1500,\"max_output_tokens\":2000}",
+        "arguments": "{\"cmd\":\"sleep 1; lsof -nP -iTCP:3110 -sTCP:LISTEN\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1500,\"max_output_tokens\":2000}",
         "command": "exec_command"
       }
     },
@@ -723,10 +723,10 @@
       "event_id": "019d0d0c-07df-7632-81fa-a1636651400a-archive-615",
       "kind": "command_delta",
       "occurred_at": "2026-03-20T21:39:46.094Z",
-      "summary": "Command: /bin/zsh -lc \"sleep 1; ps ax -o pid=,command= | rg 'CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --h...",
+      "summary": "Command: /bin/zsh -lc \"sleep 1; ps ax -o pid=,command= | rg 'VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --h...",
       "payload": {
         "call_id": "call_mGADyDexV3mf1cL5fLxkvsN1",
-        "output": "Command: /bin/zsh -lc \"sleep 1; ps ax -o pid=,command= | rg 'CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0.0.1 --port 3110|dart devtools'\"\nChunk ID: 92e7ab\nWall time: 0.9284 seconds\nProcess exited with code 0\nOriginal token count: 133\nOutput:\n16103 /Users/lubomirmolin/Library/Developer/Xcode/DerivedData/CodexMobileCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion -NSDocumentRevisionsDebugMode YES\n19369 /bin/zsh -c sleep 1; ps ax -o pid=,command= | rg 'CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0.0.1 --port 3110|dart devtools'\n19414 rg CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0.0.1 --port 3110|dart devtools\n",
+        "output": "Command: /bin/zsh -lc \"sleep 1; ps ax -o pid=,command= | rg 'VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0.0.1 --port 3110|dart devtools'\"\nChunk ID: 92e7ab\nWall time: 0.9284 seconds\nProcess exited with code 0\nOriginal token count: 133\nOutput:\n16103 /Users/lubomirmolin/Library/Developer/Xcode/DerivedData/VibeBridgeCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion -NSDocumentRevisionsDebugMode YES\n19369 /bin/zsh -c sleep 1; ps ax -o pid=,command= | rg 'VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0.0.1 --port 3110|dart devtools'\n19414 rg VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0.0.1 --port 3110|dart devtools\n",
         "type": "function_call_output"
       }
     },
@@ -766,7 +766,7 @@
       "occurred_at": "2026-03-20T21:39:50.092Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"kill -9 16103\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1000}",
+        "arguments": "{\"cmd\":\"kill -9 16103\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1000}",
         "command": "exec_command"
       }
     },
@@ -776,7 +776,7 @@
       "occurred_at": "2026-03-20T21:39:50.112Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"sleep 1; ps ax -o pid=,command= | rg 'CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0.0.1 --port 3110|dart devtools'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1500,\"max_output_tokens\":2000}",
+        "arguments": "{\"cmd\":\"sleep 1; ps ax -o pid=,command= | rg 'VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0.0.1 --port 3110|dart devtools'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1500,\"max_output_tokens\":2000}",
         "command": "exec_command"
       }
     },
@@ -795,10 +795,10 @@
       "event_id": "019d0d0c-07df-7632-81fa-a1636651400a-archive-621",
       "kind": "command_delta",
       "occurred_at": "2026-03-20T21:39:51.205Z",
-      "summary": "Command: /bin/zsh -lc \"sleep 1; ps ax -o pid=,command= | rg 'CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --h...",
+      "summary": "Command: /bin/zsh -lc \"sleep 1; ps ax -o pid=,command= | rg 'VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --h...",
       "payload": {
         "call_id": "call_3ZFkpqPdVcV7EH5KFRz69EE2",
-        "output": "Command: /bin/zsh -lc \"sleep 1; ps ax -o pid=,command= | rg 'CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0.0.1 --port 3110|dart devtools'\"\nChunk ID: 8cfada\nWall time: 0.9362 seconds\nProcess exited with code 0\nOriginal token count: 133\nOutput:\n16103 /Users/lubomirmolin/Library/Developer/Xcode/DerivedData/CodexMobileCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion -NSDocumentRevisionsDebugMode YES\n19510 /bin/zsh -c sleep 1; ps ax -o pid=,command= | rg 'CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0.0.1 --port 3110|dart devtools'\n19513 rg CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0.0.1 --port 3110|dart devtools\n",
+        "output": "Command: /bin/zsh -lc \"sleep 1; ps ax -o pid=,command= | rg 'VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0.0.1 --port 3110|dart devtools'\"\nChunk ID: 8cfada\nWall time: 0.9362 seconds\nProcess exited with code 0\nOriginal token count: 133\nOutput:\n16103 /Users/lubomirmolin/Library/Developer/Xcode/DerivedData/VibeBridgeCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion -NSDocumentRevisionsDebugMode YES\n19510 /bin/zsh -c sleep 1; ps ax -o pid=,command= | rg 'VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0.0.1 --port 3110|dart devtools'\n19513 rg VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0.0.1 --port 3110|dart devtools\n",
         "type": "function_call_output"
       }
     },
@@ -827,7 +827,7 @@
       "occurred_at": "2026-03-20T21:39:56.481Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"ps -o pid=,ppid=,stat=,command= -p 16103\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1000}",
+        "arguments": "{\"cmd\":\"ps -o pid=,ppid=,stat=,command= -p 16103\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1000}",
         "command": "exec_command"
       }
     },
@@ -837,7 +837,7 @@
       "occurred_at": "2026-03-20T21:39:56.512Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"lsof -p 16103\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1500}",
+        "arguments": "{\"cmd\":\"lsof -p 16103\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1500}",
         "command": "exec_command"
       }
     },
@@ -848,7 +848,7 @@
       "summary": "Command: /bin/zsh -lc 'ps -o pid=,ppid=,stat=,command= -p 16103'\nChunk ID: ab9072\nWall time: 0.0000 seconds\nProcess exited with code 0\nOrig...",
       "payload": {
         "call_id": "call_7UuiLZtnkDKDv7FIP459RNCO",
-        "output": "Command: /bin/zsh -lc 'ps -o pid=,ppid=,stat=,command= -p 16103'\nChunk ID: ab9072\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 60\nOutput:\n16103 16121 SX   /Users/lubomirmolin/Library/Developer/Xcode/DerivedData/CodexMobileCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion -NSDocumentRevisionsDebugMode YES\n",
+        "output": "Command: /bin/zsh -lc 'ps -o pid=,ppid=,stat=,command= -p 16103'\nChunk ID: ab9072\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 60\nOutput:\n16103 16121 SX   /Users/lubomirmolin/Library/Developer/Xcode/DerivedData/VibeBridgeCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion -NSDocumentRevisionsDebugMode YES\n",
         "type": "function_call_output"
       }
     },
@@ -859,7 +859,7 @@
       "summary": "Command: /bin/zsh -lc 'lsof -p 16103'\nChunk ID: 5a7770\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 2675\nOutp...",
       "payload": {
         "call_id": "call_TTUQd7YTlORVUqr3upQ0scre",
-        "output": "Command: /bin/zsh -lc 'lsof -p 16103'\nChunk ID: 5a7770\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 2675\nOutput:\nTotal output lines: 65\n\nCOMMAND     PID         USER   FD      TYPE             DEVICE   SIZE/OFF                NODE NAME\nCodexMobi 16103 lubomirmolin  cwd       DIR               1,18        704                   2 /\nCodexMobi 16103 lubomirmolin  txt       REG               1,18      58256            59635378 /Users/lubomirmolin/Library/Developer/Xcode/DerivedData/CodexMobileCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion\nCodexMobi 16103 lubomirmolin  txt       REG               1,18     290752            14190782 /Applications/Xcode.app/Contents/Developer/usr/lib/libBacktraceRecording.dylib\nCodexMobi 16103 lubomirmolin  txt       REG               1,18     220624            14190770 /Applications/Xcode.app/Contents/Developer/usr/lib/libLogRedirect.dylib\nCodexMobi 16103 lubomirmolin  txt       REG               1,18    1664016            14307551 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Debugger/libViewDebuggerSupport.dylib\nCodexMobi 16103 lubomirmolin  txt       REG               1,18     930608            14190755 /Applications/Xcode.app/Contents/Developer/usr/lib/libMainThreadChecker.dylib\nCodexMobi 16103 lubomirmolin  txt       REG               1,18     309408 1152921500312524691 /usr/lib/system/introspection/libsystem_pthread.dylib\nCodexMobi 16103 lubomirmolin  txt       REG               1,18    1109872            14355436 /Applications/Xcode.app/Contents/SharedFrameworks/SpatialInspectorFoundation.framework/Versions/A/SpatialInspectorFoundation\nCodexMobi 16103 lubomirmolin  txt       REG               1,18    1318928 1152921500312524689 /usr/lib/system/introspection/libdispatch.dylib\nCodexMobi 16103 lubomirmolin  txt       REG               1,18    2289328 1152921500312524539 /usr/lib/dyld\nCodexMobi 16103 lubomirmolin  txt       REG               1,18    1236416 1152921500312524548 /usr/lib/libRPAC.dylib\nCodexMobi 16103 lubomirmolin  txt       REG               1,18    1650016            59635376 /Users/lubomirmolin/Library/Developer/Xcode/DerivedData/CodexMobileCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion.debug.dylib\nCodexMobi 16103 lubomirmolin  txt       REG               1,18     905136            14356760 /Applications/Xcode.app/Contents/SharedFrameworks/RealityKitInspection.framework/Versions/A/RealityKitInspection\nCodexMobi 16103 lubomirmolin  txt       REG               1,18     962048            14358153 /Applications/Xcode.app/Contents/SharedFrameworks/DebugHierarchyFoundation.framework/Versions/A/DebugHierarchyFoundation\nCodexMobi 16103 lubomirmolin  txt       REG               1,18      67620            58432316 /Library/Preferences/Logging/.plist-cache.HVPnoLJf\nCodexMobi 16103 lubomirmolin  txt       REG               1,18   33979312 1152921500312535049 /usr/share/icu/icudt76l.dat\nCodexMobi 16103 lubomirmolin  txt       REG               1,18     158865   …1175 tokens truncated…99 /private/var/db/nsurlstoraged/dafsaData.bin\nCodexMobi 16103 lubomirmolin  txt       REG               1,18  144496840 1152921500312322591 /System/Library/PrivateFrameworks/SFSymbols.framework/Versions/A/Resources/CoreGlyphs.bundle/Contents/Resources/Assets.car\nCodexMobi 16103 lubomirmolin  txt       REG               1,14 2712797184              681682 /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e\nCodexMobi 16103 lubomirmolin  txt       REG               1,14 2202353664              681684 /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e.01\nCodexMobi 16103 lubomirmolin    0r      CHR              16,38        0t0                3277 /dev/ttys038\nCodexMobi 16103 lubomirmolin    1u      CHR              16,38    0t20654                3277 /dev/ttys038\nCodexMobi 16103 lubomirmolin    2u      CHR              16,38    0t20654                3277 /dev/ttys038\nCodexMobi 16103 lubomirmolin    3u      REG               1,18      61440            57718663 /Users/lubomirmolin/Library/Caches/com.codex.mobile.companion.shell/Cache.db\nCodexMobi 16103 lubomirmolin    4u      REG               1,18    1656272            57718666 /Users/lubomirmolin/Library/Caches/com.codex.mobile.companion.shell/Cache.db-wal\nCodexMobi 16103 lubomirmolin    5u      REG               1,18      32768            57718667 /Users/lubomirmolin/Library/Caches/com.codex.mobile.companion.shell/Cache.db-shm\nCodexMobi 16103 lubomirmolin    6u      REG               1,18       4096            57718669 /Users/lubomirmolin/Library/HTTPStorages/com.codex.mobile.companion.shell/httpstorages.sqlite\nCodexMobi 16103 lubomirmolin    7u      REG               1,18     387312            57718672 /Users/lubomirmolin/Library/HTTPStorages/com.codex.mobile.companion.shell/httpstorages.sqlite-wal\nCodexMobi 16103 lubomirmolin    8u      REG               1,18      32768            57718673 /Users/lubomirmolin/Library/HTTPStorages/com.codex.mobile.companion.shell/httpstorages.sqlite-shm\nCodexMobi 16103 lubomirmolin    9   NPOLICY                                                   \nCodexMobi 16103 lubomirmolin   10      PIPE 0x6867c46acfaab409      16384                     \nCodexMobi 16103 lubomirmolin   11u      REG               1,18      61440            57718663 /Users/lubomirmolin/Library/Caches/com.codex.mobile.companion.shell/Cache.db\nCodexMobi 16103 lubomirmolin   12      PIPE 0xc04603b30554cb4b      16384                     \nCodexMobi 16103 lubomirmolin   13u      REG               1,18    1656272            57718666 /Users/lubomirmolin/Library/Caches/com.codex.mobile.companion.shell/Cache.db-wal\nCodexMobi 16103 lubomirmolin   14      PIPE 0x6867c46acfaab409      16384                     \nCodexMobi 16103 lubomirmolin   15      PIPE 0xc04603b30554cb4b      16384                     \nCodexMobi 16103 lubomirmolin   16u     IPv4 0x8959b5a4ef61ba01        0t0                 TCP localhost:51415->localhost:sim-control (CLOSE_WAIT)\n",
+        "output": "Command: /bin/zsh -lc 'lsof -p 16103'\nChunk ID: 5a7770\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 2675\nOutput:\nTotal output lines: 65\n\nCOMMAND     PID         USER   FD      TYPE             DEVICE   SIZE/OFF                NODE NAME\nCodexMobi 16103 lubomirmolin  cwd       DIR               1,18        704                   2 /\nCodexMobi 16103 lubomirmolin  txt       REG               1,18      58256            59635378 /Users/lubomirmolin/Library/Developer/Xcode/DerivedData/VibeBridgeCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion\nCodexMobi 16103 lubomirmolin  txt       REG               1,18     290752            14190782 /Applications/Xcode.app/Contents/Developer/usr/lib/libBacktraceRecording.dylib\nCodexMobi 16103 lubomirmolin  txt       REG               1,18     220624            14190770 /Applications/Xcode.app/Contents/Developer/usr/lib/libLogRedirect.dylib\nCodexMobi 16103 lubomirmolin  txt       REG               1,18    1664016            14307551 /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Debugger/libViewDebuggerSupport.dylib\nCodexMobi 16103 lubomirmolin  txt       REG               1,18     930608            14190755 /Applications/Xcode.app/Contents/Developer/usr/lib/libMainThreadChecker.dylib\nCodexMobi 16103 lubomirmolin  txt       REG               1,18     309408 1152921500312524691 /usr/lib/system/introspection/libsystem_pthread.dylib\nCodexMobi 16103 lubomirmolin  txt       REG               1,18    1109872            14355436 /Applications/Xcode.app/Contents/SharedFrameworks/SpatialInspectorFoundation.framework/Versions/A/SpatialInspectorFoundation\nCodexMobi 16103 lubomirmolin  txt       REG               1,18    1318928 1152921500312524689 /usr/lib/system/introspection/libdispatch.dylib\nCodexMobi 16103 lubomirmolin  txt       REG               1,18    2289328 1152921500312524539 /usr/lib/dyld\nCodexMobi 16103 lubomirmolin  txt       REG               1,18    1236416 1152921500312524548 /usr/lib/libRPAC.dylib\nCodexMobi 16103 lubomirmolin  txt       REG               1,18    1650016            59635376 /Users/lubomirmolin/Library/Developer/Xcode/DerivedData/VibeBridgeCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion.debug.dylib\nCodexMobi 16103 lubomirmolin  txt       REG               1,18     905136            14356760 /Applications/Xcode.app/Contents/SharedFrameworks/RealityKitInspection.framework/Versions/A/RealityKitInspection\nCodexMobi 16103 lubomirmolin  txt       REG               1,18     962048            14358153 /Applications/Xcode.app/Contents/SharedFrameworks/DebugHierarchyFoundation.framework/Versions/A/DebugHierarchyFoundation\nCodexMobi 16103 lubomirmolin  txt       REG               1,18      67620            58432316 /Library/Preferences/Logging/.plist-cache.HVPnoLJf\nCodexMobi 16103 lubomirmolin  txt       REG               1,18   33979312 1152921500312535049 /usr/share/icu/icudt76l.dat\nCodexMobi 16103 lubomirmolin  txt       REG               1,18     158865   …1175 tokens truncated…99 /private/var/db/nsurlstoraged/dafsaData.bin\nCodexMobi 16103 lubomirmolin  txt       REG               1,18  144496840 1152921500312322591 /System/Library/PrivateFrameworks/SFSymbols.framework/Versions/A/Resources/CoreGlyphs.bundle/Contents/Resources/Assets.car\nCodexMobi 16103 lubomirmolin  txt       REG               1,14 2712797184              681682 /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e\nCodexMobi 16103 lubomirmolin  txt       REG               1,14 2202353664              681684 /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e.01\nCodexMobi 16103 lubomirmolin    0r      CHR              16,38        0t0                3277 /dev/ttys038\nCodexMobi 16103 lubomirmolin    1u      CHR              16,38    0t20654                3277 /dev/ttys038\nCodexMobi 16103 lubomirmolin    2u      CHR              16,38    0t20654                3277 /dev/ttys038\nCodexMobi 16103 lubomirmolin    3u      REG               1,18      61440            57718663 /Users/lubomirmolin/Library/Caches/com.codex.mobile.companion.shell/Cache.db\nCodexMobi 16103 lubomirmolin    4u      REG               1,18    1656272            57718666 /Users/lubomirmolin/Library/Caches/com.codex.mobile.companion.shell/Cache.db-wal\nCodexMobi 16103 lubomirmolin    5u      REG               1,18      32768            57718667 /Users/lubomirmolin/Library/Caches/com.codex.mobile.companion.shell/Cache.db-shm\nCodexMobi 16103 lubomirmolin    6u      REG               1,18       4096            57718669 /Users/lubomirmolin/Library/HTTPStorages/com.codex.mobile.companion.shell/httpstorages.sqlite\nCodexMobi 16103 lubomirmolin    7u      REG               1,18     387312            57718672 /Users/lubomirmolin/Library/HTTPStorages/com.codex.mobile.companion.shell/httpstorages.sqlite-wal\nCodexMobi 16103 lubomirmolin    8u      REG               1,18      32768            57718673 /Users/lubomirmolin/Library/HTTPStorages/com.codex.mobile.companion.shell/httpstorages.sqlite-shm\nCodexMobi 16103 lubomirmolin    9   NPOLICY                                                   \nCodexMobi 16103 lubomirmolin   10      PIPE 0x6867c46acfaab409      16384                     \nCodexMobi 16103 lubomirmolin   11u      REG               1,18      61440            57718663 /Users/lubomirmolin/Library/Caches/com.codex.mobile.companion.shell/Cache.db\nCodexMobi 16103 lubomirmolin   12      PIPE 0xc04603b30554cb4b      16384                     \nCodexMobi 16103 lubomirmolin   13u      REG               1,18    1656272            57718666 /Users/lubomirmolin/Library/Caches/com.codex.mobile.companion.shell/Cache.db-wal\nCodexMobi 16103 lubomirmolin   14      PIPE 0x6867c46acfaab409      16384                     \nCodexMobi 16103 lubomirmolin   15      PIPE 0xc04603b30554cb4b      16384                     \nCodexMobi 16103 lubomirmolin   16u     IPv4 0x8959b5a4ef61ba01        0t0                 TCP localhost:51415->localhost:sim-control (CLOSE_WAIT)\n",
         "type": "function_call_output"
       }
     },
@@ -888,7 +888,7 @@
       "occurred_at": "2026-03-20T21:40:01.175Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"ps -o pid=,ppid=,stat=,command= -p 16121\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1200}",
+        "arguments": "{\"cmd\":\"ps -o pid=,ppid=,stat=,command= -p 16121\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1200}",
         "command": "exec_command"
       }
     },
@@ -898,7 +898,7 @@
       "occurred_at": "2026-03-20T21:40:01.192Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"pgrep -fal 'CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0.0.1 --port 3110'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1200}",
+        "arguments": "{\"cmd\":\"pgrep -fal 'VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0.0.1 --port 3110'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1200}",
         "command": "exec_command"
       }
     },
@@ -917,10 +917,10 @@
       "event_id": "019d0d0c-07df-7632-81fa-a1636651400a-archive-631",
       "kind": "command_delta",
       "occurred_at": "2026-03-20T21:40:01.261Z",
-      "summary": "Command: /bin/zsh -lc \"pgrep -fal 'CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0.0.1 --port 3110'...",
+      "summary": "Command: /bin/zsh -lc \"pgrep -fal 'VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0.0.1 --port 3110'...",
       "payload": {
         "call_id": "call_AgDcDZFffOewXEZ4e388ZEPn",
-        "output": "Command: /bin/zsh -lc \"pgrep -fal 'CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0.0.1 --port 3110'\"\nChunk ID: f0ffca\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 57\nOutput:\n16103 /Users/lubomirmolin/Library/Developer/Xcode/DerivedData/CodexMobileCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion -NSDocumentRevisionsDebugMode YES\n",
+        "output": "Command: /bin/zsh -lc \"pgrep -fal 'VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0.0.1 --port 3110'\"\nChunk ID: f0ffca\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 57\nOutput:\n16103 /Users/lubomirmolin/Library/Developer/Xcode/DerivedData/VibeBridgeCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion -NSDocumentRevisionsDebugMode YES\n",
         "type": "function_call_output"
       }
     },
@@ -949,7 +949,7 @@
       "occurred_at": "2026-03-20T21:40:05.820Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"kill -9 16121 16103\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1000}",
+        "arguments": "{\"cmd\":\"kill -9 16121 16103\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1000,\"max_output_tokens\":1000}",
         "command": "exec_command"
       }
     },
@@ -959,7 +959,7 @@
       "occurred_at": "2026-03-20T21:40:05.823Z",
       "summary": "Called exec_command",
       "payload": {
-        "arguments": "{\"cmd\":\"sleep 1; pgrep -fal 'CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0.0.1 --port 3110|debugserver --fd=7 --native-regs --setsid'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\",\"yield_time_ms\":1500,\"max_output_tokens\":1200}",
+        "arguments": "{\"cmd\":\"sleep 1; pgrep -fal 'VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0.0.1 --port 3110|debugserver --fd=7 --native-regs --setsid'\",\"workdir\":\"/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion\",\"yield_time_ms\":1500,\"max_output_tokens\":1200}",
         "command": "exec_command"
       }
     },
@@ -978,10 +978,10 @@
       "event_id": "019d0d0c-07df-7632-81fa-a1636651400a-archive-636",
       "kind": "command_delta",
       "occurred_at": "2026-03-20T21:40:06.920Z",
-      "summary": "Command: /bin/zsh -lc \"sleep 1; pgrep -fal 'CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0.0.1 --p...",
+      "summary": "Command: /bin/zsh -lc \"sleep 1; pgrep -fal 'VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0.0.1 --p...",
       "payload": {
         "call_id": "call_pqfaXGOzeNr6veIwSOKkXSq8",
-        "output": "Command: /bin/zsh -lc \"sleep 1; pgrep -fal 'CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion|bridge-server --host 127.0.0.1 --port 3110|debugserver --fd=7 --native-regs --setsid'\"\nChunk ID: bf5cf5\nWall time: 0.9437 seconds\nProcess exited with code 1\nOriginal token count: 0\nOutput:\n",
+        "output": "Command: /bin/zsh -lc \"sleep 1; pgrep -fal 'VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion|bridge-server --host 127.0.0.1 --port 3110|debugserver --fd=7 --native-regs --setsid'\"\nChunk ID: bf5cf5\nWall time: 0.9437 seconds\nProcess exited with code 1\nOriginal token count: 0\nOutput:\n",
         "type": "function_call_output"
       }
     },
@@ -989,16 +989,16 @@
       "event_id": "019d0d0c-07df-7632-81fa-a1636651400a-archive-637",
       "kind": "message_delta",
       "occurred_at": "2026-03-20T21:40:09.107Z",
-      "summary": "All of the old local app/server processes are down.\n\nI killed the running `CodexMobileCompanion` app, its `bridge-server`, the attached Xco...",
+      "summary": "All of the old local app/server processes are down.\n\nI killed the running `VibeBridgeCompanion` app, its `bridge-server`, the attached Xco...",
       "payload": {
         "content": [
           {
-            "text": "All of the old local app/server processes are down.\n\nI killed the running `CodexMobileCompanion` app, its `bridge-server`, the attached Xcode `debugserver`, and the stale Dart DevTools processes. Verification is clean: `pgrep` finds no matching app, bridge, or debugserver process, and nothing is listening on port `3110`.",
+            "text": "All of the old local app/server processes are down.\n\nI killed the running `VibeBridgeCompanion` app, its `bridge-server`, the attached Xcode `debugserver`, and the stale Dart DevTools processes. Verification is clean: `pgrep` finds no matching app, bridge, or debugserver process, and nothing is listening on port `3110`.",
             "text_type": "output_text",
             "type": "text"
           }
         ],
-        "delta": "All of the old local app/server processes are down.\n\nI killed the running `CodexMobileCompanion` app, its `bridge-server`, the attached Xcode `debugserver`, and the stale Dart DevTools processes. Verification is clean: `pgrep` finds no matching app, bridge, or debugserver process, and nothing is listening on port `3110`.",
+        "delta": "All of the old local app/server processes are down.\n\nI killed the running `VibeBridgeCompanion` app, its `bridge-server`, the attached Xcode `debugserver`, and the stale Dart DevTools processes. Verification is clean: `pgrep` finds no matching app, bridge, or debugserver process, and nothing is listening on port `3110`.",
         "role": "assistant",
         "source": "assistant",
         "type": "agentMessage"

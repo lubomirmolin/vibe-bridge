@@ -26,7 +26,7 @@ void main() {
     expect(summary.contractVersion, contractVersion);
     expect(summary.threadId, 'thread-123');
     expect(summary.status, ThreadStatus.running);
-    expect(summary.repository, 'codex-mobile-companion');
+    expect(summary.repository, 'vibe-bridge-companion');
   });
 
   test('bridge event fixture maps to shared envelope', () {

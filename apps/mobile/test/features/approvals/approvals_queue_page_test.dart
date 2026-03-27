@@ -46,11 +46,11 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.textContaining('/workspace/codex-mobile-companion'),
+        find.textContaining('/workspace/vibe-bridge-companion'),
         findsAtLeastNWidgets(1),
       );
       expect(
-        find.textContaining('codex-mobile-companion'),
+        find.textContaining('vibe-bridge-companion'),
         findsAtLeastNWidgets(1),
       );
       expect(find.textContaining('master (remote: origin)'), findsOneWidget);
@@ -678,8 +678,8 @@ ApprovalRecordDto _pendingApproval() {
     requestedAt: '2026-03-18T10:10:00Z',
     resolvedAt: null,
     repository: RepositoryContextDto(
-      workspace: '/workspace/codex-mobile-companion',
-      repository: 'codex-mobile-companion',
+      workspace: '/workspace/vibe-bridge-companion',
+      repository: 'vibe-bridge-companion',
       branch: 'master',
       remote: 'origin',
     ),
@@ -699,8 +699,8 @@ ApprovalRecordDto _branchSwitchApprovalFromBridgeContract() {
     'requested_at': '2026-03-18T10:11:00Z',
     'resolved_at': null,
     'repository': <String, dynamic>{
-      'workspace': '/workspace/codex-mobile-companion',
-      'repository': 'codex-mobile-companion',
+      'workspace': '/workspace/vibe-bridge-companion',
+      'repository': 'vibe-bridge-companion',
       'branch': 'master',
       'remote': 'origin',
     },
@@ -718,8 +718,8 @@ ThreadSummaryDto _threadSummary() {
     threadId: 'thread-123',
     title: 'Implement shared contracts',
     status: ThreadStatus.running,
-    workspace: '/workspace/codex-mobile-companion',
-    repository: 'codex-mobile-companion',
+    workspace: '/workspace/vibe-bridge-companion',
+    repository: 'vibe-bridge-companion',
     branch: 'master',
     updatedAt: '2026-03-18T10:00:00Z',
   );
@@ -731,8 +731,8 @@ ThreadDetailDto _threadDetail() {
     threadId: 'thread-123',
     title: 'Implement shared contracts',
     status: ThreadStatus.running,
-    workspace: '/workspace/codex-mobile-companion',
-    repository: 'codex-mobile-companion',
+    workspace: '/workspace/vibe-bridge-companion',
+    repository: 'vibe-bridge-companion',
     branch: 'master',
     createdAt: '2026-03-18T09:45:00Z',
     updatedAt: '2026-03-18T10:00:00Z',

@@ -151,8 +151,8 @@ class _FakeThreadListBridgeApi implements ThreadListBridgeApi {
         title: 'Desktop local thread',
         status: ThreadStatus.running,
         updatedAt: '2026-03-25T10:05:00Z',
-        workspace: '/workspace/codex-mobile-companion',
-        repository: 'codex-mobile-companion',
+        workspace: '/workspace/vibe-bridge-companion',
+        repository: 'vibe-bridge-companion',
         branch: 'main',
       ),
     ];
