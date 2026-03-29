@@ -2503,7 +2503,7 @@ fn ensure_running_status_for_desktop_patch_update(
     previous_snapshot: Option<&ThreadSnapshotDto>,
     next_snapshot: &mut ThreadSnapshotDto,
     is_patch_update: bool,
-    latest_raw_turn_status: Option<&str>,
+    _latest_raw_turn_status: Option<&str>,
 ) {
     if !is_patch_update {
         return;
@@ -2523,14 +2523,26 @@ fn ensure_running_status_for_desktop_patch_update(
     ) {
         return;
     }
-    if latest_raw_turn_status.is_some_and(|status| status.trim().eq_ignore_ascii_case("idle")) {
-        return;
-    }
-    if next_snapshot.entries.is_empty() {
+    if !desktop_patch_update_has_fresh_activity(previous_snapshot, next_snapshot) {
         return;
     }
 
     next_snapshot.thread.status = ThreadStatus::Running;
+}
+
+fn desktop_patch_update_has_fresh_activity(
+    previous_snapshot: Option<&ThreadSnapshotDto>,
+    next_snapshot: &ThreadSnapshotDto,
+) -> bool {
+    if next_snapshot.entries.is_empty() {
+        return false;
+    }
+
+    let Some(previous_snapshot) = previous_snapshot else {
+        return true;
+    };
+
+    previous_snapshot.entries != next_snapshot.entries
 }
 
 fn payload_contains_hidden_message(payload: &Value) -> bool {
@@ -2962,6 +2974,105 @@ mod tests {
         );
 
         assert_eq!(next_snapshot.thread.status, ThreadStatus::Completed);
+    }
+
+    #[test]
+    fn desktop_patch_updates_with_fresh_activity_override_idle_raw_turn_status() {
+        let previous_snapshot = ThreadSnapshotDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: ThreadDetailDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "thread-1".to_string(),
+                title: "Thread".to_string(),
+                status: ThreadStatus::Idle,
+                workspace: "/repo".to_string(),
+                repository: "repo".to_string(),
+                branch: "main".to_string(),
+                created_at: "2026-03-27T20:00:00Z".to_string(),
+                updated_at: "2026-03-27T20:00:00Z".to_string(),
+                source: "codex_app_ipc".to_string(),
+                access_mode: shared_contracts::AccessMode::ControlWithApprovals,
+                last_turn_summary: "thinking".to_string(),
+            },
+            entries: vec![ThreadTimelineEntryDto {
+                event_id: "evt-1".to_string(),
+                kind: BridgeEventKind::MessageDelta,
+                occurred_at: "2026-03-27T20:00:00Z".to_string(),
+                summary: "thinking".to_string(),
+                payload: json!({"delta":"thinking","replace":true}),
+                annotations: None,
+            }],
+            approvals: Vec::new(),
+            git_status: None,
+        };
+        let mut next_snapshot = ThreadSnapshotDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: ThreadDetailDto {
+                status: ThreadStatus::Idle,
+                updated_at: "2026-03-27T20:00:10Z".to_string(),
+                ..previous_snapshot.thread.clone()
+            },
+            entries: vec![ThreadTimelineEntryDto {
+                event_id: "evt-1".to_string(),
+                kind: BridgeEventKind::MessageDelta,
+                occurred_at: "2026-03-27T20:00:10Z".to_string(),
+                summary: "thinking harder".to_string(),
+                payload: json!({"delta":"thinking harder","replace":true}),
+                annotations: None,
+            }],
+            approvals: Vec::new(),
+            git_status: None,
+        };
+
+        ensure_running_status_for_desktop_patch_update(
+            Some(&previous_snapshot),
+            &mut next_snapshot,
+            true,
+            Some("idle"),
+        );
+
+        assert_eq!(next_snapshot.thread.status, ThreadStatus::Running);
+    }
+
+    #[test]
+    fn desktop_patch_updates_without_fresh_activity_preserve_idle_raw_turn_status() {
+        let previous_snapshot = ThreadSnapshotDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: ThreadDetailDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "thread-1".to_string(),
+                title: "Thread".to_string(),
+                status: ThreadStatus::Idle,
+                workspace: "/repo".to_string(),
+                repository: "repo".to_string(),
+                branch: "main".to_string(),
+                created_at: "2026-03-27T20:00:00Z".to_string(),
+                updated_at: "2026-03-27T20:00:00Z".to_string(),
+                source: "codex_app_ipc".to_string(),
+                access_mode: shared_contracts::AccessMode::ControlWithApprovals,
+                last_turn_summary: "thinking".to_string(),
+            },
+            entries: vec![ThreadTimelineEntryDto {
+                event_id: "evt-1".to_string(),
+                kind: BridgeEventKind::MessageDelta,
+                occurred_at: "2026-03-27T20:00:00Z".to_string(),
+                summary: "thinking".to_string(),
+                payload: json!({"delta":"thinking","replace":true}),
+                annotations: None,
+            }],
+            approvals: Vec::new(),
+            git_status: None,
+        };
+        let mut next_snapshot = previous_snapshot.clone();
+
+        ensure_running_status_for_desktop_patch_update(
+            Some(&previous_snapshot),
+            &mut next_snapshot,
+            true,
+            Some("idle"),
+        );
+
+        assert_eq!(next_snapshot.thread.status, ThreadStatus::Idle);
     }
 
     #[test]
