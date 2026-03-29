@@ -82,6 +82,9 @@ String _validPayload({
   "v": "2026-03-17",
   "b": "$bridgeId",
   "u": "$bridgeApiBaseUrl",
+  "r": [
+    "$bridgeApiBaseUrl"
+  ],
   "s": "$sessionId",
   "t": "ptk-abc"
 }

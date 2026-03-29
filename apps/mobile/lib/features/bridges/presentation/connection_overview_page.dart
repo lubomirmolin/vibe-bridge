@@ -908,38 +908,42 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
         ? '${pairingState.savedBridgeCount} saved bridges available.'
         : 'A trusted bridge connection is established.';
 
-    return Column(
+    return SingleChildScrollView(
       key: const ValueKey('title-paired'),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text.rich(
-          TextSpan(
-            text: 'Connected to\n',
-            style: pairedTitleStyle,
+      physics: const NeverScrollableScrollPhysics(),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text.rich(
+            TextSpan(
+              text: 'Connected to\n',
+              style: pairedTitleStyle,
+              children: [
+                TextSpan(
+                  text: pairingState.trustedBridge?.bridgeName ?? '',
+                  style: pairedBridgeNameStyle,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              TextSpan(
-                text: pairingState.trustedBridge?.bridgeName ?? '',
-                style: pairedBridgeNameStyle,
+              Text(
+                bridgeSummary,
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 14),
+              ),
+              _PairingConnectionIndicator(
+                state: pairingState.bridgeConnectionState,
               ),
             ],
           ),
-        ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 12,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Text(
-              bridgeSummary,
-              style: const TextStyle(color: AppTheme.textMuted, fontSize: 14),
-            ),
-            _PairingConnectionIndicator(
-              state: pairingState.bridgeConnectionState,
-            ),
-          ],
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -1042,6 +1046,7 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
           data: _scannedRawQr!,
           version: QrVersions.auto,
           padding: EdgeInsets.zero,
+          errorCorrectionLevel: QrErrorCorrectLevel.M,
           eyeStyle: const QrEyeStyle(
             eyeShape: QrEyeShape.square,
             color: Colors.white,

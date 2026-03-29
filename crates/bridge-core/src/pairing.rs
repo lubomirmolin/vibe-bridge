@@ -75,11 +75,9 @@ impl PairingSessionService {
                 &bridge_api_routes,
                 &self.api_base_url,
             ),
-            bridge_api_routes: bridge_api_routes.clone(),
+            routes: compact_pairing_qr_routes(&bridge_api_routes),
             session_id: session_id.clone(),
             pairing_token: pairing_token.clone(),
-            issued_at_epoch_seconds,
-            expires_at_epoch_seconds,
         };
 
         self.sessions.insert(
@@ -589,16 +587,29 @@ struct PairingQrPayload {
     bridge_id: String,
     #[serde(rename = "u")]
     bridge_api_base_url: String,
-    #[serde(rename = "bridge_api_routes")]
-    bridge_api_routes: Vec<BridgeApiRouteDto>,
+    #[serde(rename = "r")]
+    routes: Vec<String>,
     #[serde(rename = "s")]
     session_id: String,
     #[serde(rename = "t")]
     pairing_token: String,
-    #[serde(rename = "issued_at_epoch_seconds")]
-    issued_at_epoch_seconds: u64,
-    #[serde(rename = "expires_at_epoch_seconds")]
-    expires_at_epoch_seconds: u64,
+}
+
+fn compact_pairing_qr_routes(bridge_api_routes: &[BridgeApiRouteDto]) -> Vec<String> {
+    let mut preferred_routes = bridge_api_routes
+        .iter()
+        .filter(|route| route.reachable && route.is_preferred)
+        .map(|route| route.base_url.clone())
+        .collect::<Vec<_>>();
+    let mut fallback_routes = bridge_api_routes
+        .iter()
+        .filter(|route| route.reachable && !route.is_preferred)
+        .map(|route| route.base_url.clone())
+        .collect::<Vec<_>>();
+
+    preferred_routes.append(&mut fallback_routes);
+    preferred_routes.dedup();
+    preferred_routes
 }
 
 fn preferred_bridge_api_base_url(
@@ -861,6 +872,9 @@ fn unix_now_epoch_seconds() -> u64 {
 mod tests {
     use std::path::PathBuf;
 
+    use serde_json::Value;
+    use shared_contracts::{BridgeApiRouteDto, BridgeApiRouteKind};
+
     use super::{
         PairingFinalizeError, PairingFinalizeRequest, PairingHandshakeError,
         PairingHandshakeRequest, PairingRevokeRequest, PairingSessionService,
@@ -1096,6 +1110,44 @@ mod tests {
         assert!(second_finalize.is_ok());
 
         let _ = std::fs::remove_dir_all(test_dir);
+    }
+
+    #[test]
+    fn issued_qr_payload_uses_compact_route_and_timestamp_fields() {
+        let mut service = test_service("https://bridge.ts.net");
+        let issued = service.issue_session_with_routes(vec![
+            BridgeApiRouteDto {
+                id: "tailscale".to_string(),
+                kind: BridgeApiRouteKind::Tailscale,
+                base_url: "https://bridge.ts.net".to_string(),
+                reachable: true,
+                is_preferred: true,
+            },
+            BridgeApiRouteDto {
+                id: "local_network".to_string(),
+                kind: BridgeApiRouteKind::LocalNetwork,
+                base_url: "http://192.168.1.10:3110".to_string(),
+                reachable: true,
+                is_preferred: false,
+            },
+        ]);
+
+        let qr_payload: Value =
+            serde_json::from_str(&issued.qr_payload).expect("qr payload should decode");
+
+        assert_eq!(qr_payload["u"], "https://bridge.ts.net");
+        assert_eq!(qr_payload["b"], issued.bridge_identity.bridge_id);
+        assert_eq!(qr_payload["s"], issued.pairing_session.session_id);
+        assert_eq!(qr_payload["t"], issued.pairing_session.pairing_token);
+        assert_eq!(
+            qr_payload["r"],
+            serde_json::json!(["https://bridge.ts.net", "http://192.168.1.10:3110"])
+        );
+        assert!(qr_payload.get("i").is_none());
+        assert!(qr_payload.get("e").is_none());
+        assert!(qr_payload.get("bridge_api_routes").is_none());
+        assert!(qr_payload.get("issued_at_epoch_seconds").is_none());
+        assert!(qr_payload.get("expires_at_epoch_seconds").is_none());
     }
 
     fn test_service(pairing_base_url: &str) -> PairingSessionService {

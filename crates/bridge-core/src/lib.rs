@@ -3531,18 +3531,14 @@ mod tests {
         assert_eq!(qr_payload["s"], body["pairing_session"]["session_id"]);
         assert_eq!(qr_payload["t"], body["pairing_session"]["pairing_token"]);
         assert!(qr_payload.get("bridge_name").is_none());
-        assert!(qr_payload["issued_at_epoch_seconds"].as_i64().is_some());
-        assert!(qr_payload["expires_at_epoch_seconds"].as_i64().is_some());
+        assert_eq!(qr_payload["r"].as_array().map(std::vec::Vec::len), Some(1));
         assert_eq!(
-            qr_payload["bridge_api_routes"]
-                .as_array()
-                .map(std::vec::Vec::len),
-            Some(1)
+            qr_payload["r"][0],
+            serde_json::Value::String("https://bridge.ts.net".to_string())
         );
-        assert_eq!(
-            qr_payload["bridge_api_routes"][0]["kind"],
-            serde_json::Value::String("tailscale".to_string())
-        );
+        assert!(qr_payload.get("i").is_none());
+        assert!(qr_payload.get("e").is_none());
+        assert!(qr_payload.get("bridge_api_routes").is_none());
     }
 
     #[test]
