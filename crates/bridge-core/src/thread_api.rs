@@ -27,15 +27,19 @@ use self::archive::{
 };
 pub(crate) use self::notifications::CodexNotificationNormalizer;
 pub use self::notifications::CodexNotificationStream;
+pub(crate) use self::notifications::{normalize_codex_item_payload, should_publish_live_payload};
 #[cfg(test)]
 use self::rpc::{CodexThread, CodexThreadStatus, CodexTurn, should_resume_thread};
 #[cfg(test)]
 use self::sync::THREAD_SYNC_REUSE_WINDOW_MILLIS;
 use self::sync::{ThreadSyncConfig, ThreadSyncReceipt};
+pub(crate) use self::timeline::{
+    build_timeline_event_envelope, current_timestamp_string, derive_repository_name_from_cwd,
+    summarize_live_payload, unix_timestamp_to_iso8601,
+};
 #[cfg(test)]
 use self::timeline::{
     current_unix_epoch_millis, map_codex_thread_to_timeline_events, map_thread_detail,
-    unix_timestamp_to_iso8601,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

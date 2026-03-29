@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:vibe_bridge/foundation/connectivity/live_connection_state.dart';
 import 'package:vibe_bridge/foundation/connectivity/reconnect_scheduler.dart';
@@ -473,6 +474,8 @@ bool _isExplorationTimelineItem(ThreadActivityItem item) {
 // ---------------------------------------------------------------------------
 
 class ThreadDetailController extends StateNotifier<ThreadDetailState> {
+  static const Duration _activeTurnRefreshGuardWindow = Duration(seconds: 5);
+
   ThreadDetailController({
     required String bridgeApiBaseUrl,
     required String threadId,
@@ -502,6 +505,8 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   final ThreadListController _threadListController;
   final void Function(String message) _debugLog;
   final Set<String> _knownEventIds = <String>{};
+  final Map<String, String> _lastLiveFrameFingerprintByEventId =
+      <String, String>{};
 
   late final ReconnectScheduler _reconnectScheduler;
   ThreadLiveSubscription? _liveSubscription;
@@ -512,6 +517,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   bool _shouldRefreshDetailAfterCurrentRequest = false;
   bool _isDisposed = false;
   DateTime? _pendingPromptSubmittedAt;
+  DateTime? _lastActiveTurnSignalAt;
 
   /// Resets all transient sub-state to initial values. Used when
   /// (re-)loading the thread or catching up after a reconnect.
@@ -544,6 +550,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     try {
       await _closeLiveSubscription();
       _knownEventIds.clear();
+      _lastLiveFrameFingerprintByEventId.clear();
       final requestedThreadId = state.threadId;
 
       final detail = await _bridgeApi.fetchThreadDetail(
@@ -895,11 +902,16 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     final nextItems = List<ThreadActivityItem>.from(state.items);
     for (final entry in timeline) {
       final nextItem = ThreadActivityItem.fromTimelineEntry(entry);
-      final existingIndex = nextItems.indexWhere(
-        (item) => item.eventId == entry.eventId,
+      final existingIndex = _findTimelineMergeIndex(
+        items: nextItems,
+        candidate: nextItem,
       );
       if (existingIndex >= 0) {
-        nextItems[existingIndex] = nextItem;
+        nextItems[existingIndex] = _preferTimelineMergedItem(
+          current: nextItems[existingIndex],
+          candidate: nextItem,
+        );
+        _knownEventIds.add(entry.eventId);
       } else {
         nextItems.add(nextItem);
         _knownEventIds.add(entry.eventId);
@@ -919,11 +931,16 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
     final prependedItems = <ThreadActivityItem>[];
     for (final entry in timeline) {
-      if (_knownEventIds.contains(entry.eventId)) {
+      final nextItem = ThreadActivityItem.fromTimelineEntry(entry);
+      if (_knownEventIds.contains(entry.eventId) ||
+          _findTimelineMergeIndex(items: currentItems, candidate: nextItem) >=
+              0 ||
+          _findTimelineMergeIndex(items: prependedItems, candidate: nextItem) >=
+              0) {
         continue;
       }
 
-      prependedItems.add(ThreadActivityItem.fromTimelineEntry(entry));
+      prependedItems.add(nextItem);
       _knownEventIds.add(entry.eventId);
     }
 
@@ -936,6 +953,125 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       ...currentItems,
     ]);
   }
+
+  int _findTimelineMergeIndex({
+    required List<ThreadActivityItem> items,
+    required ThreadActivityItem candidate,
+  }) {
+    final exactIndex = items.indexWhere(
+      (item) => item.eventId == candidate.eventId,
+    );
+    if (exactIndex >= 0) {
+      return exactIndex;
+    }
+
+    return items.indexWhere(
+      (item) => _isEquivalentTimelineActivityItem(
+        existing: item,
+        candidate: candidate,
+      ),
+    );
+  }
+
+  bool _isEquivalentTimelineActivityItem({
+    required ThreadActivityItem existing,
+    required ThreadActivityItem candidate,
+  }) {
+    if (existing.kind != candidate.kind || existing.type != candidate.type) {
+      return false;
+    }
+    if (!_areTimelineMomentsEquivalent(
+      existing.occurredAt,
+      candidate.occurredAt,
+    )) {
+      return false;
+    }
+
+    switch (candidate.type) {
+      case ThreadActivityItemType.userPrompt:
+        return _normalizeActivityBody(existing.body) ==
+                _normalizeActivityBody(candidate.body) &&
+            setEquals(
+              existing.messageImageUrls.toSet(),
+              candidate.messageImageUrls.toSet(),
+            );
+      case ThreadActivityItemType.assistantOutput:
+        return _areEquivalentAssistantBodies(existing.body, candidate.body);
+      case ThreadActivityItemType.planUpdate:
+      case ThreadActivityItemType.terminalOutput:
+      case ThreadActivityItemType.fileChange:
+      case ThreadActivityItemType.lifecycleUpdate:
+      case ThreadActivityItemType.approvalRequest:
+      case ThreadActivityItemType.securityEvent:
+      case ThreadActivityItemType.generic:
+        return false;
+    }
+  }
+
+  ThreadActivityItem _preferTimelineMergedItem({
+    required ThreadActivityItem current,
+    required ThreadActivityItem candidate,
+  }) {
+    if (current.eventId == candidate.eventId) {
+      return candidate;
+    }
+
+    switch (candidate.type) {
+      case ThreadActivityItemType.userPrompt:
+        return candidate.messageImageUrls.length >
+                current.messageImageUrls.length
+            ? candidate
+            : current;
+      case ThreadActivityItemType.assistantOutput:
+        final currentBody = _normalizeActivityBody(current.body);
+        final candidateBody = _normalizeActivityBody(candidate.body);
+        if (candidateBody.length > currentBody.length &&
+            candidateBody.startsWith(currentBody)) {
+          return candidate;
+        }
+        if (currentBody.length > candidateBody.length &&
+            currentBody.startsWith(candidateBody)) {
+          return current;
+        }
+        return candidateBody.length >= currentBody.length ? candidate : current;
+      case ThreadActivityItemType.planUpdate:
+      case ThreadActivityItemType.terminalOutput:
+      case ThreadActivityItemType.fileChange:
+      case ThreadActivityItemType.lifecycleUpdate:
+      case ThreadActivityItemType.approvalRequest:
+      case ThreadActivityItemType.securityEvent:
+      case ThreadActivityItemType.generic:
+        return candidate;
+    }
+  }
+
+  bool _areTimelineMomentsEquivalent(String left, String right) {
+    if (left == right) {
+      return true;
+    }
+
+    final leftTime = DateTime.tryParse(left);
+    final rightTime = DateTime.tryParse(right);
+    if (leftTime == null || rightTime == null) {
+      return false;
+    }
+
+    return leftTime.difference(rightTime).abs() <= const Duration(seconds: 2);
+  }
+
+  bool _areEquivalentAssistantBodies(String left, String right) {
+    final normalizedLeft = _normalizeActivityBody(left);
+    final normalizedRight = _normalizeActivityBody(right);
+    if (normalizedLeft.isEmpty || normalizedRight.isEmpty) {
+      return false;
+    }
+
+    return normalizedLeft == normalizedRight ||
+        normalizedLeft.startsWith(normalizedRight) ||
+        normalizedRight.startsWith(normalizedLeft);
+  }
+
+  String _normalizeActivityBody(String body) => body.trim();
 
   ThreadDetailDto? _fresherThreadDetail({
     required ThreadDetailDto? current,
@@ -1061,6 +1197,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     if (event.threadId != state.threadId) {
       return;
     }
+    if (_isDuplicateLiveFrame(event)) {
+      return;
+    }
 
     final existingIndex = state.items.indexWhere(
       (item) => item.eventId == event.eventId,
@@ -1068,6 +1207,8 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
     if (event.kind == BridgeEventKind.threadStatusChanged) {
       _applyLifecycleStatusUpdate(event);
+    } else {
+      _recordActiveTurnSignal();
     }
 
     final mergedPayload = _mergeLivePayload(
@@ -1096,6 +1237,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     } else {
       nextItems.add(nextItem);
     }
+    _knownEventIds.add(event.eventId);
 
     final thread = state.thread;
     if (thread != null && event.kind != BridgeEventKind.threadStatusChanged) {
@@ -1120,6 +1262,26 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
           ? const Duration(milliseconds: 200)
           : const Duration(milliseconds: 700),
     );
+  }
+
+  bool _isDuplicateLiveFrame(BridgeEventEnvelope<Map<String, dynamic>> event) {
+    final fingerprint = jsonEncode(<String, Object?>{
+      'kind': event.kind.wireValue,
+      'occurredAt': event.occurredAt,
+      'payload': event.payload,
+    });
+    final previous = _lastLiveFrameFingerprintByEventId[event.eventId];
+    if (previous == fingerprint) {
+      _debugLog(
+        'thread_detail_duplicate_live_frame '
+        'threadId=${state.threadId} '
+        'eventId=${event.eventId} '
+        'kind=${event.kind.wireValue}',
+      );
+      return true;
+    }
+    _lastLiveFrameFingerprintByEventId[event.eventId] = fingerprint;
+    return false;
   }
 
   void _scheduleThreadDetailRefresh({required Duration delay}) {
@@ -1195,6 +1357,12 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
     final currentUpdatedAt = DateTime.tryParse(current.updatedAt);
     final refreshedUpdatedAt = DateTime.tryParse(refreshed.updatedAt);
+    if (_shouldPreserveRunningThreadStatus(
+      current: current,
+      refreshed: refreshed,
+    )) {
+      return false;
+    }
     if (currentUpdatedAt != null &&
         refreshedUpdatedAt != null &&
         refreshedUpdatedAt.isBefore(currentUpdatedAt)) {
@@ -1218,6 +1386,24 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         left.source == right.source &&
         left.accessMode == right.accessMode &&
         left.lastTurnSummary == right.lastTurnSummary;
+  }
+
+  bool _shouldPreserveRunningThreadStatus({
+    required ThreadDetailDto current,
+    required ThreadDetailDto refreshed,
+  }) {
+    if (current.status != ThreadStatus.running ||
+        refreshed.status == ThreadStatus.running) {
+      return false;
+    }
+
+    final lastActiveTurnSignalAt = _lastActiveTurnSignalAt;
+    if (lastActiveTurnSignalAt == null) {
+      return false;
+    }
+
+    return DateTime.now().difference(lastActiveTurnSignalAt) <=
+        _activeTurnRefreshGuardWindow;
   }
 
   bool _isPlaceholderThreadTitle(String title) {
@@ -1252,11 +1438,13 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       status: status,
       updatedAt: event.occurredAt,
       lastTurnSummary: thread.lastTurnSummary,
+      title: _liveEventTitle(event) ?? thread.title,
     );
     _threadListController.applyThreadStatusUpdate(
       threadId: thread.threadId,
       status: status,
       updatedAt: event.occurredAt,
+      title: _liveEventTitle(event),
     );
   }
 
@@ -1722,6 +1910,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       updatedAt: updatedAt,
       lastTurnSummary: mutationResult.message,
     );
+    if (mutationResult.threadStatus == ThreadStatus.running) {
+      _recordActiveTurnSignal();
+    }
     _threadListController.applyThreadStatusUpdate(
       threadId: thread.threadId,
       status: mutationResult.threadStatus,
@@ -1733,6 +1924,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     required ThreadStatus status,
     required String updatedAt,
     required String lastTurnSummary,
+    String? title,
   }) {
     final thread = state.thread;
     if (thread == null) {
@@ -1741,6 +1933,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
     state = state.copyWith(
       thread: thread.copyWith(
+        title: title ?? thread.title,
         status: status,
         updatedAt: updatedAt,
         lastTurnSummary: lastTurnSummary,
@@ -1749,7 +1942,12 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
     if (status != ThreadStatus.running) {
       _pendingPromptSubmittedAt = null;
+      _lastActiveTurnSignalAt = null;
     }
+  }
+
+  void _recordActiveTurnSignal() {
+    _lastActiveTurnSignalAt = DateTime.now();
   }
 
   void _logPromptResponseIfNeeded({
@@ -1781,6 +1979,15 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       'chars=${visibleText.length}',
     );
     _pendingPromptSubmittedAt = null;
+  }
+
+  String? _liveEventTitle(BridgeEventEnvelope<Map<String, dynamic>> event) {
+    final rawTitle = event.payload['title'];
+    if (rawTitle is! String) {
+      return null;
+    }
+    final normalized = rawTitle.trim();
+    return normalized.isEmpty ? null : normalized;
   }
 
   void _logLiveEvent({

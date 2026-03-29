@@ -104,7 +104,6 @@ pub(super) fn map_codex_thread_to_upstream_record(thread: &CodexThread) -> Upstr
     let title = thread
         .name
         .as_deref()
-        .or(thread.preview.as_deref())
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("Untitled thread")
         .to_string();
@@ -246,7 +245,7 @@ pub(super) fn parse_repository_name_from_origin(origin_url: &str) -> Option<Stri
     Some(segment.trim_end_matches(".git").to_string())
 }
 
-pub(super) fn derive_repository_name_from_cwd(cwd: &str) -> Option<String> {
+pub(crate) fn derive_repository_name_from_cwd(cwd: &str) -> Option<String> {
     Path::new(cwd)
         .file_name()
         .and_then(|name| name.to_str())
@@ -313,7 +312,7 @@ pub(super) fn map_timeline_entry(upstream: &UpstreamTimelineEvent) -> ThreadTime
     }
 }
 
-pub(super) fn build_timeline_event_envelope(
+pub(crate) fn build_timeline_event_envelope(
     event_id: impl Into<String>,
     thread_id: impl Into<String>,
     kind: BridgeEventKind,
@@ -381,6 +380,14 @@ fn extract_exploration_command(payload: &Value) -> Option<String> {
 }
 
 fn extract_shell_like_command(value: &Value) -> Option<String> {
+    extract_shell_like_command_with_depth(value, 0)
+}
+
+fn extract_shell_like_command_with_depth(value: &Value, depth: usize) -> Option<String> {
+    if depth >= 8 {
+        return None;
+    }
+
     match value {
         Value::Null => None,
         Value::String(text) => {
@@ -390,8 +397,13 @@ fn extract_shell_like_command(value: &Value) -> Option<String> {
             }
 
             if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
-                return extract_shell_like_command(&parsed)
-                    .or_else(|| parse_background_command(trimmed));
+                return match parsed {
+                    Value::Null | Value::Bool(_) | Value::Number(_) => {
+                        parse_background_command(trimmed).or_else(|| Some(trimmed.to_string()))
+                    }
+                    other => extract_shell_like_command_with_depth(&other, depth + 1)
+                        .or_else(|| parse_background_command(trimmed)),
+                };
             }
 
             parse_background_command(trimmed).or_else(|| Some(trimmed.to_string()))
@@ -400,13 +412,23 @@ fn extract_shell_like_command(value: &Value) -> Option<String> {
             .get("cmd")
             .or_else(|| object.get("command"))
             .or_else(|| object.get("action"))
-            .and_then(extract_shell_like_command)
-            .or_else(|| object.get("input").and_then(extract_shell_like_command))
-            .or_else(|| object.get("arguments").and_then(extract_shell_like_command)),
-        Value::Array(values) => values.iter().find_map(extract_shell_like_command),
-        other => {
-            value_to_text(other).and_then(|text| extract_shell_like_command(&Value::String(text)))
-        }
+            .and_then(|value| extract_shell_like_command_with_depth(value, depth + 1))
+            .or_else(|| {
+                object
+                    .get("input")
+                    .and_then(|value| extract_shell_like_command_with_depth(value, depth + 1))
+            })
+            .or_else(|| {
+                object
+                    .get("arguments")
+                    .and_then(|value| extract_shell_like_command_with_depth(value, depth + 1))
+            }),
+        Value::Array(values) => extract_shell_like_command_from_array(values).or_else(|| {
+            values
+                .iter()
+                .find_map(|value| extract_shell_like_command_with_depth(value, depth + 1))
+        }),
+        Value::Bool(_) | Value::Number(_) => value_to_text(value),
     }
 }
 
@@ -416,6 +438,26 @@ fn parse_background_command(raw: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn extract_shell_like_command_from_array(values: &[Value]) -> Option<String> {
+    let parts = values
+        .iter()
+        .map(|value| value.as_str().map(str::trim))
+        .collect::<Option<Vec<_>>>()?;
+
+    if parts.is_empty() {
+        return None;
+    }
+
+    if matches!(parts.first(), Some(&"bash" | &"sh" | &"zsh" | &"fish"))
+        && let Some(index) = parts.iter().position(|part| matches!(*part, "-c" | "-lc"))
+        && let Some(command) = parts.get(index + 1)
+    {
+        return (!command.is_empty()).then(|| (*command).to_string());
+    }
+
+    Some(parts.join(" "))
 }
 
 fn is_exploration_read_command(command: &str) -> bool {
@@ -524,7 +566,7 @@ pub(super) fn map_bridge_kind_to_event_type(kind: BridgeEventKind) -> &'static s
     }
 }
 
-pub(super) fn summarize_live_payload(kind: BridgeEventKind, payload: &Value) -> String {
+pub(crate) fn summarize_live_payload(kind: BridgeEventKind, payload: &Value) -> String {
     match kind {
         BridgeEventKind::MessageDelta | BridgeEventKind::PlanDelta => payload
             .get("text")
@@ -579,7 +621,7 @@ pub(super) fn map_wire_thread_status_to_lifecycle_state(raw: &str) -> String {
     }
 }
 
-pub(super) fn current_timestamp_string() -> String {
+pub(crate) fn current_timestamp_string() -> String {
     let now = current_unix_epoch_millis() as i64;
     unix_timestamp_to_iso8601(now)
 }
@@ -591,7 +633,7 @@ pub(super) fn current_unix_epoch_millis() -> u128 {
         .as_millis()
 }
 
-pub(super) fn unix_timestamp_to_iso8601(timestamp: i64) -> String {
+pub(crate) fn unix_timestamp_to_iso8601(timestamp: i64) -> String {
     let millis = if timestamp.abs() >= 1_000_000_000_000 {
         timestamp
     } else {
@@ -620,8 +662,8 @@ mod tests {
     use shared_contracts::{BridgeEventKind, ThreadTimelineExplorationKind};
 
     use super::{
-        map_thread_summary, payload_contains_hidden_message, summarize_live_payload,
-        timeline_annotations_for_event,
+        extract_shell_like_command, map_thread_summary, payload_contains_hidden_message,
+        summarize_live_payload, timeline_annotations_for_event,
     };
     use crate::thread_api::UpstreamThreadRecord;
 
@@ -643,6 +685,35 @@ mod tests {
             &json!({
                 "id": "item-1",
                 "command": "sed -n '1,20p' src/lib.rs"
+            }),
+        )
+        .expect("annotations should exist");
+
+        assert_eq!(
+            annotations.exploration_kind,
+            Some(ThreadTimelineExplorationKind::Read)
+        );
+    }
+
+    #[test]
+    fn extract_shell_like_command_handles_scalar_json_without_recursing() {
+        assert_eq!(
+            extract_shell_like_command(&json!(true)),
+            Some("true".to_string())
+        );
+        assert_eq!(extract_shell_like_command(&json!(1)), Some("1".to_string()));
+    }
+
+    #[test]
+    fn exploration_annotations_tolerate_output_flags_in_shell_payloads() {
+        let annotations = timeline_annotations_for_event(
+            "turn-1-item-2",
+            BridgeEventKind::CommandDelta,
+            &json!({
+                "id": "item-2",
+                "command": "shell",
+                "arguments": "{\"command\":[\"bash\",\"-lc\",\"sed -n '1,20p' src/lib.rs\"],\"output\":true}",
+                "output": true
             }),
         )
         .expect("annotations should exist");

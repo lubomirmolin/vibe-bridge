@@ -961,3 +961,43 @@ fn archived_sessions_preserve_user_message_images() {
 
     let _ = fs::remove_dir_all(codex_home);
 }
+
+#[test]
+fn archived_update_plan_function_calls_become_plan_timeline_events() {
+    let codex_home = unique_test_codex_home();
+    let sessions_directory = codex_home.join("sessions/2026/03/19");
+    fs::create_dir_all(&sessions_directory).expect("test sessions directory should exist");
+    fs::write(
+        codex_home.join("session_index.jsonl"),
+        r#"{"id":"thread-archive-plan","thread_name":"Archive plan","updated_at":"2026-03-19T10:00:00Z"}"#,
+    )
+    .expect("session index should be writable");
+    fs::write(
+        sessions_directory.join("rollout-2026-03-19T10-00-00-thread-archive-plan.jsonl"),
+        concat!(
+            r#"{"timestamp":"2026-03-19T09:55:00Z","type":"session_meta","payload":{"id":"thread-archive-plan","timestamp":"2026-03-19T09:55:00Z","cwd":"/Users/test/workspace","source":"cli","git":{"branch":"main","repository_url":"git@github.com:example/project.git"}}}"#,
+            "\n",
+            r#"{"timestamp":"2026-03-19T09:56:00Z","type":"response_item","payload":{"type":"function_call","name":"update_plan","arguments":"{\"plan\":[{\"step\":\"Inspect bridge payload\",\"status\":\"completed\"},{\"step\":\"Add Flutter card\",\"status\":\"in_progress\"},{\"step\":\"Run tests\",\"status\":\"pending\"}]}"}}"#,
+            "\n"
+        ),
+    )
+    .expect("session log should be writable");
+
+    let (_, timeline) = super::load_thread_snapshot_from_codex_archive(&codex_home)
+        .expect("archive fallback should load");
+
+    let thread_timeline = timeline
+        .get("thread-archive-plan")
+        .expect("timeline should exist for archived thread");
+
+    assert_eq!(thread_timeline.len(), 1);
+    assert_eq!(thread_timeline[0].event_type, "plan_delta");
+    assert_eq!(thread_timeline[0].data["completed_count"], 1);
+    assert_eq!(thread_timeline[0].data["total_count"], 3);
+    assert_eq!(
+        thread_timeline[0].data["steps"][1]["status"].as_str(),
+        Some("in_progress")
+    );
+
+    let _ = fs::remove_dir_all(codex_home);
+}

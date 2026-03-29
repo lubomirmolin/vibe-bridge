@@ -70,8 +70,9 @@ class ThreadListState {
 
     return threads
         .where((thread) {
+          final displayTitle = _resolvedThreadTitle(thread.title).toLowerCase();
           return thread.threadId.toLowerCase().contains(normalizedQuery) ||
-              thread.title.toLowerCase().contains(normalizedQuery) ||
+              displayTitle.contains(normalizedQuery) ||
               thread.workspace.toLowerCase().contains(normalizedQuery) ||
               thread.repository.toLowerCase().contains(normalizedQuery) ||
               thread.branch.toLowerCase().contains(normalizedQuery) ||
@@ -344,6 +345,7 @@ class ThreadListController extends StateNotifier<ThreadListState> {
     required String threadId,
     required ThreadStatus status,
     String? updatedAt,
+    String? title,
   }) {
     _updateThreadSummary(
       threadId: threadId,
@@ -351,7 +353,7 @@ class ThreadListController extends StateNotifier<ThreadListState> {
         return ThreadSummaryDto(
           contractVersion: thread.contractVersion,
           threadId: thread.threadId,
-          title: thread.title,
+          title: title ?? thread.title,
           status: status,
           workspace: thread.workspace,
           repository: thread.repository,
@@ -420,6 +422,10 @@ class ThreadListController extends StateNotifier<ThreadListState> {
 
     if (event.kind == BridgeEventKind.threadStatusChanged) {
       final rawStatus = event.payload['status'];
+      final rawTitle = event.payload['title'];
+      final nextTitle = rawTitle is String && rawTitle.trim().isNotEmpty
+          ? rawTitle.trim()
+          : null;
       if (rawStatus is String && rawStatus.trim().isNotEmpty) {
         try {
           final status = threadStatusFromWire(rawStatus.trim());
@@ -427,11 +433,30 @@ class ThreadListController extends StateNotifier<ThreadListState> {
             threadId: event.threadId,
             status: status,
             updatedAt: event.occurredAt,
+            title: nextTitle,
           );
           return;
         } on FormatException {
           // Fall through to timestamp-only activity update.
         }
+      }
+      if (nextTitle != null) {
+        _updateThreadSummary(
+          threadId: event.threadId,
+          transform: (thread) {
+            return ThreadSummaryDto(
+              contractVersion: thread.contractVersion,
+              threadId: thread.threadId,
+              title: nextTitle,
+              status: thread.status,
+              workspace: thread.workspace,
+              repository: thread.repository,
+              branch: thread.branch,
+              updatedAt: event.occurredAt,
+            );
+          },
+        );
+        return;
       }
     }
 
@@ -497,6 +522,13 @@ class ThreadListController extends StateNotifier<ThreadListState> {
     required ThreadSummaryDto current,
     required ThreadSummaryDto incoming,
   }) {
+    if (_shouldPreferIncomingPlaceholderReplacement(
+      current: current,
+      incoming: incoming,
+    )) {
+      return false;
+    }
+
     final currentUpdatedAt = DateTime.tryParse(current.updatedAt);
     final incomingUpdatedAt = DateTime.tryParse(incoming.updatedAt);
     if (currentUpdatedAt == null || incomingUpdatedAt == null) {
@@ -504,6 +536,14 @@ class ThreadListController extends StateNotifier<ThreadListState> {
     }
 
     return !currentUpdatedAt.isBefore(incomingUpdatedAt);
+  }
+
+  bool _shouldPreferIncomingPlaceholderReplacement({
+    required ThreadSummaryDto current,
+    required ThreadSummaryDto incoming,
+  }) {
+    return _isPlaceholderThreadTitle(current.title) &&
+        !_isPlaceholderThreadTitle(incoming.title);
   }
 
   void _handleLiveStreamDisconnected() {
@@ -648,6 +688,19 @@ class ThreadListController extends StateNotifier<ThreadListState> {
     unawaited(_closeLiveSubscription());
     super.dispose();
   }
+}
+
+String _resolvedThreadTitle(String rawTitle) {
+  final trimmed = rawTitle.trim();
+  return trimmed.isEmpty ? 'Untitled thread' : trimmed;
+}
+
+bool _isPlaceholderThreadTitle(String rawTitle) {
+  final normalized = rawTitle.trim().toLowerCase();
+  return normalized.isEmpty ||
+      normalized == 'untitled thread' ||
+      normalized == 'new thread' ||
+      normalized == 'fresh session';
 }
 
 String _workspaceGroupId(ThreadSummaryDto thread) {

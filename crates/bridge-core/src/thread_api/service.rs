@@ -187,17 +187,24 @@ impl ThreadApiService {
 
         for thread in &thread_records {
             if let Some(previous_thread) = previous_threads.get(&thread.id)
-                && previous_thread.lifecycle_state != thread.lifecycle_state
+                && (previous_thread.lifecycle_state != thread.lifecycle_state
+                    || previous_thread.headline != thread.headline)
             {
+                let mut payload = json!({
+                    "status": serde_json::to_value(map_thread_status(&thread.lifecycle_state))
+                        .expect("thread status should serialize"),
+                    "reason": "upstream_sync",
+                });
+                if previous_thread.headline != thread.headline
+                    && let Some(object) = payload.as_object_mut()
+                {
+                    object.insert("title".to_string(), Value::String(thread.headline.clone()));
+                }
                 events.push(self.next_event_with_occurred_at(
                     &thread.id,
                     BridgeEventKind::ThreadStatusChanged,
                     thread.updated_at.as_str(),
-                    json!({
-                        "status": serde_json::to_value(map_thread_status(&thread.lifecycle_state))
-                            .expect("thread status should serialize"),
-                        "reason": "upstream_sync",
-                    }),
+                    payload,
                 ));
             }
 
@@ -1046,10 +1053,10 @@ fn resolve_latest_thread_change_diff(
         if summaries.is_empty() {
             continue;
         }
-        if let Some(path) = normalized_path {
-            if summaries.iter().all(|file| file.path != path) {
-                continue;
-            }
+        if let Some(path) = normalized_path
+            && summaries.iter().all(|file| file.path != path)
+        {
+            continue;
         }
         return diff.to_string();
     }

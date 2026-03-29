@@ -60,6 +60,7 @@ class _LiveThreadUiProbePageState
     extends ConsumerState<_LiveThreadUiProbePage> {
   late final Stopwatch _stopwatch;
   late final ThreadDetailControllerArgs _args;
+  late final ThreadDetailController _controller;
   late final ProviderSubscription<ThreadDetailState> _subscription;
   Timer? _timeoutTimer;
 
@@ -79,6 +80,7 @@ class _LiveThreadUiProbePageState
       bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
       threadId: widget.threadId,
     );
+    _controller = ref.read(threadDetailControllerProvider(_args).notifier);
 
     _subscription = ref.listenManual<ThreadDetailState>(
       threadDetailControllerProvider(_args),
@@ -122,9 +124,9 @@ class _LiveThreadUiProbePageState
       _statusText = 'submitting';
       setState(() {});
       unawaited(
-        ref
-            .read(threadDetailControllerProvider(_args).notifier)
-            .submitComposerInput('Reply with exactly ${widget.promptToken}'),
+        _controller.submitComposerInput(
+          'Reply with exactly ${widget.promptToken}',
+        ),
       );
     }
 

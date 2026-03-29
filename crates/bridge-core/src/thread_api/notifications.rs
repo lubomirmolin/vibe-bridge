@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 use shared_contracts::{BridgeEventEnvelope, BridgeEventKind, ThreadStatus};
 
 use crate::codex_transport::CodexJsonTransport;
+use crate::incremental_text::merge_incremental_text;
 
 use super::patch_diff::resolve_apply_patch_to_unified_diff;
 use super::rpc::{CodexThreadStatus, CodexTurn};
@@ -25,6 +26,7 @@ pub struct CodexNotificationStream {
 pub(crate) struct CodexNotificationNormalizer {
     active_turn_id_by_thread: HashMap<String, String>,
     items_by_event_id: HashMap<String, Value>,
+    message_event_ids_with_delta: HashSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -162,10 +164,15 @@ impl CodexNotificationNormalizer {
                     serde_json::from_value(params.clone()).ok()?;
                 self.normalize_item_added(notification)
             }
-            "item/started" | "item/completed" => {
+            "item/started" => {
                 let notification: CodexItemLifecycleNotification =
                     serde_json::from_value(params.clone()).ok()?;
-                self.normalize_item_lifecycle(notification)
+                self.normalize_item_lifecycle(notification, ItemLifecyclePhase::Started)
+            }
+            "item/completed" => {
+                let notification: CodexItemLifecycleNotification =
+                    serde_json::from_value(params.clone()).ok()?;
+                self.normalize_item_lifecycle(notification, ItemLifecyclePhase::Completed)
             }
             _ => parse_item_delta_method(method)
                 .and_then(|(item_type, target)| self.normalize_delta(params, item_type, target)),
@@ -176,17 +183,24 @@ impl CodexNotificationNormalizer {
         &mut self,
         notification: CodexThreadRealtimeItemAddedNotification,
     ) -> Option<BridgeEventEnvelope<Value>> {
-        self.normalize_item_payload(notification.thread_id, None, notification.item)
+        self.normalize_item_payload(
+            notification.thread_id,
+            None,
+            notification.item,
+            ItemLifecyclePhase::Added,
+        )
     }
 
     fn normalize_item_lifecycle(
         &mut self,
         notification: CodexItemLifecycleNotification,
+        phase: ItemLifecyclePhase,
     ) -> Option<BridgeEventEnvelope<Value>> {
         self.normalize_item_payload(
             notification.thread_id,
             notification.turn_id,
             notification.item,
+            phase,
         )
     }
 
@@ -195,6 +209,7 @@ impl CodexNotificationNormalizer {
         thread_id: String,
         turn_id: Option<String>,
         item: Value,
+        phase: ItemLifecyclePhase,
     ) -> Option<BridgeEventEnvelope<Value>> {
         let item_id = item.get("id").and_then(Value::as_str)?.to_string();
         let event_id = turn_id
@@ -202,6 +217,14 @@ impl CodexNotificationNormalizer {
             .unwrap_or_else(|| self.event_id_for_item(&thread_id, &item_id));
         self.items_by_event_id
             .insert(event_id.clone(), item.clone());
+
+        if is_message_item(&item) {
+            let should_publish_message_fallback = phase == ItemLifecyclePhase::Completed
+                && !self.message_event_ids_with_delta.contains(&event_id);
+            if !should_publish_message_fallback {
+                return None;
+            }
+        }
 
         let (kind, payload) = normalize_realtime_item_payload(&item)?;
         if !should_publish_live_payload(kind, &payload) {
@@ -224,12 +247,18 @@ impl CodexNotificationNormalizer {
     ) -> Option<BridgeEventEnvelope<Value>> {
         let notification: CodexDeltaNotification = serde_json::from_value(params.clone()).ok()?;
         let event_id = format!("{}-{}", notification.turn_id, notification.item_id);
+        let canonical_item_type = canonicalize_codex_item_type(item_type);
         let payload = self
             .items_by_event_id
             .entry(event_id.clone())
-            .or_insert_with(|| synthesize_realtime_item(item_type, &notification.item_id, target));
+            .or_insert_with(|| {
+                synthesize_realtime_item(canonical_item_type, &notification.item_id, target)
+            });
 
         apply_delta_to_item_payload(payload, &notification.delta, target);
+        if matches!(canonical_item_type, "agentMessage" | "userMessage") {
+            self.message_event_ids_with_delta.insert(event_id.clone());
+        }
 
         let (kind, normalized_payload) = normalize_realtime_item_payload(payload)?;
         if !should_publish_live_payload(kind, &normalized_payload) {
@@ -259,11 +288,18 @@ enum DeltaTarget {
     FileDiff,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ItemLifecyclePhase {
+    Added,
+    Started,
+    Completed,
+}
+
 pub(super) fn normalize_realtime_item_payload(item: &Value) -> Option<(BridgeEventKind, Value)> {
     normalize_codex_item_payload(item, None)
 }
 
-pub(super) fn should_publish_live_payload(kind: BridgeEventKind, payload: &Value) -> bool {
+pub(crate) fn should_publish_live_payload(kind: BridgeEventKind, payload: &Value) -> bool {
     match kind {
         BridgeEventKind::MessageDelta | BridgeEventKind::PlanDelta => {
             if kind == BridgeEventKind::MessageDelta && payload_contains_hidden_message(payload) {
@@ -303,7 +339,7 @@ pub(super) fn should_publish_live_payload(kind: BridgeEventKind, payload: &Value
     }
 }
 
-pub(super) fn normalize_codex_item_payload(
+pub(crate) fn normalize_codex_item_payload(
     item: &Value,
     workspace_path: Option<&str>,
 ) -> Option<(BridgeEventKind, Value)> {
@@ -423,6 +459,11 @@ fn normalize_codex_tool_invocation_item(
         .and_then(Value::as_str)
         .or_else(|| item.get("command").and_then(Value::as_str))
         .unwrap_or("command");
+    if tool_name == "update_plan"
+        && let Some(payload) = normalize_update_plan_tool_item(item)
+    {
+        return Some((BridgeEventKind::PlanDelta, payload));
+    }
     let input = item
         .get("input")
         .cloned()
@@ -460,6 +501,106 @@ fn normalize_codex_tool_invocation_item(
         },
         payload,
     ))
+}
+
+fn normalize_update_plan_tool_item(item: &Value) -> Option<Value> {
+    let plan_input = parse_update_plan_input(
+        item.get("input")
+            .or_else(|| item.get("arguments"))
+            .unwrap_or(&Value::Null),
+    )?;
+    let steps = normalize_update_plan_steps(&plan_input);
+    let explanation = plan_input
+        .get("explanation")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if steps.is_empty() && explanation.is_none() {
+        return None;
+    }
+
+    let total_count = steps.len();
+    let completed_count = steps
+        .iter()
+        .filter(|step| step.get("status").and_then(Value::as_str) == Some("completed"))
+        .count();
+    let text =
+        render_update_plan_text(explanation.as_deref(), &steps, completed_count, total_count);
+
+    let mut payload = json!({
+        "id": item.get("id").and_then(Value::as_str).unwrap_or_default(),
+        "type": "plan",
+        "text": text,
+    });
+    if let Some(object) = payload.as_object_mut() {
+        if let Some(explanation) = explanation {
+            object.insert("explanation".to_string(), Value::String(explanation));
+        }
+        if !steps.is_empty() {
+            object.insert("steps".to_string(), Value::Array(steps));
+            object.insert("completed_count".to_string(), json!(completed_count));
+            object.insert("total_count".to_string(), json!(total_count));
+        }
+    }
+
+    Some(payload)
+}
+
+fn parse_update_plan_input(input: &Value) -> Option<Value> {
+    match input {
+        Value::String(text) => serde_json::from_str::<Value>(text).ok(),
+        Value::Object(_) => Some(input.clone()),
+        _ => None,
+    }
+}
+
+fn normalize_update_plan_steps(plan_input: &Value) -> Vec<Value> {
+    plan_input
+        .get("plan")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let step = entry
+                .get("step")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?;
+            let status = entry
+                .get("status")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("pending");
+            Some(json!({
+                "step": step,
+                "status": status,
+            }))
+        })
+        .collect()
+}
+
+fn render_update_plan_text(
+    explanation: Option<&str>,
+    steps: &[Value],
+    completed_count: usize,
+    total_count: usize,
+) -> String {
+    if total_count == 0 {
+        return explanation.unwrap_or_default().to_string();
+    }
+
+    let task_label = if total_count == 1 { "task" } else { "tasks" };
+    let mut lines = vec![format!(
+        "{completed_count} out of {total_count} {task_label} completed"
+    )];
+    lines.extend(steps.iter().enumerate().filter_map(|(index, step)| {
+        step.get("step")
+            .and_then(Value::as_str)
+            .map(|value| format!("{}. {value}", index + 1))
+    }));
+    lines.join("\n")
 }
 
 fn normalize_codex_tool_output_item(item: &Value) -> Option<(BridgeEventKind, Value)> {
@@ -541,25 +682,25 @@ fn apply_delta_to_item_payload(item: &mut Value, delta: &str, target: DeltaTarge
 
     match target {
         DeltaTarget::Text => {
-            let next_text = format!(
-                "{}{}",
+            let next_text = merge_incremental_text(
                 object
                     .get("text")
                     .and_then(Value::as_str)
                     .unwrap_or_default(),
-                delta
+                delta,
+                false,
             );
             object.insert("text".to_string(), Value::String(next_text));
         }
         DeltaTarget::CommandOutput => {
-            let next_output = format!(
-                "{}{}",
+            let next_output = merge_incremental_text(
                 object
                     .get("aggregatedOutput")
                     .or_else(|| object.get("output"))
                     .and_then(Value::as_str)
                     .unwrap_or_default(),
-                delta
+                delta,
+                false,
             );
             object.insert(
                 "aggregatedOutput".to_string(),
@@ -568,14 +709,14 @@ fn apply_delta_to_item_payload(item: &mut Value, delta: &str, target: DeltaTarge
             object.insert("output".to_string(), Value::String(next_output));
         }
         DeltaTarget::FileDiff => {
-            let next_diff = format!(
-                "{}{}",
+            let next_diff = merge_incremental_text(
                 object
                     .get("resolved_unified_diff")
                     .or_else(|| object.get("output"))
                     .and_then(Value::as_str)
                     .unwrap_or_default(),
-                delta
+                delta,
+                false,
             );
             object.insert(
                 "resolved_unified_diff".to_string(),
@@ -584,6 +725,13 @@ fn apply_delta_to_item_payload(item: &mut Value, delta: &str, target: DeltaTarge
             object.insert("output".to_string(), Value::String(next_diff));
         }
     }
+}
+
+fn is_message_item(item: &Value) -> bool {
+    matches!(
+        canonicalize_codex_item_type(item.get("type").and_then(Value::as_str).unwrap_or_default()),
+        "agentMessage" | "userMessage"
+    )
 }
 
 #[cfg(test)]

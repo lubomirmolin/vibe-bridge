@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::codex_ipc::detect_default_socket_path;
 use crate::codex_runtime::CodexRuntimeMode;
 use crate::server::pairing_route::{PairingRouteState, resolve_pairing_route_contract};
 
@@ -9,6 +10,7 @@ pub struct BridgeCodexConfig {
     pub endpoint: Option<String>,
     pub command: String,
     pub args: Vec<String>,
+    pub desktop_ipc_socket_path: Option<PathBuf>,
 }
 
 impl Default for BridgeCodexConfig {
@@ -18,6 +20,7 @@ impl Default for BridgeCodexConfig {
             endpoint: Some("ws://127.0.0.1:4222".to_string()),
             command: "codex".to_string(),
             args: vec!["app-server".to_string()],
+            desktop_ipc_socket_path: detect_default_socket_path(),
         }
     }
 }
@@ -49,6 +52,10 @@ impl BridgeConfig {
         let mut codex_command = "codex".to_string();
         let mut codex_args = vec!["app-server".to_string()];
         let mut codex_args_overridden = false;
+        let mut desktop_ipc_socket_path = std::env::var("CODEX_DESKTOP_IPC_SOCKET")
+            .ok()
+            .map(PathBuf::from)
+            .or_else(detect_default_socket_path);
         let mut pairing_base_url: Option<String> = None;
 
         let mut iter = args.into_iter();
@@ -112,6 +119,15 @@ impl BridgeConfig {
                     }
                     codex_args.push(value);
                 }
+                "--codex-ipc-socket" => {
+                    desktop_ipc_socket_path =
+                        Some(PathBuf::from(iter.next().ok_or_else(|| {
+                            "--codex-ipc-socket requires a value".to_string()
+                        })?));
+                }
+                "--no-codex-ipc" => {
+                    desktop_ipc_socket_path = None;
+                }
                 "--pairing-base-url" => {
                     pairing_base_url = Some(
                         iter.next()
@@ -122,7 +138,7 @@ impl BridgeConfig {
                 }
                 "--help" | "-h" => {
                     return Err(
-                        "usage: bridge-server [--host <ip-or-hostname>] [--port <u16>] [--admin-port <u16>] [--state-directory <path>] [--pairing-base-url <https://bridge.ts.net>] [--codex-mode <auto|spawn|attach>] [--codex-endpoint <ws-url>] [--codex-command <binary>] [--codex-arg <arg>]".to_string()
+                        "usage: bridge-server [--host <ip-or-hostname>] [--port <u16>] [--admin-port <u16>] [--state-directory <path>] [--pairing-base-url <https://bridge.ts.net>] [--codex-mode <auto|spawn|attach>] [--codex-endpoint <ws-url>] [--codex-command <binary>] [--codex-arg <arg>] [--codex-ipc-socket <path>] [--no-codex-ipc]".to_string()
                     );
                 }
                 _ => return Err(format!("unknown argument: {arg}")),
@@ -156,6 +172,7 @@ impl BridgeConfig {
                 endpoint: codex_endpoint,
                 command: codex_command,
                 args: codex_args,
+                desktop_ipc_socket_path,
             },
         })
     }
@@ -192,5 +209,6 @@ mod tests {
         );
         assert_eq!(config.codex.command, "codex-dev");
         assert_eq!(config.codex.args, vec!["app-server".to_string()]);
+        assert!(config.codex.desktop_ipc_socket_path.is_some());
     }
 }
