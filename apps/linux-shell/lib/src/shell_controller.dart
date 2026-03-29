@@ -106,6 +106,96 @@ class ShellController extends ChangeNotifier {
     }
   }
 
+  Future<void> ensureSpeechModelOnDesktop() async {
+    if (_state.isInstallingSpeechModel || _disposed) {
+      return;
+    }
+
+    _emit(_state.copyWith(isInstallingSpeechModel: true));
+    try {
+      await _bridgeClient.ensureSpeechModel();
+      final speechStatus = await _safeFetchSpeechStatus();
+      _emit(
+        _state.copyWith(
+          speechPanel: _speechPanelFor(speechStatus),
+          clearErrorMessage: true,
+        ),
+      );
+    } catch (error) {
+      _emit(
+        _state.copyWith(
+          speechPanel: const SpeechPanelPresentation(
+            stateLabel: 'Failed',
+            detail: 'Speech runtime request failed.',
+            isReadOnly: false,
+          ).copyWith(detail: '$error'),
+          errorMessage: 'Failed to start speech model install: $error',
+        ),
+      );
+    } finally {
+      _emit(_state.copyWith(isInstallingSpeechModel: false));
+    }
+  }
+
+  Future<void> removeSpeechModelFromDesktop() async {
+    if (_state.isRemovingSpeechModel || _disposed) {
+      return;
+    }
+
+    _emit(_state.copyWith(isRemovingSpeechModel: true));
+    try {
+      await _bridgeClient.removeSpeechModel();
+      final speechStatus = await _safeFetchSpeechStatus();
+      _emit(
+        _state.copyWith(
+          speechPanel: _speechPanelFor(speechStatus),
+          clearErrorMessage: true,
+        ),
+      );
+    } catch (error) {
+      _emit(
+        _state.copyWith(
+          speechPanel: const SpeechPanelPresentation(
+            stateLabel: 'Failed',
+            detail: 'Speech runtime request failed.',
+            isReadOnly: false,
+          ).copyWith(detail: '$error'),
+          errorMessage: 'Failed to remove speech model: $error',
+        ),
+      );
+    } finally {
+      _emit(_state.copyWith(isRemovingSpeechModel: false));
+    }
+  }
+
+  Future<void> setLocalNetworkPairingEnabled(bool enabled) async {
+    if (_state.isUpdatingNetworkSettings || _disposed) {
+      return;
+    }
+
+    _emit(_state.copyWith(isUpdatingNetworkSettings: true));
+    try {
+      final settings = await _bridgeClient.setLocalNetworkPairingEnabled(enabled);
+      _emit(
+        _state.copyWith(
+          localNetworkPairingEnabled: settings.localNetworkPairingEnabled,
+          pairingRoutes: settings.routes,
+          errorMessage: settings.message,
+          clearErrorMessage: settings.message == null,
+        ),
+      );
+      await refreshRuntimeState();
+    } catch (error) {
+      _emit(
+        _state.copyWith(
+          errorMessage: 'Failed to update local network pairing: $error',
+        ),
+      );
+    } finally {
+      _emit(_state.copyWith(isUpdatingNetworkSettings: false));
+    }
+  }
+
   Future<void> savePreferredCodexBinaryPath(String path) async {
     if (_state.isSavingCodexPath || _disposed) {
       return;
@@ -187,6 +277,7 @@ class ShellController extends ChangeNotifier {
             ? codex.detail
             : health.runtime.detail,
         speechStatus: speechStatus,
+        networkSettings: health.networkSettings,
         runtimeIssue: health.runtime.state == 'degraded' && !codex.requiresSetup
             ? health.runtime.detail
             : null,
@@ -440,6 +531,7 @@ class ShellController extends ChangeNotifier {
     required String bridgeRuntimeLabel,
     required String runtimeDetail,
     required SpeechModelStatusDto? speechStatus,
+    required BridgeNetworkSettingsDto networkSettings,
     required CodexPresentation codex,
     String? runtimeIssue,
   }) {
@@ -485,6 +577,8 @@ class ShellController extends ChangeNotifier {
         runtimeDetail: runtimeDetail,
         speechPanel: _speechPanelFor(speechStatus),
         codex: codex,
+        localNetworkPairingEnabled: networkSettings.localNetworkPairingEnabled,
+        pairingRoutes: networkSettings.routes,
         trustedDevices: trustedDevices,
         tailscale: _state.tailscale.copyWith(
           statusLabel: 'Connected',
@@ -517,7 +611,10 @@ class ShellController extends ChangeNotifier {
           detail:
               'Speech transcription is not available from the Linux shell yet.',
           isReadOnly: true,
+          downloadProgress: null,
         ),
+        localNetworkPairingEnabled: false,
+        pairingRoutes: const <BridgeApiRouteDto>[],
         trustedDevices: const <TrustedDevicePresentation>[],
         clearPairingSession: true,
         clearErrorMessage: true,
@@ -540,8 +637,11 @@ class ShellController extends ChangeNotifier {
           detail:
               'Speech transcription is not available from the Linux shell yet.',
           isReadOnly: true,
+          downloadProgress: null,
         ),
         codex: codex ?? _state.codex,
+        localNetworkPairingEnabled: false,
+        pairingRoutes: const <BridgeApiRouteDto>[],
         trustedDevices: const <TrustedDevicePresentation>[],
         clearPairingSession: true,
         errorMessage: message,
@@ -570,7 +670,10 @@ class ShellController extends ChangeNotifier {
           detail:
               'Speech transcription is not available from the Linux shell yet.',
           isReadOnly: true,
+          downloadProgress: null,
         ),
+        localNetworkPairingEnabled: false,
+        pairingRoutes: const <BridgeApiRouteDto>[],
         trustedDevices: const <TrustedDevicePresentation>[],
         clearPairingSession: true,
         clearErrorMessage: true,
@@ -617,23 +720,25 @@ class ShellController extends ChangeNotifier {
         detail:
             'Speech transcription is not available from the Linux shell yet.',
         isReadOnly: true,
+        downloadProgress: null,
       );
     }
 
     final detail = switch (status.state) {
       SpeechModelState.notInstalled =>
-        'Parakeet is not installed. Linux shell stays read-only for speech.',
+        'Parakeet can be downloaded on demand from Hugging Face.',
       SpeechModelState.installing =>
-        'Parakeet install is in progress elsewhere. Linux shell remains read-only.',
+        'Downloading Parakeet… ${status.downloadProgress ?? 0}%',
       SpeechModelState.ready =>
-        'Bridge reports speech ready, but Linux shell does not manage speech yet.',
-      SpeechModelState.busy =>
-        'Bridge speech runtime is busy. Linux shell remains read-only.',
+        status.installedBytes == null
+            ? 'Speech runtime is managed by the local bridge.'
+            : '${status.installedBytes} bytes installed',
+      SpeechModelState.busy => 'Speech runtime is managed by the local bridge.',
       SpeechModelState.failed =>
         status.lastError ?? 'Speech runtime is unavailable right now.',
       SpeechModelState.unsupported =>
         status.lastError ??
-            'Speech transcription is only available when the macOS shell provides a speech helper.',
+            'Speech transcription is unavailable on this Linux host.',
     };
 
     return SpeechPanelPresentation(
@@ -646,7 +751,8 @@ class ShellController extends ChangeNotifier {
         SpeechModelState.failed => 'Failed',
       },
       detail: detail,
-      isReadOnly: true,
+      isReadOnly: status.state == SpeechModelState.unsupported,
+      downloadProgress: status.downloadProgress,
     );
   }
 

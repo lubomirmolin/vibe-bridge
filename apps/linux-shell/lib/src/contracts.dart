@@ -9,6 +9,8 @@ enum SpeechModelState {
   failed,
 }
 
+enum BridgeApiRouteKind { tailscale, localNetwork }
+
 class SharedContract {
   static const version = '2026-03-23';
 }
@@ -134,12 +136,14 @@ class PairingSessionResponseDto {
   const PairingSessionResponseDto({
     required this.contractVersion,
     required this.bridgeIdentity,
+    required this.bridgeApiRoutes,
     required this.pairingSession,
     required this.qrPayload,
   });
 
   final String contractVersion;
   final PairingBridgeIdentityDto bridgeIdentity;
+  final List<BridgeApiRouteDto> bridgeApiRoutes;
   final PairingSessionDto pairingSession;
   final String qrPayload;
 
@@ -149,6 +153,10 @@ class PairingSessionResponseDto {
           json['contract_version'] as String? ?? SharedContract.version,
       bridgeIdentity: PairingBridgeIdentityDto.fromJson(
         json['bridge_identity'] as Map<String, dynamic>? ?? const {},
+      ),
+      bridgeApiRoutes: _readTypedList(
+        json['bridge_api_routes'],
+        BridgeApiRouteDto.fromJson,
       ),
       pairingSession: PairingSessionDto.fromJson(
         json['pairing_session'] as Map<String, dynamic>? ?? const {},
@@ -196,17 +204,81 @@ class BridgePairingRouteHealthDto {
   const BridgePairingRouteHealthDto({
     required this.reachable,
     required this.advertisedBaseUrl,
+    required this.routes,
     required this.message,
   });
 
   final bool reachable;
   final String? advertisedBaseUrl;
+  final List<BridgeApiRouteDto> routes;
   final String? message;
 
   factory BridgePairingRouteHealthDto.fromJson(Map<String, dynamic> json) {
     return BridgePairingRouteHealthDto(
       reachable: json['reachable'] as bool? ?? false,
       advertisedBaseUrl: json['advertised_base_url'] as String?,
+      routes: _readTypedList(json['routes'], BridgeApiRouteDto.fromJson),
+      message: json['message'] as String?,
+    );
+  }
+}
+
+BridgeApiRouteKind bridgeApiRouteKindFromWire(String wireValue) {
+  switch (wireValue) {
+    case 'local_network':
+      return BridgeApiRouteKind.localNetwork;
+    case 'tailscale':
+    default:
+      return BridgeApiRouteKind.tailscale;
+  }
+}
+
+class BridgeApiRouteDto {
+  const BridgeApiRouteDto({
+    required this.id,
+    required this.kind,
+    required this.baseUrl,
+    required this.reachable,
+    required this.isPreferred,
+  });
+
+  final String id;
+  final BridgeApiRouteKind kind;
+  final String baseUrl;
+  final bool reachable;
+  final bool isPreferred;
+
+  factory BridgeApiRouteDto.fromJson(Map<String, dynamic> json) {
+    return BridgeApiRouteDto(
+      id: json['id'] as String? ?? '',
+      kind: bridgeApiRouteKindFromWire(json['kind'] as String? ?? 'tailscale'),
+      baseUrl: json['base_url'] as String? ?? '',
+      reachable: json['reachable'] as bool? ?? false,
+      isPreferred: json['is_preferred'] as bool? ?? false,
+    );
+  }
+}
+
+class BridgeNetworkSettingsDto {
+  const BridgeNetworkSettingsDto({
+    required this.contractVersion,
+    required this.localNetworkPairingEnabled,
+    required this.routes,
+    required this.message,
+  });
+
+  final String contractVersion;
+  final bool localNetworkPairingEnabled;
+  final List<BridgeApiRouteDto> routes;
+  final String? message;
+
+  factory BridgeNetworkSettingsDto.fromJson(Map<String, dynamic> json) {
+    return BridgeNetworkSettingsDto(
+      contractVersion:
+          json['contract_version'] as String? ?? SharedContract.version,
+      localNetworkPairingEnabled:
+          json['local_network_pairing_enabled'] as bool? ?? false,
+      routes: _readTypedList(json['routes'], BridgeApiRouteDto.fromJson),
       message: json['message'] as String?,
     );
   }
@@ -341,6 +413,7 @@ class BridgeHealthResponseDto {
     required this.status,
     required this.runtime,
     required this.pairingRoute,
+    required this.networkSettings,
     required this.trust,
     required this.api,
   });
@@ -348,6 +421,7 @@ class BridgeHealthResponseDto {
   final String status;
   final BridgeRuntimeSnapshotDto runtime;
   final BridgePairingRouteHealthDto pairingRoute;
+  final BridgeNetworkSettingsDto networkSettings;
   final BridgeTrustStatusDto? trust;
   final BridgeApiSurfaceDto api;
 }
@@ -383,6 +457,33 @@ class SpeechModelStatusDto {
       downloadProgress: (json['download_progress'] as num?)?.toInt(),
       lastError: json['last_error'] as String?,
       installedBytes: (json['installed_bytes'] as num?)?.toInt(),
+    );
+  }
+}
+
+class SpeechModelMutationAcceptedDto {
+  const SpeechModelMutationAcceptedDto({
+    required this.contractVersion,
+    required this.provider,
+    required this.modelId,
+    required this.state,
+    required this.message,
+  });
+
+  final String contractVersion;
+  final String provider;
+  final String modelId;
+  final SpeechModelState state;
+  final String message;
+
+  factory SpeechModelMutationAcceptedDto.fromJson(Map<String, dynamic> json) {
+    return SpeechModelMutationAcceptedDto(
+      contractVersion:
+          json['contract_version'] as String? ?? SharedContract.version,
+      provider: json['provider'] as String? ?? '',
+      modelId: json['model_id'] as String? ?? '',
+      state: speechModelStateFromWire(json['state'] as String? ?? 'unsupported'),
+      message: json['message'] as String? ?? '',
     );
   }
 }

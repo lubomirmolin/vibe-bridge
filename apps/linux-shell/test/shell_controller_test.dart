@@ -76,6 +76,36 @@ void main() {
     );
     expect(bridgeClient.fetchPairingSessionCallCount, 1);
   });
+
+  test('can toggle local network pairing from the controller', () async {
+    final bridgeClient = _FakeShellBridgeClient();
+    final controller = ShellController(
+      bridgeClient: bridgeClient,
+      runtimeSupervisor: _FakeRuntimeSupervisor(),
+      codexCliChecker: _FakeCodexCliChecker(),
+    );
+
+    await controller.refreshRuntimeState();
+    await controller.setLocalNetworkPairingEnabled(true);
+
+    expect(controller.state.localNetworkPairingEnabled, isTrue);
+    expect(controller.state.pairingRoutes, isNotEmpty);
+  });
+
+  test('can request speech model installation from the controller', () async {
+    final bridgeClient = _FakeShellBridgeClient();
+    final controller = ShellController(
+      bridgeClient: bridgeClient,
+      runtimeSupervisor: _FakeRuntimeSupervisor(),
+      codexCliChecker: _FakeCodexCliChecker(),
+    );
+
+    await controller.refreshRuntimeState();
+    await controller.ensureSpeechModelOnDesktop();
+
+    expect(controller.state.speechPanel.stateLabel, 'Ready');
+    expect(controller.state.speechPanel.isReadOnly, isFalse);
+  });
 }
 
 class _FakeShellBridgeClient implements ShellBridgeClient {
@@ -88,6 +118,8 @@ class _FakeShellBridgeClient implements ShellBridgeClient {
 
   int fetchPairingSessionCallCount = 0;
   final BridgeTrustStatusDto trust;
+  bool localNetworkPairingEnabled = false;
+  SpeechModelState speechState = SpeechModelState.notInstalled;
 
   @override
   Future<BridgeHealthResponseDto> fetchHealth() async {
@@ -105,6 +137,37 @@ class _FakeShellBridgeClient implements ShellBridgeClient {
       pairingRoute: const BridgePairingRouteHealthDto(
         reachable: true,
         advertisedBaseUrl: 'https://lubo.taild54ede.ts.net',
+        routes: <BridgeApiRouteDto>[
+          const BridgeApiRouteDto(
+            id: 'tailscale',
+            kind: BridgeApiRouteKind.tailscale,
+            baseUrl: 'https://lubo.taild54ede.ts.net',
+            reachable: true,
+            isPreferred: true,
+          ),
+        ],
+        message: null,
+      ),
+      networkSettings: BridgeNetworkSettingsDto(
+        contractVersion: SharedContract.version,
+        localNetworkPairingEnabled: localNetworkPairingEnabled,
+        routes: <BridgeApiRouteDto>[
+          const BridgeApiRouteDto(
+            id: 'tailscale',
+            kind: BridgeApiRouteKind.tailscale,
+            baseUrl: 'https://lubo.taild54ede.ts.net',
+            reachable: true,
+            isPreferred: true,
+          ),
+          if (localNetworkPairingEnabled)
+            const BridgeApiRouteDto(
+              id: 'local_network',
+              kind: BridgeApiRouteKind.localNetwork,
+              baseUrl: 'http://192.168.1.10:3110',
+              reachable: true,
+              isPreferred: false,
+            ),
+        ],
         message: null,
       ),
       trust: trust,
@@ -125,6 +188,15 @@ class _FakeShellBridgeClient implements ShellBridgeClient {
         displayName: 'Codex Mobile Companion',
         apiBaseUrl: 'https://lubo.taild54ede.ts.net',
       ),
+      bridgeApiRoutes: const <BridgeApiRouteDto>[
+        const BridgeApiRouteDto(
+          id: 'tailscale',
+          kind: BridgeApiRouteKind.tailscale,
+          baseUrl: 'https://lubo.taild54ede.ts.net',
+          reachable: true,
+          isPreferred: true,
+        ),
+      ],
       pairingSession: const PairingSessionDto(
         sessionId: 'pairing-session-1',
         pairingToken: 'token',
@@ -141,10 +213,36 @@ class _FakeShellBridgeClient implements ShellBridgeClient {
       contractVersion: SharedContract.version,
       provider: 'fluid_audio',
       modelId: 'parakeet',
-      state: SpeechModelState.unsupported,
+      state: speechState,
       downloadProgress: null,
-      lastError: 'unsupported',
-      installedBytes: null,
+      lastError: speechState == SpeechModelState.unsupported
+          ? 'unsupported'
+          : null,
+      installedBytes: speechState == SpeechModelState.ready ? 1024 : null,
+    );
+  }
+
+  @override
+  Future<SpeechModelMutationAcceptedDto> ensureSpeechModel() async {
+    speechState = SpeechModelState.ready;
+    return const SpeechModelMutationAcceptedDto(
+      contractVersion: SharedContract.version,
+      provider: 'fluid_audio',
+      modelId: 'parakeet',
+      state: SpeechModelState.ready,
+      message: 'ready',
+    );
+  }
+
+  @override
+  Future<SpeechModelMutationAcceptedDto> removeSpeechModel() async {
+    speechState = SpeechModelState.notInstalled;
+    return const SpeechModelMutationAcceptedDto(
+      contractVersion: SharedContract.version,
+      provider: 'fluid_audio',
+      modelId: 'parakeet',
+      state: SpeechModelState.notInstalled,
+      message: 'removed',
     );
   }
 
@@ -161,6 +259,53 @@ class _FakeShellBridgeClient implements ShellBridgeClient {
     return const PairingRevokeResponseDto(
       contractVersion: SharedContract.version,
       revoked: false,
+    );
+  }
+
+  @override
+  Future<BridgeNetworkSettingsDto> fetchNetworkSettings() async {
+    return BridgeNetworkSettingsDto(
+      contractVersion: SharedContract.version,
+      localNetworkPairingEnabled: localNetworkPairingEnabled,
+      routes: <BridgeApiRouteDto>[
+        const BridgeApiRouteDto(
+          id: 'tailscale',
+          kind: BridgeApiRouteKind.tailscale,
+          baseUrl: 'https://lubo.taild54ede.ts.net',
+          reachable: true,
+          isPreferred: true,
+        ),
+      ],
+      message: null,
+    );
+  }
+
+  @override
+  Future<BridgeNetworkSettingsDto> setLocalNetworkPairingEnabled(
+    bool enabled,
+  ) async {
+    localNetworkPairingEnabled = enabled;
+    return BridgeNetworkSettingsDto(
+      contractVersion: SharedContract.version,
+      localNetworkPairingEnabled: enabled,
+      routes: <BridgeApiRouteDto>[
+        const BridgeApiRouteDto(
+          id: 'tailscale',
+          kind: BridgeApiRouteKind.tailscale,
+          baseUrl: 'https://lubo.taild54ede.ts.net',
+          reachable: true,
+          isPreferred: true,
+        ),
+        if (enabled)
+          const BridgeApiRouteDto(
+            id: 'local_network',
+            kind: BridgeApiRouteKind.localNetwork,
+            baseUrl: 'http://192.168.1.10:3110',
+            reachable: true,
+            isPreferred: false,
+          ),
+      ],
+      message: null,
     );
   }
 }

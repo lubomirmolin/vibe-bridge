@@ -7,7 +7,11 @@ abstract interface class ShellBridgeClient {
   Future<BridgeHealthResponseDto> fetchHealth();
   Future<ThreadListResponseDto> fetchThreads();
   Future<SpeechModelStatusDto> fetchSpeechModelStatus();
+  Future<SpeechModelMutationAcceptedDto> ensureSpeechModel();
+  Future<SpeechModelMutationAcceptedDto> removeSpeechModel();
   Future<PairingSessionResponseDto> fetchPairingSession();
+  Future<BridgeNetworkSettingsDto> fetchNetworkSettings();
+  Future<BridgeNetworkSettingsDto> setLocalNetworkPairingEnabled(bool enabled);
   Future<PairingRevokeResponseDto> revokeTrust({String? deviceId});
 }
 
@@ -23,6 +27,7 @@ class BridgeShellApiClient implements ShellBridgeClient {
   Future<BridgeHealthResponseDto> fetchHealth() async {
     final bootstrap = await _fetchJson('/bootstrap');
     final pairingRoute = await _fetchJson('/pairing/route');
+    final networkSettings = await _fetchJson('/settings/network');
     final trust = await _fetchJson('/pairing/trust');
     final threads = (bootstrap['threads'] as List<dynamic>? ?? const []).length;
 
@@ -50,13 +55,18 @@ class BridgeShellApiClient implements ShellBridgeClient {
             'Bridge is running.',
       ),
       pairingRoute: BridgePairingRouteHealthDto.fromJson(pairingRoute),
+      networkSettings: BridgeNetworkSettingsDto.fromJson(networkSettings),
       trust: trust.isEmpty ? null : BridgeTrustStatusDto.fromJson(trust),
       api: BridgeApiSurfaceDto(
-        endpoints: const [
+        endpoints: const <String>[
           'GET /healthz',
           'GET /bootstrap',
           'GET /speech/models/parakeet',
+          'PUT /speech/models/parakeet',
+          'DELETE /speech/models/parakeet',
           'GET /pairing/session',
+          'GET /settings/network',
+          'POST /settings/network',
           'POST /pairing/trust/revoke',
           'GET /threads',
         ],
@@ -90,9 +100,52 @@ class BridgeShellApiClient implements ShellBridgeClient {
   }
 
   @override
+  Future<SpeechModelMutationAcceptedDto> ensureSpeechModel() async {
+    final data = await _sendJsonRequest(
+      _resolve('/speech/models/parakeet'),
+      method: 'PUT',
+    );
+    return SpeechModelMutationAcceptedDto.fromJson(
+      Map<String, dynamic>.from(data as Map),
+    );
+  }
+
+  @override
+  Future<SpeechModelMutationAcceptedDto> removeSpeechModel() async {
+    final data = await _sendJsonRequest(
+      _resolve('/speech/models/parakeet'),
+      method: 'DELETE',
+    );
+    return SpeechModelMutationAcceptedDto.fromJson(
+      Map<String, dynamic>.from(data as Map),
+    );
+  }
+
+  @override
   Future<PairingSessionResponseDto> fetchPairingSession() async {
     final data = await _fetchJson('/pairing/session');
     return PairingSessionResponseDto.fromJson(data);
+  }
+
+  @override
+  Future<BridgeNetworkSettingsDto> fetchNetworkSettings() async {
+    final data = await _fetchJson('/settings/network');
+    return BridgeNetworkSettingsDto.fromJson(data);
+  }
+
+  @override
+  Future<BridgeNetworkSettingsDto> setLocalNetworkPairingEnabled(
+    bool enabled,
+  ) async {
+    final url = _resolve('/settings/network').replace(
+      queryParameters: <String, String>{
+        'local_network_pairing_enabled': enabled ? 'true' : 'false',
+      },
+    );
+    final data = await _sendJsonRequest(url, method: 'POST');
+    return BridgeNetworkSettingsDto.fromJson(
+      Map<String, dynamic>.from(data as Map),
+    );
   }
 
   @override

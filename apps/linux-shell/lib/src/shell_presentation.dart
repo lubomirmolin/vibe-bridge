@@ -105,21 +105,25 @@ class SpeechPanelPresentation {
     required this.stateLabel,
     required this.detail,
     required this.isReadOnly,
+    this.downloadProgress,
   });
 
   final String stateLabel;
   final String detail;
   final bool isReadOnly;
+  final int? downloadProgress;
 
   SpeechPanelPresentation copyWith({
     String? stateLabel,
     String? detail,
     bool? isReadOnly,
+    int? downloadProgress,
   }) {
     return SpeechPanelPresentation(
       stateLabel: stateLabel ?? this.stateLabel,
       detail: detail ?? this.detail,
       isReadOnly: isReadOnly ?? this.isReadOnly,
+      downloadProgress: downloadProgress ?? this.downloadProgress,
     );
   }
 }
@@ -161,10 +165,15 @@ class ShellPresentationState {
     required this.isCheckingTailscale,
     required this.isCheckingCodex,
     required this.isSavingCodexPath,
+    required this.isInstallingSpeechModel,
+    required this.isRemovingSpeechModel,
+    required this.isUpdatingNetworkSettings,
     required this.trayAvailable,
     required this.trayStatusDetail,
     required this.tailscale,
     required this.codex,
+    required this.localNetworkPairingEnabled,
+    required this.pairingRoutes,
     required this.trustedDevices,
     required this.pairingSession,
     required this.errorMessage,
@@ -192,10 +201,15 @@ class ShellPresentationState {
       isCheckingTailscale: false,
       isCheckingCodex: false,
       isSavingCodexPath: false,
+      isInstallingSpeechModel: false,
+      isRemovingSpeechModel: false,
+      isUpdatingNetworkSettings: false,
       trayAvailable: false,
       trayStatusDetail: 'System tray not initialized yet.',
       tailscale: TailscalePresentation.initial(),
       codex: CodexPresentation.initial(),
+      localNetworkPairingEnabled: false,
+      pairingRoutes: <BridgeApiRouteDto>[],
       trustedDevices: <TrustedDevicePresentation>[],
       pairingSession: null,
       errorMessage: null,
@@ -217,10 +231,15 @@ class ShellPresentationState {
   final bool isCheckingTailscale;
   final bool isCheckingCodex;
   final bool isSavingCodexPath;
+  final bool isInstallingSpeechModel;
+  final bool isRemovingSpeechModel;
+  final bool isUpdatingNetworkSettings;
   final bool trayAvailable;
   final String trayStatusDetail;
   final TailscalePresentation tailscale;
   final CodexPresentation codex;
+  final bool localNetworkPairingEnabled;
+  final List<BridgeApiRouteDto> pairingRoutes;
   final List<TrustedDevicePresentation> trustedDevices;
   final PairingSessionResponseDto? pairingSession;
   final String? errorMessage;
@@ -242,6 +261,20 @@ class ShellPresentationState {
   int get trustedDeviceCount => trustedDevices.length;
   int get activeSessionCount =>
       trustedDevices.where((device) => device.isActive).length;
+  bool get canInstallSpeechModel =>
+      !isInstallingSpeechModel &&
+      !isRemovingSpeechModel &&
+      speechPanel.stateLabel != 'Ready' &&
+      speechPanel.stateLabel != 'Unsupported' &&
+      shellState != ShellRuntimeState.degraded;
+  bool get canRemoveSpeechModel =>
+      !isInstallingSpeechModel &&
+      !isRemovingSpeechModel &&
+      speechPanel.stateLabel == 'Ready';
+  String get routeSummaryLabel {
+    final reachableCount = pairingRoutes.where((route) => route.reachable).length;
+    return '$reachableCount/${pairingRoutes.length} reachable';
+  }
 
   ShellPresentationState copyWith({
     ShellRuntimeState? shellState,
@@ -259,10 +292,15 @@ class ShellPresentationState {
     bool? isCheckingTailscale,
     bool? isCheckingCodex,
     bool? isSavingCodexPath,
+    bool? isInstallingSpeechModel,
+    bool? isRemovingSpeechModel,
+    bool? isUpdatingNetworkSettings,
     bool? trayAvailable,
     String? trayStatusDetail,
     TailscalePresentation? tailscale,
     CodexPresentation? codex,
+    bool? localNetworkPairingEnabled,
+    List<BridgeApiRouteDto>? pairingRoutes,
     List<TrustedDevicePresentation>? trustedDevices,
     PairingSessionResponseDto? pairingSession,
     bool clearPairingSession = false,
@@ -286,10 +324,19 @@ class ShellPresentationState {
       isCheckingTailscale: isCheckingTailscale ?? this.isCheckingTailscale,
       isCheckingCodex: isCheckingCodex ?? this.isCheckingCodex,
       isSavingCodexPath: isSavingCodexPath ?? this.isSavingCodexPath,
+      isInstallingSpeechModel:
+          isInstallingSpeechModel ?? this.isInstallingSpeechModel,
+      isRemovingSpeechModel:
+          isRemovingSpeechModel ?? this.isRemovingSpeechModel,
+      isUpdatingNetworkSettings:
+          isUpdatingNetworkSettings ?? this.isUpdatingNetworkSettings,
       trayAvailable: trayAvailable ?? this.trayAvailable,
       trayStatusDetail: trayStatusDetail ?? this.trayStatusDetail,
       tailscale: tailscale ?? this.tailscale,
       codex: codex ?? this.codex,
+      localNetworkPairingEnabled:
+          localNetworkPairingEnabled ?? this.localNetworkPairingEnabled,
+      pairingRoutes: pairingRoutes ?? this.pairingRoutes,
       trustedDevices: trustedDevices ?? this.trustedDevices,
       pairingSession: clearPairingSession
           ? null
