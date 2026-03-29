@@ -261,8 +261,6 @@ class _PinnedTurnComposer extends StatelessWidget {
                                     decoration: InputDecoration(
                                       hintText: isSpeechTranscribing
                                           ? 'Transcribing voice message…'
-                                          : isTurnActive
-                                          ? 'Turn in progress. Interrupt to send a new prompt.'
                                           : 'Message Codex...',
                                       hintStyle: const TextStyle(
                                         color: AppTheme.textSubtle,
@@ -293,51 +291,64 @@ class _PinnedTurnComposer extends StatelessWidget {
                             ),
                           );
                         },
-                        child: Padding(
-                          key: const ValueKey('composer-speech-visible'),
-                          padding: const EdgeInsets.only(left: 10),
-                          child: SizedBox(
-                            width: 56,
-                            height: 56,
-                            child: MagneticButton(
-                              key: const Key('turn-composer-speech-toggle'),
-                              isCircle: true,
-                              variant: MagneticButtonVariant.secondary,
-                              onClick:
-                                  (controlsEnabled &&
-                                      !isTurnActive &&
-                                      !isComposerMutationInFlight &&
-                                      !isInterruptMutationInFlight &&
-                                      !isSpeechTranscribing)
-                                  ? () async {
-                                      await onToggleSpeechInput();
-                                    }
-                                  : () {},
-                              child: AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 180),
-                                child: isSpeechTranscribing
-                                    ? const SizedBox.square(
-                                        key: ValueKey('speech-loading'),
-                                        dimension: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: AppTheme.textMain,
-                                        ),
-                                      )
-                                    : PhosphorIcon(
-                                        key: ValueKey<bool>(isSpeechRecording),
-                                        isSpeechRecording
-                                            ? PhosphorIcons.x()
-                                            : PhosphorIcons.microphone(),
-                                        size: 24,
-                                        color: isSpeechRecording
-                                            ? AppTheme.emerald
-                                            : null,
+                        child:
+                            isComposerFocused ||
+                                isSpeechRecording ||
+                                isSpeechTranscribing
+                            ? Padding(
+                                key: const ValueKey('composer-speech-visible'),
+                                padding: const EdgeInsets.only(left: 10),
+                                child: SizedBox(
+                                  width: 56,
+                                  height: 56,
+                                  child: MagneticButton(
+                                    key: const Key(
+                                      'turn-composer-speech-toggle',
+                                    ),
+                                    isCircle: true,
+                                    variant: MagneticButtonVariant.secondary,
+                                    onClick:
+                                        (controlsEnabled &&
+                                            !isTurnActive &&
+                                            !isComposerMutationInFlight &&
+                                            !isInterruptMutationInFlight &&
+                                            !isSpeechTranscribing)
+                                        ? () async {
+                                            await onToggleSpeechInput();
+                                          }
+                                        : () {},
+                                    child: AnimatedSwitcher(
+                                      duration: const Duration(
+                                        milliseconds: 180,
                                       ),
+                                      child: isSpeechTranscribing
+                                          ? const SizedBox.square(
+                                              key: ValueKey('speech-loading'),
+                                              dimension: 20,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: AppTheme.textMain,
+                                              ),
+                                            )
+                                          : PhosphorIcon(
+                                              key: ValueKey<bool>(
+                                                isSpeechRecording,
+                                              ),
+                                              isSpeechRecording
+                                                  ? PhosphorIcons.x()
+                                                  : PhosphorIcons.microphone(),
+                                              size: 24,
+                                              color: isSpeechRecording
+                                                  ? AppTheme.emerald
+                                                  : null,
+                                            ),
+                                    ),
+                                  ),
+                                ),
+                              )
+                            : const SizedBox(
+                                key: ValueKey('composer-speech-hidden'),
                               ),
-                            ),
-                          ),
-                        ),
                       ),
                       const SizedBox(width: 10),
                       SizedBox(

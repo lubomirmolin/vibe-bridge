@@ -1605,6 +1605,9 @@ class _ThreadSummaryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final displayTitle = thread.title.trim().isEmpty
+        ? 'Untitled thread'
+        : thread.title.trim();
     BadgeVariant variant;
     String statusText;
 
@@ -1660,7 +1663,7 @@ class _ThreadSummaryCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    thread.title,
+                    displayTitle,
                     style: const TextStyle(
                       color: AppTheme.textMain,
                       fontSize: 16,

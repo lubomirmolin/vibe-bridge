@@ -1008,6 +1008,73 @@ void main() {
     },
   );
 
+  testWidgets(
+    'thread-list reload replaces placeholder titles with fetched generated titles',
+    (tester) async {
+      const placeholderSummary = ThreadSummaryDto(
+        contractVersion: contractVersion,
+        threadId: 'thread-123',
+        title: 'New Thread',
+        status: ThreadStatus.running,
+        workspace: '/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion',
+        repository: 'vibe-bridge-companion',
+        branch: 'main',
+        updatedAt: '2026-03-20T21:40:00Z',
+      );
+      const generatedSummary = ThreadSummaryDto(
+        contractVersion: contractVersion,
+        threadId: 'thread-123',
+        title: 'Implement shared contracts',
+        status: ThreadStatus.running,
+        workspace: '/Users/lubomirmolin/PhpstormProjects/vibe-bridge-companion',
+        repository: 'vibe-bridge-companion',
+        branch: 'main',
+        updatedAt: '2026-03-20T21:39:00Z',
+      );
+
+      final bridgeApi = FakeThreadListBridgeApi(
+        scriptedResults: [
+          [placeholderSummary],
+          [generatedSummary],
+        ],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            threadListBridgeApiProvider.overrideWithValue(bridgeApi),
+            approvalBridgeApiProvider.overrideWithValue(
+              EmptyApprovalBridgeApi(),
+            ),
+            threadLiveStreamProvider.overrideWithValue(FakeThreadLiveStream()),
+            threadCacheRepositoryProvider.overrideWithValue(
+              _newCacheRepository(),
+            ),
+          ],
+          child: const MaterialApp(
+            home: ThreadListPage(bridgeApiBaseUrl: 'https://bridge.ts.net'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('New Thread'), findsOneWidget);
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ThreadListPage)),
+      );
+      final controller = container.read(
+        threadListControllerProvider('https://bridge.ts.net').notifier,
+      );
+
+      await controller.loadThreads();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Implement shared contracts'), findsOneWidget);
+      expect(find.text('New Thread'), findsNothing);
+    },
+  );
+
   testWidgets('groups threads by workspace folder and keeps matches scoped', (
     tester,
   ) async {

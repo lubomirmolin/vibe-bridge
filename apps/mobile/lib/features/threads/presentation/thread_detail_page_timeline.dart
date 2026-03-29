@@ -106,6 +106,13 @@ class _ThreadActivityCard extends StatelessWidget {
         padding: const EdgeInsets.only(bottom: 16),
         child: _ChatMessageCard(item: item),
       );
+    } else if (item.type == ThreadActivityItemType.planUpdate &&
+        item.plan != null &&
+        item.plan!.hasSteps) {
+      content = Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: _PlanUpdateCard(item: item, plan: item.plan!),
+      );
     } else {
       Color borderColor;
       Color iconColor;
@@ -419,6 +426,177 @@ String? _workedForLabel(double? wallTimeSeconds) {
     return 'Worked for ${minutes}m';
   }
   return 'Worked for ${minutes}m ${seconds}s';
+}
+
+class _PlanUpdateCard extends StatelessWidget {
+  const _PlanUpdateCard({required this.item, required this.plan});
+
+  final ThreadActivityItem item;
+  final ThreadPlanSnapshot plan;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceZinc800.withValues(alpha: 0.4),
+        border: Border(left: BorderSide(color: AppTheme.emerald, width: 3)),
+        borderRadius: const BorderRadius.only(
+          topRight: Radius.circular(12),
+          bottomRight: Radius.circular(12),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              PhosphorIcon(
+                PhosphorIcons.listChecks(),
+                color: AppTheme.emerald,
+                size: 16,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  plan.progressLabel,
+                  style: GoogleFonts.jetBrainsMono(
+                    color: AppTheme.textMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Text(
+                item.occurredAt,
+                style: GoogleFonts.jetBrainsMono(
+                  color: AppTheme.textSubtle,
+                  fontSize: 10,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          for (var index = 0; index < plan.steps.length; index++) ...[
+            _PlanStepRow(index: index + 1, step: plan.steps[index]),
+            if (index != plan.steps.length - 1) const SizedBox(height: 10),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PlanStepRow extends StatelessWidget {
+  const _PlanStepRow({required this.index, required this.step});
+
+  final int index;
+  final ThreadPlanStep step;
+
+  @override
+  Widget build(BuildContext context) {
+    final isCompleted = step.status == ThreadPlanStepStatus.completed;
+    final isInProgress = step.status == ThreadPlanStepStatus.inProgress;
+    final textColor = isCompleted ? AppTheme.textMuted : AppTheme.textMain;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: _PlanStepMarker(status: step.status),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: '$index. ',
+                  style: GoogleFonts.jetBrainsMono(
+                    color: AppTheme.textSubtle,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                TextSpan(
+                  text: step.step,
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 15,
+                    height: 1.25,
+                    decoration: isCompleted
+                        ? TextDecoration.lineThrough
+                        : TextDecoration.none,
+                    decorationColor: AppTheme.textSubtle,
+                  ),
+                ),
+                if (isInProgress)
+                  TextSpan(
+                    text: '  In progress',
+                    style: GoogleFonts.jetBrainsMono(
+                      color: AppTheme.emerald,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PlanStepMarker extends StatelessWidget {
+  const _PlanStepMarker({required this.status});
+
+  final ThreadPlanStepStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    switch (status) {
+      case ThreadPlanStepStatus.completed:
+        return PhosphorIcon(
+          PhosphorIcons.checkCircle(),
+          color: AppTheme.emerald,
+          size: 16,
+        );
+      case ThreadPlanStepStatus.inProgress:
+        return Container(
+          width: 16,
+          height: 16,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: AppTheme.emerald, width: 1.5),
+          ),
+          child: Center(
+            child: Container(
+              width: 6,
+              height: 6,
+              decoration: const BoxDecoration(
+                color: AppTheme.emerald,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+        );
+      case ThreadPlanStepStatus.pending:
+      case ThreadPlanStepStatus.unknown:
+        return Container(
+          width: 16,
+          height: 16,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.4),
+              width: 1.5,
+            ),
+          ),
+        );
+    }
+  }
 }
 
 class _CollapsibleTerminalCard extends StatelessWidget {

@@ -106,7 +106,11 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
     final hasThread = thread != null;
     final showSidebarToggle = onToggleSidebar != null;
     final leadingInset = showBackButton || showSidebarToggle ? 36.0 : 16.0;
-    final title = thread?.title ?? 'Session Details';
+    final title = thread == null
+        ? 'Session Details'
+        : (thread.title.trim().isEmpty
+              ? 'Untitled thread'
+              : thread.title.trim());
     final repositoryLabel = thread?.repository ?? 'Repository unavailable';
     final statusLabel = hasThread ? _threadStatusLabel(thread.status) : 'Idle';
     final branchLabel = hasThread

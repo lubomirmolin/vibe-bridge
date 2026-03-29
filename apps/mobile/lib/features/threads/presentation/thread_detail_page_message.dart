@@ -778,11 +778,7 @@ class _InlineQuoteParser {
       spans.add(
         TextSpan(
           text: quotedText,
-          style: textStyle.copyWith(
-            color: textStyle.color?.withValues(alpha: 0.92),
-            fontStyle: FontStyle.italic,
-            backgroundColor: AppTheme.surfaceZinc800.withValues(alpha: 0.7),
-          ),
+          style: _buildInlineCodeStyle(textStyle),
         ),
       );
       index = closingIndex + 1;
@@ -806,6 +802,19 @@ class _InlineQuoteParser {
           )
         : baseStyle;
     return TextSpan(text: label, style: style);
+  }
+
+  static TextStyle _buildInlineCodeStyle(TextStyle textStyle) {
+    final baseStyle = textStyle.copyWith(
+      color: AppTheme.emerald,
+      fontWeight: FontWeight.w600,
+      backgroundColor: AppTheme.emerald.withValues(alpha: 0.12),
+    );
+    return GoogleFonts.jetBrainsMono(
+      textStyle: baseStyle,
+      fontSize: textStyle.fontSize,
+      height: textStyle.height,
+    );
   }
 
   static bool _isPartOfBacktickRun(String text, int index) {
@@ -840,8 +849,8 @@ class _InlineQuoteParser {
       return null;
     }
 
-    final targetEnd = text.indexOf(')', labelEnd + 2);
-    if (targetEnd == -1) {
+    final targetEnd = _findMarkdownLinkTargetEnd(text, labelEnd + 1);
+    if (targetEnd == null) {
       return null;
     }
 
@@ -851,6 +860,31 @@ class _InlineQuoteParser {
     }
 
     return _MarkdownLinkMatch(label: label, end: targetEnd + 1);
+  }
+
+  static int? _findMarkdownLinkTargetEnd(String text, int openParenIndex) {
+    var depth = 0;
+
+    for (var index = openParenIndex; index < text.length; index++) {
+      final char = text[index];
+      if (char == '(') {
+        depth += 1;
+        continue;
+      }
+      if (char != ')') {
+        continue;
+      }
+
+      depth -= 1;
+      if (depth == 0) {
+        return index;
+      }
+      if (depth < 0) {
+        return null;
+      }
+    }
+
+    return null;
   }
 
   static bool _looksLikeFileReference(String label) {

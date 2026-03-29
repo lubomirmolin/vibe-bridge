@@ -51,6 +51,81 @@ class ThreadActivityPresentation {
   }
 }
 
+enum ThreadPlanStepStatus { pending, inProgress, completed, unknown }
+
+class ThreadPlanStep {
+  const ThreadPlanStep({required this.step, required this.status});
+
+  final String step;
+  final ThreadPlanStepStatus status;
+}
+
+class ThreadPlanSnapshot {
+  const ThreadPlanSnapshot({
+    required this.steps,
+    required this.completedCount,
+    required this.totalCount,
+    this.explanation,
+  });
+
+  final List<ThreadPlanStep> steps;
+  final int completedCount;
+  final int totalCount;
+  final String? explanation;
+
+  bool get hasSteps => steps.isNotEmpty;
+
+  String get progressLabel {
+    final taskLabel = totalCount == 1 ? 'task' : 'tasks';
+    return '$completedCount out of $totalCount $taskLabel completed';
+  }
+
+  String renderText() {
+    if (!hasSteps) {
+      return explanation ?? '';
+    }
+
+    final lines = <String>[
+      progressLabel,
+      for (var index = 0; index < steps.length; index++)
+        '${index + 1}. ${steps[index].step}',
+    ];
+    return lines.join('\n');
+  }
+
+  factory ThreadPlanSnapshot.fromPayload(Map<String, dynamic> payload) {
+    final rawSteps = payload['steps'];
+    final steps = <ThreadPlanStep>[
+      if (rawSteps is List)
+        for (final entry in rawSteps)
+          if (entry is Map<String, dynamic>)
+            if (_optionalString(entry, 'step') case final String step)
+              ThreadPlanStep(
+                step: step,
+                status: _threadPlanStepStatusFromWire(
+                  _optionalString(entry, 'status'),
+                ),
+              ),
+    ];
+
+    final completedCount =
+        (payload['completed_count'] as num?)?.toInt() ??
+        steps
+            .where((entry) => entry.status == ThreadPlanStepStatus.completed)
+            .length;
+    final totalCount =
+        (payload['total_count'] as num?)?.toInt() ?? steps.length;
+    final explanation = _optionalString(payload, 'explanation');
+
+    return ThreadPlanSnapshot(
+      steps: List<ThreadPlanStep>.unmodifiable(steps),
+      completedCount: completedCount,
+      totalCount: totalCount,
+      explanation: explanation,
+    );
+  }
+}
+
 class ThreadActivityItem {
   const ThreadActivityItem({
     required this.eventId,
@@ -63,6 +138,7 @@ class ThreadActivityItem {
     this.messageImageUrls = const <String>[],
     this.presentation,
     this.parsedCommandOutput,
+    this.plan,
   });
 
   final String eventId;
@@ -75,6 +151,7 @@ class ThreadActivityItem {
   final List<String> messageImageUrls;
   final ThreadActivityPresentation? presentation;
   final ParsedCommandOutput? parsedCommandOutput;
+  final ThreadPlanSnapshot? plan;
 
   factory ThreadActivityItem.fromTimelineEntry(ThreadTimelineEntryDto entry) {
     return ThreadActivityItem._fromEvent(
@@ -109,8 +186,11 @@ class ThreadActivityItem {
     ThreadTimelineAnnotationsDto? annotations,
   }) {
     final type = _mapType(kind, payload);
+    final plan = type == ThreadActivityItemType.planUpdate
+        ? _extractPlanSnapshot(payload)
+        : null;
     final title = _titleForType(type);
-    final body = _bodyForType(type, kind, payload, summary);
+    final body = _bodyForType(type, kind, payload, summary, plan: plan);
     final messageImageUrls = _extractMessageImageUrls(payload);
     final presentation = _extractPresentation(annotations);
 
@@ -131,6 +211,7 @@ class ThreadActivityItem {
       messageImageUrls: messageImageUrls,
       presentation: presentation,
       parsedCommandOutput: parsedCommandOutput,
+      plan: plan,
     );
   }
 }
@@ -250,13 +331,17 @@ String _bodyForType(
   ThreadActivityItemType type,
   BridgeEventKind kind,
   Map<String, dynamic> payload,
-  String fallbackSummary,
-) {
+  String fallbackSummary, {
+  ThreadPlanSnapshot? plan,
+}) {
   switch (type) {
     case ThreadActivityItemType.userPrompt:
     case ThreadActivityItemType.assistantOutput:
       return _extractMessageText(payload) ?? '';
     case ThreadActivityItemType.planUpdate:
+      if (plan != null && plan.hasSteps) {
+        return plan.renderText();
+      }
       return _extractPlanText(payload) ?? fallbackSummary;
     case ThreadActivityItemType.terminalOutput:
       final normalizedBackgroundTerminal = _normalizeBackgroundTerminalBody(
@@ -350,6 +435,20 @@ String _bodyForType(
     case ThreadActivityItemType.generic:
       return _extractSummary(kind, payload);
   }
+}
+
+ThreadPlanSnapshot? _extractPlanSnapshot(Map<String, dynamic> payload) {
+  final rawSteps = payload['steps'];
+  final hasStructuredSteps = rawSteps is List && rawSteps.isNotEmpty;
+  final hasCounts =
+      payload['completed_count'] is num || payload['total_count'] is num;
+  final explanation = _optionalString(payload, 'explanation');
+
+  if (!hasStructuredSteps && !hasCounts && explanation == null) {
+    return null;
+  }
+
+  return ThreadPlanSnapshot.fromPayload(payload);
 }
 
 String? _normalizeBackgroundTerminalBody(
@@ -521,6 +620,21 @@ String? _extractPlanText(Map<String, dynamic> payload) {
       _optionalString(payload, 'instruction') ??
       _optionalString(payload, 'text') ??
       _optionalString(payload, 'phase');
+}
+
+ThreadPlanStepStatus _threadPlanStepStatusFromWire(String? value) {
+  switch (value) {
+    case 'pending':
+      return ThreadPlanStepStatus.pending;
+    case 'in_progress':
+      return ThreadPlanStepStatus.inProgress;
+    case 'completed':
+      return ThreadPlanStepStatus.completed;
+    case null:
+      return ThreadPlanStepStatus.pending;
+    default:
+      return ThreadPlanStepStatus.unknown;
+  }
 }
 
 String? _optionalString(Map<String, dynamic> json, String key) {

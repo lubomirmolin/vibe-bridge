@@ -118,8 +118,14 @@ class _ConnectionStatusBannerState extends State<ConnectionStatusBanner> {
     });
   }
 
-  Duration get _currentTimestamp =>
-      SchedulerBinding.instance.currentFrameTimeStamp;
+  Duration get _currentTimestamp {
+    final binding = SchedulerBinding.instance;
+    if (binding.schedulerPhase != SchedulerPhase.idle) {
+      return binding.currentFrameTimeStamp;
+    }
+
+    return Duration(milliseconds: DateTime.now().millisecondsSinceEpoch);
+  }
 
   @override
   void dispose() {

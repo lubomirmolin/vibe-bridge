@@ -90,6 +90,32 @@ void main() {
     },
   );
 
+  testWidgets('structured plan updates render progress and checklist steps', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail(status: ThreadStatus.running)],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [_structuredPlanTimelineEvents()],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+
+    await _scrollUntilVisible(tester, find.text('1 out of 3 tasks completed'));
+    expect(find.text('1 out of 3 tasks completed'), findsOneWidget);
+    expect(find.text('1. Inspect bridge payload'), findsOneWidget);
+    expect(find.textContaining('2. Add Flutter card'), findsOneWidget);
+    expect(find.textContaining('In progress'), findsOneWidget);
+    expect(find.text('3. Run targeted tests'), findsOneWidget);
+  });
+
   testWidgets(
     'real-thread header follows bridge detail metadata on initial load',
     (tester) async {
@@ -1002,7 +1028,7 @@ void main() {
       (children[1] as TextSpan).text,
       'This came from the earlier discussion.',
     );
-    expect((children[1] as TextSpan).style?.fontStyle, FontStyle.italic);
+    expect((children[1] as TextSpan).style?.color, AppTheme.emerald);
     expect((children[2] as TextSpan).text, ' Next step.');
   });
 
@@ -1065,6 +1091,69 @@ void main() {
     expect((children[1] as TextSpan).style?.color, AppTheme.emerald);
     expect((children[2] as TextSpan).text, ' for details.');
   });
+
+  testWidgets(
+    'markdown file links with wrapped targets still render as emerald labels',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            <ThreadTimelineEntryDto>[
+              _timelineEvent(
+                id: 'evt-link-wrapped',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Assistant output',
+                payload: {
+                  'type': 'agentMessage',
+                  'text':
+                      'State comes from [PairingEntryViewModel.swift]((/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mac-shell/Sources/ViewModel/PairingEntryViewModel.swift#L107)), which starts supervision on launch.',
+                },
+                occurredAt: '2026-03-18T10:02:00Z',
+              ),
+            ],
+          ],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+      );
+      await tester.pumpAndSettle();
+
+      await _scrollUntilVisible(
+        tester,
+        find.byKey(const Key('thread-message-text-0')),
+      );
+
+      expect(
+        find.textContaining('/Users/lubomirmolin/PhpstormProjects'),
+        findsNothing,
+      );
+
+      final textFinder = find.byKey(const Key('thread-message-text-0'));
+      final selectableTextFinder = find.descendant(
+        of: textFinder.first,
+        matching: find.byType(SelectableText),
+      );
+      final messageText = tester.widget<SelectableText>(selectableTextFinder);
+      final rootSpan = messageText.textSpan;
+      expect(rootSpan, isNotNull);
+      final children = rootSpan!.children;
+      expect(children, hasLength(3));
+      expect((children![0] as TextSpan).text, 'State comes from ');
+      expect((children[1] as TextSpan).text, 'PairingEntryViewModel.swift');
+      expect((children[1] as TextSpan).style?.color, AppTheme.emerald);
+      expect(
+        (children[2] as TextSpan).text,
+        ', which starts supervision on launch.',
+      );
+    },
+  );
 
   testWidgets(
     'thread detail hides lifecycle and security noise from the conversation timeline',
@@ -4120,6 +4209,42 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     },
   );
 
+  testWidgets('speech toggle stays hidden until the composer is focused', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail(status: ThreadStatus.completed)],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+      speechStatusScript: [
+        const SpeechModelStatusDto(
+          contractVersion: contractVersion,
+          provider: 'fluid_audio',
+          modelId: 'parakeet-tdt-0.6b-v3-coreml',
+          state: SpeechModelState.ready,
+        ),
+      ],
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+
+    expect(find.byKey(const Key('turn-composer-speech-toggle')), findsNothing);
+
+    await _focusComposer(tester);
+
+    expect(
+      find.byKey(const Key('turn-composer-speech-toggle')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('speech preflight shows a dialog when speech is unsupported', (
     tester,
   ) async {
@@ -4660,6 +4785,29 @@ List<ThreadTimelineEntryDto> _mixedTimelineEvents() {
       summary: 'File change',
       payload: {'path': 'lib/main.dart', 'summary': 'Adjusted parser mapping'},
       occurredAt: '2026-03-18T10:05:00Z',
+    ),
+  ];
+}
+
+List<ThreadTimelineEntryDto> _structuredPlanTimelineEvents() {
+  return [
+    _timelineEvent(
+      id: 'evt-plan-1',
+      kind: BridgeEventKind.planDelta,
+      summary: 'Plan updated',
+      payload: {
+        'type': 'plan',
+        'text':
+            '1 out of 3 tasks completed\n1. Inspect bridge payload\n2. Add Flutter card\n3. Run targeted tests',
+        'steps': [
+          {'step': 'Inspect bridge payload', 'status': 'completed'},
+          {'step': 'Add Flutter card', 'status': 'in_progress'},
+          {'step': 'Run targeted tests', 'status': 'pending'},
+        ],
+        'completed_count': 1,
+        'total_count': 3,
+      },
+      occurredAt: '2026-03-18T10:03:00Z',
     ),
   ];
 }
