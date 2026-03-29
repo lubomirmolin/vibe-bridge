@@ -67,6 +67,7 @@ pub async fn run_from_env() -> Result<(), String> {
 
     let state = BridgeAppState::from_config(config.clone()).await;
     state.start_notification_forwarder();
+    state.start_desktop_ipc_forwarder();
     state.start_summary_reconciler();
     let app = api::router(state.clone());
 

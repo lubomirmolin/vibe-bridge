@@ -415,7 +415,12 @@ fn timeline_merge_fingerprint(event: &UpstreamTimelineEvent) -> String {
                 .or_else(|| event.data.get("text").and_then(Value::as_str))
                 .unwrap_or(event.summary_text.as_str())
                 .trim();
-            format!("plan_delta\u{1f}|{text}")
+            let steps = event
+                .data
+                .get("steps")
+                .map(|value| canonical_json_string(Some(value)))
+                .unwrap_or_default();
+            format!("plan_delta\u{1f}|{text}\u{1f}|{steps}")
         }
         "command_output_delta" => {
             let command = normalized_merge_text_value(
@@ -1100,6 +1105,23 @@ fn map_archived_session_event(
                         .get("name")
                         .and_then(Value::as_str)
                         .unwrap_or("command");
+                    if name == "update_plan"
+                        && let Some(plan_data) =
+                            normalize_archived_update_plan_payload(payload.get("arguments"))
+                    {
+                        let summary = plan_data
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .map(truncate_summary)
+                            .unwrap_or_else(|| "Plan updated".to_string());
+                        return Some(UpstreamTimelineEvent {
+                            id: format!("{thread_id}-archive-{sequence}"),
+                            event_type: "plan_delta".to_string(),
+                            happened_at: timestamp.to_string(),
+                            summary_text: summary,
+                            data: plan_data,
+                        });
+                    }
                     Some(UpstreamTimelineEvent {
                         id: format!("{thread_id}-archive-{sequence}"),
                         event_type: "command_output_delta".to_string(),
@@ -1134,6 +1156,23 @@ fn map_archived_session_event(
                         .get("name")
                         .and_then(Value::as_str)
                         .unwrap_or("custom_tool");
+                    if tool_name == "update_plan"
+                        && let Some(plan_data) =
+                            normalize_archived_update_plan_payload(payload.get("input"))
+                    {
+                        let summary = plan_data
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .map(truncate_summary)
+                            .unwrap_or_else(|| "Plan updated".to_string());
+                        return Some(UpstreamTimelineEvent {
+                            id: format!("{thread_id}-archive-{sequence}"),
+                            event_type: "plan_delta".to_string(),
+                            happened_at: timestamp.to_string(),
+                            summary_text: summary,
+                            data: plan_data,
+                        });
+                    }
                     let input = payload.get("input").cloned().unwrap_or(Value::Null);
                     let input_text = value_to_text(&input).unwrap_or_default();
                     let is_file_change =
@@ -1272,6 +1311,97 @@ fn map_archived_session_event(
         }
         _ => None,
     }
+}
+
+fn normalize_archived_update_plan_payload(input: Option<&Value>) -> Option<Value> {
+    let plan_input = match input? {
+        Value::String(text) => serde_json::from_str::<Value>(text).ok()?,
+        Value::Object(_) => input.cloned()?,
+        _ => return None,
+    };
+    let steps = plan_input
+        .get("plan")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let step = entry
+                .get("step")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?;
+            let status = entry
+                .get("status")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("pending");
+            Some(json!({
+                "step": step,
+                "status": status,
+            }))
+        })
+        .collect::<Vec<_>>();
+    let explanation = plan_input
+        .get("explanation")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if steps.is_empty() && explanation.is_none() {
+        return None;
+    }
+
+    let total_count = steps.len();
+    let completed_count = steps
+        .iter()
+        .filter(|step| step.get("status").and_then(Value::as_str) == Some("completed"))
+        .count();
+    let text = render_archived_update_plan_text(
+        explanation.as_deref(),
+        &steps,
+        completed_count,
+        total_count,
+    );
+
+    let mut payload = json!({
+        "type": "plan",
+        "text": text,
+    });
+    if let Some(object) = payload.as_object_mut() {
+        if let Some(explanation) = explanation {
+            object.insert("explanation".to_string(), Value::String(explanation));
+        }
+        if !steps.is_empty() {
+            object.insert("steps".to_string(), Value::Array(steps));
+            object.insert("completed_count".to_string(), json!(completed_count));
+            object.insert("total_count".to_string(), json!(total_count));
+        }
+    }
+
+    Some(payload)
+}
+
+fn render_archived_update_plan_text(
+    explanation: Option<&str>,
+    steps: &[Value],
+    completed_count: usize,
+    total_count: usize,
+) -> String {
+    if total_count == 0 {
+        return explanation.unwrap_or_default().to_string();
+    }
+
+    let task_label = if total_count == 1 { "task" } else { "tasks" };
+    let mut lines = vec![format!(
+        "{completed_count} out of {total_count} {task_label} completed"
+    )];
+    lines.extend(steps.iter().enumerate().filter_map(|(index, step)| {
+        step.get("step")
+            .and_then(Value::as_str)
+            .map(|value| format!("{}. {value}", index + 1))
+    }));
+    lines.join("\n")
 }
 
 pub(super) fn is_file_change_custom_tool(tool_name: &str) -> bool {

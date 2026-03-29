@@ -42,7 +42,7 @@ class _ThreadDetailBody extends StatelessWidget {
   final String? openOnMacErrorMessage;
   final bool hasPinnedComposer;
   final VoidCallback onRefreshApprovals;
-  final VoidCallback onTimelineUserScroll;
+  final ValueChanged<ScrollDirection> onTimelineUserScroll;
   final ScrollController scrollController;
   final bool Function(String id, {required bool defaultValue})
   isTimelineCardExpanded;
@@ -81,6 +81,27 @@ class _ThreadDetailBody extends StatelessWidget {
     }
 
     final timelineBlocks = buildThreadTimelineBlocks(state.visibleItems);
+    final leadingChildren = _buildLeadingChildren(
+      state: state,
+      controlsEnabled: controlsEnabled,
+      isReadOnlyMode: isReadOnlyMode,
+      desktopIntegrationEnabled: desktopIntegrationEnabled,
+      gitControlsUnavailableReason: gitControlsUnavailableReason,
+      gitErrorMessage: gitErrorMessage,
+      gitMutationMessage: gitMutationMessage,
+      openOnMacMessage: openOnMacMessage,
+      openOnMacErrorMessage: openOnMacErrorMessage,
+    );
+    final trailingChildren = _buildTrailingChildren(
+      state: state,
+      controlsEnabled: controlsEnabled,
+    );
+    final timelineItemCount =
+        state.isInitialTimelineLoading || state.visibleItems.isEmpty
+        ? 1
+        : timelineBlocks.length * 2;
+    final itemCount =
+        leadingChildren.length + timelineItemCount + trailingChildren.length;
 
     return RefreshIndicator(
       color: AppTheme.emerald,
@@ -89,13 +110,14 @@ class _ThreadDetailBody extends StatelessWidget {
       child: NotificationListener<UserScrollNotification>(
         onNotification: (notification) {
           if (notification.direction != ScrollDirection.idle) {
-            onTimelineUserScroll();
+            onTimelineUserScroll(notification.direction);
           }
           return false;
         },
-        child: ListView(
+        child: ListView.builder(
           controller: scrollController,
           key: const Key('thread-detail-scroll-view'),
+          cacheExtent: 1400,
           physics: const AlwaysScrollableScrollPhysics(
             parent: BouncingScrollPhysics(),
           ),
@@ -105,138 +127,197 @@ class _ThreadDetailBody extends StatelessWidget {
             bottom: hasPinnedComposer ? 140 : 16,
             top: 212,
           ),
-          children: [
-            Align(
+          itemCount: itemCount,
+          itemBuilder: (context, index) {
+            Widget child;
+            if (index < leadingChildren.length) {
+              child = leadingChildren[index];
+            } else if (index < leadingChildren.length + timelineItemCount) {
+              child = _buildTimelineChild(
+                state: state,
+                timelineBlocks: timelineBlocks,
+                timelineIndex: index - leadingChildren.length,
+              );
+            } else {
+              child =
+                  trailingChildren[index -
+                      leadingChildren.length -
+                      timelineItemCount];
+            }
+
+            return Align(
               alignment: Alignment.topCenter,
               child: ConstrainedBox(
                 constraints: const BoxConstraints(
                   maxWidth: _ThreadDetailPageState._sessionContentMaxWidth,
                 ),
                 child: SizedBox(
-                  key: const Key('thread-detail-session-content'),
+                  key: index == 0
+                      ? const Key('thread-detail-session-content')
+                      : null,
                   width: double.infinity,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const SizedBox(height: 16),
-                      if (!controlsEnabled) ...[
-                        const SizedBox(height: 12),
-                        _MutatingActionsBlockedNotice(
-                          message: isReadOnlyMode
-                              ? 'Read-only mode blocks turn and git mutations.'
-                              : 'Mutating actions are blocked while bridge is offline.',
-                          onRetryReconnect: isReadOnlyMode
-                              ? null
-                              : onRetryReconnect,
-                        ),
-                      ],
-                      if (state.turnControlErrorMessage != null) ...[
-                        const SizedBox(height: 12),
-                        _InlineWarning(message: state.turnControlErrorMessage!),
-                      ],
-                      if (gitControlsUnavailableReason != null) ...[
-                        const SizedBox(height: 12),
-                        KeyedSubtree(
-                          key: const Key('git-controls-unavailable-message'),
-                          child: _InlineWarning(
-                            message: gitControlsUnavailableReason,
-                          ),
-                        ),
-                      ],
-                      if (gitErrorMessage != null) ...[
-                        const SizedBox(height: 12),
-                        _InlineWarning(message: gitErrorMessage),
-                      ],
-                      if (gitMutationMessage != null) ...[
-                        const SizedBox(height: 12),
-                        _InlineInfo(message: gitMutationMessage),
-                      ],
-                      if (!desktopIntegrationEnabled) ...[
-                        const SizedBox(height: 12),
-                        const KeyedSubtree(
-                          key: Key('desktop-integration-disabled-message'),
-                          child: _InlineWarning(
-                            message:
-                                'Desktop integration is disabled in settings.',
-                          ),
-                        ),
-                      ],
-                      if (openOnMacMessage != null) ...[
-                        const SizedBox(height: 12),
-                        KeyedSubtree(
-                          key: const Key('open-on-mac-success-message'),
-                          child: _InlineInfo(message: openOnMacMessage),
-                        ),
-                      ],
-                      if (openOnMacErrorMessage != null) ...[
-                        const SizedBox(height: 12),
-                        KeyedSubtree(
-                          key: const Key('open-on-mac-error-message'),
-                          child: _InlineWarning(message: openOnMacErrorMessage),
-                        ),
-                      ],
-                      if (threadApprovals.isNotEmpty ||
-                          approvalsErrorMessage != null) ...[
-                        const SizedBox(height: 16),
-                        _ThreadApprovalsCard(
-                          approvals: threadApprovals,
-                          canResolveApprovals: canResolveApprovals,
-                          errorMessage: approvalsErrorMessage,
-                          onRefresh: onRefreshApprovals,
-                        ),
-                      ],
-                      const SizedBox(height: 32),
-                      const Text(
-                        'Timeline',
-                        style: TextStyle(
-                          color: AppTheme.textSubtle,
-                          fontSize: 13,
-                          letterSpacing: 1.2,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      if (state.isLoadingEarlierHistory) ...[
-                        const _InlineInfo(message: 'Loading older history…'),
-                        const SizedBox(height: 12),
-                      ],
-                      if (state.isInitialTimelineLoading)
-                        const _TimelineLoadingState()
-                      else if (state.visibleItems.isEmpty)
-                        const _EmptyTimelineState()
-                      else
-                        ...timelineBlocks
-                            .map(
-                              (block) => _ThreadTimelineBlockView(
-                                block: block,
-                                isTimelineCardExpanded: isTimelineCardExpanded,
-                                onTimelineCardExpansionChanged:
-                                    onTimelineCardExpansionChanged,
-                              ),
-                            )
-                            .expand(
-                              (widget) => [widget, const SizedBox(height: 12)],
-                            ),
-                      if (state.isTurnActive) ...[
-                        _ChatLoadingMessageCard(
-                          phaseLabel: _runningTurnPhaseLabel(
-                            state.visibleItems,
-                          ),
-                          controlsEnabled: controlsEnabled,
-                          isInterruptMutationInFlight:
-                              state.isInterruptMutationInFlight,
-                          onInterruptActiveTurn: onInterruptActiveTurn,
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-                    ],
-                  ),
+                  child: child,
                 ),
               ),
-            ),
-          ],
+            );
+          },
         ),
       ),
     );
+  }
+
+  List<Widget> _buildLeadingChildren({
+    required ThreadDetailState state,
+    required bool controlsEnabled,
+    required bool isReadOnlyMode,
+    required bool desktopIntegrationEnabled,
+    required String? gitControlsUnavailableReason,
+    required String? gitErrorMessage,
+    required String? gitMutationMessage,
+    required String? openOnMacMessage,
+    required String? openOnMacErrorMessage,
+  }) {
+    return <Widget>[
+      const SizedBox(height: 16),
+      if (!controlsEnabled) ...[
+        const SizedBox(height: 12),
+        _MutatingActionsBlockedNotice(
+          message: isReadOnlyMode
+              ? 'Read-only mode blocks turn and git mutations.'
+              : 'Mutating actions are blocked while bridge is offline.',
+          onRetryReconnect: isReadOnlyMode ? null : onRetryReconnect,
+        ),
+      ],
+      if (state.turnControlErrorMessage != null) ...[
+        const SizedBox(height: 12),
+        _InlineWarning(message: state.turnControlErrorMessage!),
+      ],
+      if (gitControlsUnavailableReason != null) ...[
+        const SizedBox(height: 12),
+        KeyedSubtree(
+          key: const Key('git-controls-unavailable-message'),
+          child: _InlineWarning(message: gitControlsUnavailableReason),
+        ),
+      ],
+      if (gitErrorMessage != null) ...[
+        const SizedBox(height: 12),
+        _InlineWarning(message: gitErrorMessage),
+      ],
+      if (gitMutationMessage != null) ...[
+        const SizedBox(height: 12),
+        _InlineInfo(message: gitMutationMessage),
+      ],
+      if (!desktopIntegrationEnabled) ...[
+        const SizedBox(height: 12),
+        const KeyedSubtree(
+          key: Key('desktop-integration-disabled-message'),
+          child: _InlineWarning(
+            message: 'Desktop integration is disabled in settings.',
+          ),
+        ),
+      ],
+      if (openOnMacMessage != null) ...[
+        const SizedBox(height: 12),
+        KeyedSubtree(
+          key: const Key('open-on-mac-success-message'),
+          child: _InlineInfo(message: openOnMacMessage),
+        ),
+      ],
+      if (openOnMacErrorMessage != null) ...[
+        const SizedBox(height: 12),
+        KeyedSubtree(
+          key: const Key('open-on-mac-error-message'),
+          child: _InlineWarning(message: openOnMacErrorMessage),
+        ),
+      ],
+      if (threadApprovals.isNotEmpty || approvalsErrorMessage != null) ...[
+        const SizedBox(height: 16),
+        _ThreadApprovalsCard(
+          approvals: threadApprovals,
+          canResolveApprovals: canResolveApprovals,
+          errorMessage: approvalsErrorMessage,
+          onRefresh: onRefreshApprovals,
+        ),
+      ],
+      const SizedBox(height: 32),
+      const Text(
+        'Timeline',
+        style: TextStyle(
+          color: AppTheme.textSubtle,
+          fontSize: 13,
+          letterSpacing: 1.2,
+        ),
+      ),
+      const SizedBox(height: 16),
+      if (state.isLoadingEarlierHistory) ...[
+        const _InlineInfo(message: 'Loading older history…'),
+        const SizedBox(height: 12),
+      ],
+    ];
+  }
+
+  Widget _buildTimelineChild({
+    required ThreadDetailState state,
+    required List<ThreadTimelineBlock> timelineBlocks,
+    required int timelineIndex,
+  }) {
+    if (state.isInitialTimelineLoading) {
+      return const _TimelineLoadingState();
+    }
+    if (state.visibleItems.isEmpty) {
+      return const _EmptyTimelineState();
+    }
+    if (timelineIndex.isOdd) {
+      return const SizedBox(height: 12);
+    }
+
+    final block = timelineBlocks[timelineIndex ~/ 2];
+    return KeyedSubtree(
+      key: ValueKey(_timelineBlockKey(block)),
+      child: _ThreadTimelineBlockView(
+        block: block,
+        isTimelineCardExpanded: isTimelineCardExpanded,
+        onTimelineCardExpansionChanged: onTimelineCardExpansionChanged,
+      ),
+    );
+  }
+
+  List<Widget> _buildTrailingChildren({
+    required ThreadDetailState state,
+    required bool controlsEnabled,
+  }) {
+    return <Widget>[
+      if (!state.isInitialTimelineLoading && state.visibleItems.isNotEmpty)
+        const SizedBox(height: 12),
+      if (state.isTurnActive) ...[
+        _ChatLoadingMessageCard(
+          phaseLabel: _runningTurnPhaseLabel(state.visibleItems),
+          controlsEnabled: controlsEnabled,
+          isInterruptMutationInFlight: state.isInterruptMutationInFlight,
+          onInterruptActiveTurn: onInterruptActiveTurn,
+        ),
+        const SizedBox(height: 12),
+      ],
+    ];
+  }
+
+  String _timelineBlockKey(ThreadTimelineBlock block) {
+    final item = block.item;
+    if (item != null) {
+      return 'activity:${item.eventId}';
+    }
+
+    final exploration = block.exploration;
+    if (exploration != null) {
+      return 'exploration:${exploration.sourceEventIds.join("|")}';
+    }
+
+    final workSummary = block.workSummary;
+    if (workSummary != null) {
+      return 'work-summary:${workSummary.anchorEventId}';
+    }
+
+    return 'timeline-block';
   }
 }
 

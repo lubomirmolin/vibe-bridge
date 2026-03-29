@@ -1,6 +1,6 @@
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 use shared_contracts::{
     AccessMode, ApprovalSummaryDto, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION,
     GitStatusDto, ModelOptionDto, ReasoningEffortOptionDto, ThreadDetailDto, ThreadSnapshotDto,
@@ -8,6 +8,7 @@ use shared_contracts::{
     ThreadTimelineExplorationKind, ThreadTimelineGroupKind, TurnMutationAcceptedDto,
 };
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
@@ -122,6 +123,7 @@ struct CodexTurn {
 impl CodexGateway {
     const MAX_THREADS_TO_FETCH: usize = 100;
     const RESERVED_TRANSPORT_TTL: Duration = Duration::from_secs(120);
+    const THREAD_TITLE_MAX_CHARS: usize = 80;
 
     pub fn new(config: BridgeCodexConfig) -> Self {
         Self {
@@ -133,7 +135,7 @@ impl CodexGateway {
     pub async fn bootstrap(&self) -> Result<GatewayBootstrap, String> {
         let config = self.config.clone();
         tokio::task::spawn_blocking(move || {
-            let mut transport = connect_transport(&config)?;
+            let mut transport = connect_read_transport(&config)?;
             let summaries = fetch_thread_summaries(&mut transport, &config)?;
             let models = fetch_model_catalog(&mut transport);
             Ok(GatewayBootstrap {
@@ -155,7 +157,7 @@ impl CodexGateway {
         let reserved_transports = Arc::clone(&self.reserved_transports);
         tokio::task::spawn_blocking(move || {
             let mut transport = take_reserved_transport(&reserved_transports, &thread_id)
-                .unwrap_or(connect_transport(&config)?);
+                .unwrap_or(connect_read_transport(&config)?);
             let payload = read_thread_with_resume(&mut transport, &thread_id, true)?;
             let snapshot = map_thread_snapshot(payload.thread);
             reserve_transport(&reserved_transports, thread_id, transport);
@@ -214,7 +216,11 @@ impl CodexGateway {
         CodexNotificationStream::start(&self.config.command, &self.config.args, endpoint)
     }
 
-    pub fn start_turn_streaming<F>(
+    pub fn desktop_ipc_socket_path(&self) -> Option<PathBuf> {
+        self.config.desktop_ipc_socket_path.clone()
+    }
+
+    pub fn start_turn_streaming<F, G>(
         &self,
         thread_id: &str,
         prompt: &str,
@@ -222,9 +228,11 @@ impl CodexGateway {
         model: Option<&str>,
         effort: Option<&str>,
         on_event: F,
+        on_turn_completed: G,
     ) -> Result<GatewayTurnMutation, String>
     where
         F: Fn(BridgeEventEnvelope<Value>) + Send + 'static,
+        G: Fn(String) + Send + 'static,
     {
         let config = self.config.clone();
         let thread_id = thread_id.to_string();
@@ -300,6 +308,7 @@ impl CodexGateway {
                 }
 
                 if method == "turn/completed" {
+                    on_turn_completed(thread_id.clone());
                     break;
                 }
             }
@@ -339,6 +348,68 @@ impl CodexGateway {
         })
         .await
         .map_err(|error| format!("codex interrupt_turn task failed: {error}"))?
+    }
+
+    pub async fn set_thread_name(&self, thread_id: &str, name: &str) -> Result<(), String> {
+        let config = self.config.clone();
+        let thread_id = thread_id.to_string();
+        let name = name.trim().to_string();
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            if name.is_empty() {
+                return Ok(());
+            }
+
+            let mut transport = connect_transport(&config)?;
+            transport.request(
+                "thread/name/set",
+                json!({
+                    "threadId": thread_id,
+                    "name": name,
+                }),
+            )?;
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("codex set_thread_name task failed: {error}"))?
+    }
+
+    pub async fn generate_thread_title_candidate(
+        &self,
+        workspace: &str,
+        prompt: &str,
+        model: Option<&str>,
+    ) -> Result<Option<String>, String> {
+        let config = self.config.clone();
+        let workspace = workspace.to_string();
+        let prompt = prompt.to_string();
+        let model = model.map(str::to_string);
+        tokio::task::spawn_blocking(move || -> Result<Option<String>, String> {
+            let normalized_prompt = prompt.trim();
+            if normalized_prompt.is_empty() {
+                return Ok(None);
+            }
+
+            let mut transport = connect_transport(&config)?;
+            let title_thread_id =
+                start_ephemeral_read_only_thread(&mut transport, &workspace, model.as_deref())?;
+            let turn = start_structured_turn(
+                &mut transport,
+                &title_thread_id,
+                &build_thread_title_prompt(normalized_prompt),
+                build_thread_title_output_schema(),
+                model.as_deref(),
+                Some("low"),
+            )?;
+            let agent_message = read_structured_agent_message(
+                &mut transport,
+                &title_thread_id,
+                &turn.turn.id,
+                "thread title generation",
+            )?;
+            Ok(extract_generated_thread_title(agent_message.as_deref()))
+        })
+        .await
+        .map_err(|error| format!("codex generate_thread_title task failed: {error}"))?
     }
 }
 
@@ -415,6 +486,41 @@ fn start_turn_with_resume(
     }
 }
 
+fn start_ephemeral_read_only_thread(
+    transport: &mut CodexJsonTransport,
+    workspace: &str,
+    model: Option<&str>,
+) -> Result<String, String> {
+    let mut params = serde_json::Map::new();
+    params.insert("cwd".to_string(), Value::String(workspace.to_string()));
+    params.insert(
+        "approvalPolicy".to_string(),
+        Value::String("never".to_string()),
+    );
+    params.insert(
+        "sandbox".to_string(),
+        Value::String("read-only".to_string()),
+    );
+    params.insert("ephemeral".to_string(), Value::Bool(true));
+    params.insert("persistExtendedHistory".to_string(), Value::Bool(false));
+    params.insert("experimentalRawEvents".to_string(), Value::Bool(false));
+    params.insert(
+        "config".to_string(),
+        json!({
+            "web_search": "disabled",
+            "model_reasoning_effort": "low",
+        }),
+    );
+    if let Some(model) = model {
+        params.insert("model".to_string(), Value::String(model.to_string()));
+    }
+
+    let response = transport.request("thread/start", Value::Object(params))?;
+    let payload: CodexThreadStartResult = serde_json::from_value(response)
+        .map_err(|error| format!("invalid thread/start response from codex: {error}"))?;
+    Ok(payload.thread.id)
+}
+
 fn start_turn(
     transport: &mut CodexJsonTransport,
     thread_id: &str,
@@ -426,6 +532,31 @@ fn start_turn(
     let mut params = serde_json::Map::new();
     params.insert("threadId".to_string(), Value::String(thread_id.to_string()));
     params.insert("input".to_string(), build_turn_start_input(prompt, images));
+    if let Some(model) = model {
+        params.insert("model".to_string(), Value::String(model.to_string()));
+    }
+    if let Some(effort) = effort {
+        params.insert("effort".to_string(), Value::String(effort.to_string()));
+    }
+
+    let response = transport.request("turn/start", Value::Object(params))?;
+    serde_json::from_value(response)
+        .map_err(|error| format!("invalid turn/start response from codex: {error}"))
+}
+
+fn start_structured_turn(
+    transport: &mut CodexJsonTransport,
+    thread_id: &str,
+    prompt: &str,
+    output_schema: Value,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> Result<CodexTurnStartResult, String> {
+    let mut params = serde_json::Map::new();
+    params.insert("threadId".to_string(), Value::String(thread_id.to_string()));
+    params.insert("input".to_string(), build_turn_start_input(prompt, &[]));
+    params.insert("summary".to_string(), Value::String("auto".to_string()));
+    params.insert("outputSchema".to_string(), output_schema);
     if let Some(model) = model {
         params.insert("model".to_string(), Value::String(model.to_string()));
     }
@@ -461,6 +592,179 @@ fn build_turn_start_input(prompt: &str, images: &[String]) -> Value {
     Value::Array(input)
 }
 
+fn read_structured_agent_message(
+    transport: &mut CodexJsonTransport,
+    thread_id: &str,
+    turn_id: &str,
+    context: &str,
+) -> Result<Option<String>, String> {
+    let mut latest_agent_message: Option<String> = None;
+
+    while let Some(message) = transport.next_message(context)? {
+        if message.get("id").is_some() {
+            continue;
+        }
+
+        let Some(method) = message.get("method").and_then(Value::as_str) else {
+            continue;
+        };
+        let params = message.get("params").cloned().unwrap_or(Value::Null);
+
+        match method {
+            "item/agentMessage/delta" => {
+                if params.get("threadId").and_then(Value::as_str) != Some(thread_id) {
+                    continue;
+                }
+                let notification_turn_id = params.get("turnId").and_then(Value::as_str);
+                if notification_turn_id.is_some() && notification_turn_id != Some(turn_id) {
+                    continue;
+                }
+                let delta = params
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if delta.is_empty() {
+                    continue;
+                }
+                let next_value = latest_agent_message
+                    .take()
+                    .unwrap_or_default()
+                    .chars()
+                    .chain(delta.chars())
+                    .collect::<String>();
+                latest_agent_message = Some(next_value);
+            }
+            "item/completed" => {
+                if params.get("threadId").and_then(Value::as_str) != Some(thread_id) {
+                    continue;
+                }
+                let notification_turn_id = params.get("turnId").and_then(Value::as_str);
+                if notification_turn_id.is_some() && notification_turn_id != Some(turn_id) {
+                    continue;
+                }
+                let Some(item) = params.get("item") else {
+                    continue;
+                };
+                if item.get("type").and_then(Value::as_str) != Some("agentMessage") {
+                    continue;
+                }
+                latest_agent_message = item
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string);
+            }
+            "turn/completed" => {
+                if params
+                    .get("threadId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    != thread_id
+                {
+                    continue;
+                }
+                if params
+                    .get("turn")
+                    .and_then(|turn| turn.get("id"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    != turn_id
+                {
+                    continue;
+                }
+                let status = params
+                    .get("turn")
+                    .and_then(|turn| turn.get("status"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if status != "completed" {
+                    return Ok(None);
+                }
+                return Ok(latest_agent_message);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(latest_agent_message)
+}
+
+fn build_thread_title_prompt(prompt: &str) -> String {
+    [
+        "Generate a concise thread title for the user's request.",
+        "Write the result into the structured response field title.",
+        "Rules:",
+        "- Keep the title under 80 characters.",
+        "- Use plain text only in the title field.",
+        "- Prefer an imperative title when the request is actionable.",
+        "- Preserve important product or framework names like Flutter, Rust, macOS, Android, iOS, Codex, and Tailscale.",
+        "- Do not include quotes, markdown, trailing punctuation, or filler words like 'Please' or 'Help me'.",
+        "",
+        "User request:",
+        prompt,
+    ]
+    .join("\n")
+}
+
+fn build_thread_title_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "title": {
+                "type": "string",
+                "minLength": 4,
+                "maxLength": CodexGateway::THREAD_TITLE_MAX_CHARS,
+            }
+        },
+        "required": ["title"],
+    })
+}
+
+fn extract_generated_thread_title(agent_message: Option<&str>) -> Option<String> {
+    let agent_message = agent_message?.trim();
+    if agent_message.is_empty() {
+        return None;
+    }
+
+    let parsed = serde_json::from_str::<Value>(agent_message).ok();
+    let raw_title = parsed
+        .as_ref()
+        .and_then(|value| value.get("title"))
+        .and_then(Value::as_str)
+        .unwrap_or(agent_message);
+    normalize_generated_thread_title(raw_title)
+}
+
+fn normalize_generated_thread_title(raw_title: &str) -> Option<String> {
+    let normalized_whitespace = raw_title.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = normalized_whitespace
+        .trim_matches(|ch: char| ch == '"' || ch == '\'' || ch == '`')
+        .trim();
+    if trimmed.is_empty() || is_placeholder_thread_title(trimmed) {
+        return None;
+    }
+
+    let mut title = trimmed.to_string();
+    if title.chars().count() > CodexGateway::THREAD_TITLE_MAX_CHARS {
+        title = title
+            .chars()
+            .take(CodexGateway::THREAD_TITLE_MAX_CHARS)
+            .collect::<String>()
+            .trim()
+            .to_string();
+    }
+
+    while title.ends_with('.') || title.ends_with(':') || title.ends_with(';') {
+        title.pop();
+    }
+
+    let normalized = title.trim();
+    if normalized.is_empty() || is_placeholder_thread_title(normalized) {
+        return None;
+    }
+    Some(normalized.to_string())
+}
+
 fn connect_transport(config: &BridgeCodexConfig) -> Result<CodexJsonTransport, String> {
     match config.mode {
         CodexRuntimeMode::Attach => {
@@ -475,6 +779,16 @@ fn connect_transport(config: &BridgeCodexConfig) -> Result<CodexJsonTransport, S
                 return Ok(transport);
             }
             CodexJsonTransport::start(&config.command, &config.args, None)
+        }
+    }
+}
+
+fn connect_read_transport(config: &BridgeCodexConfig) -> Result<CodexJsonTransport, String> {
+    match config.mode {
+        CodexRuntimeMode::Spawn => connect_transport(config),
+        CodexRuntimeMode::Attach | CodexRuntimeMode::Auto => {
+            CodexJsonTransport::start(&config.command, &config.args, None)
+                .or_else(|_| connect_transport(config))
         }
     }
 }
@@ -729,6 +1043,14 @@ fn value_text(value: Option<&Value>) -> Option<String> {
     }
 }
 
+fn is_placeholder_thread_title(title: &str) -> bool {
+    let normalized = title.trim().to_lowercase();
+    normalized.is_empty()
+        || normalized == "untitled thread"
+        || normalized == "new thread"
+        || normalized == "fresh session"
+}
+
 fn map_thread_summary(thread: CodexThread) -> ThreadSummaryDto {
     let repository = thread
         .git_info
@@ -744,7 +1066,6 @@ fn map_thread_summary(thread: CodexThread) -> ThreadSummaryDto {
     let title = thread
         .name
         .as_deref()
-        .or(thread.preview.as_deref())
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("Untitled thread")
         .to_string();
@@ -825,7 +1146,6 @@ fn map_thread_detail(thread: &CodexThread) -> ThreadDetailDto {
     let title = thread
         .name
         .as_deref()
-        .or(thread.preview.as_deref())
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("Untitled thread")
         .to_string();
@@ -1042,6 +1362,11 @@ fn normalize_codex_tool_invocation_item(item: &Value) -> Option<(BridgeEventKind
         .and_then(Value::as_str)
         .or_else(|| item.get("command").and_then(Value::as_str))
         .unwrap_or("command");
+    if tool_name == "update_plan"
+        && let Some(payload) = normalize_update_plan_tool_item(item)
+    {
+        return Some((BridgeEventKind::PlanDelta, payload));
+    }
     let input = item
         .get("input")
         .cloned()
@@ -1074,6 +1399,106 @@ fn normalize_codex_tool_invocation_item(item: &Value) -> Option<(BridgeEventKind
             normalize_command_item(&payload)
         },
     ))
+}
+
+fn normalize_update_plan_tool_item(item: &Value) -> Option<Value> {
+    let plan_input = parse_update_plan_input(
+        item.get("input")
+            .or_else(|| item.get("arguments"))
+            .unwrap_or(&Value::Null),
+    )?;
+    let steps = normalize_update_plan_steps(&plan_input);
+    let explanation = plan_input
+        .get("explanation")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if steps.is_empty() && explanation.is_none() {
+        return None;
+    }
+
+    let total_count = steps.len();
+    let completed_count = steps
+        .iter()
+        .filter(|step| step.get("status").and_then(Value::as_str) == Some("completed"))
+        .count();
+    let text =
+        render_update_plan_text(explanation.as_deref(), &steps, completed_count, total_count);
+
+    let mut payload = json!({
+        "id": item.get("id").and_then(Value::as_str).unwrap_or_default(),
+        "type": "plan",
+        "text": text,
+    });
+    if let Some(object) = payload.as_object_mut() {
+        if let Some(explanation) = explanation {
+            object.insert("explanation".to_string(), Value::String(explanation));
+        }
+        if !steps.is_empty() {
+            object.insert("steps".to_string(), Value::Array(steps));
+            object.insert("completed_count".to_string(), json!(completed_count));
+            object.insert("total_count".to_string(), json!(total_count));
+        }
+    }
+
+    Some(payload)
+}
+
+fn parse_update_plan_input(input: &Value) -> Option<Value> {
+    match input {
+        Value::String(text) => serde_json::from_str::<Value>(text).ok(),
+        Value::Object(_) => Some(input.clone()),
+        _ => None,
+    }
+}
+
+fn normalize_update_plan_steps(plan_input: &Value) -> Vec<Value> {
+    plan_input
+        .get("plan")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let step = entry
+                .get("step")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?;
+            let status = entry
+                .get("status")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("pending");
+            Some(json!({
+                "step": step,
+                "status": status,
+            }))
+        })
+        .collect()
+}
+
+fn render_update_plan_text(
+    explanation: Option<&str>,
+    steps: &[Value],
+    completed_count: usize,
+    total_count: usize,
+) -> String {
+    if total_count == 0 {
+        return explanation.unwrap_or_default().to_string();
+    }
+
+    let task_label = if total_count == 1 { "task" } else { "tasks" };
+    let mut lines = vec![format!(
+        "{completed_count} out of {total_count} {task_label} completed"
+    )];
+    lines.extend(steps.iter().enumerate().filter_map(|(index, step)| {
+        step.get("step")
+            .and_then(Value::as_str)
+            .map(|value| format!("{}. {value}", index + 1))
+    }));
+    lines.join("\n")
 }
 
 fn normalize_codex_tool_output_item(item: &Value) -> Option<(BridgeEventKind, Value)> {
@@ -1502,8 +1927,9 @@ fn extract_file_name_from_command(command: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CodexGateway, build_turn_start_input, derive_repository_name_from_cwd,
-        fetch_thread_summaries_from_archive, normalize_codex_item_payload, parse_model_options,
+        CodexGateway, CodexThread, build_turn_start_input, derive_repository_name_from_cwd,
+        extract_generated_thread_title, fetch_thread_summaries_from_archive, map_thread_summary,
+        normalize_codex_item_payload, normalize_generated_thread_title, parse_model_options,
         parse_repository_name_from_origin, prefer_archive_timeline_when_rpc_lacks_tool_events,
     };
     use crate::codex_runtime::CodexRuntimeMode;
@@ -1544,6 +1970,27 @@ mod tests {
         assert_eq!(kind, BridgeEventKind::CommandDelta);
         assert_eq!(payload["command"], "exec_command");
         assert_eq!(payload["arguments"], "{\"cmd\":\"flutter analyze\"}");
+    }
+
+    #[test]
+    fn update_plan_function_call_normalizes_to_plan_delta() {
+        let item = json!({
+            "id": "tool-2",
+            "type": "functionCall",
+            "name": "update_plan",
+            "arguments": "{\"plan\":[{\"step\":\"Inspect bridge payload\",\"status\":\"completed\"},{\"step\":\"Add Flutter card\",\"status\":\"in_progress\"}]}"
+        });
+
+        let (kind, payload) =
+            normalize_codex_item_payload(&item).expect("update_plan should normalize");
+        assert_eq!(kind, BridgeEventKind::PlanDelta);
+        assert_eq!(payload["type"], "plan");
+        assert_eq!(payload["completed_count"], 1);
+        assert_eq!(payload["total_count"], 2);
+        assert_eq!(
+            payload["text"].as_str(),
+            Some("1 out of 2 tasks completed\n1. Inspect bridge payload\n2. Add Flutter card")
+        );
     }
 
     #[test]
@@ -1621,6 +2068,47 @@ mod tests {
     }
 
     #[test]
+    fn generated_thread_title_is_normalized() {
+        assert_eq!(
+            normalize_generated_thread_title("  \"Fix stale thread state.\"  "),
+            Some("Fix stale thread state".to_string())
+        );
+        assert_eq!(normalize_generated_thread_title("Untitled thread"), None);
+    }
+
+    #[test]
+    fn generated_thread_title_prefers_structured_json_field() {
+        assert_eq!(
+            extract_generated_thread_title(Some(r#"{"title":"Add todo list to Flutter app"}"#)),
+            Some("Add todo list to Flutter app".to_string())
+        );
+    }
+
+    #[test]
+    fn thread_summary_ignores_preview_when_name_is_missing() {
+        let summary = map_thread_summary(CodexThread {
+            id: "thread-1".to_string(),
+            name: None,
+            preview: Some("This should stay a preview".to_string()),
+            status: super::CodexThreadStatus {
+                kind: "idle".to_string(),
+            },
+            cwd: "/Users/test/project".to_string(),
+            path: None,
+            git_info: Some(super::CodexGitInfo {
+                branch: Some("main".to_string()),
+                origin_url: Some("git@github.com:openai/codex-mobile-companion.git".to_string()),
+            }),
+            created_at: 0,
+            updated_at: 0,
+            source: json!("cli"),
+            turns: Vec::new(),
+        });
+
+        assert_eq!(summary.title, "Untitled thread");
+    }
+
+    #[test]
     fn archive_timeline_is_preferred_when_rpc_has_only_messages() {
         let rpc_entries = vec![ThreadTimelineEntryDto {
             event_id: "evt-msg".to_string(),
@@ -1684,6 +2172,7 @@ mod tests {
             endpoint: None,
             command: "definitely-missing-codex".to_string(),
             args: vec!["app-server".to_string()],
+            desktop_ipc_socket_path: None,
         })
         .expect("archive fallback should load thread summaries");
 
@@ -1725,6 +2214,7 @@ mod tests {
                 endpoint: None,
                 command: codex_bin,
                 args: vec!["app-server".to_string()],
+                desktop_ipc_socket_path: None,
             });
 
             let create_started_at = Instant::now();
@@ -1759,6 +2249,7 @@ mod tests {
                     move |event| {
                         let _ = event_tx.send(event);
                     },
+                    |_| {},
                 )
                 .expect("turn should start");
 

@@ -143,7 +143,8 @@ class ThreadDetailPage extends ConsumerStatefulWidget {
   ConsumerState<ThreadDetailPage> createState() => _ThreadDetailPageState();
 }
 
-class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
+class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
+    with WidgetsBindingObserver {
   static const double _historyPrefetchTriggerOffset = 160;
   static const double _sessionContentMaxWidth = threadSessionContentMaxWidth;
 
@@ -153,6 +154,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   late final ScrollController _timelineScrollController;
   late final ValueNotifier<bool> _isHeaderCollapsed;
   late final ValueNotifier<bool> _showNewMessagePill;
+  late final ValueNotifier<String?> _newMessagePreview;
   final ImagePicker _imagePicker = ImagePicker();
   SpeechCapture? _speechCapture;
 
@@ -182,6 +184,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   bool _hasUserScrolledTimeline = false;
   bool _didSubmitInitialComposerInput = false;
   bool _isDraftThreadCreationInFlight = false;
+  bool _isResumeReconnectInFlight = false;
   Future<void> Function()? _loadEarlierHistory;
   String? _draftThreadErrorMessage;
   final Map<String, bool> _timelineExpansionState = <String, bool>{};
@@ -191,6 +194,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   double _lastScrollOffset = 0;
   double _scrollOffsetOnDirectionChange = 0;
   bool _isScrollingDown = false;
+  bool _isTimelineAutoFollowEnabled = true;
 
   bool get _isDraftMode =>
       widget.threadId == null && _localDraftTransition == null;
@@ -228,6 +232,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (widget.initialSelectedModel != null &&
         widget.initialSelectedModel!.trim().isNotEmpty) {
       _selectedModel = widget.initialSelectedModel!.trim();
@@ -244,6 +249,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     _timelineScrollController = ScrollController();
     _isHeaderCollapsed = ValueNotifier(false);
     _showNewMessagePill = ValueNotifier(false);
+    _newMessagePreview = ValueNotifier(null);
     _composerFocusNode.addListener(_handleComposerFocusChange);
     _timelineScrollController.addListener(_onScroll);
     _setComposerSelectionsFromCatalog(_availableModelOptions);
@@ -475,12 +481,32 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
 
     _lastScrollOffset = currentOffset;
 
-    final isNearBottom = position.maxScrollExtent - currentOffset < 120;
+    final isNearBottom = _isTimelineNearBottom(currentOffset: currentOffset);
+    if (isNearBottom) {
+      _isTimelineAutoFollowEnabled = true;
+    }
     if (isNearBottom && _showNewMessagePill.value) {
       _showNewMessagePill.value = false;
+      _newMessagePreview.value = null;
     }
 
     _maybeAutoLoadEarlierHistory();
+  }
+
+  bool _isTimelineNearBottom({double? currentOffset, double tolerance = 120}) {
+    if (!_timelineScrollController.hasClients) {
+      return true;
+    }
+
+    final position = _timelineScrollController.position;
+    final effectiveOffset =
+        currentOffset ??
+        clampDouble(
+          _timelineScrollController.offset,
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        );
+    return position.maxScrollExtent - effectiveOffset < tolerance;
   }
 
   void _maybeAutoLoadEarlierHistory() {
@@ -539,6 +565,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       _localDraftTransition = null;
       _didInitialScrollToBottom = false;
       _didSubmitInitialComposerInput = false;
+      _isTimelineAutoFollowEnabled = true;
       _timelineExpansionState.clear();
     }
     if (oldWidget.bridgeApiBaseUrl != widget.bridgeApiBaseUrl) {
@@ -576,7 +603,43 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state != AppLifecycleState.resumed) {
+      return;
+    }
+    unawaited(_refreshThreadConnectionOnResume());
+  }
+
+  Future<void> _refreshThreadConnectionOnResume() async {
+    if (!mounted || _isDraftMode || _isResumeReconnectInFlight) {
+      return;
+    }
+
+    final threadId = _effectiveThreadId;
+    if (threadId == null || threadId.trim().isEmpty) {
+      return;
+    }
+
+    _isResumeReconnectInFlight = true;
+    final args = ThreadDetailControllerArgs(
+      bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+      threadId: threadId,
+      initialVisibleTimelineEntries: widget.initialVisibleTimelineEntries,
+    );
+
+    try {
+      await ref
+          .read(threadDetailControllerProvider(args).notifier)
+          .retryReconnectCatchUp();
+    } finally {
+      _isResumeReconnectInFlight = false;
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     if (_isSpeechRecording) {
       unawaited(_resolvedSpeechCapture.stop());
     }
@@ -594,6 +657,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     _timelineScrollController.dispose();
     _isHeaderCollapsed.dispose();
     _showNewMessagePill.dispose();
+    _newMessagePreview.dispose();
     super.dispose();
   }
 
@@ -615,6 +679,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
       }
 
       final position = _timelineScrollController.position;
+      _isTimelineAutoFollowEnabled = true;
       _timelineScrollController.jumpTo(position.maxScrollExtent);
 
       if (attempt < 2) {
@@ -641,6 +706,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_timelineScrollController.hasClients) return;
       final position = _timelineScrollController.position;
+      _isTimelineAutoFollowEnabled = true;
       _timelineScrollController.animateTo(
         position.maxScrollExtent,
         duration: const Duration(milliseconds: 250),
@@ -1017,6 +1083,22 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
     }
 
     _hasUserScrolledTimeline = true;
+  }
+
+  void _handleTimelineUserScrollDirection(ScrollDirection direction) {
+    if (direction == ScrollDirection.idle) {
+      return;
+    }
+
+    _markTimelineUserScroll();
+    if (direction == ScrollDirection.forward) {
+      _isTimelineAutoFollowEnabled = false;
+      return;
+    }
+
+    if (_isTimelineNearBottom(tolerance: 180)) {
+      _isTimelineAutoFollowEnabled = true;
+    }
   }
 
   Future<void> _showGitBranchSheet(
@@ -1412,15 +1494,14 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
             return;
           }
 
-          final isNearBottom =
-              !_timelineScrollController.hasClients ||
-              (_timelineScrollController.position.maxScrollExtent -
-                      _timelineScrollController.offset <
-                  180);
-
-          if (isNearBottom) {
+          if (_isTimelineAutoFollowEnabled && _isTimelineNearBottom()) {
+            _newMessagePreview.value = null;
             _scrollToTimelineBottom();
           } else {
+            final preview = next.$3?.trim();
+            _newMessagePreview.value = preview == null || preview.isEmpty
+                ? null
+                : preview;
             _showNewMessagePill.value = true;
           }
         }
@@ -1539,7 +1620,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                   onRefreshApprovals: () {
                     approvalsController.loadApprovals(showLoading: false);
                   },
-                  onTimelineUserScroll: _markTimelineUserScroll,
+                  onTimelineUserScroll: _handleTimelineUserScrollDirection,
                   scrollController: _timelineScrollController,
                   isTimelineCardExpanded: _isTimelineCardExpanded,
                   onTimelineCardExpansionChanged: _setTimelineCardExpanded,
@@ -1630,25 +1711,67 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage> {
                                             variant:
                                                 MagneticButtonVariant.secondary,
                                             onClick: () {
+                                              _isTimelineAutoFollowEnabled =
+                                                  true;
                                               _showNewMessagePill.value = false;
+                                              _newMessagePreview.value = null;
                                               _jumpToTimelineBottom(attempt: 0);
                                             },
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                const Text(
-                                                  'New messages',
-                                                  style: TextStyle(
-                                                    fontSize: 14,
-                                                    fontWeight: FontWeight.w600,
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 8),
-                                                PhosphorIcon(
-                                                  PhosphorIcons.arrowDown(),
-                                                  size: 16,
-                                                ),
-                                              ],
+                                            child: ValueListenableBuilder<String?>(
+                                              valueListenable:
+                                                  _newMessagePreview,
+                                              builder: (context, preview, child) {
+                                                return Row(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    Flexible(
+                                                      child: Column(
+                                                        mainAxisSize:
+                                                            MainAxisSize.min,
+                                                        crossAxisAlignment:
+                                                            CrossAxisAlignment
+                                                                .start,
+                                                        children: [
+                                                          const Text(
+                                                            'New messages',
+                                                            style: TextStyle(
+                                                              fontSize: 14,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w600,
+                                                            ),
+                                                          ),
+                                                          if (preview != null)
+                                                            Padding(
+                                                              padding:
+                                                                  const EdgeInsets.only(
+                                                                    top: 2,
+                                                                  ),
+                                                              child: Text(
+                                                                preview,
+                                                                maxLines: 1,
+                                                                overflow:
+                                                                    TextOverflow
+                                                                        .ellipsis,
+                                                                style: const TextStyle(
+                                                                  fontSize: 12,
+                                                                  color: AppTheme
+                                                                      .textSubtle,
+                                                                ),
+                                                              ),
+                                                            ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                    PhosphorIcon(
+                                                      PhosphorIcons.arrowDown(),
+                                                      size: 16,
+                                                    ),
+                                                  ],
+                                                );
+                                              },
                                             ),
                                           ),
                                         )
