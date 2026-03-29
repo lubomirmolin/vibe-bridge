@@ -213,6 +213,37 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     );
   });
 
+  test('structured plan payload is parsed into a checklist snapshot', () {
+    final entry = ThreadTimelineEntryDto(
+      eventId: 'event-plan',
+      kind: BridgeEventKind.planDelta,
+      occurredAt: '2026-03-19T17:35:04.000Z',
+      summary: 'Plan updated',
+      payload: <String, dynamic>{
+        'type': 'plan',
+        'text':
+            '1 out of 3 tasks completed\n1. Inspect bridge payload\n2. Add Flutter card\n3. Run tests',
+        'steps': [
+          {'step': 'Inspect bridge payload', 'status': 'completed'},
+          {'step': 'Add Flutter card', 'status': 'in_progress'},
+          {'step': 'Run tests', 'status': 'pending'},
+        ],
+        'completed_count': 1,
+        'total_count': 3,
+      },
+    );
+
+    final item = ThreadActivityItem.fromTimelineEntry(entry);
+
+    expect(item.type, ThreadActivityItemType.planUpdate);
+    expect(item.plan, isNotNull);
+    expect(item.plan!.completedCount, 1);
+    expect(item.plan!.totalCount, 3);
+    expect(item.plan!.steps[1].status, ThreadPlanStepStatus.inProgress);
+    expect(item.body, contains('1 out of 3 tasks completed'));
+    expect(item.body, contains('2. Add Flutter card'));
+  });
+
   test('file-change exec_command arguments do not render as unknown command', () {
     final entry = ThreadTimelineEntryDto(
       eventId: 'event-4b',
