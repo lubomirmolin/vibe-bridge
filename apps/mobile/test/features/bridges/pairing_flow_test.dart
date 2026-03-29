@@ -670,8 +670,13 @@ String _validPayloadJson({
   "v": "2026-03-17",
   "b": "$bridgeId",
   "u": "https://bridge.ts.net",
+  "r": [
+    "https://bridge.ts.net"
+  ],
   "s": "$sessionId",
-  "t": "ptk-abc"
+  "t": "ptk-abc",
+  "i": 1773910800,
+  "e": 1773911100
 }
 ''';
 }

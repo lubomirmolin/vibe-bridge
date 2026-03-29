@@ -337,6 +337,7 @@ class _PairDeviceCard extends StatelessWidget {
               child: QrImageView(
                 data: session.qrPayload,
                 size: 220,
+                errorCorrectionLevel: QrErrorCorrectLevel.M,
                 eyeStyle: const QrEyeStyle(
                   eyeShape: QrEyeShape.square,
                   color: Color(0xFF09090B),

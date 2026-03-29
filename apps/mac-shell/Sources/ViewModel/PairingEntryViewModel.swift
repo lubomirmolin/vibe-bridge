@@ -86,7 +86,7 @@ struct PairingQRCodeRenderer {
     static func makeImage(from payload: String) -> NSImage? {
         let filter = CIFilter.qrCodeGenerator()
         filter.setValue(Data(payload.utf8), forKey: "inputMessage")
-        filter.setValue("Q", forKey: "inputCorrectionLevel")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
 
         guard let outputImage = filter.outputImage else {
             return nil

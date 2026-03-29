@@ -58,9 +58,11 @@ class PairingQrPayload {
       pairingToken: _readRequiredStringAny(json, ['pairing_token', 't']),
       issuedAtEpochSeconds: _readOptionalIntAny(json, [
         'issued_at_epoch_seconds',
+        'i',
       ]),
       expiresAtEpochSeconds: _readOptionalIntAny(json, [
         'expires_at_epoch_seconds',
+        'e',
       ]),
     );
 
@@ -289,6 +291,25 @@ List<BridgeApiRoute> _readBridgeApiRoutes(
   Map<String, dynamic> json, {
   required String fallbackBaseUrl,
 }) {
+  final compactRoutes = json['r'];
+  if (compactRoutes is List<dynamic>) {
+    final parsed = compactRoutes
+        .asMap()
+        .entries
+        .map(
+          (entry) => _readCompactBridgeApiRoute(
+            entry.value,
+            index: entry.key,
+            fallbackBaseUrl: fallbackBaseUrl,
+          ),
+        )
+        .toList(growable: false);
+    if (parsed.isEmpty) {
+      throw const FormatException('r must not be empty.');
+    }
+    return parsed;
+  }
+
   final rawRoutes = json['bridge_api_routes'];
   if (rawRoutes is List<dynamic>) {
     final parsed = rawRoutes
@@ -310,6 +331,45 @@ List<BridgeApiRoute> _readBridgeApiRoutes(
   }
 
   return <BridgeApiRoute>[BridgeApiRoute.legacy(baseUrl: fallbackBaseUrl)];
+}
+
+BridgeApiRoute _readCompactBridgeApiRoute(
+  dynamic rawRoute, {
+  required int index,
+  required String fallbackBaseUrl,
+}) {
+  if (rawRoute is String) {
+    return _buildCompactBridgeApiRoute(
+      baseUrl: rawRoute,
+      index: index,
+      fallbackBaseUrl: fallbackBaseUrl,
+    );
+  }
+
+  throw const FormatException('Invalid r entry.');
+}
+
+BridgeApiRoute _buildCompactBridgeApiRoute({
+  required String baseUrl,
+  required int index,
+  required String fallbackBaseUrl,
+}) {
+  final normalizedBaseUrl = baseUrl.trim();
+  final kind = _readBridgeApiRouteKind(
+    _inferBridgeApiRouteKindWire(normalizedBaseUrl),
+    normalizedBaseUrl,
+  );
+  if (!isSupportedBridgeApiRouteBaseUrl(normalizedBaseUrl, kind: kind)) {
+    throw const FormatException('Invalid bridge API route.');
+  }
+
+  return BridgeApiRoute(
+    id: kind == BridgeApiRouteKind.tailscale ? 'tailscale' : 'local_network',
+    kind: kind,
+    baseUrl: normalizedBaseUrl,
+    reachable: true,
+    isPreferred: index == 0 || normalizedBaseUrl == fallbackBaseUrl.trim(),
+  );
 }
 
 BridgeApiRouteKind _readBridgeApiRouteKind(String raw, String baseUrl) {

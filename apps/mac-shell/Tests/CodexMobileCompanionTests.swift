@@ -78,7 +78,7 @@ final class CodexMobileCompanionTests: XCTestCase {
             "issued_at_epoch_seconds": 1,
             "expires_at_epoch_seconds": 301
           },
-          "qr_payload": "{\\"v\\":\\"2026-03-23\\",\\"b\\":\\"bridge-74dbf8ad31e2af1b\\",\\"u\\":\\"http://192.168.1.10:3110\\",\\"bridge_api_routes\\":[{\\"id\\":\\"local_network\\",\\"kind\\":\\"local_network\\",\\"base_url\\":\\"http://192.168.1.10:3110\\",\\"reachable\\":true,\\"is_preferred\\":true}],\\"issued_at_epoch_seconds\\":1,\\"expires_at_epoch_seconds\\":301,\\"s\\":\\"pairing-session-1\\",\\"t\\":\\"ptk-aabbccdd\\"}"
+          "qr_payload": "{\\"v\\":\\"2026-03-23\\",\\"b\\":\\"bridge-74dbf8ad31e2af1b\\",\\"u\\":\\"http://192.168.1.10:3110\\",\\"r\\":[\\"http://192.168.1.10:3110\\"],\\"s\\":\\"pairing-session-1\\",\\"t\\":\\"ptk-aabbccdd\\"}"
         }
         """
 
