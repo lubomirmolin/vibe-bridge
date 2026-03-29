@@ -147,6 +147,10 @@ class _CodexLinuxShellAppState extends State<CodexLinuxShellApp>
             onChooseCodexBinary: _chooseCodexBinary,
             onRefreshQr: () => _controller.refreshPairingSession(force: true),
             onRestartRuntime: _controller.restartLocalRuntime,
+            onInstallSpeechModel: _controller.ensureSpeechModelOnDesktop,
+            onRemoveSpeechModel: _controller.removeSpeechModelFromDesktop,
+            onSetLocalNetworkPairingEnabled:
+                _controller.setLocalNetworkPairingEnabled,
             onRevokeActiveDevice:
                 _controller.revokeActiveTrustedDeviceFromDesktop,
             onRevokeAllDevices: _controller.revokeAllTrustedDevicesFromDesktop,

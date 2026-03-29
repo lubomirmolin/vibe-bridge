@@ -53,6 +53,9 @@ class _PreviewHomeState extends State<_PreviewHome> {
           onChooseCodexBinary: () async {},
           onRefreshQr: () async {},
           onRestartRuntime: () async {},
+          onInstallSpeechModel: () async {},
+          onRemoveSpeechModel: () async {},
+          onSetLocalNetworkPairingEnabled: (_) async {},
           onRevokeActiveDevice: () async {},
           onRevokeAllDevices: () async {},
         ),
@@ -253,6 +256,28 @@ ShellPresentationState _stateFor(PreviewScenario scenario) {
             binaryPath: '/home/lubo/.nvm/versions/node/v24.14.0/bin/codex',
             sourceLabel: 'NVM',
           ),
+    localNetworkPairingEnabled: true,
+    pairingRoutes: const <BridgeApiRouteDto>[
+      const BridgeApiRouteDto(
+        id: 'tailscale',
+        kind: BridgeApiRouteKind.tailscale,
+        baseUrl: 'https://host.tailnet.ts.net',
+        reachable: true,
+        isPreferred: true,
+      ),
+      const BridgeApiRouteDto(
+        id: 'local_network',
+        kind: BridgeApiRouteKind.localNetwork,
+        baseUrl: 'http://192.168.1.10:3110',
+        reachable: true,
+        isPreferred: false,
+      ),
+    ],
+    speechPanel: const SpeechPanelPresentation(
+      stateLabel: 'Ready',
+      detail: 'Speech runtime is managed by the local bridge.',
+      isReadOnly: false,
+    ),
     trayAvailable: true,
     trayStatusDetail:
         'Preview tray detail only. No real tray integration here.',
@@ -301,6 +326,15 @@ ShellPresentationState _stateFor(PreviewScenario scenario) {
               displayName: 'Codex Host',
               apiBaseUrl: 'http://127.0.0.1:3110',
             ),
+            bridgeApiRoutes: const <BridgeApiRouteDto>[
+              const BridgeApiRouteDto(
+                id: 'tailscale',
+                kind: BridgeApiRouteKind.tailscale,
+                baseUrl: 'https://host.tailnet.ts.net',
+                reachable: true,
+                isPreferred: true,
+              ),
+            ],
             pairingSession: const PairingSessionDto(
               sessionId: 'preview-session',
               pairingToken: 'preview-token',

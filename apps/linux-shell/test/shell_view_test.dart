@@ -32,6 +32,15 @@ void main() {
             displayName: 'Codex Host',
             apiBaseUrl: 'http://127.0.0.1:3110',
           ),
+          bridgeApiRoutes: const <BridgeApiRouteDto>[
+            const BridgeApiRouteDto(
+              id: 'tailscale',
+              kind: BridgeApiRouteKind.tailscale,
+              baseUrl: 'http://127.0.0.1:3110',
+              reachable: true,
+              isPreferred: true,
+            ),
+          ],
           pairingSession: const PairingSessionDto(
             sessionId: 'session-1',
             pairingToken: 'token',
@@ -118,6 +127,15 @@ void main() {
             displayName: 'Codex Host',
             apiBaseUrl: 'http://127.0.0.1:3110',
           ),
+          bridgeApiRoutes: const <BridgeApiRouteDto>[
+            const BridgeApiRouteDto(
+              id: 'tailscale',
+              kind: BridgeApiRouteKind.tailscale,
+              baseUrl: 'http://127.0.0.1:3110',
+              reachable: true,
+              isPreferred: true,
+            ),
+          ],
           pairingSession: const PairingSessionDto(
             sessionId: 'session-2',
             pairingToken: 'token',
@@ -185,6 +203,15 @@ void main() {
             displayName: 'Codex Host',
             apiBaseUrl: 'http://127.0.0.1:3110',
           ),
+          bridgeApiRoutes: const <BridgeApiRouteDto>[
+            const BridgeApiRouteDto(
+              id: 'tailscale',
+              kind: BridgeApiRouteKind.tailscale,
+              baseUrl: 'http://127.0.0.1:3110',
+              reachable: true,
+              isPreferred: true,
+            ),
+          ],
           pairingSession: const PairingSessionDto(
             sessionId: 'session-1',
             pairingToken: 'token',
@@ -207,6 +234,42 @@ void main() {
     expect(find.text('Choose Binary'), findsOneWidget);
     expect(find.byKey(const Key('pairing-qr')), findsOneWidget);
   });
+
+  testWidgets('renders network and speech controls', (tester) async {
+    await _pumpShellView(
+      tester,
+      _state(
+        pairingRoutes: const <BridgeApiRouteDto>[
+          const BridgeApiRouteDto(
+            id: 'tailscale',
+            kind: BridgeApiRouteKind.tailscale,
+            baseUrl: 'https://host.tailnet.ts.net',
+            reachable: true,
+            isPreferred: true,
+          ),
+          const BridgeApiRouteDto(
+            id: 'local_network',
+            kind: BridgeApiRouteKind.localNetwork,
+            baseUrl: 'http://192.168.1.10:3110',
+            reachable: true,
+            isPreferred: false,
+          ),
+        ],
+        localNetworkPairingEnabled: true,
+        speechPanel: const SpeechPanelPresentation(
+          stateLabel: 'Ready',
+          detail: 'Speech runtime is managed by the local bridge.',
+          isReadOnly: false,
+        ),
+      ),
+    );
+
+    expect(find.text('Pairing Routes'), findsWidgets);
+    expect(find.text('Enable Local Network Pairing'), findsOneWidget);
+    expect(find.text('Speech'), findsWidgets);
+    expect(find.text('Download Parakeet'), findsOneWidget);
+    expect(find.text('Remove Parakeet'), findsOneWidget);
+  });
 }
 
 Widget _wrap(ShellPresentationState state) {
@@ -218,6 +281,9 @@ Widget _wrap(ShellPresentationState state) {
       onChooseCodexBinary: () async {},
       onRefreshQr: () async {},
       onRestartRuntime: () async {},
+      onInstallSpeechModel: () async {},
+      onRemoveSpeechModel: () async {},
+      onSetLocalNetworkPairingEnabled: (_) async {},
       onRevokeActiveDevice: () async {},
       onRevokeAllDevices: () async {},
     ),
@@ -241,6 +307,9 @@ ShellPresentationState _state({
   PairingSessionResponseDto? pairingSession,
   TailscalePresentation? tailscale,
   CodexPresentation? codex,
+  SpeechPanelPresentation? speechPanel,
+  bool? localNetworkPairingEnabled,
+  List<BridgeApiRouteDto>? pairingRoutes,
   List<TrustedDevicePresentation>? trustedDevices,
 }) {
   return ShellPresentationState.initial().copyWith(
@@ -270,6 +339,9 @@ ShellPresentationState _state({
         'Private pairing route is unavailable until Tailscale is installed.',
       _ => 'Bridge runtime healthy.',
     },
+    speechPanel: speechPanel,
+    localNetworkPairingEnabled: localNetworkPairingEnabled,
+    pairingRoutes: pairingRoutes,
     tailscale:
         tailscale ??
         const TailscalePresentation(

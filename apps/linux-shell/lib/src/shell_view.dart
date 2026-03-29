@@ -1,3 +1,4 @@
+import 'package:codex_linux_shell/src/contracts.dart';
 import 'package:codex_linux_shell/src/shell_presentation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,6 +15,9 @@ class ShellView extends StatelessWidget {
     required this.onChooseCodexBinary,
     required this.onRefreshQr,
     required this.onRestartRuntime,
+    required this.onInstallSpeechModel,
+    required this.onRemoveSpeechModel,
+    required this.onSetLocalNetworkPairingEnabled,
     required this.onRevokeActiveDevice,
     required this.onRevokeAllDevices,
   });
@@ -24,6 +28,9 @@ class ShellView extends StatelessWidget {
   final Future<void> Function() onChooseCodexBinary;
   final Future<void> Function() onRefreshQr;
   final Future<void> Function() onRestartRuntime;
+  final Future<void> Function() onInstallSpeechModel;
+  final Future<void> Function() onRemoveSpeechModel;
+  final Future<void> Function(bool enabled) onSetLocalNetworkPairingEnabled;
   final Future<void> Function() onRevokeActiveDevice;
   final Future<void> Function() onRevokeAllDevices;
 
@@ -92,6 +99,20 @@ class ShellView extends StatelessWidget {
                                                 state: state,
                                               ),
                                               const SizedBox(height: 24),
+                                              _NetworkRoutesCard(
+                                                state: state,
+                                                onSetLocalNetworkPairingEnabled:
+                                                    onSetLocalNetworkPairingEnabled,
+                                              ),
+                                              const SizedBox(height: 24),
+                                              _SpeechCard(
+                                                state: state,
+                                                onInstallSpeechModel:
+                                                    onInstallSpeechModel,
+                                                onRemoveSpeechModel:
+                                                    onRemoveSpeechModel,
+                                              ),
+                                              const SizedBox(height: 24),
                                               _SystemActionsCard(
                                                 state: state,
                                                 onCheckTailscale:
@@ -139,6 +160,20 @@ class ShellView extends StatelessWidget {
                                       ],
                                       const SizedBox(height: 24),
                                       _ConnectionDetailsCard(state: state),
+                                      const SizedBox(height: 24),
+                                      _NetworkRoutesCard(
+                                        state: state,
+                                        onSetLocalNetworkPairingEnabled:
+                                            onSetLocalNetworkPairingEnabled,
+                                      ),
+                                      const SizedBox(height: 24),
+                                      _SpeechCard(
+                                        state: state,
+                                        onInstallSpeechModel:
+                                            onInstallSpeechModel,
+                                        onRemoveSpeechModel:
+                                            onRemoveSpeechModel,
+                                      ),
                                       const SizedBox(height: 24),
                                       _SystemActionsCard(
                                         state: state,
@@ -934,9 +969,13 @@ class _ConnectionDetailsCard extends StatelessWidget {
           Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
           _DetailRow(label: 'Bridge', value: state.bridgeRuntimeLabel),
           Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
+          _DetailRow(label: 'Pairing Routes', value: state.routeSummaryLabel),
+          Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
           _DetailRow(label: 'Tailscale', value: state.tailscale.statusLabel),
           Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
           _DetailRow(label: 'Codex', value: state.codex.statusLabel),
+          Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
+          _DetailRow(label: 'Speech', value: state.speechPanel.stateLabel),
           Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
           _DetailRow(
             label: 'Trusted Devices',
@@ -970,6 +1009,296 @@ class _ConnectionDetailsCard extends StatelessWidget {
                 const Text(
                   'End-to-End',
                   style: TextStyle(color: AppTheme.emerald, fontSize: 14),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NetworkRoutesCard extends StatelessWidget {
+  const _NetworkRoutesCard({
+    required this.state,
+    required this.onSetLocalNetworkPairingEnabled,
+  });
+
+  final ShellPresentationState state;
+  final Future<void> Function(bool enabled) onSetLocalNetworkPairingEnabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceZinc900.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.all(24),
+            child: Text(
+              'Pairing Routes',
+              style: TextStyle(
+                color: AppTheme.textMain,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
+          Padding(
+            padding: const EdgeInsets.all(24),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      Text(
+                        'Enable Local Network Pairing',
+                        style: TextStyle(
+                          color: AppTheme.textMain,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        'Advertise an HTTP LAN route alongside Tailscale on trusted private networks.',
+                        style: TextStyle(
+                          color: AppTheme.textSubtle,
+                          fontSize: 13,
+                          height: 1.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 24),
+                Switch(
+                  value: state.localNetworkPairingEnabled,
+                  onChanged:
+                      state.isUpdatingNetworkSettings || state.isRefreshingRuntime
+                      ? null
+                      : (enabled) => onSetLocalNetworkPairingEnabled(enabled),
+                  activeColor: AppTheme.emerald,
+                ),
+              ],
+            ),
+          ),
+          if (state.pairingRoutes.isNotEmpty) ...[
+            Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
+            ...state.pairingRoutes.map(
+              (route) => Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 18,
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: route.reachable
+                                ? AppTheme.emerald
+                                : AppTheme.textSubtle,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                route.kind == BridgeApiRouteKind.tailscale
+                                    ? 'Tailscale'
+                                    : 'Local Network',
+                                style: const TextStyle(
+                                  color: AppTheme.textMain,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                route.baseUrl,
+                                style: AppTheme.monoTextStyle.copyWith(
+                                  color: AppTheme.textMuted,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Text(
+                          route.isPreferred && route.reachable
+                              ? 'PRIMARY'
+                              : route.reachable
+                              ? 'REACHABLE'
+                              : 'OFFLINE',
+                          style: TextStyle(
+                            color: route.reachable
+                                ? AppTheme.emerald
+                                : AppTheme.textSubtle,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (route != state.pairingRoutes.last)
+                    Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SpeechCard extends StatelessWidget {
+  const _SpeechCard({
+    required this.state,
+    required this.onInstallSpeechModel,
+    required this.onRemoveSpeechModel,
+  });
+
+  final ShellPresentationState state;
+  final Future<void> Function() onInstallSpeechModel;
+  final Future<void> Function() onRemoveSpeechModel;
+
+  @override
+  Widget build(BuildContext context) {
+    final showProgress =
+        state.speechPanel.stateLabel == 'Installing' &&
+        state.speechPanel.downloadProgress != null;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceZinc900.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.all(24),
+            child: Text(
+              'Speech',
+              style: TextStyle(
+                color: AppTheme.textMain,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
+          Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Parakeet v3',
+                        style: TextStyle(
+                          color: AppTheme.textMain,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      state.speechPanel.stateLabel,
+                      style: TextStyle(
+                        color: state.speechPanel.stateLabel == 'Ready'
+                            ? AppTheme.emerald
+                            : AppTheme.textMuted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  state.speechPanel.detail,
+                  style: const TextStyle(
+                    color: AppTheme.textSubtle,
+                    fontSize: 13,
+                    height: 1.5,
+                  ),
+                ),
+                if (showProgress) ...[
+                  const SizedBox(height: 16),
+                  LinearProgressIndicator(
+                    value: state.speechPanel.downloadProgress! / 100,
+                    color: AppTheme.emerald,
+                    backgroundColor: Colors.white.withValues(alpha: 0.06),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${state.speechPanel.downloadProgress}%',
+                    style: AppTheme.monoTextStyle.copyWith(
+                      color: AppTheme.textMuted,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
+          Padding(
+            padding: const EdgeInsets.all(24),
+            child: Row(
+              children: [
+                Expanded(
+                  child: MagneticButton(
+                    variant: MagneticButtonVariant.primary,
+                    onClick: state.canInstallSpeechModel
+                        ? () => onInstallSpeechModel()
+                        : () {},
+                    child: Text(
+                      state.isInstallingSpeechModel
+                          ? 'Downloading...'
+                          : 'Download Parakeet',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: TextButton(
+                    onPressed: state.canRemoveSpeechModel
+                        ? onRemoveSpeechModel
+                        : null,
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppTheme.rose,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    child: Text(
+                      state.isRemovingSpeechModel
+                          ? 'Removing...'
+                          : 'Remove Parakeet',
+                    ),
+                  ),
                 ),
               ],
             ),
