@@ -11,6 +11,7 @@
 .packages
 .pub-cache/
 build/
+dist/
 
 target/
 
@@ -18,5 +19,7 @@ DerivedData/
 *.xcuserdatad/
 *.xcworkspace/xcuserdata/
 *.xcodeproj/project.xcworkspace/xcuserdata/
+apps/mobile/android/key.properties
+apps/mobile/android/upload-keystore.jks
 
 *.log
