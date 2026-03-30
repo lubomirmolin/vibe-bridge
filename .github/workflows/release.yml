@@ -46,7 +46,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          REQUIRE_ANDROID_RELEASE_SIGNING: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && '1' || '0' }}
+          REQUIRE_ANDROID_RELEASE_SIGNING: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
         run: ./scripts/release/package-android.sh
 
       - uses: actions/upload-artifact@v6
