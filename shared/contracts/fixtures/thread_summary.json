@@ -1,10 +1,10 @@
 {
-  "contract_version": "2026-03-23",
+  "contract_version": "2026-03-29",
   "thread_id": "thread-123",
   "title": "Implement shared contracts",
   "status": "running",
-  "workspace": "/workspace/vibe-bridge-companion",
-  "repository": "vibe-bridge-companion",
-  "branch": "master",
+  "workspace": "/workspace/vibe-bridge",
+  "repository": "vibe-bridge",
+  "branch": "main",
   "updated_at": "2026-03-17T18:00:00Z"
 }

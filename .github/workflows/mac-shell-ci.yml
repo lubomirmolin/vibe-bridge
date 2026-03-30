@@ -1,0 +1,67 @@
+name: Mac Shell CI
+
+on:
+  pull_request:
+    paths:
+      - "apps/mac-shell/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/mac-shell-ci.yml"
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - "apps/mac-shell/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/mac-shell-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-shell-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mac-shell:
+    runs-on: macos-15-intel
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Run macOS unit tests
+        run: |
+          export MACOS_BUILD_ARCH="$(uname -m)"
+          export CODEX_MOBILE_COMPANION_CARGO_BIN="$HOME/.cargo/bin/cargo"
+          export CODEX_MOBILE_COMPANION_RUSTC_BIN="$HOME/.cargo/bin/rustc"
+          xcodebuild test \
+            -project apps/mac-shell/CodexMobileCompanion.xcodeproj \
+            -scheme CodexMobileCompanion \
+            -destination "platform=macOS,arch=${MACOS_BUILD_ARCH}" \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Build macOS release app
+        run: |
+          export MACOS_BUILD_ARCH="$(uname -m)"
+          export CODEX_MOBILE_COMPANION_CARGO_BIN="$HOME/.cargo/bin/cargo"
+          export CODEX_MOBILE_COMPANION_RUSTC_BIN="$HOME/.cargo/bin/rustc"
+          xcodebuild \
+            -project apps/mac-shell/CodexMobileCompanion.xcodeproj \
+            -scheme CodexMobileCompanion \
+            -configuration Release \
+            -destination "platform=macOS,arch=${MACOS_BUILD_ARCH}" \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
