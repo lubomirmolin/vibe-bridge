@@ -218,6 +218,48 @@ final class CodexMobileCompanionTests: XCTestCase {
         }
     }
 
+    func testSemanticVersionOrdersPreReleaseBeforeStable() {
+        XCTAssertLessThan(
+            SemanticVersion(parsing: "1.2.3-beta.1")!,
+            SemanticVersion(parsing: "1.2.3")!
+        )
+    }
+
+    func testPreferredMacAssetPrefersZip() {
+        let assets = [
+            GitHubReleaseAsset(
+                name: "codex-mobile-companion-macos-arm64-1.0.0.dmg",
+                browserDownloadURL: URL(string: "https://github.com/lubomirmolin/vibe-bridge/releases/download/v1.0.0/codex-mobile-companion-macos-arm64-1.0.0.dmg")!
+            ),
+            GitHubReleaseAsset(
+                name: "codex-mobile-companion-macos-arm64-1.0.0.zip",
+                browserDownloadURL: URL(string: "https://github.com/lubomirmolin/vibe-bridge/releases/download/v1.0.0/codex-mobile-companion-macos-arm64-1.0.0.zip")!
+            )
+        ]
+
+        XCTAssertEqual(
+            GitHubReleaseUpdateChecker.preferredMacAsset(from: assets)?.name,
+            "codex-mobile-companion-macos-arm64-1.0.0.zip"
+        )
+    }
+
+    func testChecksumManifestParsesNamedAssetDigest() throws {
+        let manifest = """
+        1111111111111111111111111111111111111111111111111111111111111111  codex-mobile-companion-linux-x86_64-1.0.0.tar.gz
+        2222222222222222222222222222222222222222222222222222222222222222  codex-mobile-companion-macos-arm64-1.0.0.zip
+        """
+
+        let digest = try GitHubInAppUpdater.parseDigestManifest(
+            data: Data(manifest.utf8),
+            assetName: "codex-mobile-companion-macos-arm64-1.0.0.zip"
+        )
+
+        XCTAssertEqual(
+            digest,
+            "2222222222222222222222222222222222222222222222222222222222222222"
+        )
+    }
+
     func testBridgeBinaryPathResolverPrefersBundledHelper() throws {
         let tempDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

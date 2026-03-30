@@ -12,6 +12,9 @@ class ShellView extends StatelessWidget {
     required this.state,
     required this.onCheckTailscale,
     required this.onCheckCodex,
+    required this.onCheckForUpdates,
+    required this.onInstallUpdate,
+    required this.onOpenReleasesPage,
     required this.onChooseCodexBinary,
     required this.onRefreshQr,
     required this.onRestartRuntime,
@@ -25,6 +28,9 @@ class ShellView extends StatelessWidget {
   final ShellPresentationState state;
   final Future<void> Function() onCheckTailscale;
   final Future<void> Function() onCheckCodex;
+  final Future<void> Function() onCheckForUpdates;
+  final Future<void> Function() onInstallUpdate;
+  final Future<void> Function() onOpenReleasesPage;
   final Future<void> Function() onChooseCodexBinary;
   final Future<void> Function() onRefreshQr;
   final Future<void> Function() onRestartRuntime;
@@ -117,6 +123,16 @@ class ShellView extends StatelessWidget {
                                                       onRemoveSpeechModel,
                                                 ),
                                                 const SizedBox(height: 24),
+                                                _UpdateCard(
+                                                  state: state,
+                                                  onCheckForUpdates:
+                                                      onCheckForUpdates,
+                                                  onInstallUpdate:
+                                                      onInstallUpdate,
+                                                  onOpenReleasesPage:
+                                                      onOpenReleasesPage,
+                                                ),
+                                                const SizedBox(height: 24),
                                                 _SystemActionsCard(
                                                   state: state,
                                                   onCheckTailscale:
@@ -179,6 +195,13 @@ class ShellView extends StatelessWidget {
                                             onInstallSpeechModel,
                                         onRemoveSpeechModel:
                                             onRemoveSpeechModel,
+                                      ),
+                                      const SizedBox(height: 24),
+                                      _UpdateCard(
+                                        state: state,
+                                        onCheckForUpdates: onCheckForUpdates,
+                                        onInstallUpdate: onInstallUpdate,
+                                        onOpenReleasesPage: onOpenReleasesPage,
                                       ),
                                       const SizedBox(height: 24),
                                       _SystemActionsCard(
@@ -1349,6 +1372,123 @@ class _DetailRow extends StatelessWidget {
               value!,
               style: const TextStyle(color: AppTheme.textMain, fontSize: 14),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+class _UpdateCard extends StatelessWidget {
+  const _UpdateCard({
+    required this.state,
+    required this.onCheckForUpdates,
+    required this.onInstallUpdate,
+    required this.onOpenReleasesPage,
+  });
+
+  final ShellPresentationState state;
+  final Future<void> Function() onCheckForUpdates;
+  final Future<void> Function() onInstallUpdate;
+  final Future<void> Function() onOpenReleasesPage;
+
+  @override
+  Widget build(BuildContext context) {
+    final updatePanel = state.updatePanel;
+
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceZinc900.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Updates',
+                  style: TextStyle(
+                    color: AppTheme.textMain,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: updatePanel.isChecking || updatePanel.isInstalling
+                    ? null
+                    : onCheckForUpdates,
+                child: Text(
+                  updatePanel.isChecking ? 'Checking…' : 'Check for Updates',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'User-initiated updater only. No background auto-update daemon.',
+            style: const TextStyle(color: AppTheme.textSubtle, fontSize: 12),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            updatePanel.stateLabel,
+            style: AppTheme.monoTextStyle.copyWith(
+              color: AppTheme.emerald,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            updatePanel.detail,
+            style: const TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 14,
+              height: 1.5,
+            ),
+          ),
+          if (updatePanel.latestVersion != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              'Latest release: ${updatePanel.latestVersion}',
+              style: const TextStyle(
+                color: AppTheme.textMain,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              if (updatePanel.canInstall)
+                Expanded(
+                  child: MagneticButton(
+                    variant: MagneticButtonVariant.primary,
+                    onClick: updatePanel.isInstalling
+                        ? () {}
+                        : () => onInstallUpdate(),
+                    child: Text(
+                      updatePanel.isInstalling
+                          ? 'Installing…'
+                          : 'Download & Install Update',
+                    ),
+                  ),
+                ),
+              if (updatePanel.canInstall && updatePanel.showOpenReleases)
+                const SizedBox(width: 12),
+              if (updatePanel.showOpenReleases)
+                Expanded(
+                  child: MagneticButton(
+                    variant: MagneticButtonVariant.secondary,
+                    onClick: () => onOpenReleasesPage(),
+                    child: const Text('Open Releases Page'),
+                  ),
+                ),
+            ],
+          ),
         ],
       ),
     );

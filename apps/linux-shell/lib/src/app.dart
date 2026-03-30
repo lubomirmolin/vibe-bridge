@@ -88,6 +88,21 @@ class _CodexLinuxShellAppState extends State<CodexLinuxShellApp>
     await windowManager.focus();
   }
 
+  Future<void> _installUpdate() async {
+    final launched = await _controller.installUpdate();
+    if (!launched) {
+      return;
+    }
+
+    _isQuitting = true;
+    try {
+      await trayManager.destroy();
+    } catch (_) {
+      // Ignore tray teardown failures during updater handoff.
+    }
+    await windowManager.destroy();
+  }
+
   Future<void> _shutdownApp({required bool keepBridge}) async {
     if (_isQuitting) {
       return;
@@ -144,6 +159,9 @@ class _CodexLinuxShellAppState extends State<CodexLinuxShellApp>
             state: _controller.state,
             onCheckTailscale: _controller.checkTailscaleAvailability,
             onCheckCodex: _controller.checkCodexAvailability,
+            onCheckForUpdates: _controller.checkForUpdates,
+            onInstallUpdate: _installUpdate,
+            onOpenReleasesPage: _controller.openReleasesPage,
             onChooseCodexBinary: _chooseCodexBinary,
             onRefreshQr: () => _controller.refreshPairingSession(force: true),
             onRestartRuntime: _controller.restartLocalRuntime,
