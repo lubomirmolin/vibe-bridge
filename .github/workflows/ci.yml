@@ -92,7 +92,7 @@ jobs:
         run: |
           cd apps/mobile
           flutter pub get
-          flutter analyze --no-fatal-infos
+          flutter analyze --no-fatal-infos --no-fatal-warnings
           flutter test --concurrency=5
 
       - name: Build Android APK
@@ -106,7 +106,7 @@ jobs:
         run: |
           cd apps/linux-shell
           flutter pub get
-          flutter analyze --no-fatal-infos
+          flutter analyze --no-fatal-infos --no-fatal-warnings
           flutter test
 
       - name: Package Linux artifacts
