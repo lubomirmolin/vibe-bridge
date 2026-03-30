@@ -24,3 +24,5 @@ apps/mobile/android/upload-keystore.jks
 
 *.log
 tmp/
+.factory/
+.claude/references/
