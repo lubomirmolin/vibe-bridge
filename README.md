@@ -94,12 +94,7 @@ flutter build linux
 ## Validate
 
 ```bash
-flutter analyze apps/mobile
-(cd apps/linux-shell && flutter analyze)
-cargo fmt --manifest-path Cargo.toml --all --check
-cargo check --manifest-path Cargo.toml --workspace --all-targets
-cargo test --manifest-path Cargo.toml --workspace --jobs 5
-(cd apps/linux-shell && flutter test)
+./scripts/release/run-checks.sh
 ```
 
 ## Linux Packaging
@@ -120,9 +115,9 @@ Package the bundle as an AppImage when `appimagetool` is installed:
 
 The repository now includes:
 
-- `.github/workflows/ci.yml` for push and pull request validation
-- `.github/workflows/release.yml` for `main` rolling releases and tagged
+- `.github/workflows/release.yml` for tagged or manually triggered
   multi-platform release builds
+- `./scripts/release/run-checks.sh` for local validation before release
 
 Release builds package:
 

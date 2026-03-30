@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:codex_linux_shell/src/bridge_shell_api_client.dart';
 import 'package:codex_linux_shell/src/contracts.dart';
+import 'package:codex_linux_shell/src/release_updater.dart';
 import 'package:codex_linux_shell/src/runtime_supervisor.dart';
 import 'package:codex_linux_shell/src/shell_presentation.dart';
 import 'package:flutter/foundation.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 class ShellController extends ChangeNotifier {
   ShellController({
@@ -12,12 +14,18 @@ class ShellController extends ChangeNotifier {
     RuntimeSupervisor? runtimeSupervisor,
     TailscaleCliChecker? tailscaleCliChecker,
     CodexCliChecker? codexCliChecker,
+    ShellReleaseUpdater? releaseUpdater,
+    Future<String> Function()? appVersionProvider,
     Duration degradedPollInterval = const Duration(seconds: 2),
     Duration healthyPollInterval = const Duration(seconds: 5),
   }) : _bridgeClient = bridgeClient ?? BridgeShellApiClient(),
        _runtimeSupervisor = runtimeSupervisor ?? RuntimeSupervisor(),
        _tailscaleCliChecker = tailscaleCliChecker ?? LinuxTailscaleCliChecker(),
        _codexCliChecker = codexCliChecker ?? LinuxCodexCliChecker(),
+       _releaseUpdater = releaseUpdater ?? GitHubShellReleaseUpdater(),
+       _appVersionProvider =
+           appVersionProvider ??
+           (() async => (await PackageInfo.fromPlatform()).version),
        _degradedPollInterval = degradedPollInterval,
        _healthyPollInterval = healthyPollInterval;
 
@@ -25,6 +33,8 @@ class ShellController extends ChangeNotifier {
   final RuntimeSupervisor _runtimeSupervisor;
   final TailscaleCliChecker _tailscaleCliChecker;
   final CodexCliChecker _codexCliChecker;
+  final ShellReleaseUpdater _releaseUpdater;
+  final Future<String> Function() _appVersionProvider;
   final Duration _degradedPollInterval;
   final Duration _healthyPollInterval;
 
@@ -33,6 +43,7 @@ class ShellController extends ChangeNotifier {
 
   String? _activeTrustedDeviceId;
   PairingSessionResponseDto? _cachedPairingSession;
+  LinuxUpdateCheckResult? _latestUpdateCheckResult;
   bool _disposed = false;
   Future<void>? _supervisionLoop;
 
@@ -106,6 +117,184 @@ class ShellController extends ChangeNotifier {
     }
   }
 
+  Future<void> checkForUpdates() async {
+    final panel = _state.updatePanel;
+    if (panel.isChecking || panel.isInstalling || _disposed) {
+      return;
+    }
+
+    _latestUpdateCheckResult = null;
+    _emit(
+      _state.copyWith(
+        updatePanel: panel.copyWith(
+          stateLabel: 'Checking',
+          detail: 'Checking GitHub releases…',
+          isChecking: true,
+          isInstalling: false,
+          canInstall: false,
+          showOpenReleases: false,
+          clearLatestVersion: true,
+        ),
+      ),
+    );
+
+    try {
+      final currentVersion = await _appVersionProvider();
+      final result = await _releaseUpdater.checkForUpdates(
+        currentVersion: currentVersion,
+      );
+
+      if (result.isUpdateAvailable) {
+        _latestUpdateCheckResult = result;
+        _emit(
+          _state.copyWith(
+            updatePanel: _state.updatePanel.copyWith(
+              stateLabel: 'Available',
+              detail: result.asset == null
+                  ? 'Version ${result.latestVersion} is available, but this release has no installable Linux shell asset.'
+                  : 'Version ${result.latestVersion} is ready to download and install.',
+              isChecking: false,
+              isInstalling: false,
+              canInstall: result.asset != null,
+              showOpenReleases: result.asset == null,
+              latestVersion: result.latestVersion.toString(),
+              releaseUrl: result.releaseUrl.toString(),
+            ),
+          ),
+        );
+      } else {
+        _emit(
+          _state.copyWith(
+            updatePanel: _state.updatePanel.copyWith(
+              stateLabel: 'Up to Date',
+              detail: 'You are up to date ($currentVersion).',
+              isChecking: false,
+              isInstalling: false,
+              canInstall: false,
+              showOpenReleases: false,
+              latestVersion: result.latestVersion.toString(),
+              releaseUrl: result.releaseUrl.toString(),
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      _emit(
+        _state.copyWith(
+          updatePanel: _state.updatePanel.copyWith(
+            stateLabel: 'Failed',
+            detail: '$error',
+            isChecking: false,
+            isInstalling: false,
+            canInstall: false,
+            showOpenReleases: true,
+            clearLatestVersion: true,
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<bool> installUpdate() async {
+    final panel = _state.updatePanel;
+    final updateCheckResult = _latestUpdateCheckResult;
+    if (panel.isInstalling ||
+        updateCheckResult == null ||
+        !updateCheckResult.isUpdateAvailable ||
+        updateCheckResult.asset == null ||
+        _disposed) {
+      return false;
+    }
+
+    _emit(
+      _state.copyWith(
+        updatePanel: panel.copyWith(
+          stateLabel: 'Downloading',
+          detail: 'Downloading update…',
+          isChecking: false,
+          isInstalling: true,
+          canInstall: false,
+        ),
+      ),
+    );
+
+    try {
+      await _releaseUpdater.prepareAndLaunchInstall(
+        updateCheckResult,
+        onProgress: (progress) {
+          switch (progress.stage) {
+            case LinuxInstallProgressStage.downloading:
+              final detail = progress.fraction == null
+                  ? 'Downloading update…'
+                  : 'Downloading update: ${(progress.fraction! * 100).round()}%';
+              _emit(
+                _state.copyWith(
+                  updatePanel: _state.updatePanel.copyWith(
+                    stateLabel: 'Downloading',
+                    detail: detail,
+                    isInstalling: true,
+                    canInstall: false,
+                  ),
+                ),
+              );
+            case LinuxInstallProgressStage.installing:
+              _emit(
+                _state.copyWith(
+                  updatePanel: _state.updatePanel.copyWith(
+                    stateLabel: 'Installing',
+                    detail: 'Preparing installation…',
+                    isInstalling: true,
+                    canInstall: false,
+                  ),
+                ),
+              );
+            case LinuxInstallProgressStage.relaunching:
+              _emit(
+                _state.copyWith(
+                  updatePanel: _state.updatePanel.copyWith(
+                    stateLabel: 'Relaunching',
+                    detail: 'Installing and relaunching…',
+                    isInstalling: true,
+                    canInstall: false,
+                  ),
+                ),
+              );
+          }
+        },
+      );
+      return true;
+    } catch (error) {
+      _emit(
+        _state.copyWith(
+          updatePanel: _state.updatePanel.copyWith(
+            stateLabel: 'Failed',
+            detail: '$error',
+            isInstalling: false,
+            canInstall: true,
+            showOpenReleases: true,
+          ),
+        ),
+      );
+      return false;
+    }
+  }
+
+  Future<void> openReleasesPage() async {
+    try {
+      await _releaseUpdater.openReleasesPage();
+    } catch (error) {
+      _emit(
+        _state.copyWith(
+          updatePanel: _state.updatePanel.copyWith(
+            stateLabel: 'Failed',
+            detail: 'Could not open Releases: $error',
+            showOpenReleases: true,
+          ),
+        ),
+      );
+    }
+  }
+
   Future<void> ensureSpeechModelOnDesktop() async {
     if (_state.isInstallingSpeechModel || _disposed) {
       return;
@@ -175,7 +364,9 @@ class ShellController extends ChangeNotifier {
 
     _emit(_state.copyWith(isUpdatingNetworkSettings: true));
     try {
-      final settings = await _bridgeClient.setLocalNetworkPairingEnabled(enabled);
+      final settings = await _bridgeClient.setLocalNetworkPairingEnabled(
+        enabled,
+      );
       _emit(
         _state.copyWith(
           localNetworkPairingEnabled: settings.localNetworkPairingEnabled,
