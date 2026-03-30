@@ -504,9 +504,9 @@ class _PendingUserInputCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
       decoration: BoxDecoration(
-        color: const Color(0xFF10211A),
+        color: const Color(0xFF1E1E24), // matching dark grey
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: AppTheme.emerald.withValues(alpha: 0.28)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -517,13 +517,13 @@ class _PendingUserInputCard extends StatelessWidget {
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: AppTheme.emerald.withValues(alpha: 0.14),
+                  color: AppTheme.purple.withValues(alpha: 0.2),
                   shape: BoxShape.circle,
                 ),
                 child: Center(
                   child: PhosphorIcon(
-                    PhosphorIcons.listChecks(),
-                    color: AppTheme.emerald,
+                    PhosphorIcons.lightbulb(PhosphorIconsStyle.fill),
+                    color: AppTheme.purple,
                     size: 18,
                   ),
                 ),
@@ -746,12 +746,12 @@ class _PendingUserInputOptionChip extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
           decoration: BoxDecoration(
             color: isSelected
-                ? AppTheme.emerald.withValues(alpha: 0.18)
+                ? Colors.white.withValues(alpha: 0.12)
                 : Colors.white.withValues(alpha: 0.04),
             borderRadius: BorderRadius.circular(18),
             border: Border.all(
               color: isSelected
-                  ? AppTheme.emerald.withValues(alpha: 0.75)
+                  ? Colors.white.withValues(alpha: 0.2)
                   : Colors.white.withValues(alpha: 0.08),
             ),
           ),
@@ -809,8 +809,9 @@ class _PendingUserInputOptionChip extends StatelessWidget {
   }
 }
 
-class _ComposerPrimaryActionRail extends StatelessWidget {
+class _ComposerPrimaryActionRail extends StatefulWidget {
   const _ComposerPrimaryActionRail({
+    super.key,
     required this.composerController,
     required this.attachedImages,
     required this.composerMode,
@@ -843,49 +844,143 @@ class _ComposerPrimaryActionRail extends StatelessWidget {
   final Future<bool> Function(String rawInput)? onSubmitPendingUserInput;
 
   @override
+  State<_ComposerPrimaryActionRail> createState() =>
+      _ComposerPrimaryActionRailState();
+}
+
+class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _swapController;
+  double _dragDx = 0.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _swapController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 250),
+    );
+  }
+
+  @override
+  void dispose() {
+    _swapController.dispose();
+    super.dispose();
+  }
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    if (widget.hasPendingUserInput) return;
+    setState(() {
+      _dragDx += details.delta.dx;
+      // Only allow dragging to the left
+      if (_dragDx > 0) _dragDx = 0;
+    });
+  }
+
+  void _onDragEnd(DragEndDetails details) {
+    if (widget.hasPendingUserInput) return;
+    final velocity = details.primaryVelocity ?? 0;
+
+    if (_dragDx < -20 || velocity < -180) {
+      // Animate the rest of the swap
+      _swapController.forward(from: (_dragDx.abs() / 56).clamp(0.0, 1.0)).then((
+        _,
+      ) {
+        final secondaryMode = widget.composerMode == TurnMode.act
+            ? TurnMode.plan
+            : TurnMode.act;
+        widget.onComposerModeChanged(secondaryMode);
+        setState(() {
+          _dragDx = 0;
+        });
+        _swapController.reset();
+      });
+    } else {
+      // Snap back
+      _swapController.reverse(from: (_dragDx.abs() / 56).clamp(0.0, 1.0)).then((
+        _,
+      ) {
+        setState(() {
+          _dragDx = 0;
+        });
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return SizedBox(
       key: const Key('turn-composer-primary-rail'),
-      width: hasPendingUserInput ? 56 : 66,
+      width: widget.hasPendingUserInput ? 56 : 66,
       height: 56,
       child: ListenableBuilder(
-        listenable: composerController,
+        listenable: widget.composerController,
         builder: (context, _) {
-          final hasFreeText = composerController.text.trim().isNotEmpty;
-          final hasInput = hasPendingUserInput
-              ? hasFreeText || selectedPlanOptionByQuestionId.isNotEmpty
-              : hasFreeText || attachedImages.isNotEmpty;
+          final hasFreeText = widget.composerController.text.trim().isNotEmpty;
+          final hasInput = widget.hasPendingUserInput
+              ? hasFreeText || widget.selectedPlanOptionByQuestionId.isNotEmpty
+              : hasFreeText || widget.attachedImages.isNotEmpty;
           final canRunPrimaryAction =
               hasInput &&
-              controlsEnabled &&
-              !isTurnActive &&
-              !isComposerMutationInFlight &&
-              !isInterruptMutationInFlight &&
-              !isSpeechRecording &&
-              !isSpeechTranscribing;
-          final effectiveMode = hasPendingUserInput
+              widget.controlsEnabled &&
+              !widget.isTurnActive &&
+              !widget.isComposerMutationInFlight &&
+              !widget.isInterruptMutationInFlight &&
+              !widget.isSpeechRecording &&
+              !widget.isSpeechTranscribing;
+          final effectiveMode = widget.hasPendingUserInput
               ? TurnMode.plan
-              : composerMode;
+              : widget.composerMode;
 
           Future<void> handleSubmit() async {
             if (!canRunPrimaryAction) {
               return;
             }
-            final success = hasPendingUserInput
-                ? await onSubmitPendingUserInput?.call(
-                        composerController.text,
+            final success = widget.hasPendingUserInput
+                ? await widget.onSubmitPendingUserInput?.call(
+                        widget.composerController.text,
                       ) ??
                       false
-                : await onSubmitComposer(composerController.text);
+                : await widget.onSubmitComposer(widget.composerController.text);
             if (success) {
-              composerController.clear();
+              widget.composerController.clear();
             }
           }
 
           Widget buildPrimaryButton({
             required TurnMode mode,
             required bool isActive,
+            bool isPurple = false,
           }) {
+            final child = AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              child: widget.isComposerMutationInFlight && isActive
+                  ? SizedBox.square(
+                      key: ValueKey('composer-loading-${mode.wireValue}'),
+                      dimension: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: isActive
+                            ? (isPurple ? Colors.white : AppTheme.background)
+                            : AppTheme.textMain,
+                      ),
+                    )
+                  : PhosphorIcon(
+                      mode == TurnMode.plan
+                          ? (isPurple
+                                ? PhosphorIcons.lightbulb(
+                                    PhosphorIconsStyle.fill,
+                                  )
+                                : PhosphorIcons.listChecks())
+                          : PhosphorIcons.arrowUp(),
+                      key: ValueKey('composer-primary-${mode.wireValue}'),
+                      size: isPurple ? 24 : 22,
+                      color: isActive
+                          ? (isPurple ? Colors.white : null)
+                          : AppTheme.textSubtle,
+                    ),
+            );
+
             if (!isActive) {
               return Container(
                 width: 56,
@@ -897,17 +992,37 @@ class _ComposerPrimaryActionRail extends StatelessWidget {
                     color: Colors.white.withValues(alpha: 0.06),
                   ),
                 ),
-                child: Center(
-                  child: PhosphorIcon(
-                    mode == TurnMode.plan
-                        ? PhosphorIcons.listChecks()
-                        : PhosphorIcons.arrowUp(),
-                    size: 20,
-                    color: AppTheme.textSubtle,
+                child: Center(child: child),
+              );
+            }
+
+            if (isPurple) {
+              return GestureDetector(
+                onTap: isActive && canRunPrimaryAction
+                    ? () async {
+                        await handleSubmit();
+                      }
+                    : null,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: Color(0xFFA855F7), // purple-500
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Color(0xFFA855F7).withValues(alpha: 0.4),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
                   ),
+                  child: Center(child: child),
                 ),
               );
             }
+
             return SizedBox(
               width: 56,
               height: 56,
@@ -924,33 +1039,17 @@ class _ComposerPrimaryActionRail extends StatelessWidget {
                         await handleSubmit();
                       }
                     : () {},
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 180),
-                  child: isComposerMutationInFlight && isActive
-                      ? SizedBox.square(
-                          key: ValueKey('composer-loading-${mode.wireValue}'),
-                          dimension: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: isActive
-                                ? AppTheme.background
-                                : AppTheme.textMain,
-                          ),
-                        )
-                      : PhosphorIcon(
-                          mode == TurnMode.plan
-                              ? PhosphorIcons.listChecks()
-                              : PhosphorIcons.arrowUp(),
-                          key: ValueKey('composer-primary-${mode.wireValue}'),
-                          size: 22,
-                        ),
-                ),
+                child: child,
               ),
             );
           }
 
-          if (hasPendingUserInput) {
-            return buildPrimaryButton(mode: TurnMode.plan, isActive: true);
+          if (widget.hasPendingUserInput) {
+            return buildPrimaryButton(
+              mode: TurnMode.plan,
+              isActive: true,
+              isPurple: true,
+            );
           }
 
           final activeMode = effectiveMode;
@@ -958,39 +1057,60 @@ class _ComposerPrimaryActionRail extends StatelessWidget {
               ? TurnMode.plan
               : TurnMode.act;
 
-          return GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTapUp: (details) {
-              if (details.localPosition.dx >= 56) {
-                onComposerModeChanged(secondaryMode);
-              }
-            },
-            onHorizontalDragEnd: (details) {
-              final velocity = details.primaryVelocity ?? 0;
-              if (velocity <= -180) {
-                onComposerModeChanged(TurnMode.plan);
-              } else if (velocity >= 180) {
-                onComposerModeChanged(TurnMode.act);
-              }
-            },
-            child: Stack(
-              children: [
-                Positioned(
-                  left: 10,
-                  child: Opacity(
-                    opacity: 0.95,
-                    child: buildPrimaryButton(
-                      mode: secondaryMode,
-                      isActive: false,
+          return AnimatedBuilder(
+            animation: _swapController,
+            builder: (context, child) {
+              final progress = _swapController.value;
+              final effectiveDrag = _dragDx;
+
+              // Active button moves left and fades out
+              final activeLeft = effectiveDrag - (progress * 56);
+              final activeOpacity =
+                  (1.0 - progress - (effectiveDrag.abs() / 56)).clamp(0.0, 1.0);
+
+              // Secondary button moves left to 0 and becomes fully opaque
+              final secondaryLeft =
+                  10.0 + (effectiveDrag * 0.2) - (progress * 10);
+              final secondaryOpacity =
+                  (0.8 + (progress * 0.2) + ((effectiveDrag.abs() / 56) * 0.2))
+                      .clamp(0.0, 1.0);
+
+              return GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTapUp: (details) {
+                  if (details.localPosition.dx >= 56) {
+                    widget.onComposerModeChanged(secondaryMode);
+                  }
+                },
+                onHorizontalDragUpdate: _onDragUpdate,
+                onHorizontalDragEnd: _onDragEnd,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Positioned(
+                      left: secondaryLeft,
+                      child: Opacity(
+                        opacity: secondaryOpacity,
+                        child: buildPrimaryButton(
+                          mode: secondaryMode,
+                          isActive: false,
+                        ),
+                      ),
                     ),
-                  ),
+                    Positioned(
+                      left: activeLeft,
+                      child: Opacity(
+                        opacity: activeOpacity,
+                        child: buildPrimaryButton(
+                          mode: activeMode,
+                          isActive: true,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                Positioned(
-                  left: 0,
-                  child: buildPrimaryButton(mode: activeMode, isActive: true),
-                ),
-              ],
-            ),
+              );
+            },
           );
         },
       ),
