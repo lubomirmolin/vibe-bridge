@@ -1,12 +1,13 @@
 # GitHub Publishing And Releases
 
-This repository now ships with GitHub Actions for validation and tagged release
+This repository now ships with a single GitHub Actions workflow for release
 packaging:
 
-- `.github/workflows/ci.yml` runs Rust, Android/Flutter, Linux shell, and
-  macOS shell validation on pushes and pull requests.
 - `.github/workflows/release.yml` builds release artifacts for Android, Linux,
-  macOS, and the standalone Rust bridge when you push `main` or a `v*` tag.
+  macOS, and the standalone Rust bridge when you push a `v*` tag or trigger it
+  manually.
+- `./scripts/release/run-checks.sh` runs the same validation targets locally
+  before you cut a release.
 
 ## Make The Repository Public
 
@@ -42,8 +43,8 @@ zip contains the unsigned `.app` bundle.
 
 ## Required Secrets
 
-Main and tagged GitHub releases are configured to require a real release
-keystore. Add these repository secrets before pushing `main` or a release tag:
+Tagged GitHub releases are configured to require a real release keystore. Add
+these repository secrets before pushing a release tag:
 
 - `ANDROID_KEYSTORE_BASE64`
 - `ANDROID_KEYSTORE_PASSWORD`
@@ -53,24 +54,37 @@ keystore. Add these repository secrets before pushing `main` or a release tag:
 `ANDROID_KEYSTORE_BASE64` should be the base64-encoded contents of your JKS or
 PKCS12 signing file.
 
-Without those secrets:
-
-- regular CI still builds the Android app with the debug signing config
-- manual `workflow_dispatch` release runs can still produce preview artifacts
-- pushes to `main` and tagged release runs fail the Android job instead of
-  publishing a debug-signed APK
+Without those secrets, manual `workflow_dispatch` runs can still produce preview
+artifacts, but tagged release runs fail the Android job instead of publishing a
+debug-signed APK.
 
 ## Cutting A Release
 
-1. Merge the release-ready state to `main` for rolling release updates.
+1. Run `./scripts/release/run-checks.sh` locally, or scope it to the targets you
+   changed.
 2. Update the version values you want to ship.
-3. Push a tag in the form `vX.Y.Z` when you want a versioned release.
+3. Push a tag in the form `vX.Y.Z` when you want a versioned release, or run
+   the `Release` workflow manually for a preview build.
 4. Wait for the `Release` workflow to finish.
 5. Review the GitHub Release page and attached artifacts.
 
 ## Local Packaging
 
-The same packaging commands used by GitHub Actions are available locally:
+Run the validation gate locally:
+
+```bash
+./scripts/release/run-checks.sh
+```
+
+Or scope it to specific targets:
+
+```bash
+./scripts/release/run-checks.sh rust mobile
+./scripts/release/run-checks.sh linux
+./scripts/release/run-checks.sh macos
+```
+
+The packaging commands used by GitHub Actions are also available locally:
 
 ```bash
 ./scripts/release/package-android.sh
