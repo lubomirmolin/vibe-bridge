@@ -1,0 +1,78 @@
+name: Linux Shell CI
+
+on:
+  pull_request:
+    paths:
+      - "apps/linux-shell/**"
+      - "packages/codex_ui/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/linux-shell-ci.yml"
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - "apps/linux-shell/**"
+      - "packages/codex_ui/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/linux-shell-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-shell-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-shell:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang \
+            cmake \
+            libasound2-dev \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            ninja-build \
+            pkg-config
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Configure Flutter desktop
+        run: flutter config --enable-linux-desktop --no-analytics
+
+      - name: Flutter pub get
+        working-directory: apps/linux-shell
+        run: flutter pub get
+
+      - name: Flutter analyze
+        working-directory: apps/linux-shell
+        run: flutter analyze
+
+      - name: Flutter test
+        working-directory: apps/linux-shell
+        run: flutter test
+
+      - name: Build Linux shell
+        working-directory: apps/linux-shell
+        run: flutter build linux --release

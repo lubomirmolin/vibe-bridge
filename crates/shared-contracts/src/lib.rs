@@ -454,7 +454,7 @@ mod tests {
 
         assert_eq!(summary.contract_version, CONTRACT_VERSION);
         assert_eq!(summary.status, ThreadStatus::Running);
-        assert_eq!(summary.repository, "codex-mobile-companion");
+        assert_eq!(summary.repository, "vibe-bridge");
     }
 
     #[test]
