@@ -37,3 +37,6 @@ tmp/
 # Local bridge runtime state
 /trust-registry.json
 /state/trust-registry.json
+
+# Local docs scratch area
+/docs/
