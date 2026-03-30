@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.target.name }}
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        target:
+          - name: Rust
+            id: rust
+            runner: ubuntu-24.04
+          - name: Mobile
+            id: mobile
+            runner: ubuntu-24.04
+          - name: Linux Shell
+            id: linux
+            runner: ubuntu-24.04
+          - name: Mac Shell
+            id: macos
+            runner: macos-15-intel
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - uses: actions/setup-java@v4
+        if: matrix.target.id == 'mobile'
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        if: matrix.target.id == 'mobile' || matrix.target.id == 'linux'
+        with:
+          channel: stable
+          cache: true
+
+      - name: Configure Flutter
+        if: matrix.target.id == 'mobile'
+        run: flutter config --no-analytics
+
+      - name: Configure Flutter desktop
+        if: matrix.target.id == 'linux'
+        run: flutter config --enable-linux-desktop --no-analytics
+
+      - name: Install Linux desktop dependencies
+        if: matrix.target.id == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang \
+            cmake \
+            libasound2-dev \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            ninja-build \
+            pkg-config
+
+      - name: Rust checks
+        if: matrix.target.id == 'rust'
+        run: |
+          cargo fmt --manifest-path Cargo.toml --all --check
+          cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings
+          cargo check --manifest-path Cargo.toml --workspace --all-targets
+          cargo test --manifest-path Cargo.toml --workspace --jobs 5
+
+      - name: Mobile checks
+        if: matrix.target.id == 'mobile'
+        run: |
+          cd apps/mobile
+          flutter pub get
+          flutter analyze --no-fatal-infos
+          flutter test --concurrency=5
+
+      - name: Build Android APK
+        if: matrix.target.id == 'mobile'
+        run: |
+          cd apps/mobile
+          flutter build apk --debug
+
+      - name: Linux shell checks
+        if: matrix.target.id == 'linux'
+        run: |
+          cd apps/linux-shell
+          flutter pub get
+          flutter analyze --no-fatal-infos
+          flutter test
+
+      - name: Package Linux artifacts
+        if: matrix.target.id == 'linux'
+        run: |
+          cd apps/linux-shell
+          flutter build linux --release
+
+      - name: Run macOS unit tests
+        if: matrix.target.id == 'macos'
+        run: |
+          export MACOS_BUILD_ARCH="$(uname -m)"
+          export CODEX_MOBILE_COMPANION_CARGO_BIN="$HOME/.cargo/bin/cargo"
+          export CODEX_MOBILE_COMPANION_RUSTC_BIN="$HOME/.cargo/bin/rustc"
+          xcodebuild test \
+            -project apps/mac-shell/CodexMobileCompanion.xcodeproj \
+            -scheme CodexMobileCompanion \
+            -destination "platform=macOS,arch=${MACOS_BUILD_ARCH}" \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package macOS artifacts
+        if: matrix.target.id == 'macos'
+        run: |
+          export MACOS_BUILD_ARCH="$(uname -m)"
+          export CODEX_MOBILE_COMPANION_CARGO_BIN="$HOME/.cargo/bin/cargo"
+          export CODEX_MOBILE_COMPANION_RUSTC_BIN="$HOME/.cargo/bin/rustc"
+          xcodebuild \
+            -project apps/mac-shell/CodexMobileCompanion.xcodeproj \
+            -scheme CodexMobileCompanion \
+            -configuration Release \
+            -destination "platform=macOS,arch=${MACOS_BUILD_ARCH}" \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
