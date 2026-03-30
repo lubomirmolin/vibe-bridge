@@ -61,81 +61,87 @@ class ShellView extends StatelessWidget {
                           builder: (context, constraints) {
                             final wide = constraints.maxWidth >= 800;
                             return wide
-                                ? Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Expanded(
-                                        flex: 5,
-                                        child: SingleChildScrollView(
-                                          child: state.requiresTailscaleSetup
-                                              ? _TailscaleRequiredCard(
+                                ? SingleChildScrollView(
+                                    padding: const EdgeInsets.only(bottom: 8),
+                                    child: ConstrainedBox(
+                                      constraints: BoxConstraints(
+                                        minHeight: constraints.maxHeight,
+                                      ),
+                                      child: Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Expanded(
+                                            flex: 5,
+                                            child: state.requiresTailscaleSetup
+                                                ? _TailscaleRequiredCard(
+                                                    state: state,
+                                                    onCheckTailscale:
+                                                        onCheckTailscale,
+                                                  )
+                                                : _PairDeviceCard(
+                                                    state: state,
+                                                    onRefreshQr: onRefreshQr,
+                                                  ),
+                                          ),
+                                          const SizedBox(width: 24),
+                                          Expanded(
+                                            flex: 7,
+                                            child: Column(
+                                              children: [
+                                                if (state
+                                                    .requiresCodexSetup) ...[
+                                                  _CodexRequiredCard(
+                                                    state: state,
+                                                    onCheckCodex: onCheckCodex,
+                                                    onChooseCodexBinary:
+                                                        onChooseCodexBinary,
+                                                  ),
+                                                  const SizedBox(height: 24),
+                                                ],
+                                                _ConnectionDetailsCard(
+                                                  state: state,
+                                                ),
+                                                const SizedBox(height: 24),
+                                                _NetworkRoutesCard(
+                                                  state: state,
+                                                  onSetLocalNetworkPairingEnabled:
+                                                      onSetLocalNetworkPairingEnabled,
+                                                ),
+                                                const SizedBox(height: 24),
+                                                _SpeechCard(
+                                                  state: state,
+                                                  onInstallSpeechModel:
+                                                      onInstallSpeechModel,
+                                                  onRemoveSpeechModel:
+                                                      onRemoveSpeechModel,
+                                                ),
+                                                const SizedBox(height: 24),
+                                                _SystemActionsCard(
                                                   state: state,
                                                   onCheckTailscale:
                                                       onCheckTailscale,
-                                                )
-                                              : _PairDeviceCard(
-                                                  state: state,
-                                                  onRefreshQr: onRefreshQr,
+                                                  onRestartRuntime:
+                                                      onRestartRuntime,
+                                                  onRevokeActiveDevice:
+                                                      onRevokeActiveDevice,
+                                                  onRevokeAllDevices:
+                                                      onRevokeAllDevices,
                                                 ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 24),
-                                      Expanded(
-                                        flex: 7,
-                                        child: SingleChildScrollView(
-                                          child: Column(
-                                            children: [
-                                              if (state.requiresCodexSetup) ...[
-                                                _CodexRequiredCard(
-                                                  state: state,
-                                                  onCheckCodex: onCheckCodex,
-                                                  onChooseCodexBinary:
-                                                      onChooseCodexBinary,
-                                                ),
-                                                const SizedBox(height: 24),
+                                                if (state.errorMessage !=
+                                                    null) ...[
+                                                  const SizedBox(height: 16),
+                                                  _ErrorBanner(
+                                                    message:
+                                                        state.errorMessage!,
+                                                  ),
+                                                ],
                                               ],
-                                              _ConnectionDetailsCard(
-                                                state: state,
-                                              ),
-                                              const SizedBox(height: 24),
-                                              _NetworkRoutesCard(
-                                                state: state,
-                                                onSetLocalNetworkPairingEnabled:
-                                                    onSetLocalNetworkPairingEnabled,
-                                              ),
-                                              const SizedBox(height: 24),
-                                              _SpeechCard(
-                                                state: state,
-                                                onInstallSpeechModel:
-                                                    onInstallSpeechModel,
-                                                onRemoveSpeechModel:
-                                                    onRemoveSpeechModel,
-                                              ),
-                                              const SizedBox(height: 24),
-                                              _SystemActionsCard(
-                                                state: state,
-                                                onCheckTailscale:
-                                                    onCheckTailscale,
-                                                onRestartRuntime:
-                                                    onRestartRuntime,
-                                                onRevokeActiveDevice:
-                                                    onRevokeActiveDevice,
-                                                onRevokeAllDevices:
-                                                    onRevokeAllDevices,
-                                              ),
-                                              if (state.errorMessage !=
-                                                  null) ...[
-                                                const SizedBox(height: 16),
-                                                _ErrorBanner(
-                                                  message: state.errorMessage!,
-                                                ),
-                                              ],
-                                            ],
+                                            ),
                                           ),
-                                        ),
+                                        ],
                                       ),
-                                    ],
+                                    ),
                                   )
                                 : ListView(
                                     children: [
@@ -302,6 +308,10 @@ class _Header extends StatelessWidget {
 class _PairDeviceCard extends StatelessWidget {
   const _PairDeviceCard({required this.state, required this.onRefreshQr});
 
+  static const double _qrVisualSize = 228;
+  static const EdgeInsets _qrInnerPadding = EdgeInsets.all(6);
+  static const double _qrCardPadding = 12;
+
   final ShellPresentationState state;
   final Future<void> Function() onRefreshQr;
 
@@ -364,14 +374,15 @@ class _PairDeviceCard extends StatelessWidget {
           if (session != null) ...[
             Container(
               key: const Key('pairing-qr'),
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.all(_qrCardPadding),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(24),
               ),
               child: QrImageView(
                 data: session.qrPayload,
-                size: 220,
+                size: _qrVisualSize,
+                padding: _qrInnerPadding,
                 errorCorrectionLevel: QrErrorCorrectLevel.M,
                 eyeStyle: const QrEyeStyle(
                   eyeShape: QrEyeShape.square,
@@ -1084,7 +1095,8 @@ class _NetworkRoutesCard extends StatelessWidget {
                 Switch(
                   value: state.localNetworkPairingEnabled,
                   onChanged:
-                      state.isUpdatingNetworkSettings || state.isRefreshingRuntime
+                      state.isUpdatingNetworkSettings ||
+                          state.isRefreshingRuntime
                       ? null
                       : (enabled) => onSetLocalNetworkPairingEnabled(enabled),
                   activeColor: AppTheme.emerald,
@@ -1159,7 +1171,10 @@ class _NetworkRoutesCard extends StatelessWidget {
                     ),
                   ),
                   if (route != state.pairingRoutes.last)
-                    Divider(color: Colors.white.withValues(alpha: 0.05), height: 1),
+                    Divider(
+                      color: Colors.white.withValues(alpha: 0.05),
+                      height: 1,
+                    ),
                 ],
               ),
             ),

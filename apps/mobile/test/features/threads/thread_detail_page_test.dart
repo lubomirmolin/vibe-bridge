@@ -4410,6 +4410,73 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
   });
 
   testWidgets(
+    'reconnect deduplicates a replayed assistant reply with a new event id',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail(), _thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            <ThreadTimelineEntryDto>[],
+            [
+              _timelineEvent(
+                id: 'evt-replayed-hello',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Hello.',
+                payload: {'delta': 'Hello.'},
+                occurredAt: '2026-03-18T10:01:30Z',
+              ),
+            ],
+          ],
+        },
+      );
+      final liveStream = FakeThreadLiveStream();
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+        liveStream: liveStream,
+      );
+      await tester.pumpAndSettle();
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-live-hello',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:01:00Z',
+          payload: {'type': 'agentMessage', 'text': 'Hello.'},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Hello.'), findsOneWidget);
+      expect(
+        find.byKey(const Key('thread-message-card-evt-live-hello')),
+        findsOneWidget,
+      );
+
+      liveStream.emitError('thread-123');
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.text('Hello.'), findsOneWidget);
+      expect(
+        find.byKey(const Key('thread-message-card-evt-replayed-hello')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('thread-message-card-evt-live-hello')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
     'speech preflight shows a dialog when Parakeet is not installed',
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(

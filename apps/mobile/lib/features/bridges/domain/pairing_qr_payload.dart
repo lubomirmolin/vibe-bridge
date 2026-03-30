@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart'
     as bridge_contracts;
 
-const String _defaultBridgeDisplayName = 'Vibe bridge companion';
+const String _defaultBridgeDisplayName = 'Vibe bridge';
 
 class PairingQrPayload {
   const PairingQrPayload({

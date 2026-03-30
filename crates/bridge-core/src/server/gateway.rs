@@ -3,9 +3,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use shared_contracts::{
     AccessMode, ApprovalSummaryDto, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION,
-    GitStatusDto, ModelOptionDto, ReasoningEffortOptionDto, ThreadDetailDto, ThreadSnapshotDto,
-    ThreadStatus, ThreadSummaryDto, ThreadTimelineAnnotationsDto, ThreadTimelineEntryDto,
-    ThreadTimelineExplorationKind, ThreadTimelineGroupKind, TurnMutationAcceptedDto,
+    GitStatusDto, ModelOptionDto, PendingUserInputDto, ReasoningEffortOptionDto, ThreadDetailDto,
+    ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto, ThreadTimelineAnnotationsDto,
+    ThreadTimelineEntryDto, ThreadTimelineExplorationKind, ThreadTimelineGroupKind,
+    TurnMutationAcceptedDto,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -15,6 +16,7 @@ use std::time::{Duration, Instant};
 use crate::codex_runtime::CodexRuntimeMode;
 use crate::codex_transport::CodexJsonTransport;
 use crate::server::config::BridgeCodexConfig;
+use crate::server::state::parse_pending_user_input_payload;
 use crate::thread_api::{
     CodexNotificationNormalizer, CodexNotificationStream, ThreadApiService,
     load_archive_timeline_entries_for_session_path, load_archive_timeline_entries_for_thread,
@@ -1084,6 +1086,7 @@ fn map_thread_summary(thread: CodexThread) -> ThreadSummaryDto {
 
 fn map_thread_snapshot(thread: CodexThread) -> ThreadSnapshotDto {
     let detail = map_thread_detail(&thread);
+    let pending_user_input = pending_user_input_from_thread(&thread);
     let entries = {
         let rpc_entries = map_thread_timeline_entries(&thread);
         let archive_entries = thread
@@ -1103,8 +1106,33 @@ fn map_thread_snapshot(thread: CodexThread) -> ThreadSnapshotDto {
         entries,
         approvals: Vec::<ApprovalSummaryDto>::new(),
         git_status,
-        pending_user_input: None,
+        pending_user_input,
     }
+}
+
+fn pending_user_input_from_thread(thread: &CodexThread) -> Option<PendingUserInputDto> {
+    for turn in thread.turns.iter().rev() {
+        for item in turn.items.iter().rev() {
+            let Some((kind, payload)) = normalize_codex_item_payload(item) else {
+                continue;
+            };
+            if kind == BridgeEventKind::MessageDelta && payload_contains_hidden_message(&payload) {
+                let Some(message_text) = payload_primary_text(&payload) else {
+                    continue;
+                };
+                if let Some(questionnaire) =
+                    parse_pending_user_input_payload(message_text, &thread.id)
+                {
+                    return Some(questionnaire);
+                }
+                continue;
+            }
+
+            return None;
+        }
+    }
+
+    None
 }
 
 fn prefer_archive_timeline_when_rpc_lacks_tool_events(
@@ -1717,6 +1745,9 @@ fn is_hidden_archive_message(message: &str) -> bool {
         || trimmed.starts_with("<app-context>")
         || trimmed.starts_with("<environment_context>")
         || trimmed.starts_with("<collaboration_mode>")
+        || trimmed.starts_with("You are running in mobile plan intake mode.")
+        || trimmed.starts_with("You are continuing a mobile planning workflow.")
+        || trimmed.contains("<codex-plan-questions>")
 }
 
 fn summarize_live_payload(kind: BridgeEventKind, payload: &Value) -> String {
@@ -1934,14 +1965,15 @@ fn extract_file_name_from_command(command: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CodexGateway, CodexThread, build_turn_start_input, derive_repository_name_from_cwd,
-        extract_generated_thread_title, fetch_thread_summaries_from_archive, map_thread_summary,
+        CodexGateway, CodexGitInfo, CodexThread, CodexThreadStatus, CodexTurn,
+        build_turn_start_input, derive_repository_name_from_cwd, extract_generated_thread_title,
+        fetch_thread_summaries_from_archive, map_thread_snapshot, map_thread_summary,
         normalize_codex_item_payload, normalize_generated_thread_title, parse_model_options,
         parse_repository_name_from_origin, prefer_archive_timeline_when_rpc_lacks_tool_events,
     };
     use crate::codex_runtime::CodexRuntimeMode;
     use crate::server::config::BridgeCodexConfig;
-    use serde_json::json;
+    use serde_json::{Value, json};
     use shared_contracts::{BridgeEventKind, ThreadTimelineEntryDto};
     use std::fs;
     use std::sync::mpsc;
@@ -2045,6 +2077,50 @@ mod tests {
         assert_eq!(kind, BridgeEventKind::MessageDelta);
         assert_eq!(payload["role"], "user");
         assert_eq!(payload["images"], json!(["data:image/png;base64,AAA"]));
+    }
+
+    #[test]
+    fn map_thread_snapshot_surfaces_pending_plan_questions_without_protocol_messages() {
+        let snapshot = map_thread_snapshot(CodexThread {
+            id: "thread-plan".to_string(),
+            name: Some("Plan mode".to_string()),
+            preview: Some("preview".to_string()),
+            status: CodexThreadStatus {
+                kind: "idle".to_string(),
+            },
+            cwd: "/workspace/repo".to_string(),
+            path: None,
+            git_info: Some(CodexGitInfo {
+                branch: Some("main".to_string()),
+                origin_url: Some("git@github.com:example/repo.git".to_string()),
+            }),
+            created_at: 1_710_000_000,
+            updated_at: 1_710_000_300,
+            source: Value::String("cli".to_string()),
+            turns: vec![CodexTurn {
+                id: "turn-plan".to_string(),
+                items: vec![
+                    json!({
+                        "id": "msg-hidden-user",
+                        "type": "userMessage",
+                        "text": "You are running in mobile plan intake mode.\nReturn only one XML-like block.",
+                    }),
+                    json!({
+                        "id": "msg-hidden-assistant",
+                        "type": "agentMessage",
+                        "text": "<codex-plan-questions>{\"title\":\"Clarify the implementation\",\"detail\":\"Pick a focus.\",\"questions\":[{\"question_id\":\"scope\",\"prompt\":\"What should the test cover first?\",\"options\":[{\"option_id\":\"core\",\"label\":\"Core flows\",\"description\":\"Focus on pairing and thread navigation.\",\"is_recommended\":true},{\"option_id\":\"plan\",\"label\":\"Plan mode\",\"description\":\"Focus on plan mode only.\",\"is_recommended\":false},{\"option_id\":\"polish\",\"label\":\"UI polish\",\"description\":\"Focus on layout and copy.\",\"is_recommended\":false}]}]}</codex-plan-questions>",
+                    }),
+                ],
+            }],
+        });
+
+        assert!(snapshot.entries.is_empty());
+        let pending_user_input = snapshot
+            .pending_user_input
+            .expect("pending user input should be reconstructed");
+        assert_eq!(pending_user_input.title, "Clarify the implementation");
+        assert_eq!(pending_user_input.questions.len(), 1);
+        assert_eq!(pending_user_input.questions[0].question_id, "scope");
     }
 
     #[test]

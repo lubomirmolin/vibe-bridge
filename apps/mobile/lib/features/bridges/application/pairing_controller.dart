@@ -21,7 +21,7 @@ final pairingBridgeApiProvider = Provider<PairingBridgeApi>((ref) {
 });
 
 final phoneDisplayNameProvider = Provider<String>((ref) {
-  return 'Vibe bridge companion Phone';
+  return 'Vibe bridge Phone';
 });
 
 final pairingControllerProvider =

@@ -141,245 +141,10 @@ class _PinnedTurnComposer extends StatelessWidget {
                   const SizedBox(height: 10),
                 ],
                 TextFieldTapRegion(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    alignment: Alignment.bottomRight,
                     children: [
-                      AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 220),
-                        switchInCurve: Curves.easeOutCubic,
-                        switchOutCurve: Curves.easeInCubic,
-                        transitionBuilder: (child, animation) {
-                          return FadeTransition(
-                            opacity: animation,
-                            child: SizeTransition(
-                              axis: Axis.horizontal,
-                              axisAlignment: -1,
-                              sizeFactor: animation,
-                              child: child,
-                            ),
-                          );
-                        },
-                        child: shouldHideLeadingActions
-                            ? const SizedBox(
-                                key: ValueKey(
-                                  'composer-leading-actions-hidden',
-                                ),
-                              )
-                            : Padding(
-                                key: const ValueKey(
-                                  'composer-leading-actions-visible',
-                                ),
-                                padding: const EdgeInsets.only(right: 8),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    _ComposerUtilityButton(
-                                      key: const Key(
-                                        'turn-composer-attach-button',
-                                      ),
-                                      icon: PhosphorIcons.plus(),
-                                      tooltip: 'Attach images',
-                                      onPressed: canEditPinnedControls
-                                          ? () async {
-                                              await onPickImages();
-                                            }
-                                          : null,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    _ComposerUtilityButton(
-                                      key: const Key(
-                                        'turn-composer-model-button',
-                                      ),
-                                      icon: PhosphorIcons.slidersHorizontal(),
-                                      tooltip: 'Composer settings',
-                                      onPressed: canEditPinnedControls
-                                          ? () {
-                                              composerFocusNode.unfocus();
-                                              showModalBottomSheet<void>(
-                                                context: context,
-                                                backgroundColor:
-                                                    Colors.transparent,
-                                                isScrollControlled: true,
-                                                builder: (context) =>
-                                                    _ComposerModelSheet(
-                                                      modelOptions:
-                                                          modelOptions,
-                                                      reasoningOptions:
-                                                          reasoningOptions,
-                                                      initialModel:
-                                                          selectedModel,
-                                                      initialReasoning:
-                                                          selectedReasoning,
-                                                      selectedAccessMode:
-                                                          accessMode,
-                                                      session: session,
-                                                      isAccessModeUpdating:
-                                                          isAccessModeUpdating,
-                                                      onModelChanged:
-                                                          onModelChanged,
-                                                      onReasoningChanged:
-                                                          onReasoningChanged,
-                                                      onAccessModeChanged:
-                                                          onAccessModeChanged,
-                                                    ),
-                                              );
-                                            }
-                                          : null,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                      ),
-                      Expanded(
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 220),
-                          curve: Curves.easeOutCubic,
-                          decoration: BoxDecoration(
-                            color: AppTheme.surfaceZinc800.withValues(
-                              alpha: isComposerFocused ? 0.98 : 0.9,
-                            ),
-                            borderRadius: BorderRadius.circular(26),
-                            border: Border.all(
-                              color: Colors.white.withValues(
-                                alpha: isComposerFocused ? 0.14 : 0.07,
-                              ),
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(
-                                  alpha: isComposerFocused ? 0.18 : 0.12,
-                                ),
-                                blurRadius: isComposerFocused ? 18 : 12,
-                                offset: const Offset(0, 8),
-                              ),
-                            ],
-                          ),
-                          child: AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 180),
-                            switchInCurve: Curves.easeOutCubic,
-                            switchOutCurve: Curves.easeInCubic,
-                            child: isSpeechRecording
-                                ? _RecordingStatusInline(
-                                    key: const ValueKey(
-                                      'recording-inline-status',
-                                    ),
-                                    durationSeconds: speechDurationSeconds,
-                                    amplitudeStream: speechAmplitudeStream,
-                                  )
-                                : TextField(
-                                    key: const Key('turn-composer-input'),
-                                    controller: composerController,
-                                    focusNode: composerFocusNode,
-                                    enabled: composerEnabled,
-                                    minLines: 1,
-                                    maxLines: 4,
-                                    keyboardType: TextInputType.multiline,
-                                    textCapitalization:
-                                        TextCapitalization.sentences,
-                                    textInputAction: TextInputAction.newline,
-                                    onTapOutside: (_) =>
-                                        composerFocusNode.unfocus(),
-                                    style: const TextStyle(
-                                      color: AppTheme.textMain,
-                                      fontSize: 15,
-                                    ),
-                                    decoration: InputDecoration(
-                                      hintText: isSpeechTranscribing
-                                          ? 'Transcribing voice message…'
-                                          : hasPendingUserInput
-                                          ? 'Something else...'
-                                          : composerMode == TurnMode.plan
-                                          ? 'Ask Codex to plan...'
-                                          : 'Message Codex...',
-                                      hintStyle: const TextStyle(
-                                        color: AppTheme.textSubtle,
-                                      ),
-                                      border: InputBorder.none,
-                                      contentPadding:
-                                          const EdgeInsets.symmetric(
-                                            horizontal: 18,
-                                            vertical: 16,
-                                          ),
-                                    ),
-                                  ),
-                          ),
-                        ),
-                      ),
-                      AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 220),
-                        switchInCurve: Curves.easeOutCubic,
-                        switchOutCurve: Curves.easeInCubic,
-                        transitionBuilder: (child, animation) {
-                          return FadeTransition(
-                            opacity: animation,
-                            child: SizeTransition(
-                              axis: Axis.horizontal,
-                              axisAlignment: -1,
-                              sizeFactor: animation,
-                              child: child,
-                            ),
-                          );
-                        },
-                        child:
-                            isComposerFocused ||
-                                isSpeechRecording ||
-                                isSpeechTranscribing
-                            ? Padding(
-                                key: const ValueKey('composer-speech-visible'),
-                                padding: const EdgeInsets.only(left: 10),
-                                child: SizedBox(
-                                  width: 56,
-                                  height: 56,
-                                  child: MagneticButton(
-                                    key: const Key(
-                                      'turn-composer-speech-toggle',
-                                    ),
-                                    isCircle: true,
-                                    variant: MagneticButtonVariant.secondary,
-                                    onClick:
-                                        (controlsEnabled &&
-                                            !isTurnActive &&
-                                            !isComposerMutationInFlight &&
-                                            !isInterruptMutationInFlight &&
-                                            !isSpeechTranscribing)
-                                        ? () async {
-                                            await onToggleSpeechInput();
-                                          }
-                                        : () {},
-                                    child: AnimatedSwitcher(
-                                      duration: const Duration(
-                                        milliseconds: 180,
-                                      ),
-                                      child: isSpeechTranscribing
-                                          ? const SizedBox.square(
-                                              key: ValueKey('speech-loading'),
-                                              dimension: 20,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                                color: AppTheme.textMain,
-                                              ),
-                                            )
-                                          : PhosphorIcon(
-                                              key: ValueKey<bool>(
-                                                isSpeechRecording,
-                                              ),
-                                              isSpeechRecording
-                                                  ? PhosphorIcons.x()
-                                                  : PhosphorIcons.microphone(),
-                                              size: 24,
-                                              color: isSpeechRecording
-                                                  ? AppTheme.emerald
-                                                  : null,
-                                            ),
-                                    ),
-                                  ),
-                                ),
-                              )
-                            : const SizedBox(
-                                key: ValueKey('composer-speech-hidden'),
-                              ),
-                      ),
-                      const SizedBox(width: 10),
                       _ComposerPrimaryActionRail(
                         composerController: composerController,
                         attachedImages: attachedImages,
@@ -397,6 +162,263 @@ class _PinnedTurnComposer extends StatelessWidget {
                         onComposerModeChanged: onComposerModeChanged,
                         onSubmitComposer: onSubmitComposer,
                         onSubmitPendingUserInput: onSubmitPendingUserInput,
+                      ),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 220),
+                            switchInCurve: Curves.easeOutCubic,
+                            switchOutCurve: Curves.easeInCubic,
+                            transitionBuilder: (child, animation) {
+                              return FadeTransition(
+                                opacity: animation,
+                                child: SizeTransition(
+                                  axis: Axis.horizontal,
+                                  axisAlignment: -1,
+                                  sizeFactor: animation,
+                                  child: child,
+                                ),
+                              );
+                            },
+                            child: shouldHideLeadingActions
+                                ? const SizedBox(
+                                    key: ValueKey(
+                                      'composer-leading-actions-hidden',
+                                    ),
+                                  )
+                                : Padding(
+                                    key: const ValueKey(
+                                      'composer-leading-actions-visible',
+                                    ),
+                                    padding: const EdgeInsets.only(right: 8),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        _ComposerUtilityButton(
+                                          key: const Key(
+                                            'turn-composer-attach-button',
+                                          ),
+                                          icon: PhosphorIcons.plus(),
+                                          tooltip: 'Attach images',
+                                          onPressed: canEditPinnedControls
+                                              ? () async {
+                                                  await onPickImages();
+                                                }
+                                              : null,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        _ComposerUtilityButton(
+                                          key: const Key(
+                                            'turn-composer-model-button',
+                                          ),
+                                          icon:
+                                              PhosphorIcons.slidersHorizontal(),
+                                          tooltip: 'Composer settings',
+                                          onPressed: canEditPinnedControls
+                                              ? () {
+                                                  composerFocusNode.unfocus();
+                                                  showModalBottomSheet<void>(
+                                                    context: context,
+                                                    backgroundColor:
+                                                        Colors.transparent,
+                                                    isScrollControlled: true,
+                                                    builder: (context) =>
+                                                        _ComposerModelSheet(
+                                                          modelOptions:
+                                                              modelOptions,
+                                                          reasoningOptions:
+                                                              reasoningOptions,
+                                                          initialModel:
+                                                              selectedModel,
+                                                          initialReasoning:
+                                                              selectedReasoning,
+                                                          selectedAccessMode:
+                                                              accessMode,
+                                                          session: session,
+                                                          isAccessModeUpdating:
+                                                              isAccessModeUpdating,
+                                                          onModelChanged:
+                                                              onModelChanged,
+                                                          onReasoningChanged:
+                                                              onReasoningChanged,
+                                                          onAccessModeChanged:
+                                                              onAccessModeChanged,
+                                                        ),
+                                                  );
+                                                }
+                                              : null,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                          ),
+                          Expanded(
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 220),
+                              curve: Curves.easeOutCubic,
+                              decoration: BoxDecoration(
+                                color: AppTheme.surfaceZinc800.withValues(
+                                  alpha: isComposerFocused ? 0.98 : 0.9,
+                                ),
+                                borderRadius: BorderRadius.circular(26),
+                                border: Border.all(
+                                  color: hasPendingUserInput
+                                      ? const Color(
+                                          0xFFA855F7,
+                                        ).withValues(alpha: 0.5)
+                                      : Colors.white.withValues(
+                                          alpha: isComposerFocused
+                                              ? 0.14
+                                              : 0.07,
+                                        ),
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(
+                                      alpha: isComposerFocused ? 0.18 : 0.12,
+                                    ),
+                                    blurRadius: isComposerFocused ? 18 : 12,
+                                    offset: const Offset(0, 8),
+                                  ),
+                                ],
+                              ),
+                              child: AnimatedSwitcher(
+                                duration: const Duration(milliseconds: 180),
+                                switchInCurve: Curves.easeOutCubic,
+                                switchOutCurve: Curves.easeInCubic,
+                                child: isSpeechRecording
+                                    ? _RecordingStatusInline(
+                                        key: const ValueKey(
+                                          'recording-inline-status',
+                                        ),
+                                        durationSeconds: speechDurationSeconds,
+                                        amplitudeStream: speechAmplitudeStream,
+                                      )
+                                    : TextField(
+                                        key: const Key('turn-composer-input'),
+                                        controller: composerController,
+                                        focusNode: composerFocusNode,
+                                        enabled: composerEnabled,
+                                        minLines: 1,
+                                        maxLines: 4,
+                                        keyboardType: TextInputType.multiline,
+                                        textCapitalization:
+                                            TextCapitalization.sentences,
+                                        textInputAction:
+                                            TextInputAction.newline,
+                                        onTapOutside: (_) =>
+                                            composerFocusNode.unfocus(),
+                                        style: const TextStyle(
+                                          color: AppTheme.textMain,
+                                          fontSize: 15,
+                                        ),
+                                        decoration: InputDecoration(
+                                          hintText: isSpeechTranscribing
+                                              ? 'Transcribing voice message…'
+                                              : hasPendingUserInput
+                                              ? 'Something else...'
+                                              : composerMode == TurnMode.plan
+                                              ? 'Ask Codex to plan...'
+                                              : 'Message Codex...',
+                                          hintStyle: const TextStyle(
+                                            color: AppTheme.textSubtle,
+                                          ),
+                                          border: InputBorder.none,
+                                          contentPadding:
+                                              const EdgeInsets.symmetric(
+                                                horizontal: 18,
+                                                vertical: 16,
+                                              ),
+                                        ),
+                                      ),
+                              ),
+                            ),
+                          ),
+                          AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 220),
+                            switchInCurve: Curves.easeOutCubic,
+                            switchOutCurve: Curves.easeInCubic,
+                            transitionBuilder: (child, animation) {
+                              return FadeTransition(
+                                opacity: animation,
+                                child: SizeTransition(
+                                  axis: Axis.horizontal,
+                                  axisAlignment: -1,
+                                  sizeFactor: animation,
+                                  child: child,
+                                ),
+                              );
+                            },
+                            child:
+                                isComposerFocused ||
+                                    isSpeechRecording ||
+                                    isSpeechTranscribing
+                                ? Padding(
+                                    key: const ValueKey(
+                                      'composer-speech-visible',
+                                    ),
+                                    padding: const EdgeInsets.only(left: 10),
+                                    child: SizedBox(
+                                      width: 56,
+                                      height: 56,
+                                      child: MagneticButton(
+                                        key: const Key(
+                                          'turn-composer-speech-toggle',
+                                        ),
+                                        isCircle: true,
+                                        variant:
+                                            MagneticButtonVariant.secondary,
+                                        onClick:
+                                            (controlsEnabled &&
+                                                !isTurnActive &&
+                                                !isComposerMutationInFlight &&
+                                                !isInterruptMutationInFlight &&
+                                                !isSpeechTranscribing)
+                                            ? () async {
+                                                await onToggleSpeechInput();
+                                              }
+                                            : () {},
+                                        child: AnimatedSwitcher(
+                                          duration: const Duration(
+                                            milliseconds: 180,
+                                          ),
+                                          child: isSpeechTranscribing
+                                              ? const SizedBox.square(
+                                                  key: ValueKey(
+                                                    'speech-loading',
+                                                  ),
+                                                  dimension: 20,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                        strokeWidth: 2,
+                                                        color:
+                                                            AppTheme.textMain,
+                                                      ),
+                                                )
+                                              : PhosphorIcon(
+                                                  key: ValueKey<bool>(
+                                                    isSpeechRecording,
+                                                  ),
+                                                  isSpeechRecording
+                                                      ? PhosphorIcons.x()
+                                                      : PhosphorIcons.microphone(),
+                                                  size: 24,
+                                                  color: isSpeechRecording
+                                                      ? AppTheme.emerald
+                                                      : null,
+                                                ),
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                : const SizedBox(
+                                    key: ValueKey('composer-speech-hidden'),
+                                  ),
+                          ),
+                          const SizedBox(width: 10),
+                          SizedBox(width: hasPendingUserInput ? 56.0 : 66.0),
+                        ],
                       ),
                     ],
                   ),
@@ -517,13 +539,13 @@ class _PendingUserInputCard extends StatelessWidget {
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: AppTheme.purple.withValues(alpha: 0.2),
+                  color: const Color(0xFFA855F7).withValues(alpha: 0.2),
                   shape: BoxShape.circle,
                 ),
                 child: Center(
                   child: PhosphorIcon(
                     PhosphorIcons.lightbulb(PhosphorIconsStyle.fill),
-                    color: AppTheme.purple,
+                    color: const Color(0xFFA855F7),
                     size: 18,
                   ),
                 ),
@@ -537,8 +559,8 @@ class _PendingUserInputCard extends StatelessWidget {
                       pendingUserInput.title,
                       style: const TextStyle(
                         color: AppTheme.textMain,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
                     if (pendingUserInput.detail case final detail?)
@@ -633,6 +655,7 @@ class _PendingUserInputCard extends StatelessWidget {
                     index: currentQuestionIndex + 1,
                     totalQuestions: pendingUserInput.questions.length,
                     question: currentQuestion,
+                    pendingUserInputTitle: pendingUserInput.title,
                     selectedOptionId:
                         selectedOptionByQuestionId[currentQuestion.questionId],
                     onSelectOption: (optionId) =>
@@ -651,6 +674,7 @@ class _PendingUserInputQuestionCard extends StatelessWidget {
     required this.index,
     required this.totalQuestions,
     required this.question,
+    required this.pendingUserInputTitle,
     required this.selectedOptionId,
     required this.onSelectOption,
   });
@@ -658,21 +682,16 @@ class _PendingUserInputQuestionCard extends StatelessWidget {
   final int index;
   final int totalQuestions;
   final UserInputQuestionDto question;
+  final String pendingUserInputTitle;
   final String? selectedOptionId;
   final ValueChanged<String> onSelectOption;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.03),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (totalQuestions > 1) ...[
           Row(
             children: [
               Text(
@@ -694,32 +713,37 @@ class _PendingUserInputQuestionCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 12),
+        ],
+        if (question.prompt.isNotEmpty &&
+            question.prompt != pendingUserInputTitle) ...[
           Text(
             question.prompt,
             style: const TextStyle(
               color: AppTheme.textMain,
               fontSize: 14,
               height: 1.35,
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: question.options
-                .map(
-                  (option) => _PendingUserInputOptionChip(
+          const SizedBox(height: 12),
+        ],
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: question.options
+              .map(
+                (option) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _PendingUserInputOptionChip(
                     option: option,
                     isSelected: selectedOptionId == option.optionId,
                     onTap: () => onSelectOption(option.optionId),
                   ),
-                )
-                .toList(growable: false),
-          ),
-        ],
-      ),
+                ),
+              )
+              .toList(growable: false),
+        ),
+      ],
     );
   }
 }
@@ -740,68 +764,64 @@ class _PendingUserInputOptionChip extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(14),
         onTap: onTap,
         child: Ink(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
           decoration: BoxDecoration(
             color: isSelected
                 ? Colors.white.withValues(alpha: 0.12)
-                : Colors.white.withValues(alpha: 0.04),
-            borderRadius: BorderRadius.circular(18),
+                : Colors.white.withValues(alpha: 0.03),
+            borderRadius: BorderRadius.circular(14),
             border: Border.all(
               color: isSelected
                   ? Colors.white.withValues(alpha: 0.2)
                   : Colors.white.withValues(alpha: 0.08),
             ),
           ),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minWidth: 96, maxWidth: 220),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        option.label,
-                        style: TextStyle(
-                          color: isSelected
-                              ? AppTheme.textMain
-                              : AppTheme.textMuted,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                        ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      option.label,
+                      style: TextStyle(
+                        color: isSelected
+                            ? AppTheme.textMain
+                            : const Color(0xFFD4D4D8),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w400,
                       ),
-                    ),
-                    if (option.isRecommended) ...[
-                      const SizedBox(width: 6),
-                      Text(
-                        'REC',
-                        style: GoogleFonts.jetBrainsMono(
-                          color: AppTheme.emerald,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                if (option.description.trim().isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    option.description,
-                    style: const TextStyle(
-                      color: AppTheme.textSubtle,
-                      fontSize: 11,
-                      height: 1.3,
                     ),
                   ),
+                  if (option.isRecommended) ...[
+                    const SizedBox(width: 8),
+                    Text(
+                      'REC',
+                      style: GoogleFonts.jetBrainsMono(
+                        color: AppTheme.emerald,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
                 ],
+              ),
+              if (option.description.trim().isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  option.description,
+                  style: const TextStyle(
+                    color: AppTheme.textSubtle,
+                    fontSize: 12,
+                    height: 1.3,
+                  ),
+                ),
               ],
-            ),
+            ],
           ),
         ),
       ),
@@ -850,30 +870,38 @@ class _ComposerPrimaryActionRail extends StatefulWidget {
 
 class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _swapController;
+  late final AnimationController _snapController;
+  late Animation<double> _snapAnimation;
   double _dragDx = 0.0;
 
   @override
   void initState() {
     super.initState();
-    _swapController = AnimationController(
+    _snapController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 250),
+      duration: const Duration(milliseconds: 300),
     );
+    _snapAnimation = const AlwaysStoppedAnimation(0.0);
+    _snapController.addListener(() {
+      setState(() {
+        _dragDx = _snapAnimation.value;
+      });
+    });
   }
 
   @override
   void dispose() {
-    _swapController.dispose();
+    _snapController.dispose();
     super.dispose();
   }
 
   void _onDragUpdate(DragUpdateDetails details) {
     if (widget.hasPendingUserInput) return;
+    _snapController.stop();
     setState(() {
       _dragDx += details.delta.dx;
-      // Only allow dragging to the left
-      if (_dragDx > 0) _dragDx = 0;
+      // Soft clamp for pulling right (elastic feel)
+      if (_dragDx > 24.0) _dragDx = 24.0;
     });
   }
 
@@ -882,10 +910,12 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
     final velocity = details.primaryVelocity ?? 0;
 
     if (_dragDx < -20 || velocity < -180) {
-      // Animate the rest of the swap
-      _swapController.forward(from: (_dragDx.abs() / 56).clamp(0.0, 1.0)).then((
-        _,
-      ) {
+      // Snap to next
+      _snapAnimation = Tween<double>(begin: _dragDx, end: -68.0).animate(
+        CurvedAnimation(parent: _snapController, curve: Curves.easeOutCubic),
+      );
+
+      _snapController.forward(from: 0.0).then((_) {
         final secondaryMode = widget.composerMode == TurnMode.act
             ? TurnMode.plan
             : TurnMode.act;
@@ -893,17 +923,14 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
         setState(() {
           _dragDx = 0;
         });
-        _swapController.reset();
       });
     } else {
-      // Snap back
-      _swapController.reverse(from: (_dragDx.abs() / 56).clamp(0.0, 1.0)).then((
-        _,
-      ) {
-        setState(() {
-          _dragDx = 0;
-        });
-      });
+      // Snap back to 0
+      _snapAnimation = Tween<double>(begin: _dragDx, end: 0.0).animate(
+        CurvedAnimation(parent: _snapController, curve: Curves.easeOutCubic),
+      );
+
+      _snapController.forward(from: 0.0);
     }
   }
 
@@ -951,7 +978,48 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
             required TurnMode mode,
             required bool isActive,
             bool isPurple = false,
+            double dragProgress = 1.0,
           }) {
+            final activeBgColor = isPurple
+                ? const Color(0xFFA855F7)
+                : Colors.white;
+            final inactiveBgColor = AppTheme.surfaceZinc800.withValues(
+              alpha: 0.9,
+            );
+            final bgColor = Color.lerp(
+              inactiveBgColor,
+              activeBgColor,
+              dragProgress,
+            );
+
+            final activeIconColor = isPurple
+                ? Colors.white
+                : AppTheme.background;
+            final inactiveIconColor = AppTheme.textSubtle;
+            final iconColor = Color.lerp(
+              inactiveIconColor,
+              activeIconColor,
+              dragProgress,
+            );
+
+            final activeBorderColor = Colors.transparent;
+            final inactiveBorderColor = Colors.white.withValues(alpha: 0.06);
+            final borderColor = Color.lerp(
+              inactiveBorderColor,
+              activeBorderColor,
+              dragProgress,
+            );
+
+            final activeShadowColor = isPurple
+                ? const Color(0xFFA855F7).withValues(alpha: 0.4)
+                : Colors.transparent;
+            final inactiveShadowColor = Colors.transparent;
+            final shadowColor = Color.lerp(
+              inactiveShadowColor,
+              activeShadowColor,
+              dragProgress,
+            );
+
             final child = AnimatedSwitcher(
               duration: const Duration(milliseconds: 180),
               child: widget.isComposerMutationInFlight && isActive
@@ -975,71 +1043,48 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
                           : PhosphorIcons.arrowUp(),
                       key: ValueKey('composer-primary-${mode.wireValue}'),
                       size: isPurple ? 24 : 22,
-                      color: isActive
-                          ? (isPurple ? Colors.white : null)
-                          : AppTheme.textSubtle,
+                      color: iconColor,
                     ),
             );
-
-            if (!isActive) {
-              return Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: AppTheme.surfaceZinc800.withValues(alpha: 0.9),
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.06),
-                  ),
-                ),
-                child: Center(child: child),
-              );
-            }
-
-            if (isPurple) {
-              return GestureDetector(
-                onTap: isActive && canRunPrimaryAction
-                    ? () async {
-                        await handleSubmit();
-                      }
-                    : null,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    color: Color(0xFFA855F7), // purple-500
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Color(0xFFA855F7).withValues(alpha: 0.4),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Center(child: child),
-                ),
-              );
-            }
 
             return SizedBox(
               width: 56,
               height: 56,
-              child: MagneticButton(
-                key: Key(
-                  mode == TurnMode.act
-                      ? 'turn-composer-submit'
-                      : 'turn-composer-plan-submit',
+              child: Container(
+                decoration: BoxDecoration(
+                  color: bgColor,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: borderColor ?? Colors.transparent),
+                  boxShadow:
+                      shadowColor != null && shadowColor != Colors.transparent
+                      ? [
+                          BoxShadow(
+                            color: shadowColor,
+                            blurRadius: 12,
+                            offset: const Offset(0, 4),
+                          ),
+                        ]
+                      : null,
                 ),
-                isCircle: true,
-                variant: MagneticButtonVariant.primary,
-                onClick: isActive && canRunPrimaryAction
-                    ? () async {
-                        await handleSubmit();
-                      }
-                    : () {},
-                child: child,
+                child: MagneticButton(
+                  key: Key(
+                    mode == TurnMode.act
+                        ? 'turn-composer-submit'
+                        : 'turn-composer-plan-submit',
+                  ),
+                  isCircle: true,
+                  variant: MagneticButtonVariant.primary,
+                  backgroundColorOverride: Colors
+                      .transparent, // Let the container handle the background for lerping
+                  foregroundColorOverride: iconColor,
+                  onClick:
+                      (isActive && dragProgress > 0.5) && canRunPrimaryAction
+                      ? () async {
+                          await handleSubmit();
+                        }
+                      : () {},
+                  child: child,
+                ),
               ),
             );
           }
@@ -1058,22 +1103,31 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
               : TurnMode.act;
 
           return AnimatedBuilder(
-            animation: _swapController,
+            animation: _snapController,
             builder: (context, child) {
-              final progress = _swapController.value;
               final effectiveDrag = _dragDx;
 
-              // Active button moves left and fades out
-              final activeLeft = effectiveDrag - (progress * 56);
-              final activeOpacity =
-                  (1.0 - progress - (effectiveDrag.abs() / 56)).clamp(0.0, 1.0);
+              const spacing = 68.0;
 
-              // Secondary button moves left to 0 and becomes fully opaque
-              final secondaryLeft =
-                  10.0 + (effectiveDrag * 0.2) - (progress * 10);
-              final secondaryOpacity =
-                  (0.8 + (progress * 0.2) + ((effectiveDrag.abs() / 56) * 0.2))
-                      .clamp(0.0, 1.0);
+              // Calculate progress for color morphing
+              // progress = 1.0 when active is fully centered, 0.0 when active is completely offset
+              // secondaryProgress = 1.0 when secondary is fully centered, 0.0 when secondary is completely offset
+              final activeOffset = effectiveDrag;
+              final secondaryOffset = spacing + effectiveDrag;
+
+              final activeProgress = math
+                  .max(0.0, 1.0 - (activeOffset.abs() / spacing))
+                  .toDouble();
+              final secondaryProgress = math
+                  .max(0.0, 1.0 - (secondaryOffset.abs() / spacing))
+                  .toDouble();
+
+              final activeScale = math
+                  .max(0.6, 1.0 - (activeOffset.abs() / 150))
+                  .toDouble();
+              final secondaryScale = math
+                  .max(0.6, 1.0 - (secondaryOffset.abs() / 150))
+                  .toDouble();
 
               return GestureDetector(
                 behavior: HitTestBehavior.translucent,
@@ -1084,30 +1138,42 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
                 },
                 onHorizontalDragUpdate: _onDragUpdate,
                 onHorizontalDragEnd: _onDragEnd,
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Positioned(
-                      left: secondaryLeft,
-                      child: Opacity(
-                        opacity: secondaryOpacity,
-                        child: buildPrimaryButton(
-                          mode: secondaryMode,
-                          isActive: false,
+                child: SizedBox(
+                  width: 66,
+                  height: 56,
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Positioned(
+                        left: 0,
+                        child: Transform(
+                          transform: Matrix4.identity()
+                            ..translate(secondaryOffset, 0.0)
+                            ..scale(secondaryScale, secondaryScale),
+                          alignment: Alignment.center,
+                          child: buildPrimaryButton(
+                            mode: secondaryMode,
+                            isActive: false, // will handle color internally
+                            dragProgress: secondaryProgress,
+                          ),
                         ),
                       ),
-                    ),
-                    Positioned(
-                      left: activeLeft,
-                      child: Opacity(
-                        opacity: activeOpacity,
-                        child: buildPrimaryButton(
-                          mode: activeMode,
-                          isActive: true,
+                      Positioned(
+                        left: 0,
+                        child: Transform(
+                          transform: Matrix4.identity()
+                            ..translate(activeOffset, 0.0)
+                            ..scale(activeScale, activeScale),
+                          alignment: Alignment.center,
+                          child: buildPrimaryButton(
+                            mode: activeMode,
+                            isActive: true, // will handle color internally
+                            dragProgress: activeProgress,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               );
             },

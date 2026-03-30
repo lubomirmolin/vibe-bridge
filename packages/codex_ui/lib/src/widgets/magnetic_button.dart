@@ -10,6 +10,8 @@ class MagneticButton extends StatefulWidget {
   final MagneticButtonVariant variant;
   final EdgeInsetsGeometry padding;
   final bool isCircle;
+  final Color? backgroundColorOverride;
+  final Color? foregroundColorOverride;
 
   const MagneticButton({
     super.key,
@@ -18,6 +20,8 @@ class MagneticButton extends StatefulWidget {
     this.variant = MagneticButtonVariant.primary,
     this.padding = const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
     this.isCircle = false,
+    this.backgroundColorOverride,
+    this.foregroundColorOverride,
   });
 
   @override
@@ -96,6 +100,13 @@ class _MagneticButtonState extends State<MagneticButton> {
         );
         textColor = AppTheme.rose;
         break;
+    }
+
+    if (widget.backgroundColorOverride != null) {
+      decoration = decoration.copyWith(color: widget.backgroundColorOverride);
+    }
+    if (widget.foregroundColorOverride != null) {
+      textColor = widget.foregroundColorOverride!;
     }
 
     Widget innerContainer = AnimatedContainer(
