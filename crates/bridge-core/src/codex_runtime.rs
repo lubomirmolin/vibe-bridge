@@ -446,7 +446,8 @@ mod tests {
 
     #[test]
     fn spawn_mode_keeps_stdin_open_for_managed_app_server_processes() {
-        let script = make_stdin_blocking_test_script("codex-runtime-stdin");
+        let script_dir = unique_temp_dir("codex-runtime-stdin");
+        let script = make_stdin_blocking_test_script(&script_dir, "codex-runtime-stdin");
         let mut supervisor = CodexRuntimeSupervisor::new(CodexRuntimeConfig {
             mode: CodexRuntimeMode::Spawn,
             endpoint: Some("ws://127.0.0.1:4222".to_string()),
@@ -463,11 +464,11 @@ mod tests {
         assert_eq!(snapshot.state, "managed");
         assert!(snapshot.pid.is_some());
 
-        let _ = fs::remove_file(script);
+        let _ = fs::remove_dir_all(script_dir);
     }
 
-    fn make_stdin_blocking_test_script(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+    fn make_stdin_blocking_test_script(parent: &std::path::Path, name: &str) -> PathBuf {
+        let path = parent.join(name);
         fs::write(
             &path,
             "#!/bin/sh\nif [ \"$1\" = \"app-server\" ]; then\n  shift\nfi\ncat >/dev/null\n",
@@ -477,5 +478,18 @@ mod tests {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
             .expect("test script should be executable");
         path
+    }
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock should be after unix epoch")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).expect("temp test directory should be created");
+        dir
     }
 }
