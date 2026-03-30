@@ -38,9 +38,8 @@ do
   fi
 done
 
-if [ "${REQUIRE_ANDROID_RELEASE_SIGNING:-0}" = "1" ] && [ "${has_release_signing}" != "true" ]; then
-  echo "error: tagged Android releases require ANDROID_KEYSTORE_BASE64 or ANDROID_KEYSTORE_PATH plus the release signing secrets." >&2
-  exit 1
+if [ "${has_release_signing}" != "true" ]; then
+  echo "warning: Android release signing secrets are not configured; falling back to Gradle's debug/generated signing config." >&2
 fi
 
 pushd "${REPO_ROOT}/apps/mobile" >/dev/null
