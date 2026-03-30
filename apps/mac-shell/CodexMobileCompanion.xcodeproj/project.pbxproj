@@ -16,6 +16,8 @@
 		47EF301FD4DB23F23CE7051A /* SecureStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE2411DE1FFF6CE64E10B9C0 /* SecureStore.swift */; };
 		82562FC75DF9A3EC759F42CB /* PairingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD6A06141FE8DC9786018F28 /* PairingViews.swift */; };
 		8342BD14E062007C2A9EC2D2 /* CodexMobileCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9EBC4B14B8E5EFE0024E1CC /* CodexMobileCompanionApp.swift */; };
+		9BA69C63586281C0DF6F3FC8 /* UpdateCheckViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41DE442C8D708C97FBF5B810 /* UpdateCheckViewModel.swift */; };
+		A78FC71CDB7F14567602C7D8 /* ReleaseUpdater.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86885E31FC31A3BF0B909170 /* ReleaseUpdater.swift */; };
 		B17D93EC9AC73B9003D48DD9 /* StructuredLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED9789893934082730104731 /* StructuredLogger.swift */; };
 		D86F81EE7320E6CF368F94E6 /* SpeechHelperMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE77A3E5D1E631FDAEAF0F9D /* SpeechHelperMain.swift */; };
 		DBD044B04323228856E52A52 /* PairingEntryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B7AB0DAD1B68544E6B87F2C /* PairingEntryViewModel.swift */; };
@@ -41,10 +43,12 @@
 
 /* Begin PBXFileReference section */
 		253C6D9A6CE243C2E4429D55 /* PersistenceBoundary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceBoundary.swift; sourceTree = "<group>"; };
+		41DE442C8D708C97FBF5B810 /* UpdateCheckViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateCheckViewModel.swift; sourceTree = "<group>"; };
 		443BA9831BAAF12691D150FF /* BridgeShellAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeShellAPIClient.swift; sourceTree = "<group>"; };
 		5648474174ABB9345A052D70 /* DesktopRuntimeSupervisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopRuntimeSupervisor.swift; sourceTree = "<group>"; };
 		728B378B81F809C4F14EC72D /* CodexMobileCompanionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexMobileCompanionTests.swift; sourceTree = "<group>"; };
 		854D870C62DD6114E50C410F /* CodexSpeechHelper */ = {isa = PBXFileReference; includeInIndex = 0; path = CodexSpeechHelper; sourceTree = BUILT_PRODUCTS_DIR; };
+		86885E31FC31A3BF0B909170 /* ReleaseUpdater.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseUpdater.swift; sourceTree = "<group>"; };
 		8B7AB0DAD1B68544E6B87F2C /* PairingEntryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingEntryViewModel.swift; sourceTree = "<group>"; };
 		A90B6FE0AC3C66F2B1FA806D /* CodexMobileCompanionTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CodexMobileCompanionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B2F2D601B571120586CB68C0 /* BridgeContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeContracts.swift; sourceTree = "<group>"; };
@@ -71,6 +75,7 @@
 		06A1A52B8E050A92076962B5 /* Foundation */ = {
 			isa = PBXGroup;
 			children = (
+				86885E31FC31A3BF0B909170 /* ReleaseUpdater.swift */,
 				26164932D6129823FBDE21BE /* Contracts */,
 				127F99BDB4362D4644ECFD26 /* Logging */,
 				6FC3EB7AE2D7FB93BAD402FB /* Storage */,
@@ -196,6 +201,7 @@
 			isa = PBXGroup;
 			children = (
 				8B7AB0DAD1B68544E6B87F2C /* PairingEntryViewModel.swift */,
+				41DE442C8D708C97FBF5B810 /* UpdateCheckViewModel.swift */,
 			);
 			path = ViewModel;
 			sourceTree = "<group>";
@@ -378,8 +384,10 @@
 				DBD044B04323228856E52A52 /* PairingEntryViewModel.swift in Sources */,
 				82562FC75DF9A3EC759F42CB /* PairingViews.swift in Sources */,
 				076DAD3555DF80C951B9329F /* PersistenceBoundary.swift in Sources */,
+				A78FC71CDB7F14567602C7D8 /* ReleaseUpdater.swift in Sources */,
 				47EF301FD4DB23F23CE7051A /* SecureStore.swift in Sources */,
 				B17D93EC9AC73B9003D48DD9 /* StructuredLogger.swift in Sources */,
+				9BA69C63586281C0DF6F3FC8 /* UpdateCheckViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -477,8 +485,11 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = CodexMobileCompanion;
+				INFOPLIST_KEY_CFBundleShortVersionString = "$(MARKETING_VERSION)";
+				INFOPLIST_KEY_CFBundleVersion = "$(CURRENT_PROJECT_VERSION)";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Codex Mobile Companion";
@@ -487,6 +498,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.codex.mobile.companion.shell;
 				PRODUCT_NAME = CodexMobileCompanion;
 				SDKROOT = macosx;
@@ -514,8 +526,11 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = CodexMobileCompanion;
+				INFOPLIST_KEY_CFBundleShortVersionString = "$(MARKETING_VERSION)";
+				INFOPLIST_KEY_CFBundleVersion = "$(CURRENT_PROJECT_VERSION)";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Codex Mobile Companion";
@@ -524,6 +539,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.codex.mobile.companion.shell;
 				PRODUCT_NAME = CodexMobileCompanion;
 				SDKROOT = macosx;
