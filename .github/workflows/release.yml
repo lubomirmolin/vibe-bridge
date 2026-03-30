@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-java@v4
         with:
@@ -49,7 +49,7 @@ jobs:
           REQUIRE_ANDROID_RELEASE_SIGNING: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && '1' || '0' }}
         run: ./scripts/release/package-android.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: release-android
           path: dist/*
@@ -60,7 +60,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Linux desktop dependencies
         run: |
@@ -93,7 +93,7 @@ jobs:
       - name: Package standalone Linux bridge
         run: ./scripts/release/package-bridge.sh linux
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: release-linux
           path: dist/*
@@ -104,7 +104,7 @@ jobs:
     runs-on: macos-15-intel
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install stable Rust
         run: |
@@ -117,7 +117,7 @@ jobs:
       - name: Package standalone macOS bridge
         run: ./scripts/release/package-bridge.sh macos
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: release-macos
           path: dist/*
@@ -135,7 +135,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: dist
