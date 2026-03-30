@@ -39,7 +39,7 @@ use crate::server::controls::{
     read_git_state, read_git_state_for_status,
 };
 use crate::server::events::EventHub;
-use crate::server::gateway::CodexGateway;
+use crate::server::gateway::{CodexGateway, TurnStartRequest};
 use crate::server::pairing_route::PairingRouteState;
 use crate::server::projection::ProjectionStore;
 use crate::server::speech::{SpeechError, SpeechService};
@@ -1525,10 +1525,12 @@ impl BridgeAppState {
             .insert(thread_id.to_string());
         let result = match self.inner.gateway.start_turn_streaming(
             thread_id,
-            upstream_prompt,
-            images,
-            model,
-            effort,
+            TurnStartRequest {
+                prompt: upstream_prompt.to_string(),
+                images: images.to_vec(),
+                model: model.map(str::to_string),
+                effort: effort.map(str::to_string),
+            },
             move |event| {
                 let state = state.clone();
                 if let Some(user_input_event) = handle.block_on(async {
