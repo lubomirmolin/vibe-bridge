@@ -93,6 +93,7 @@ void main() {
         'timeline_count=${timelinePage.entries.length}',
       );
     },
+    skip: !_runLiveThreadCreateResponseTest(),
     timeout: const Timeout(Duration(minutes: 2)),
   );
 }
@@ -112,4 +113,8 @@ String _resolveBridgeApiBaseUrl() {
   }
 
   return 'http://127.0.0.1:3110';
+}
+
+bool _runLiveThreadCreateResponseTest() {
+  return const bool.fromEnvironment('RUN_LIVE_THREAD_CREATE_RESPONSE_TEST');
 }
