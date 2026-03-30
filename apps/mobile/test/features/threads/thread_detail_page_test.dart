@@ -621,13 +621,15 @@ void main() {
           ],
         },
       );
-      final cacheRepository = _newCacheRepository();
+      final store = InMemorySecureStore();
+      final cacheRepository = _newCacheRepository(store: store);
 
       await _pumpThreadDetailApp(
         tester,
         detailApi: detailApi,
         threadId: 'thread-123',
         cacheRepository: cacheRepository,
+        store: store,
       );
 
       await tester.enterText(
@@ -644,6 +646,7 @@ void main() {
         detailApi: detailApi,
         threadId: 'thread-123',
         cacheRepository: cacheRepository,
+        store: store,
       );
       await tester.pumpAndSettle();
 
@@ -681,13 +684,15 @@ void main() {
           ],
         },
       );
-      final cacheRepository = _newCacheRepository();
+      final store = InMemorySecureStore();
+      final cacheRepository = _newCacheRepository(store: store);
 
       await _pumpThreadDetailApp(
         tester,
         detailApi: detailApi,
         threadId: 'thread-123',
         cacheRepository: cacheRepository,
+        store: store,
       );
 
       await tester.enterText(
@@ -706,6 +711,7 @@ void main() {
         detailApi: detailApi,
         threadId: 'thread-123',
         cacheRepository: cacheRepository,
+        store: store,
       );
       await tester.pumpAndSettle();
 
@@ -4693,13 +4699,16 @@ Future<void> _pumpThreadDetailApp(
   ApprovalBridgeApi? approvalApi,
   ThreadCacheRepository? cacheRepository,
   SettingsBridgeApi? settingsApi,
+  InMemorySecureStore? store,
   Future<List<XFile>> Function()? pickImagesOverride,
   SpeechCapture? speechCaptureOverride,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
-        appSecureStoreProvider.overrideWithValue(InMemorySecureStore()),
+        appSecureStoreProvider.overrideWithValue(
+          store ?? InMemorySecureStore(),
+        ),
         threadListBridgeApiProvider.overrideWithValue(
           listApi ??
               FakeThreadListBridgeApi(scriptedResults: [_threadSummaries()]),

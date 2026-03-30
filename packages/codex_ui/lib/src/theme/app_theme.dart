@@ -12,6 +12,7 @@ class AppTheme {
   static const Color emerald = Color(0xFF10B981); // emerald-500
   static const Color amber = Color(0xFFF59E0B); // amber-500
   static const Color rose = Color(0xFFF43F5E); // rose-500
+  static const Color purple = Color(0xFFA855F7); // purple-500
 
   // Surface colors
   static const Color surfaceZinc100 = Color(
