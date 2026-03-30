@@ -26,3 +26,14 @@ apps/mobile/android/upload-keystore.jks
 tmp/
 .factory/
 .claude/references/
+
+# Stray generated desktop bundle artifacts
+/app-server-manager-hooks-*.js
+/desktop-*.js
+/main-*.js
+/product-name-*.js
+/use-navigate-to-local-conversation-*.js
+
+# Local bridge runtime state
+/trust-registry.json
+/state/trust-registry.json
