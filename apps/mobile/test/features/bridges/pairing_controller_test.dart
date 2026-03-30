@@ -26,10 +26,7 @@ void main() {
       controller.submitScannedPayload(_compactPayload());
 
       expect(controller.state.step, PairingStep.review);
-      expect(
-        controller.state.pendingPayload?.bridgeName,
-        'Vibe bridge companion',
-      );
+      expect(controller.state.pendingPayload?.bridgeName, 'Vibe bridge');
 
       await controller.confirmTrust();
 
@@ -71,7 +68,7 @@ void main() {
       await store.writeSecret(SecureValueKey.trustedBridgeIdentity, '''
 {
   "bridge_id": "bridge-a1",
-  "bridge_name": "Vibe bridge companion",
+  "bridge_name": "Vibe bridge",
   "bridge_api_base_url": "https://bridge.ts.net",
   "session_id": "session-1",
   "paired_at_epoch_seconds": 100
