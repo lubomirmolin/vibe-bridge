@@ -1,11 +1,11 @@
 {
-    "name": "Vibe bridge companion",
-    "short_name": "Vibe bridge companion",
+    "name": "Vibe bridge",
+    "short_name": "Vibe bridge",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "Vibe bridge companion mobile app.",
+    "description": "Vibe bridge mobile app.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

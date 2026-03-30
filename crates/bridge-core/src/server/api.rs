@@ -2193,6 +2193,56 @@ mod tests {
         )
     }
 
+    fn test_state_with_codex_command(command: &Path) -> BridgeAppState {
+        let temp_state_directory = unique_temp_dir("bridge-codex-test");
+        let speech = SpeechService::new_for_tests(
+            Arc::new(crate::server::speech::UnsupportedSpeechBackend),
+            unique_temp_dir("bridge-codex-speech"),
+            SpeechModelStatusDto {
+                contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+                provider: "fluid_audio".to_string(),
+                model_id: "parakeet-tdt-0.6b-v3-coreml".to_string(),
+                state: SpeechModelStateDto::Unsupported,
+                download_progress: None,
+                last_error: Some("tests use the unsupported speech backend".to_string()),
+                installed_bytes: None,
+            },
+        );
+        let config = BridgeConfig {
+            host: "127.0.0.1".to_string(),
+            port: 3110,
+            state_directory: temp_state_directory.clone(),
+            speech_helper_binary: None,
+            pairing_route: PairingRouteState::new(
+                "https://bridge.ts.net".to_string(),
+                true,
+                None,
+                3110,
+                false,
+                temp_state_directory,
+            ),
+            codex: BridgeCodexConfig {
+                mode: crate::codex_runtime::CodexRuntimeMode::Spawn,
+                endpoint: None,
+                command: command.to_string_lossy().to_string(),
+                args: vec!["app-server".to_string()],
+                desktop_ipc_socket_path: None,
+            },
+        };
+
+        BridgeAppState::new(
+            config.codex,
+            crate::pairing::PairingSessionService::new(
+                config.host.as_str(),
+                config.port,
+                config.pairing_route.pairing_base_url().to_string(),
+                config.state_directory.clone(),
+            ),
+            config.pairing_route,
+            speech,
+        )
+    }
+
     async fn prime_thread(
         state: &BridgeAppState,
         thread_id: &str,
@@ -2267,6 +2317,111 @@ mod tests {
             0x00, 0x7D, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0x64, 0x61, 0x74, 0x61, 0x04, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ]
+    }
+
+    fn write_fake_codex_script(label: &str, script_body: &str) -> PathBuf {
+        let temp_dir = unique_temp_dir(label);
+        let script_path = temp_dir.join("fake-codex.sh");
+        fs::write(&script_path, script_body).expect("fake codex script should be written");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))
+                .expect("fake codex script should be executable");
+        }
+        script_path
+    }
+
+    #[tokio::test]
+    async fn thread_history_route_hides_plan_protocol_messages_and_surfaces_pending_input() {
+        let script_path = write_fake_codex_script(
+            "plan-history",
+            r#"#!/usr/bin/env python3
+import json
+import sys
+
+for line in sys.stdin:
+    request = json.loads(line)
+    response = {"id": request.get("id")}
+    method = request.get("method")
+
+    if method == "initialize":
+        response["result"] = {}
+    elif method == "thread/read":
+        response["result"] = {
+            "thread": {
+                "id": "thread-plan",
+                "name": "Plan thread",
+                "preview": "preview",
+                "status": {"type": "idle"},
+                "cwd": "/workspace/repo",
+                "gitInfo": {
+                    "branch": "main",
+                    "originUrl": "git@github.com:example/repo.git",
+                },
+                "createdAt": 1710000000,
+                "updatedAt": 1710000300,
+                "source": "cli",
+                "turns": [
+                    {
+                        "id": "turn-plan",
+                        "items": [
+                            {
+                                "id": "msg-hidden-user",
+                                "type": "userMessage",
+                                "text": "You are running in mobile plan intake mode.\nDo not edit files, do not run commands, and do not produce the plan yet.",
+                            },
+                            {
+                                "id": "msg-hidden-assistant",
+                                "type": "agentMessage",
+                                "text": "<codex-plan-questions>{\"title\":\"Clarify the implementation\",\"detail\":\"Pick the first test target.\",\"questions\":[{\"question_id\":\"scope\",\"prompt\":\"What should the test cover first?\",\"options\":[{\"option_id\":\"core\",\"label\":\"Core flows\",\"description\":\"Cover pairing and thread navigation.\",\"is_recommended\":true},{\"option_id\":\"plan\",\"label\":\"Plan mode\",\"description\":\"Cover plan mode only.\",\"is_recommended\":false},{\"option_id\":\"polish\",\"label\":\"Polish\",\"description\":\"Cover copy and layout polish.\",\"is_recommended\":false}]}]}</codex-plan-questions>",
+                            },
+                        ],
+                    }
+                ],
+            }
+        }
+    else:
+        response["result"] = {}
+
+    sys.stdout.write(json.dumps(response) + "\n")
+    sys.stdout.flush()
+"#,
+        );
+
+        let app = router(test_state_with_codex_command(&script_path));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/threads/thread-plan/history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+
+        assert_eq!(decoded["entries"], json!([]));
+        assert_eq!(
+            decoded["pending_user_input"]["title"],
+            "Clarify the implementation"
+        );
+        assert_eq!(
+            decoded["pending_user_input"]["questions"][0]["question_id"],
+            "scope"
+        );
+        assert_eq!(decoded["thread"]["thread_id"], "thread-plan");
+
+        let _ = fs::remove_file(&script_path);
+        if let Some(parent) = script_path.parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
     }
 
     #[derive(Debug)]

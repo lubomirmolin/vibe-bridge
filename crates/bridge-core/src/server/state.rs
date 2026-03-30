@@ -2636,7 +2636,7 @@ fn render_user_input_response_summary(
     lines.join("\n")
 }
 
-fn parse_pending_user_input_payload(
+pub(super) fn parse_pending_user_input_payload(
     message_text: &str,
     thread_id: &str,
 ) -> Option<PendingUserInputDto> {
@@ -3002,6 +3002,9 @@ fn is_hidden_message(message: &str) -> bool {
         || trimmed.starts_with("<environment_context>")
         || trimmed.starts_with("<collaboration_mode>")
         || trimmed.starts_with("<turn_aborted>")
+        || trimmed.starts_with("You are running in mobile plan intake mode.")
+        || trimmed.starts_with("You are continuing a mobile planning workflow.")
+        || trimmed.contains("<codex-plan-questions>")
 }
 
 fn build_hidden_commit_prompt() -> String {
@@ -3074,8 +3077,8 @@ mod tests {
         BridgeAppState, LiveDeltaCompactor, NotificationControlMessage,
         build_desktop_ipc_snapshot_update, drain_notification_control_messages,
         ensure_running_status_for_desktop_patch_update, is_duplicate_synthetic_user_message,
-        preserve_bootstrap_status_for_cached_desktop_snapshot, resume_notification_threads,
-        should_clear_transient_thread_state,
+        payload_contains_hidden_message, preserve_bootstrap_status_for_cached_desktop_snapshot,
+        resume_notification_threads, should_clear_transient_thread_state,
         should_suppress_desktop_ipc_live_update_for_bridge_active_turn,
         should_suppress_non_running_thread_status_for_bridge_active_turn,
         should_suppress_notification_event_for_bridge_active_turn,
@@ -3176,6 +3179,19 @@ mod tests {
             "hello",
             &mismatched_text_event
         ));
+    }
+
+    #[test]
+    fn hidden_payload_detection_marks_mobile_plan_protocol_messages() {
+        assert!(payload_contains_hidden_message(&json!({
+            "text": "You are running in mobile plan intake mode.\nReturn only one XML-like block."
+        })));
+        assert!(payload_contains_hidden_message(&json!({
+            "text": "<codex-plan-questions>{\"title\":\"Plan\",\"questions\":[]}</codex-plan-questions>"
+        })));
+        assert!(!payload_contains_hidden_message(&json!({
+            "text": "Plan how to cover the critical mobile flows."
+        })));
     }
 
     #[test]

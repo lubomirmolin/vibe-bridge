@@ -482,6 +482,7 @@ bool _isExplorationTimelineItem(ThreadActivityItem item) {
 
 class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   static const Duration _activeTurnRefreshGuardWindow = Duration(seconds: 5);
+  static const Duration _assistantReplayDedupWindow = Duration(minutes: 2);
 
   ThreadDetailController({
     required String bridgeApiBaseUrl,
@@ -982,12 +983,53 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       return exactIndex;
     }
 
-    return items.indexWhere(
+    final equivalentIndex = items.indexWhere(
       (item) => _isEquivalentTimelineActivityItem(
         existing: item,
         candidate: candidate,
       ),
     );
+    if (equivalentIndex >= 0) {
+      return equivalentIndex;
+    }
+
+    return _findReplayAssistantMergeIndex(items: items, candidate: candidate);
+  }
+
+  int _findReplayAssistantMergeIndex({
+    required List<ThreadActivityItem> items,
+    required ThreadActivityItem candidate,
+  }) {
+    if (candidate.type != ThreadActivityItemType.assistantOutput) {
+      return -1;
+    }
+
+    final candidateBody = _normalizeActivityBody(candidate.body);
+    if (candidateBody.isEmpty) {
+      return -1;
+    }
+
+    for (var index = items.length - 1; index >= 0; index -= 1) {
+      final existing = items[index];
+      if (existing.type == ThreadActivityItemType.userPrompt) {
+        break;
+      }
+      if (existing.type != ThreadActivityItemType.assistantOutput) {
+        continue;
+      }
+      if (_normalizeActivityBody(existing.body) != candidateBody) {
+        continue;
+      }
+      if (!_areTimelineMomentsWithinReplayWindow(
+        existing.occurredAt,
+        candidate.occurredAt,
+      )) {
+        continue;
+      }
+      return index;
+    }
+
+    return -1;
   }
 
   bool _isEquivalentTimelineActivityItem({
@@ -1074,6 +1116,20 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     }
 
     return leftTime.difference(rightTime).abs() <= const Duration(seconds: 2);
+  }
+
+  bool _areTimelineMomentsWithinReplayWindow(String left, String right) {
+    if (left == right) {
+      return true;
+    }
+
+    final leftTime = DateTime.tryParse(left);
+    final rightTime = DateTime.tryParse(right);
+    if (leftTime == null || rightTime == null) {
+      return false;
+    }
+
+    return leftTime.difference(rightTime).abs() <= _assistantReplayDedupWindow;
   }
 
   bool _areEquivalentAssistantBodies(String left, String right) {

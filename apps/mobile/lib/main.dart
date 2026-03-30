@@ -16,7 +16,7 @@ class VibeBridgeApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       navigatorKey: appNavigatorKey,
-      title: 'Vibe bridge companion',
+      title: 'Vibe bridge',
       theme: AppTheme.darkTheme,
       builder: (context, child) =>
           MacosWindowChromeFrame(child: child ?? const SizedBox.shrink()),
