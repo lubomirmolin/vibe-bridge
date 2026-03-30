@@ -128,6 +128,64 @@ class SpeechPanelPresentation {
   }
 }
 
+class UpdatePanelPresentation {
+  const UpdatePanelPresentation({
+    required this.stateLabel,
+    required this.detail,
+    required this.isChecking,
+    required this.isInstalling,
+    required this.canInstall,
+    required this.showOpenReleases,
+    this.latestVersion,
+    this.releaseUrl,
+  });
+
+  const UpdatePanelPresentation.initial()
+    : stateLabel = 'Manual',
+      detail = 'Manual update checks only.',
+      isChecking = false,
+      isInstalling = false,
+      canInstall = false,
+      showOpenReleases = false,
+      latestVersion = null,
+      releaseUrl = null;
+
+  final String stateLabel;
+  final String detail;
+  final bool isChecking;
+  final bool isInstalling;
+  final bool canInstall;
+  final bool showOpenReleases;
+  final String? latestVersion;
+  final String? releaseUrl;
+
+  UpdatePanelPresentation copyWith({
+    String? stateLabel,
+    String? detail,
+    bool? isChecking,
+    bool? isInstalling,
+    bool? canInstall,
+    bool? showOpenReleases,
+    String? latestVersion,
+    String? releaseUrl,
+    bool clearLatestVersion = false,
+    bool clearReleaseUrl = false,
+  }) {
+    return UpdatePanelPresentation(
+      stateLabel: stateLabel ?? this.stateLabel,
+      detail: detail ?? this.detail,
+      isChecking: isChecking ?? this.isChecking,
+      isInstalling: isInstalling ?? this.isInstalling,
+      canInstall: canInstall ?? this.canInstall,
+      showOpenReleases: showOpenReleases ?? this.showOpenReleases,
+      latestVersion: clearLatestVersion
+          ? null
+          : latestVersion ?? this.latestVersion,
+      releaseUrl: clearReleaseUrl ? null : releaseUrl ?? this.releaseUrl,
+    );
+  }
+}
+
 class TrustedDevicePresentation {
   const TrustedDevicePresentation({
     required this.deviceId,
@@ -168,6 +226,7 @@ class ShellPresentationState {
     required this.isInstallingSpeechModel,
     required this.isRemovingSpeechModel,
     required this.isUpdatingNetworkSettings,
+    required this.updatePanel,
     required this.trayAvailable,
     required this.trayStatusDetail,
     required this.tailscale,
@@ -204,6 +263,7 @@ class ShellPresentationState {
       isInstallingSpeechModel: false,
       isRemovingSpeechModel: false,
       isUpdatingNetworkSettings: false,
+      updatePanel: UpdatePanelPresentation.initial(),
       trayAvailable: false,
       trayStatusDetail: 'System tray not initialized yet.',
       tailscale: TailscalePresentation.initial(),
@@ -234,6 +294,7 @@ class ShellPresentationState {
   final bool isInstallingSpeechModel;
   final bool isRemovingSpeechModel;
   final bool isUpdatingNetworkSettings;
+  final UpdatePanelPresentation updatePanel;
   final bool trayAvailable;
   final String trayStatusDetail;
   final TailscalePresentation tailscale;
@@ -272,7 +333,9 @@ class ShellPresentationState {
       !isRemovingSpeechModel &&
       speechPanel.stateLabel == 'Ready';
   String get routeSummaryLabel {
-    final reachableCount = pairingRoutes.where((route) => route.reachable).length;
+    final reachableCount = pairingRoutes
+        .where((route) => route.reachable)
+        .length;
     return '$reachableCount/${pairingRoutes.length} reachable';
   }
 
@@ -295,6 +358,7 @@ class ShellPresentationState {
     bool? isInstallingSpeechModel,
     bool? isRemovingSpeechModel,
     bool? isUpdatingNetworkSettings,
+    UpdatePanelPresentation? updatePanel,
     bool? trayAvailable,
     String? trayStatusDetail,
     TailscalePresentation? tailscale,
@@ -330,6 +394,7 @@ class ShellPresentationState {
           isRemovingSpeechModel ?? this.isRemovingSpeechModel,
       isUpdatingNetworkSettings:
           isUpdatingNetworkSettings ?? this.isUpdatingNetworkSettings,
+      updatePanel: updatePanel ?? this.updatePanel,
       trayAvailable: trayAvailable ?? this.trayAvailable,
       trayStatusDetail: trayStatusDetail ?? this.trayStatusDetail,
       tailscale: tailscale ?? this.tailscale,

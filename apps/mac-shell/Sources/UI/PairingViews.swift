@@ -17,6 +17,7 @@ enum PairingWindowID {
 
 struct PairingEntryView: View {
     @ObservedObject var viewModel: PairingEntryViewModel
+    @ObservedObject var updateViewModel: UpdateCheckViewModel
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -55,6 +56,7 @@ struct PairingEntryView: View {
                     deviceManagementCard
                     networkCard
                     speechCard
+                    updateCard
                     qrSection
 
                     if let errorMessage = viewModel.errorMessage {
@@ -332,6 +334,74 @@ struct PairingEntryView: View {
             .padding(.vertical, 12)
             .padding(.horizontal, 16)
         }
+        .background(Color(NSColor.controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+        )
+    }
+
+    private var updateCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Updates")
+                    .font(.headline)
+                Spacer()
+                Button(updateViewModel.isChecking ? "Checking…" : "Check for Updates") {
+                    updateViewModel.checkForUpdates()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(updateViewModel.isChecking || updateViewModel.isInstalling)
+            }
+
+            Text("User-initiated updater only. No background auto-update daemon.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Text(updateViewModel.stateMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if let latestVersion = updateViewModel.latestVersion {
+                Text("Latest release: \(latestVersion)")
+                    .font(.subheadline.weight(.semibold))
+            }
+
+            if let notes = updateViewModel.releaseNotes, !notes.isEmpty {
+                ScrollView {
+                    Text(notes)
+                        .font(.caption)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 120)
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color(NSColor.windowBackgroundColor).opacity(0.4))
+                )
+            }
+
+            HStack {
+                if updateViewModel.canInstall {
+                    Button("Download & Install Update") {
+                        updateViewModel.installUpdate()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(updateViewModel.isInstalling)
+                }
+
+                if updateViewModel.showOpenReleasesFallback {
+                    Button("Open Releases Page") {
+                        updateViewModel.openReleasesPage()
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                Spacer()
+            }
+        }
+        .padding(16)
         .background(Color(NSColor.controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
