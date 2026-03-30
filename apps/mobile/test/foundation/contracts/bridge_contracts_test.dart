@@ -26,7 +26,7 @@ void main() {
     expect(summary.contractVersion, contractVersion);
     expect(summary.threadId, 'thread-123');
     expect(summary.status, ThreadStatus.running);
-    expect(summary.repository, 'vibe-bridge-companion');
+    expect(summary.repository, 'vibe-bridge');
   });
 
   test('bridge event fixture maps to shared envelope', () {
