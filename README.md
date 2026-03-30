@@ -115,3 +115,20 @@ Package the bundle as an AppImage when `appimagetool` is installed:
 ```bash
 ./apps/linux-shell/tool/build_appimage.sh
 ```
+
+## GitHub Automation
+
+The repository now includes:
+
+- `.github/workflows/ci.yml` for push and pull request validation
+- `.github/workflows/release.yml` for `main` rolling releases and tagged
+  multi-platform release builds
+
+Release builds package:
+
+- the Flutter Android APK
+- the Flutter Linux desktop bundle
+- the macOS shell app bundle
+- standalone `bridge-server` archives for Linux and macOS
+
+See [docs/github-public-release.md](docs/github-public-release.md) for the public-repo checklist, required GitHub secrets, and local release commands.
