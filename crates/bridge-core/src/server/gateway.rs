@@ -47,6 +47,14 @@ pub struct GatewayTurnMutation {
     pub turn_id: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct TurnStartRequest {
+    pub prompt: String,
+    pub images: Vec<String>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct CodexThreadListResult {
     data: Vec<CodexThread>,
@@ -225,10 +233,7 @@ impl CodexGateway {
     pub fn start_turn_streaming<F, G>(
         &self,
         thread_id: &str,
-        prompt: &str,
-        images: &[String],
-        model: Option<&str>,
-        effort: Option<&str>,
+        request: TurnStartRequest,
         on_event: F,
         on_turn_completed: G,
     ) -> Result<GatewayTurnMutation, String>
@@ -238,10 +243,12 @@ impl CodexGateway {
     {
         let config = self.config.clone();
         let thread_id = thread_id.to_string();
-        let prompt = prompt.to_string();
-        let images = images.to_vec();
-        let model = model.map(str::to_string);
-        let effort = effort.map(str::to_string);
+        let TurnStartRequest {
+            prompt,
+            images,
+            model,
+            effort,
+        } = request;
         let reserved_transports = Arc::clone(&self.reserved_transports);
         let (result_tx, result_rx) = mpsc::sync_channel(1);
 
@@ -1965,7 +1972,7 @@ fn extract_file_name_from_command(command: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CodexGateway, CodexGitInfo, CodexThread, CodexThreadStatus, CodexTurn,
+        CodexGateway, CodexGitInfo, CodexThread, CodexThreadStatus, CodexTurn, TurnStartRequest,
         build_turn_start_input, derive_repository_name_from_cwd, extract_generated_thread_title,
         fetch_thread_summaries_from_archive, map_thread_snapshot, map_thread_summary,
         normalize_codex_item_payload, normalize_generated_thread_title, parse_model_options,
@@ -2325,10 +2332,12 @@ mod tests {
             gateway
                 .start_turn_streaming(
                     &snapshot.thread.thread_id,
-                    &prompt,
-                    &[],
-                    None,
-                    None,
+                    TurnStartRequest {
+                        prompt: prompt.clone(),
+                        images: Vec::new(),
+                        model: None,
+                        effort: None,
+                    },
                     move |event| {
                         let _ = event_tx.send(event);
                     },

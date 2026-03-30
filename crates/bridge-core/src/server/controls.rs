@@ -103,14 +103,21 @@ pub struct ExecutedGitMutation {
     pub snapshot_status: GitStatusDto,
 }
 
+struct ExecutedMutationContext {
+    operation: &'static str,
+    message: String,
+    command: String,
+    output: String,
+}
+
 pub fn read_git_state(workspace: &str, thread_id: &str) -> Result<ResolvedGitState, String> {
     let workspace = normalize_workspace(workspace)?;
-    let top_level = run_git(&workspace, ["rev-parse", "--show-toplevel"])?;
-    let branch = run_git(&workspace, ["rev-parse", "--abbrev-ref", "HEAD"])?;
-    let remote_name = resolve_remote_name(&workspace, &branch)?;
-    let dirty = !run_git(&workspace, ["status", "--porcelain"])?.is_empty();
-    let (ahead_by, behind_by) = read_ahead_behind(&workspace)?;
-    let repository = repository_name(&workspace, remote_name.as_deref())?;
+    let top_level = run_git(workspace, ["rev-parse", "--show-toplevel"])?;
+    let branch = run_git(workspace, ["rev-parse", "--abbrev-ref", "HEAD"])?;
+    let remote_name = resolve_remote_name(workspace, &branch)?;
+    let dirty = !run_git(workspace, ["status", "--porcelain"])?.is_empty();
+    let (ahead_by, behind_by) = read_ahead_behind(workspace)?;
+    let repository = repository_name(workspace, remote_name.as_deref())?;
     let repository_context = RepositoryContextDto {
         workspace: top_level.clone(),
         repository,
@@ -171,19 +178,21 @@ pub fn execute_branch_switch(
         return Err("Branch name cannot be empty.".to_string());
     }
     let _ = run_git(
-        &workspace,
+        workspace,
         ["rev-parse", "--verify", &format!("refs/heads/{branch}")],
     )?;
-    let output = run_git(&workspace, ["switch", branch])?;
+    let output = run_git(workspace, ["switch", branch])?;
     build_executed_mutation(
-        &workspace,
+        workspace,
         thread_id,
         thread_status,
         occurred_at,
-        "git_branch_switch",
-        format!("Switched branch to {branch}"),
-        format!("git switch {branch}"),
-        output,
+        ExecutedMutationContext {
+            operation: "git_branch_switch",
+            message: format!("Switched branch to {branch}"),
+            command: format!("git switch {branch}"),
+            output,
+        },
     )
 }
 
@@ -195,18 +204,20 @@ pub fn execute_pull(
     occurred_at: &str,
 ) -> Result<ExecutedGitMutation, String> {
     let workspace = normalize_workspace(workspace)?;
-    let branch = run_git(&workspace, ["rev-parse", "--abbrev-ref", "HEAD"])?;
-    let remote = resolve_remote_override(&workspace, &branch, remote)?;
-    let output = run_git(&workspace, ["pull", "--ff-only", &remote, &branch])?;
+    let branch = run_git(workspace, ["rev-parse", "--abbrev-ref", "HEAD"])?;
+    let remote = resolve_remote_override(workspace, &branch, remote)?;
+    let output = run_git(workspace, ["pull", "--ff-only", &remote, &branch])?;
     build_executed_mutation(
-        &workspace,
+        workspace,
         thread_id,
         thread_status,
         occurred_at,
-        "git_pull",
-        format!("Pulled latest changes from {remote} for {branch}"),
-        format!("git pull --ff-only {remote} {branch}"),
-        output,
+        ExecutedMutationContext {
+            operation: "git_pull",
+            message: format!("Pulled latest changes from {remote} for {branch}"),
+            command: format!("git pull --ff-only {remote} {branch}"),
+            output,
+        },
     )
 }
 
@@ -218,18 +229,20 @@ pub fn execute_push(
     occurred_at: &str,
 ) -> Result<ExecutedGitMutation, String> {
     let workspace = normalize_workspace(workspace)?;
-    let branch = run_git(&workspace, ["rev-parse", "--abbrev-ref", "HEAD"])?;
-    let remote = resolve_remote_override(&workspace, &branch, remote)?;
-    let output = run_git(&workspace, ["push", &remote, &branch])?;
+    let branch = run_git(workspace, ["rev-parse", "--abbrev-ref", "HEAD"])?;
+    let remote = resolve_remote_override(workspace, &branch, remote)?;
+    let output = run_git(workspace, ["push", &remote, &branch])?;
     build_executed_mutation(
-        &workspace,
+        workspace,
         thread_id,
         thread_status,
         occurred_at,
-        "git_push",
-        format!("Pushed local commits to {remote} for {branch}"),
-        format!("git push {remote} {branch}"),
-        output,
+        ExecutedMutationContext {
+            operation: "git_push",
+            message: format!("Pushed local commits to {remote} for {branch}"),
+            command: format!("git push {remote} {branch}"),
+            output,
+        },
     )
 }
 
@@ -238,22 +251,23 @@ fn build_executed_mutation(
     thread_id: &str,
     thread_status: shared_contracts::ThreadStatus,
     occurred_at: &str,
-    operation: &str,
-    message: String,
-    command: String,
-    output: String,
+    context: ExecutedMutationContext,
 ) -> Result<ExecutedGitMutation, String> {
     let state = read_git_state(workspace.to_string_lossy().as_ref(), thread_id)?;
     let command_event = BridgeEventEnvelope {
         contract_version: CONTRACT_VERSION.to_string(),
-        event_id: format!("{thread_id}-{operation}-{occurred_at}"),
+        event_id: format!("{thread_id}-{}-{occurred_at}", context.operation),
         thread_id: thread_id.to_string(),
         kind: BridgeEventKind::CommandDelta,
         occurred_at: occurred_at.to_string(),
         payload: json!({
-            "command": command,
-            "output": if output.trim().is_empty() { message.clone() } else { output },
-            "action": operation,
+            "command": context.command,
+            "output": if context.output.trim().is_empty() {
+                context.message.clone()
+            } else {
+                context.output
+            },
+            "action": context.operation,
         }),
         annotations: None,
     };
@@ -263,9 +277,9 @@ fn build_executed_mutation(
         mutation: MutationResultResponse {
             contract_version: CONTRACT_VERSION.to_string(),
             thread_id: thread_id.to_string(),
-            operation: operation.to_string(),
+            operation: context.operation.to_string(),
             outcome: "success".to_string(),
-            message,
+            message: context.message,
             thread_status,
             repository: state.response.repository,
             status: state.response.status,
