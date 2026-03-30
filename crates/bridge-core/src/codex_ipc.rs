@@ -457,6 +457,7 @@ pub fn snapshot_from_conversation_state(
             .map(|snapshot| snapshot.approvals.clone())
             .unwrap_or_default(),
         git_status: previous_snapshot.and_then(|snapshot| snapshot.git_status.clone()),
+        pending_user_input: None,
     })
 }
 

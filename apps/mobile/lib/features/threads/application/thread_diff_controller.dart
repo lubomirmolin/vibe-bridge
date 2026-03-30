@@ -300,6 +300,7 @@ class ThreadDiffController extends StateNotifier<ThreadDiffState> {
         return true;
       case BridgeEventKind.messageDelta:
       case BridgeEventKind.planDelta:
+      case BridgeEventKind.userInputRequested:
       case BridgeEventKind.approvalRequested:
       case BridgeEventKind.securityAudit:
         return false;

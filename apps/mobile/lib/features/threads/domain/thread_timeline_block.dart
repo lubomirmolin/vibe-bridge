@@ -222,8 +222,10 @@ List<ThreadTimelineBlock> _bundleWorkBlocks(List<ThreadTimelineBlock> blocks) {
       continue;
     }
 
-    var scanIndex = index;
-    while (scanIndex < blocks.length && _isWorkLikeBlock(blocks[scanIndex])) {
+    var scanIndex = index + 1;
+    while (scanIndex < blocks.length &&
+        _isWorkLikeBlock(blocks[scanIndex]) &&
+        !_startsNewWorkGroup(blocks[scanIndex])) {
       scanIndex += 1;
     }
 
@@ -292,4 +294,8 @@ bool _isWorkLikeBlock(ThreadTimelineBlock block) {
   }
 
   return item.type == ThreadActivityItemType.terminalOutput;
+}
+
+bool _startsNewWorkGroup(ThreadTimelineBlock block) {
+  return block.item?.startsNewVisualGroup ?? false;
 }

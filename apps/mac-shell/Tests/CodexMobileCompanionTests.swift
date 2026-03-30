@@ -9,7 +9,7 @@ final class CodexMobileCompanionTests: XCTestCase {
     func testThreadSummaryDecodesSharedFixtureShape() throws {
         let json = """
         {
-          "contract_version": "2026-03-23",
+          "contract_version": "2026-03-29",
           "thread_id": "thread-123",
           "title": "Implement shared contracts",
           "status": "running",
@@ -57,7 +57,7 @@ final class CodexMobileCompanionTests: XCTestCase {
     func testPairingSessionResponseDecodesBridgeIdentityAndSession() throws {
         let json = """
         {
-          "contract_version": "2026-03-23",
+          "contract_version": "2026-03-29",
           "bridge_identity": {
             "bridge_id": "bridge-74dbf8ad31e2af1b",
             "display_name": "Codex Mobile Companion",
@@ -78,7 +78,7 @@ final class CodexMobileCompanionTests: XCTestCase {
             "issued_at_epoch_seconds": 1,
             "expires_at_epoch_seconds": 301
           },
-          "qr_payload": "{\\"v\\":\\"2026-03-23\\",\\"b\\":\\"bridge-74dbf8ad31e2af1b\\",\\"u\\":\\"http://192.168.1.10:3110\\",\\"r\\":[\\"http://192.168.1.10:3110\\"],\\"s\\":\\"pairing-session-1\\",\\"t\\":\\"ptk-aabbccdd\\"}"
+          "qr_payload": "{\\"v\\":\\"2026-03-29\\",\\"b\\":\\"bridge-74dbf8ad31e2af1b\\",\\"u\\":\\"http://192.168.1.10:3110\\",\\"r\\":[\\"http://192.168.1.10:3110\\"],\\"s\\":\\"pairing-session-1\\",\\"t\\":\\"ptk-aabbccdd\\"}"
         }
         """
 
@@ -92,6 +92,48 @@ final class CodexMobileCompanionTests: XCTestCase {
         XCTAssertEqual(decoded.pairingSession.sessionID, "pairing-session-1")
         XCTAssertEqual(decoded.bridgeIdentity.apiBaseURL, "http://127.0.0.1:3110")
         XCTAssertEqual(decoded.bridgeAPIRoutes.first?.baseURL, "http://192.168.1.10:3110")
+    }
+
+    func testBridgeTrustStatusDecodesMultiDevicePayloadWithLegacyFallback() throws {
+        let json = """
+        {
+          "trusted_devices": [
+            {
+              "phone_id": "phone-1",
+              "phone_name": "Primary Phone",
+              "paired_at_epoch_seconds": 100
+            },
+            {
+              "device_id": "phone-2",
+              "device_name": "Backup Phone",
+              "paired_at_epoch_seconds": 200
+            }
+          ],
+          "trusted_sessions": [
+            {
+              "phone_id": "phone-1",
+              "session_id": "pairing-session-42",
+              "finalized_at_epoch_seconds": 120
+            },
+            {
+              "device_id": "phone-2",
+              "session_id": "pairing-session-43",
+              "finalized_at_epoch_seconds": 220
+            }
+          ]
+        }
+        """
+
+        let decoded = try JSONDecoder().decode(
+            BridgeTrustStatusDTO.self,
+            from: Data(json.utf8)
+        )
+
+        XCTAssertEqual(decoded.trustedDevices.count, 2)
+        XCTAssertEqual(decoded.trustedDevices[0].deviceID, "phone-1")
+        XCTAssertEqual(decoded.trustedDevices[1].deviceName, "Backup Phone")
+        XCTAssertEqual(decoded.trustedSessions.count, 2)
+        XCTAssertEqual(decoded.trustedSessions[1].sessionID, "pairing-session-43")
     }
 
     func testDesktopRuntimeSupervisorDefaultStateDirectoryUsesApplicationSupport() {
@@ -290,7 +332,7 @@ final class CodexMobileCompanionTests: XCTestCase {
     func testSpeechModelStatusDecodesSharedContractShape() throws {
         let json = """
         {
-          "contract_version": "2026-03-23",
+          "contract_version": "2026-03-29",
           "provider": "fluid_audio",
           "model_id": "parakeet-tdt-0.6b-v3-coreml",
           "state": "installing",
@@ -476,7 +518,7 @@ final class CodexMobileCompanionTests: XCTestCase {
         await viewModel.refreshRuntimeState()
         XCTAssertEqual(viewModel.shellState, .pairedIdle)
 
-        await viewModel.revokeTrustedPhoneFromDesktop()
+        await viewModel.revokeTrustedDeviceFromDesktop(phoneID: "phone-1")
 
         XCTAssertEqual(viewModel.shellState, .unpaired)
         XCTAssertNil(viewModel.errorMessage)
@@ -500,7 +542,7 @@ final class CodexMobileCompanionTests: XCTestCase {
         await viewModel.refreshRuntimeState()
         XCTAssertEqual(viewModel.shellState, .pairedIdle)
 
-        await viewModel.revokeTrustedPhoneFromDesktop()
+        await viewModel.revokeTrustedDeviceFromDesktop(phoneID: "phone-1")
 
         XCTAssertEqual(viewModel.shellState, .pairedIdle)
         XCTAssertNotNil(viewModel.errorMessage)
@@ -605,7 +647,21 @@ final class CodexMobileCompanionTests: XCTestCase {
                 phoneID: "phone-1",
                 sessionID: "pairing-session-42",
                 finalizedAtEpochSeconds: 120
-            )
+            ),
+            trustedDevices: [
+                BridgeTrustedDeviceDTO(
+                    deviceID: "phone-1",
+                    deviceName: "Primary Phone",
+                    pairedAtEpochSeconds: 100
+                )
+            ],
+            trustedSessions: [
+                BridgeTrustedSessionDTO(
+                    deviceID: "phone-1",
+                    sessionID: "pairing-session-42",
+                    finalizedAtEpochSeconds: 120
+                )
+            ]
         )
     }
 

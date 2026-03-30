@@ -3688,7 +3688,7 @@ mod tests {
     }
 
     #[test]
-    fn pairing_finalize_enforces_single_trusted_phone_per_mac() {
+    fn pairing_finalize_allows_multiple_trusted_phones_per_mac() {
         let app = test_application();
 
         let first_session = parse_json_body(&route_request("POST /pairing/session HTTP/1.1", &app));
@@ -3721,8 +3721,11 @@ mod tests {
             "POST /pairing/finalize?session_id={second_session_id}&pairing_token={second_pairing_token}&phone_id=phone-2&phone_name=SecondPhone&bridge_id={first_bridge_id} HTTP/1.1"
         );
         let second_finalize = route_request(&second_finalize_path, &app);
-        assert!(second_finalize.starts_with("HTTP/1.1 409 Conflict"));
-        assert!(second_finalize.contains("\"code\":\"trusted_phone_conflict\""));
+        assert!(second_finalize.starts_with("HTTP/1.1 200 OK"));
+
+        let trust_snapshot = app.trust_snapshot();
+        assert_eq!(trust_snapshot.trusted_devices.len(), 2);
+        assert_eq!(trust_snapshot.trusted_sessions.len(), 2);
     }
 
     fn test_application() -> BridgeApplication {

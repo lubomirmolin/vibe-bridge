@@ -7,6 +7,7 @@ enum SecureValueKey {
   trustedBridgeIdentity,
   savedBridgeRegistry,
   threadListCache,
+  threadComposerDraftCache,
   selectedThreadId,
   desktopIntegrationEnabled,
 }
@@ -24,6 +25,8 @@ extension SecureValueKeyMetadata on SecureValueKey {
         return 'saved_bridge_registry';
       case SecureValueKey.threadListCache:
         return 'thread_list_cache';
+      case SecureValueKey.threadComposerDraftCache:
+        return 'thread_composer_draft_cache';
       case SecureValueKey.selectedThreadId:
         return 'selected_thread_id';
       case SecureValueKey.desktopIntegrationEnabled:

@@ -23,6 +23,7 @@ class _ThreadDetailBody extends StatelessWidget {
     required this.scrollController,
     required this.isTimelineCardExpanded,
     required this.onTimelineCardExpansionChanged,
+    required this.timelineBlockMeasurementKey,
   });
 
   final ThreadDetailState state;
@@ -48,6 +49,7 @@ class _ThreadDetailBody extends StatelessWidget {
   isTimelineCardExpanded;
   final void Function(String id, bool isExpanded)
   onTimelineCardExpansionChanged;
+  final GlobalKey Function(String id) timelineBlockMeasurementKey;
 
   @override
   Widget build(BuildContext context) {
@@ -117,7 +119,7 @@ class _ThreadDetailBody extends StatelessWidget {
         child: ListView.builder(
           controller: scrollController,
           key: const Key('thread-detail-scroll-view'),
-          cacheExtent: 1400,
+          cacheExtent: state.isLoadingEarlierHistory ? 8000 : 3200,
           physics: const AlwaysScrollableScrollPhysics(
             parent: BouncingScrollPhysics(),
           ),
@@ -272,12 +274,16 @@ class _ThreadDetailBody extends StatelessWidget {
     }
 
     final block = timelineBlocks[timelineIndex ~/ 2];
+    final blockId = _timelineBlockKey(block);
     return KeyedSubtree(
-      key: ValueKey(_timelineBlockKey(block)),
-      child: _ThreadTimelineBlockView(
-        block: block,
-        isTimelineCardExpanded: isTimelineCardExpanded,
-        onTimelineCardExpansionChanged: onTimelineCardExpansionChanged,
+      key: ValueKey(blockId),
+      child: SizedBox(
+        key: timelineBlockMeasurementKey(blockId),
+        child: _ThreadTimelineBlockView(
+          block: block,
+          isTimelineCardExpanded: isTimelineCardExpanded,
+          onTimelineCardExpansionChanged: onTimelineCardExpansionChanged,
+        ),
       ),
     );
   }

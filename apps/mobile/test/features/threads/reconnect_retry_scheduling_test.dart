@@ -1019,6 +1019,7 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    TurnMode mode = TurnMode.act,
     List<String> images = const <String>[],
     String? model,
     String? effort,
@@ -1037,6 +1038,28 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
         outcome: 'accepted',
         threadStatus: ThreadStatus.running,
         message: 'Turn started and streaming is active',
+      ),
+    );
+  }
+
+  @override
+  Future<TurnMutationResult> respondToUserInput({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String requestId,
+    List<UserInputAnswerDto> answers = const <UserInputAnswerDto>[],
+    String? freeText,
+    String? model,
+    String? effort,
+  }) {
+    return Future<TurnMutationResult>.value(
+      TurnMutationResult(
+        contractVersion: contractVersion,
+        threadId: threadId,
+        operation: 'turn_respond',
+        outcome: 'accepted',
+        threadStatus: ThreadStatus.running,
+        message: 'Plan clarification accepted',
       ),
     );
   }

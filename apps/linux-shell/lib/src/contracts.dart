@@ -12,7 +12,7 @@ enum SpeechModelState {
 enum BridgeApiRouteKind { tailscale, localNetwork }
 
 class SharedContract {
-  static const version = '2026-03-23';
+  static const version = '2026-03-29';
 }
 
 ThreadStatus threadStatusFromWire(String wireValue) {

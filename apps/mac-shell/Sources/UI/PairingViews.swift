@@ -52,6 +52,7 @@ struct PairingEntryView: View {
             ScrollView {
                 VStack(spacing: 24) {
                     statusCard
+                    deviceManagementCard
                     networkCard
                     speechCard
                     qrSection
@@ -81,9 +82,9 @@ struct PairingEntryView: View {
 
                 if viewModel.canRevokeTrust {
                     Button(role: .destructive) {
-                        Task { await viewModel.revokeTrustedPhoneFromDesktop() }
+                        Task { await viewModel.revokeTrustedDeviceFromDesktop() }
                     } label: {
-                        Text(viewModel.isRevokingTrust ? "Revoking…" : "Unpair Phone")
+                        Text(viewModel.isRevokingTrust ? "Removing…" : "Remove All Devices")
                     }
                     .disabled(viewModel.isRevokingTrust || viewModel.isRefreshingRuntime)
                 }
@@ -98,7 +99,11 @@ struct PairingEntryView: View {
                 Button {
                     Task { await viewModel.refreshPairingSession() }
                 } label: {
-                    Text(viewModel.isLoadingPairing ? "Generating…" : "Refresh QR")
+                    Text(
+                        viewModel.isLoadingPairing
+                            ? "Generating…"
+                            : (viewModel.hasTrustedDevices ? "Add Device QR" : "Refresh QR")
+                    )
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(viewModel.isLoadingPairing || !viewModel.shouldShowPairingQR)
@@ -160,12 +165,12 @@ struct PairingEntryView: View {
                 value: viewModel.bridgeRuntimeLabel
             )
             Divider().padding(.leading, 44)
-            statusRow(
-                icon: "candybarphone",
-                iconColor: .secondary,
-                label: "Paired Phone",
-                value: viewModel.pairedDeviceLabel
-            )
+                statusRow(
+                    icon: "candybarphone",
+                    iconColor: .secondary,
+                    label: "Paired Devices",
+                    value: viewModel.pairedDeviceLabel
+                )
             if viewModel.shellState == .pairedActive || viewModel.shellState == .pairedIdle {
                 Divider().padding(.leading, 44)
                 statusRow(
@@ -432,6 +437,106 @@ struct PairingEntryView: View {
     }
 
     @ViewBuilder
+    private var deviceManagementCard: some View {
+        VStack(spacing: 0) {
+            statusRow(
+                icon: "iphone.gen3",
+                iconColor: .secondary,
+                label: "Trusted Devices",
+                value: "\(viewModel.trustedDevices.count)"
+            )
+
+            if viewModel.trustedDevices.isEmpty {
+                Divider().padding(.leading, 44)
+                HStack(spacing: 12) {
+                    Image(systemName: "plus.viewfinder")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("No paired devices")
+                            .font(.body)
+                        Text("Generate a QR code below to pair the first device.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+                }
+                .padding(.vertical, 12)
+                .padding(.horizontal, 16)
+            } else {
+                Divider().padding(.leading, 44)
+                VStack(spacing: 0) {
+                    ForEach(Array(viewModel.trustedDevices.enumerated()), id: \.element.id) { index, device in
+                        trustedDeviceRow(
+                            device: device,
+                            session: viewModel.trustedSessions.first(where: { $0.deviceID == device.deviceID })
+                        )
+
+                        if index < viewModel.trustedDevices.count - 1 {
+                            Divider().padding(.leading, 44)
+                        }
+                    }
+                }
+            }
+        }
+        .background(Color(NSColor.controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+        )
+    }
+
+    private func trustedDeviceRow(
+        device: BridgeTrustedDeviceDTO,
+        session: BridgeTrustedSessionDTO?
+    ) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "iphone.gen3")
+                .font(.system(size: 16))
+                .foregroundStyle(.secondary)
+                .frame(width: 20)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(device.deviceName)
+                    .font(.body)
+
+                Text(device.deviceID)
+                    .font(.footnote.monospaced())
+                    .foregroundStyle(.secondary)
+
+                Text(
+                    "Paired \(DateFormatter.pairingExpiry.string(from: Date(timeIntervalSince1970: TimeInterval(device.pairedAtEpochSeconds))))"
+                )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+                if let session {
+                    Text("Session \(session.sessionID)")
+                        .font(.footnote.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            Spacer()
+
+            Button(role: .destructive) {
+                Task { await viewModel.revokeTrustedDeviceFromDesktop(phoneID: device.deviceID) }
+            } label: {
+                Text(viewModel.isRevokingTrust ? "Removing…" : "Remove")
+            }
+            .disabled(viewModel.isRevokingTrust || viewModel.isRefreshingRuntime)
+        }
+        .padding(.vertical, 12)
+        .padding(.horizontal, 16)
+    }
+
+    @ViewBuilder
     private var qrSection: some View {
         switch viewModel.shellState {
         case .starting:
@@ -441,7 +546,7 @@ struct PairingEntryView: View {
                 message: "Desktop app is starting the local bridge and Codex runtime. Pairing will unlock automatically once the stack reports healthy."
             )
 
-        case .unpaired:
+        case .unpaired, .pairedIdle, .pairedActive:
             if let qrImage = viewModel.qrImage,
                let response = viewModel.pairingSession
             {
@@ -470,9 +575,13 @@ struct PairingEntryView: View {
                     .help("Click to open large pairing window")
 
                     VStack(spacing: 8) {
-                        Text("Ready to Pair")
+                        Text(viewModel.hasTrustedDevices ? "Add Another Device" : "Ready to Pair")
                             .font(.headline)
-                        Text("Scan this QR code using the Codex mobile app.")
+                        Text(
+                            viewModel.hasTrustedDevices
+                                ? "Scan this QR code using the Codex mobile app to add another trusted device."
+                                : "Scan this QR code using the Codex mobile app."
+                        )
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
@@ -493,18 +602,12 @@ struct PairingEntryView: View {
             } else {
                 infoBox(
                     icon: "qrcode.viewfinder",
-                    title: "Ready to Generate QR",
-                    message: "Bridge is reachable but no pairing QR is cached yet. Click \"Refresh QR\" below to begin."
+                    title: viewModel.hasTrustedDevices ? "Add Another Device" : "Ready to Generate QR",
+                    message: viewModel.hasTrustedDevices
+                        ? "Existing devices stay connected. Click \"Add Device QR\" below to generate a fresh pairing code for another device."
+                        : "Bridge is reachable but no pairing QR is cached yet. Click \"Refresh QR\" below to begin."
                 )
             }
-
-        case .pairedIdle, .pairedActive:
-            infoBox(
-                icon: "checkmark.shield.fill",
-                iconColor: .green,
-                title: "Mac is Paired",
-                message: "Existing trusted phone sessions stay active without rescanning. Use \"Unpair Phone\" to revoke trust and require a fresh pairing flow."
-            )
 
         case .degraded:
             infoBox(

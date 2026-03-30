@@ -5,7 +5,7 @@ void main() {
   test('decodes compact pairing routes and short timestamps', () {
     final payload = decodePairingQrPayload('''
 {
-  "v": "2026-03-23",
+  "v": "2026-03-29",
   "b": "bridge-a1",
   "u": "https://bridge.ts.net",
   "r": [

@@ -11,7 +11,7 @@ use shared_contracts::{
     AccessMode, BootstrapDto, ModelCatalogDto, NetworkSettingsDto, PairingRouteInventoryDto,
     SecurityAuditEventDto, SpeechModelMutationAcceptedDto, SpeechModelStatusDto,
     SpeechTranscriptionResultDto, ThreadGitDiffDto, ThreadGitDiffMode, ThreadSnapshotDto,
-    ThreadSummaryDto, ThreadTimelinePageDto, TurnMutationAcceptedDto,
+    ThreadSummaryDto, ThreadTimelinePageDto, TurnMode, TurnMutationAcceptedDto, UserInputAnswerDto,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
@@ -65,6 +65,10 @@ pub fn router(state: BridgeAppState) -> Router {
         .route("/threads/:thread_id/git/pull", post(thread_git_pull))
         .route("/threads/:thread_id/git/push", post(thread_git_push))
         .route("/threads/:thread_id/turns", post(start_turn))
+        .route(
+            "/threads/:thread_id/user-input/respond",
+            post(respond_to_user_input),
+        )
         .route(
             "/threads/:thread_id/actions/commit",
             post(start_commit_action),
@@ -438,6 +442,21 @@ struct StartTurnRequest {
     model: Option<String>,
     #[serde(default, alias = "reasoning_effort")]
     effort: Option<String>,
+    #[serde(default)]
+    mode: Option<TurnMode>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserInputResponseRequest {
+    request_id: String,
+    #[serde(default)]
+    answers: Vec<UserInputAnswerDto>,
+    #[serde(default)]
+    free_text: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default, alias = "reasoning_effort")]
+    effort: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -560,6 +579,7 @@ async fn start_turn(
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty()),
+            request.mode.unwrap_or(TurnMode::Act),
         )
         .await
     {
@@ -568,6 +588,44 @@ async fn start_turn(
             eprintln!("bridge start_turn failed for {thread_id}: {error}");
             Err(StatusCode::BAD_GATEWAY)
         }
+    }
+}
+
+async fn respond_to_user_input(
+    State(state): State<BridgeAppState>,
+    Path(thread_id): Path<String>,
+    ExtractJson(request): ExtractJson<UserInputResponseRequest>,
+) -> Result<Json<TurnMutationAcceptedDto>, (StatusCode, Json<ErrorEnvelope>)> {
+    match state
+        .respond_to_user_input(
+            &thread_id,
+            &request.request_id,
+            &request.answers,
+            request
+                .free_text
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
+            request
+                .model
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
+            request
+                .effort
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
+        )
+        .await
+    {
+        Ok(response) => Ok(Json(response)),
+        Err(error) => Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "user_input_response_failed",
+            "invalid_user_input_response",
+            error,
+        )),
     }
 }
 
@@ -1640,7 +1698,10 @@ mod tests {
             .expect("events should be an array");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0]["category"], "policy");
-        assert_eq!(events[0]["event"]["payload"]["reason"], "mode=full_control");
+        assert_eq!(
+            events[0]["event"]["payload"]["reason"],
+            "mode=full_control;auth=paired_session"
+        );
     }
 
     #[tokio::test]
@@ -2172,6 +2233,7 @@ mod tests {
                 ahead_by: 0,
                 behind_by: 0,
             }),
+            pending_user_input: None,
         };
         state.projections().put_snapshot(snapshot.clone()).await;
         state

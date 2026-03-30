@@ -546,6 +546,7 @@ pub(super) fn map_event_kind(raw: &str) -> BridgeEventKind {
     match raw {
         "agent_message_delta" => BridgeEventKind::MessageDelta,
         "plan_delta" => BridgeEventKind::PlanDelta,
+        "user_input_requested" => BridgeEventKind::UserInputRequested,
         "command_output_delta" => BridgeEventKind::CommandDelta,
         "file_change_delta" => BridgeEventKind::FileChange,
         "approval_requested" => BridgeEventKind::ApprovalRequested,
@@ -558,6 +559,7 @@ pub(super) fn map_bridge_kind_to_event_type(kind: BridgeEventKind) -> &'static s
     match kind {
         BridgeEventKind::MessageDelta => "agent_message_delta",
         BridgeEventKind::PlanDelta => "plan_delta",
+        BridgeEventKind::UserInputRequested => "user_input_requested",
         BridgeEventKind::CommandDelta => "command_output_delta",
         BridgeEventKind::FileChange => "file_change_delta",
         BridgeEventKind::ThreadStatusChanged => "thread_status_changed",
@@ -571,6 +573,12 @@ pub(crate) fn summarize_live_payload(kind: BridgeEventKind, payload: &Value) -> 
         BridgeEventKind::MessageDelta | BridgeEventKind::PlanDelta => payload
             .get("text")
             .or_else(|| payload.get("delta"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        BridgeEventKind::UserInputRequested => payload
+            .get("title")
+            .or_else(|| payload.get("detail"))
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
