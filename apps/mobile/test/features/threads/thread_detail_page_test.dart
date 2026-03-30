@@ -4466,11 +4466,11 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
 
       expect(find.text('Hello.'), findsOneWidget);
       expect(
-        find.byKey(const Key('thread-message-card-evt-replayed-hello')),
+        find.byKey(const Key('thread-message-card-evt-live-hello')),
         findsOneWidget,
       );
       expect(
-        find.byKey(const Key('thread-message-card-evt-live-hello')),
+        find.byKey(const Key('thread-message-card-evt-replayed-hello')),
         findsNothing,
       );
     },
