@@ -1,5 +1,5 @@
 {
-  "contract_version": "2026-03-17",
+  "contract_version": "2026-03-29",
   "thread_status_values": [
     "idle",
     "running",
@@ -15,6 +15,7 @@
   "event_kind_values": [
     "message_delta",
     "plan_delta",
+    "user_input_requested",
     "command_delta",
     "file_change",
     "approval_requested",
