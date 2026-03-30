@@ -31,18 +31,34 @@ else
   require_targets=("$@")
 fi
 
-declare -A selected_targets=()
+run_rust=false
+run_mobile=false
+run_linux=false
+run_macos=false
 
 for target in "${require_targets[@]}"; do
   case "${target}" in
     all)
-      selected_targets[rust]=1
-      selected_targets[mobile]=1
-      selected_targets[linux]=1
-      selected_targets[macos]=1
+      run_rust=true
+      run_mobile=true
+      run_linux=true
+      run_macos=true
       ;;
     rust | mobile | linux | macos)
-      selected_targets["${target}"]=1
+      case "${target}" in
+        rust)
+          run_rust=true
+          ;;
+        mobile)
+          run_mobile=true
+          ;;
+        linux)
+          run_linux=true
+          ;;
+        macos)
+          run_macos=true
+          ;;
+      esac
       ;;
     -h | --help)
       usage
@@ -116,18 +132,18 @@ run_macos_checks() {
     build
 }
 
-if [[ -n "${selected_targets[rust]:-}" ]]; then
+if [ "${run_rust}" = true ]; then
   run_rust_checks
 fi
 
-if [[ -n "${selected_targets[mobile]:-}" ]]; then
+if [ "${run_mobile}" = true ]; then
   run_mobile_checks
 fi
 
-if [[ -n "${selected_targets[linux]:-}" ]]; then
+if [ "${run_linux}" = true ]; then
   run_linux_checks
 fi
 
-if [[ -n "${selected_targets[macos]:-}" ]]; then
+if [ "${run_macos}" = true ]; then
   run_macos_checks
 fi
