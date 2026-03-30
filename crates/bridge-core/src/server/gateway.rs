@@ -1103,6 +1103,7 @@ fn map_thread_snapshot(thread: CodexThread) -> ThreadSnapshotDto {
         entries,
         approvals: Vec::<ApprovalSummaryDto>::new(),
         git_status,
+        pending_user_input: None,
     }
 }
 
@@ -1723,6 +1724,12 @@ fn summarize_live_payload(kind: BridgeEventKind, payload: &Value) -> String {
         BridgeEventKind::MessageDelta | BridgeEventKind::PlanDelta => payload
             .get("text")
             .or_else(|| payload.get("delta"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        BridgeEventKind::UserInputRequested => payload
+            .get("title")
+            .or_else(|| payload.get("detail"))
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),

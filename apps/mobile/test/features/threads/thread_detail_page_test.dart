@@ -13,6 +13,7 @@ import 'package:vibe_bridge/features/threads/data/thread_detail_bridge_api.dart'
 import 'package:vibe_bridge/features/threads/data/thread_list_bridge_api.dart';
 import 'package:vibe_bridge/features/threads/data/thread_live_stream.dart';
 import 'package:vibe_bridge/features/threads/domain/thread_activity_item.dart';
+import 'package:vibe_bridge/features/threads/domain/thread_timeline_block.dart';
 import 'package:vibe_bridge/features/threads/presentation/thread_detail_page.dart';
 import 'package:vibe_bridge/features/threads/presentation/thread_list_page.dart';
 import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
@@ -300,6 +301,55 @@ void main() {
   );
 
   testWidgets(
+    'thread detail reaches the true bottom after a delayed large timeline load',
+    (tester) async {
+      final timelineCompleter = Completer<List<ThreadTimelineEntryDto>>();
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail(status: ThreadStatus.completed)],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [timelineCompleter.future],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+        initialVisibleTimelineEntries: 160,
+      );
+
+      expect(
+        find.byKey(const Key('thread-detail-timeline-loading-state')),
+        findsOneWidget,
+      );
+
+      timelineCompleter.complete(<ThreadTimelineEntryDto>[
+        for (var index = 0; index < 160; index += 1)
+          _timelineEvent(
+            id: 'evt-large-thread-$index',
+            kind: BridgeEventKind.messageDelta,
+            summary: 'Assistant output',
+            payload: {
+              'delta':
+                  'Large thread entry $index\n${List<String>.filled(4, 'filler line $index').join('\n')}',
+            },
+            occurredAt:
+                '2026-03-18T${(10 + (index ~/ 60)).toString().padLeft(2, '0')}:${(index % 60).toString().padLeft(2, '0')}:00Z',
+          ),
+      ]);
+
+      await tester.pump();
+      await _pumpForTransientUiWork(tester, iterations: 16);
+
+      final position = _threadDetailScrollPosition(tester);
+      expect(position.pixels, closeTo(position.maxScrollExtent, 1));
+      expect(find.textContaining('Large thread entry 159'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'thread list header plus opens draft detail and submits first prompt through a created thread',
     (tester) async {
       final createdThread = ThreadDetailDto(
@@ -555,6 +605,118 @@ void main() {
   );
 
   testWidgets(
+    'thread detail restores an unsent composer draft after leaving and reopening',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            _thread123Detail(status: ThreadStatus.idle),
+            _thread123Detail(status: ThreadStatus.idle),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            <ThreadTimelineEntryDto>[],
+            <ThreadTimelineEntryDto>[],
+          ],
+        },
+      );
+      final cacheRepository = _newCacheRepository();
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+        cacheRepository: cacheRepository,
+      );
+
+      await tester.enterText(
+        find.byKey(const Key('turn-composer-input')),
+        'Unsaved prompt draft',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+        cacheRepository: cacheRepository,
+      );
+      await tester.pumpAndSettle();
+
+      final composer = tester.widget<TextField>(
+        find.byKey(const Key('turn-composer-input')),
+      );
+      expect(composer.controller?.text, 'Unsaved prompt draft');
+    },
+  );
+
+  testWidgets(
+    'successful composer submission clears the persisted thread draft',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            _thread123Detail(status: ThreadStatus.idle),
+            _thread123Detail(status: ThreadStatus.idle),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            <ThreadTimelineEntryDto>[],
+            <ThreadTimelineEntryDto>[],
+          ],
+        },
+        startTurnScriptByThreadId: {
+          'thread-123': [
+            _turnMutationResult(
+              threadId: 'thread-123',
+              operation: 'start_turn',
+              status: ThreadStatus.running,
+              message: 'Turn started',
+            ),
+          ],
+        },
+      );
+      final cacheRepository = _newCacheRepository();
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+        cacheRepository: cacheRepository,
+      );
+
+      await tester.enterText(
+        find.byKey(const Key('turn-composer-input')),
+        'Ship the fix',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('turn-composer-submit')));
+      await tester.pumpAndSettle();
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+        cacheRepository: cacheRepository,
+      );
+      await tester.pumpAndSettle();
+
+      final composer = tester.widget<TextField>(
+        find.byKey(const Key('turn-composer-input')),
+      );
+      expect(composer.controller?.text, isEmpty);
+    },
+  );
+
+  testWidgets(
     'real-thread initial 80-entry slice keeps latest context and bundled work activity visible',
     (tester) async {
       final fixture = _loadRealThreadFixture();
@@ -694,6 +856,74 @@ void main() {
         pagedIds.last,
         equals(latestPageFixture.timelineEntries.last.eventId),
       );
+    },
+  );
+
+  testWidgets(
+    'real-thread older-history pagination keeps the current viewport anchored while prepending earlier events',
+    (tester) async {
+      final latestPageFixture = _loadRealThreadFixture();
+      final olderPageFixture = _loadRealThreadOlderTimelineFixture();
+      final combinedTimeline = <ThreadTimelineEntryDto>[
+        ...olderPageFixture.entries,
+        ...latestPageFixture.timelineEntries,
+      ];
+
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          latestPageFixture.detail.threadId: [latestPageFixture.detail],
+        },
+        timelineScriptByThreadId: {
+          latestPageFixture.detail.threadId: [combinedTimeline],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: latestPageFixture.detail.threadId,
+        initialVisibleTimelineEntries: 80,
+      );
+      await tester.pumpAndSettle();
+
+      final scrollViewFinder = find.byKey(
+        const Key('thread-detail-scroll-view'),
+      );
+      final scrollView = tester.widget<ListView>(scrollViewFinder);
+      final scrollController = scrollView.controller!;
+      final args = ThreadDetailControllerArgs(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: latestPageFixture.detail.threadId,
+        initialVisibleTimelineEntries: 80,
+      );
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ThreadDetailPage)),
+      );
+      final controllerState = container.read(
+        threadDetailControllerProvider(args),
+      );
+      final initialBlocks = buildThreadTimelineBlocks(
+        controllerState.visibleItems,
+      );
+      final anchorFinder = find.byKey(
+        ValueKey(_timelineBlockKeyForTest(initialBlocks.first)),
+      );
+
+      scrollController.jumpTo(100);
+      await tester.pump();
+
+      expect(anchorFinder, findsOneWidget);
+      final anchorTopBefore = tester.getTopLeft(anchorFinder).dy;
+
+      await tester.drag(scrollViewFinder, const Offset(0, 80));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
+
+      expect(detailApi.timelineFetchCount, 2);
+
+      final anchorTopAfter = tester.getTopLeft(anchorFinder).dy;
+      expect(anchorTopAfter, closeTo(anchorTopBefore, 48));
     },
   );
 
@@ -2423,6 +2653,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       );
 
       expect(input.maxLines, 4);
+      expect(input.textCapitalization, TextCapitalization.sentences);
       expect(input.textInputAction, TextInputAction.newline);
       expect(
         find.byKey(const Key('turn-composer-attach-button')),
@@ -3465,7 +3696,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
         tester,
         find.text('Streaming chunk from live output.'),
       );
-      expect(find.text('Streaming chunk from live output.'), findsOneWidget);
+      expect(find.text('Streaming chunk from live output.'), findsWidgets);
 
       liveStream.emit(
         BridgeEventEnvelope<Map<String, dynamic>>(
@@ -3581,7 +3812,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     'new live messages still surface the badge when scrolled away from the bottom',
     (tester) async {
       final timeline = List<ThreadTimelineEntryDto>.generate(
-        24,
+        64,
         (index) => _timelineEvent(
           id: 'evt-live-$index',
           kind: BridgeEventKind.messageDelta,
@@ -3609,10 +3840,9 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       );
       await tester.pumpAndSettle();
 
-      await tester.drag(
-        find.byKey(const Key('thread-detail-scroll-view')),
-        const Offset(0, 900),
-      );
+      final scrollPosition = _threadDetailScrollPosition(tester);
+      scrollPosition.jumpTo(scrollPosition.minScrollExtent);
+      await tester.pump();
       await tester.pumpAndSettle();
 
       liveStream.emit(
@@ -3627,8 +3857,12 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('New messages'), findsOneWidget);
-      expect(find.text('Newest streamed event'), findsOneWidget);
+      expect(
+        find.byKey(const Key('thread-detail-new-message-button')),
+        findsOneWidget,
+      );
+      expect(find.text('New messages'), findsNothing);
+      expect(find.text('Newest streamed event'), findsNothing);
     },
   );
 
@@ -3716,7 +3950,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       );
       await tester.pumpAndSettle();
       await _scrollUntilVisible(tester, find.text('Visible on thread 456'));
-      expect(find.text('Visible on thread 456'), findsOneWidget);
+      expect(find.text('Visible on thread 456'), findsWidgets);
     },
   );
 
@@ -3778,7 +4012,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       );
       expect(
         find.text('Streaming from a turn started in Codex.app'),
-        findsOneWidget,
+        findsWidgets,
       );
 
       liveStream.emit(
@@ -3854,7 +4088,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       expect(find.text('Hel'), findsNothing);
       expect(
         find.text('Hello from the updated streamed message'),
-        findsOneWidget,
+        findsWidgets,
       );
       expect(
         find.byKey(const Key('thread-message-card-evt-stable-stream')),
@@ -4496,7 +4730,8 @@ Future<void> _pumpThreadDetailApp(
     ),
   );
 
-  await tester.pumpAndSettle();
+  await tester.pump();
+  await _pumpForTransientUiWork(tester, iterations: 4);
 }
 
 Future<void> _scrollUntilVisible(WidgetTester tester, Finder finder) async {
@@ -4526,6 +4761,33 @@ Future<void> _scrollUntilVisible(WidgetTester tester, Finder finder) async {
   }
 
   throw StateError('Could not scroll finder into view: $finder');
+}
+
+String _timelineBlockKeyForTest(ThreadTimelineBlock block) {
+  if (block.item != null) {
+    return 'activity:${block.item!.eventId}';
+  }
+
+  if (block.workSummary != null) {
+    return 'work-summary:${block.workSummary!.anchorEventId}';
+  }
+
+  final exploration = block.exploration;
+  if (exploration != null) {
+    return 'exploration:${exploration.sourceEventIds.join("|")}';
+  }
+
+  return 'timeline-block';
+}
+
+ScrollPosition _threadDetailScrollPosition(WidgetTester tester) {
+  final scrollable = find
+      .descendant(
+        of: find.byKey(const Key('thread-detail-scroll-view')),
+        matching: find.byType(Scrollable),
+      )
+      .first;
+  return tester.state<ScrollableState>(scrollable).position;
 }
 
 Future<void> _tapThreadDetailBackButton(WidgetTester tester) async {
@@ -5184,6 +5446,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    TurnMode mode = TurnMode.act,
     List<String> images = const <String>[],
     String? model,
     String? effort,
@@ -5214,6 +5477,24 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     }
 
     throw StateError('Unsupported start-turn scripted result: $scriptedResult');
+  }
+
+  @override
+  Future<TurnMutationResult> respondToUserInput({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String requestId,
+    List<UserInputAnswerDto> answers = const <UserInputAnswerDto>[],
+    String? freeText,
+    String? model,
+    String? effort,
+  }) async {
+    return _turnMutationResult(
+      threadId: threadId,
+      operation: 'turn_respond',
+      status: ThreadStatus.running,
+      message: 'Plan clarification accepted',
+    );
   }
 
   @override

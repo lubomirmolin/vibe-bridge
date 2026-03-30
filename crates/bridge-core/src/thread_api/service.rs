@@ -428,6 +428,7 @@ impl ThreadApiService {
                 .iter()
                 .map(map_timeline_entry)
                 .collect::<Vec<_>>(),
+            pending_user_input: None,
             next_before,
             has_more_before,
         })

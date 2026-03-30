@@ -90,10 +90,25 @@ abstract class ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    TurnMode mode = TurnMode.act,
     List<String> images = const <String>[],
     String? model,
     String? effort,
   });
+
+  Future<TurnMutationResult> respondToUserInput({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String requestId,
+    List<UserInputAnswerDto> answers = const <UserInputAnswerDto>[],
+    String? freeText,
+    String? model,
+    String? effort,
+  }) async {
+    throw const ThreadTurnBridgeException(
+      message: 'Pending plan questions are unavailable in this build.',
+    );
+  }
 
   Future<TurnMutationResult> steerTurn({
     required String bridgeApiBaseUrl,
@@ -330,6 +345,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    TurnMode mode = TurnMode.act,
     List<String> images = const <String>[],
     String? model,
     String? effort,
@@ -345,7 +361,37 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       routeSegment: 'turns',
       body: <String, dynamic>{
         'prompt': prompt,
+        'mode': mode.wireValue,
         if (normalizedImages.isNotEmpty) 'images': normalizedImages,
+        if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
+        if (effort != null && effort.trim().isNotEmpty) 'effort': effort.trim(),
+      },
+    );
+  }
+
+  @override
+  Future<TurnMutationResult> respondToUserInput({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String requestId,
+    List<UserInputAnswerDto> answers = const <UserInputAnswerDto>[],
+    String? freeText,
+    String? model,
+    String? effort,
+  }) {
+    return _postTurnMutation(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+      operation: 'respond',
+      routeSegment: 'user-input/respond',
+      body: <String, dynamic>{
+        'request_id': requestId,
+        if (answers.isNotEmpty)
+          'answers': answers
+              .map((answer) => answer.toJson())
+              .toList(growable: false),
+        if (freeText != null && freeText.trim().isNotEmpty)
+          'free_text': freeText.trim(),
         if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
         if (effort != null && effort.trim().isNotEmpty) 'effort': effort.trim(),
       },

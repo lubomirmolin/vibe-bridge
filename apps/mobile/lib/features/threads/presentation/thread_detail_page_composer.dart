@@ -16,6 +16,8 @@ class _PinnedTurnComposer extends StatelessWidget {
     required this.speechMessageIsError,
     required this.isComposerFocused,
     required this.attachedImages,
+    required this.composerMode,
+    required this.selectedPlanOptionByQuestionId,
     required this.modelOptions,
     required this.reasoningOptions,
     required this.selectedModel,
@@ -27,10 +29,14 @@ class _PinnedTurnComposer extends StatelessWidget {
     required this.onPickImages,
     required this.onToggleSpeechInput,
     required this.onRemoveImage,
+    required this.onComposerModeChanged,
+    required this.onSelectPlanOption,
     required this.onModelChanged,
     required this.onReasoningChanged,
     required this.onAccessModeChanged,
     required this.onSubmitComposer,
+    required this.onSubmitPendingUserInput,
+    this.pendingUserInput,
   });
 
   final TextEditingController composerController;
@@ -47,6 +53,9 @@ class _PinnedTurnComposer extends StatelessWidget {
   final bool speechMessageIsError;
   final bool isComposerFocused;
   final List<XFile> attachedImages;
+  final TurnMode composerMode;
+  final PendingUserInputDto? pendingUserInput;
+  final Map<String, String> selectedPlanOptionByQuestionId;
   final List<ModelOptionDto> modelOptions;
   final List<String> reasoningOptions;
   final String selectedModel;
@@ -58,13 +67,17 @@ class _PinnedTurnComposer extends StatelessWidget {
   final Future<void> Function() onPickImages;
   final Future<void> Function() onToggleSpeechInput;
   final ValueChanged<XFile> onRemoveImage;
+  final ValueChanged<TurnMode> onComposerModeChanged;
+  final void Function(String questionId, String optionId) onSelectPlanOption;
   final ValueChanged<String> onModelChanged;
   final ValueChanged<String> onReasoningChanged;
   final ValueChanged<AccessMode> onAccessModeChanged;
   final Future<bool> Function(String rawInput) onSubmitComposer;
+  final Future<bool> Function(String rawInput)? onSubmitPendingUserInput;
 
   @override
   Widget build(BuildContext context) {
+    final hasPendingUserInput = pendingUserInput != null;
     final canEditPinnedControls =
         !isComposerMutationInFlight &&
         !isInterruptMutationInFlight &&
@@ -76,6 +89,8 @@ class _PinnedTurnComposer extends StatelessWidget {
         !isInterruptMutationInFlight &&
         !isSpeechRecording &&
         !isSpeechTranscribing;
+    final shouldHideLeadingActions =
+        hasPendingUserInput || isComposerFocused || isSpeechRecording;
 
     if (!composerEnabled && composerFocusNode.hasFocus) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -99,6 +114,14 @@ class _PinnedTurnComposer extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (pendingUserInput != null) ...[
+                  _PendingUserInputCard(
+                    pendingUserInput: pendingUserInput!,
+                    selectedOptionByQuestionId: selectedPlanOptionByQuestionId,
+                    onSelectOption: onSelectPlanOption,
+                  ),
+                  const SizedBox(height: 10),
+                ],
                 if (attachedImages.isNotEmpty) ...[
                   Align(
                     alignment: Alignment.centerLeft,
@@ -136,7 +159,7 @@ class _PinnedTurnComposer extends StatelessWidget {
                             ),
                           );
                         },
-                        child: isComposerFocused || isSpeechRecording
+                        child: shouldHideLeadingActions
                             ? const SizedBox(
                                 key: ValueKey(
                                   'composer-leading-actions-hidden',
@@ -251,6 +274,8 @@ class _PinnedTurnComposer extends StatelessWidget {
                                     minLines: 1,
                                     maxLines: 4,
                                     keyboardType: TextInputType.multiline,
+                                    textCapitalization:
+                                        TextCapitalization.sentences,
                                     textInputAction: TextInputAction.newline,
                                     onTapOutside: (_) =>
                                         composerFocusNode.unfocus(),
@@ -261,6 +286,10 @@ class _PinnedTurnComposer extends StatelessWidget {
                                     decoration: InputDecoration(
                                       hintText: isSpeechTranscribing
                                           ? 'Transcribing voice message…'
+                                          : hasPendingUserInput
+                                          ? 'Something else...'
+                                          : composerMode == TurnMode.plan
+                                          ? 'Ask Codex to plan...'
                                           : 'Message Codex...',
                                       hintStyle: const TextStyle(
                                         color: AppTheme.textSubtle,
@@ -351,62 +380,23 @@ class _PinnedTurnComposer extends StatelessWidget {
                               ),
                       ),
                       const SizedBox(width: 10),
-                      SizedBox(
-                        width: 56,
-                        height: 56,
-                        child: ListenableBuilder(
-                          listenable: composerController,
-                          builder: (context, _) {
-                            final hasInput =
-                                composerController.text.trim().isNotEmpty ||
-                                attachedImages.isNotEmpty;
-                            final canRunPrimaryAction =
-                                hasInput &&
-                                controlsEnabled &&
-                                !isTurnActive &&
-                                !isComposerMutationInFlight &&
-                                !isInterruptMutationInFlight &&
-                                !isSpeechRecording &&
-                                !isSpeechTranscribing;
-
-                            return MagneticButton(
-                              key: const Key('turn-composer-submit'),
-                              isCircle: true,
-                              variant: MagneticButtonVariant.primary,
-                              onClick: canRunPrimaryAction
-                                  ? () async {
-                                      if (!hasInput) return;
-
-                                      final success = await onSubmitComposer(
-                                        composerController.text,
-                                      );
-                                      if (success) {
-                                        composerController.clear();
-                                      }
-                                    }
-                                  : () {},
-                              child: AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 180),
-                                switchInCurve: Curves.easeOutCubic,
-                                switchOutCurve: Curves.easeInCubic,
-                                child: isComposerMutationInFlight
-                                    ? const SizedBox.square(
-                                        key: ValueKey('composer-loading'),
-                                        dimension: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: AppTheme.background,
-                                        ),
-                                      )
-                                    : PhosphorIcon(
-                                        PhosphorIcons.arrowUp(),
-                                        key: const ValueKey('send'),
-                                        size: 24,
-                                      ),
-                              ),
-                            );
-                          },
-                        ),
+                      _ComposerPrimaryActionRail(
+                        composerController: composerController,
+                        attachedImages: attachedImages,
+                        composerMode: composerMode,
+                        hasPendingUserInput: hasPendingUserInput,
+                        selectedPlanOptionByQuestionId:
+                            selectedPlanOptionByQuestionId,
+                        controlsEnabled: controlsEnabled,
+                        isTurnActive: isTurnActive,
+                        isComposerMutationInFlight: isComposerMutationInFlight,
+                        isInterruptMutationInFlight:
+                            isInterruptMutationInFlight,
+                        isSpeechRecording: isSpeechRecording,
+                        isSpeechTranscribing: isSpeechTranscribing,
+                        onComposerModeChanged: onComposerModeChanged,
+                        onSubmitComposer: onSubmitComposer,
+                        onSubmitPendingUserInput: onSubmitPendingUserInput,
                       ),
                     ],
                   ),
@@ -459,6 +449,550 @@ class _PinnedTurnComposer extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _PendingUserInputCard extends StatelessWidget {
+  const _PendingUserInputCard({
+    required this.pendingUserInput,
+    required this.selectedOptionByQuestionId,
+    required this.onSelectOption,
+  });
+
+  final PendingUserInputDto pendingUserInput;
+  final Map<String, String> selectedOptionByQuestionId;
+  final void Function(String questionId, String optionId) onSelectOption;
+
+  @override
+  Widget build(BuildContext context) {
+    UserInputQuestionDto? currentQuestion;
+    var currentQuestionIndex = -1;
+    final answeredQuestions =
+        <
+          ({
+            int index,
+            UserInputQuestionDto question,
+            UserInputOptionDto option,
+          })
+        >[];
+
+    for (var index = 0; index < pendingUserInput.questions.length; index += 1) {
+      final question = pendingUserInput.questions[index];
+      final selectedOptionId = selectedOptionByQuestionId[question.questionId];
+      if (selectedOptionId == null) {
+        currentQuestion ??= question;
+        currentQuestionIndex = currentQuestionIndex == -1
+            ? index
+            : currentQuestionIndex;
+        continue;
+      }
+
+      final selectedOption = question.options.firstWhere(
+        (option) => option.optionId == selectedOptionId,
+        orElse: () => question.options.first,
+      );
+      answeredQuestions.add((
+        index: index,
+        question: question,
+        option: selectedOption,
+      ));
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF10211A),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: AppTheme.emerald.withValues(alpha: 0.28)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: AppTheme.emerald.withValues(alpha: 0.14),
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: PhosphorIcon(
+                    PhosphorIcons.listChecks(),
+                    color: AppTheme.emerald,
+                    size: 18,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      pendingUserInput.title,
+                      style: const TextStyle(
+                        color: AppTheme.textMain,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (pendingUserInput.detail case final detail?)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          detail,
+                          style: const TextStyle(
+                            color: AppTheme.textMuted,
+                            fontSize: 12,
+                            height: 1.3,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (answeredQuestions.isNotEmpty) ...[
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: answeredQuestions
+                  .map(
+                    (entry) => Container(
+                      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.05),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.08),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '${entry.index + 1}',
+                            style: GoogleFonts.jetBrainsMono(
+                              color: AppTheme.emerald,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              entry.option.label,
+                              style: const TextStyle(
+                                color: AppTheme.textMain,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+            const SizedBox(height: 12),
+          ],
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            child: currentQuestion == null
+                ? Container(
+                    key: const ValueKey('pending-user-input-complete'),
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.03),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.06),
+                      ),
+                    ),
+                    child: const Text(
+                      'All three answers are selected. Add "Something else" below if needed, or press plan to continue.',
+                      style: TextStyle(
+                        color: AppTheme.textMuted,
+                        fontSize: 13,
+                        height: 1.35,
+                      ),
+                    ),
+                  )
+                : _PendingUserInputQuestionCard(
+                    key: ValueKey(currentQuestion.questionId),
+                    index: currentQuestionIndex + 1,
+                    totalQuestions: pendingUserInput.questions.length,
+                    question: currentQuestion,
+                    selectedOptionId:
+                        selectedOptionByQuestionId[currentQuestion.questionId],
+                    onSelectOption: (optionId) =>
+                        onSelectOption(currentQuestion!.questionId, optionId),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PendingUserInputQuestionCard extends StatelessWidget {
+  const _PendingUserInputQuestionCard({
+    super.key,
+    required this.index,
+    required this.totalQuestions,
+    required this.question,
+    required this.selectedOptionId,
+    required this.onSelectOption,
+  });
+
+  final int index;
+  final int totalQuestions;
+  final UserInputQuestionDto question;
+  final String? selectedOptionId;
+  final ValueChanged<String> onSelectOption;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.03),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                '$index',
+                style: GoogleFonts.jetBrainsMono(
+                  color: AppTheme.emerald,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Question $index of $totalQuestions',
+                style: const TextStyle(
+                  color: AppTheme.textSubtle,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            question.prompt,
+            style: const TextStyle(
+              color: AppTheme.textMain,
+              fontSize: 14,
+              height: 1.35,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: question.options
+                .map(
+                  (option) => _PendingUserInputOptionChip(
+                    option: option,
+                    isSelected: selectedOptionId == option.optionId,
+                    onTap: () => onSelectOption(option.optionId),
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PendingUserInputOptionChip extends StatelessWidget {
+  const _PendingUserInputOptionChip({
+    required this.option,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final UserInputOptionDto option;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Ink(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? AppTheme.emerald.withValues(alpha: 0.18)
+                : Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: isSelected
+                  ? AppTheme.emerald.withValues(alpha: 0.75)
+                  : Colors.white.withValues(alpha: 0.08),
+            ),
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 96, maxWidth: 220),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        option.label,
+                        style: TextStyle(
+                          color: isSelected
+                              ? AppTheme.textMain
+                              : AppTheme.textMuted,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    if (option.isRecommended) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        'REC',
+                        style: GoogleFonts.jetBrainsMono(
+                          color: AppTheme.emerald,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                if (option.description.trim().isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    option.description,
+                    style: const TextStyle(
+                      color: AppTheme.textSubtle,
+                      fontSize: 11,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ComposerPrimaryActionRail extends StatelessWidget {
+  const _ComposerPrimaryActionRail({
+    required this.composerController,
+    required this.attachedImages,
+    required this.composerMode,
+    required this.hasPendingUserInput,
+    required this.selectedPlanOptionByQuestionId,
+    required this.controlsEnabled,
+    required this.isTurnActive,
+    required this.isComposerMutationInFlight,
+    required this.isInterruptMutationInFlight,
+    required this.isSpeechRecording,
+    required this.isSpeechTranscribing,
+    required this.onComposerModeChanged,
+    required this.onSubmitComposer,
+    required this.onSubmitPendingUserInput,
+  });
+
+  final TextEditingController composerController;
+  final List<XFile> attachedImages;
+  final TurnMode composerMode;
+  final bool hasPendingUserInput;
+  final Map<String, String> selectedPlanOptionByQuestionId;
+  final bool controlsEnabled;
+  final bool isTurnActive;
+  final bool isComposerMutationInFlight;
+  final bool isInterruptMutationInFlight;
+  final bool isSpeechRecording;
+  final bool isSpeechTranscribing;
+  final ValueChanged<TurnMode> onComposerModeChanged;
+  final Future<bool> Function(String rawInput) onSubmitComposer;
+  final Future<bool> Function(String rawInput)? onSubmitPendingUserInput;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      key: const Key('turn-composer-primary-rail'),
+      width: hasPendingUserInput ? 56 : 66,
+      height: 56,
+      child: ListenableBuilder(
+        listenable: composerController,
+        builder: (context, _) {
+          final hasFreeText = composerController.text.trim().isNotEmpty;
+          final hasInput = hasPendingUserInput
+              ? hasFreeText || selectedPlanOptionByQuestionId.isNotEmpty
+              : hasFreeText || attachedImages.isNotEmpty;
+          final canRunPrimaryAction =
+              hasInput &&
+              controlsEnabled &&
+              !isTurnActive &&
+              !isComposerMutationInFlight &&
+              !isInterruptMutationInFlight &&
+              !isSpeechRecording &&
+              !isSpeechTranscribing;
+          final effectiveMode = hasPendingUserInput
+              ? TurnMode.plan
+              : composerMode;
+
+          Future<void> handleSubmit() async {
+            if (!canRunPrimaryAction) {
+              return;
+            }
+            final success = hasPendingUserInput
+                ? await onSubmitPendingUserInput?.call(
+                        composerController.text,
+                      ) ??
+                      false
+                : await onSubmitComposer(composerController.text);
+            if (success) {
+              composerController.clear();
+            }
+          }
+
+          Widget buildPrimaryButton({
+            required TurnMode mode,
+            required bool isActive,
+          }) {
+            if (!isActive) {
+              return Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceZinc800.withValues(alpha: 0.9),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.06),
+                  ),
+                ),
+                child: Center(
+                  child: PhosphorIcon(
+                    mode == TurnMode.plan
+                        ? PhosphorIcons.listChecks()
+                        : PhosphorIcons.arrowUp(),
+                    size: 20,
+                    color: AppTheme.textSubtle,
+                  ),
+                ),
+              );
+            }
+            return SizedBox(
+              width: 56,
+              height: 56,
+              child: MagneticButton(
+                key: Key(
+                  mode == TurnMode.act
+                      ? 'turn-composer-submit'
+                      : 'turn-composer-plan-submit',
+                ),
+                isCircle: true,
+                variant: MagneticButtonVariant.primary,
+                onClick: isActive && canRunPrimaryAction
+                    ? () async {
+                        await handleSubmit();
+                      }
+                    : () {},
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 180),
+                  child: isComposerMutationInFlight && isActive
+                      ? SizedBox.square(
+                          key: ValueKey('composer-loading-${mode.wireValue}'),
+                          dimension: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: isActive
+                                ? AppTheme.background
+                                : AppTheme.textMain,
+                          ),
+                        )
+                      : PhosphorIcon(
+                          mode == TurnMode.plan
+                              ? PhosphorIcons.listChecks()
+                              : PhosphorIcons.arrowUp(),
+                          key: ValueKey('composer-primary-${mode.wireValue}'),
+                          size: 22,
+                        ),
+                ),
+              ),
+            );
+          }
+
+          if (hasPendingUserInput) {
+            return buildPrimaryButton(mode: TurnMode.plan, isActive: true);
+          }
+
+          final activeMode = effectiveMode;
+          final secondaryMode = activeMode == TurnMode.act
+              ? TurnMode.plan
+              : TurnMode.act;
+
+          return GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTapUp: (details) {
+              if (details.localPosition.dx >= 56) {
+                onComposerModeChanged(secondaryMode);
+              }
+            },
+            onHorizontalDragEnd: (details) {
+              final velocity = details.primaryVelocity ?? 0;
+              if (velocity <= -180) {
+                onComposerModeChanged(TurnMode.plan);
+              } else if (velocity >= 180) {
+                onComposerModeChanged(TurnMode.act);
+              }
+            },
+            child: Stack(
+              children: [
+                Positioned(
+                  left: 10,
+                  child: Opacity(
+                    opacity: 0.95,
+                    child: buildPrimaryButton(
+                      mode: secondaryMode,
+                      isActive: false,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 0,
+                  child: buildPrimaryButton(mode: activeMode, isActive: true),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }

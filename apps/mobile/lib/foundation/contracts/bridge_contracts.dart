@@ -1,6 +1,8 @@
-const String contractVersion = '2026-03-23';
+const String contractVersion = '2026-03-29';
 
 enum ThreadStatus { idle, running, completed, interrupted, failed }
+
+enum TurnMode { act, plan }
 
 enum AccessMode { readOnly, controlWithApprovals, fullControl }
 
@@ -20,6 +22,7 @@ enum SpeechModelState {
 enum BridgeEventKind {
   messageDelta,
   planDelta,
+  userInputRequested,
   commandDelta,
   fileChange,
   approvalRequested,
@@ -214,6 +217,8 @@ extension BridgeEventKindWire on BridgeEventKind {
         return 'message_delta';
       case BridgeEventKind.planDelta:
         return 'plan_delta';
+      case BridgeEventKind.userInputRequested:
+        return 'user_input_requested';
       case BridgeEventKind.commandDelta:
         return 'command_delta';
       case BridgeEventKind.fileChange:
@@ -224,6 +229,17 @@ extension BridgeEventKindWire on BridgeEventKind {
         return 'thread_status_changed';
       case BridgeEventKind.securityAudit:
         return 'security_audit';
+    }
+  }
+}
+
+extension TurnModeWire on TurnMode {
+  String get wireValue {
+    switch (this) {
+      case TurnMode.act:
+        return 'act';
+      case TurnMode.plan:
+        return 'plan';
     }
   }
 }
@@ -705,6 +721,145 @@ class ThreadGitStatusDto {
   }
 }
 
+class UserInputOptionDto {
+  const UserInputOptionDto({
+    required this.optionId,
+    required this.label,
+    required this.description,
+    required this.isRecommended,
+  });
+
+  final String optionId;
+  final String label;
+  final String description;
+  final bool isRecommended;
+
+  factory UserInputOptionDto.fromJson(Map<String, dynamic> json) {
+    return UserInputOptionDto(
+      optionId: json['option_id'] as String,
+      label: json['label'] as String,
+      description: (json['description'] as String?) ?? '',
+      isRecommended: json['is_recommended'] as bool? ?? false,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'option_id': optionId,
+      'label': label,
+      'description': description,
+      'is_recommended': isRecommended,
+    };
+  }
+}
+
+class UserInputQuestionDto {
+  const UserInputQuestionDto({
+    required this.questionId,
+    required this.prompt,
+    required this.options,
+  });
+
+  final String questionId;
+  final String prompt;
+  final List<UserInputOptionDto> options;
+
+  factory UserInputQuestionDto.fromJson(Map<String, dynamic> json) {
+    final optionsJson = json['options'];
+    if (optionsJson is! List<dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "options" in user input question.',
+      );
+    }
+
+    return UserInputQuestionDto(
+      questionId: json['question_id'] as String,
+      prompt: json['prompt'] as String,
+      options: optionsJson
+          .map((item) {
+            if (item is! Map<String, dynamic>) {
+              throw const FormatException(
+                'User input option must be a JSON object.',
+              );
+            }
+            return UserInputOptionDto.fromJson(item);
+          })
+          .toList(growable: false),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'question_id': questionId,
+      'prompt': prompt,
+      'options': options
+          .map((option) => option.toJson())
+          .toList(growable: false),
+    };
+  }
+}
+
+class PendingUserInputDto {
+  const PendingUserInputDto({
+    required this.requestId,
+    required this.title,
+    required this.questions,
+    this.detail,
+  });
+
+  final String requestId;
+  final String title;
+  final String? detail;
+  final List<UserInputQuestionDto> questions;
+
+  factory PendingUserInputDto.fromJson(Map<String, dynamic> json) {
+    final questionsJson = json['questions'];
+    if (questionsJson is! List<dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "questions" in pending user input.',
+      );
+    }
+
+    return PendingUserInputDto(
+      requestId: json['request_id'] as String,
+      title: json['title'] as String,
+      detail: json['detail'] as String?,
+      questions: questionsJson
+          .map((item) {
+            if (item is! Map<String, dynamic>) {
+              throw const FormatException(
+                'Pending user input question must be a JSON object.',
+              );
+            }
+            return UserInputQuestionDto.fromJson(item);
+          })
+          .toList(growable: false),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'request_id': requestId,
+      'title': title,
+      if (detail != null) 'detail': detail,
+      'questions': questions
+          .map((question) => question.toJson())
+          .toList(growable: false),
+    };
+  }
+}
+
+class UserInputAnswerDto {
+  const UserInputAnswerDto({required this.questionId, required this.optionId});
+
+  final String questionId;
+  final String optionId;
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{'question_id': questionId, 'option_id': optionId};
+  }
+}
+
 class ThreadSnapshotDto {
   const ThreadSnapshotDto({
     required this.contractVersion,
@@ -712,6 +867,7 @@ class ThreadSnapshotDto {
     required this.entries,
     required this.approvals,
     this.gitStatus,
+    this.pendingUserInput,
   });
 
   final String contractVersion;
@@ -719,6 +875,7 @@ class ThreadSnapshotDto {
   final List<ThreadTimelineEntryDto> entries;
   final List<ApprovalSummaryDto> approvals;
   final ThreadGitStatusDto? gitStatus;
+  final PendingUserInputDto? pendingUserInput;
 
   factory ThreadSnapshotDto.fromJson(Map<String, dynamic> json) {
     final threadJson = json['thread'];
@@ -770,6 +927,11 @@ class ThreadSnapshotDto {
               json['git_status'] as Map<String, dynamic>,
             )
           : null,
+      pendingUserInput: json['pending_user_input'] is Map<String, dynamic>
+          ? PendingUserInputDto.fromJson(
+              json['pending_user_input'] as Map<String, dynamic>,
+            )
+          : null,
     );
   }
 
@@ -782,6 +944,8 @@ class ThreadSnapshotDto {
           .map((approval) => approval.toJson())
           .toList(growable: false),
       if (gitStatus != null) 'git_status': gitStatus!.toJson(),
+      if (pendingUserInput != null)
+        'pending_user_input': pendingUserInput!.toJson(),
     };
   }
 }
@@ -1350,6 +1514,14 @@ BridgeEventKind bridgeEventKindFromWire(String wireValue) {
   );
 }
 
+TurnMode turnModeFromWire(String wireValue) {
+  return TurnMode.values.firstWhere(
+    (mode) => mode.wireValue == wireValue,
+    orElse: () =>
+        throw FormatException('Unknown TurnMode wire value "$wireValue".'),
+  );
+}
+
 ThreadTimelineGroupKind threadTimelineGroupKindFromWire(String wireValue) {
   return ThreadTimelineGroupKind.values.firstWhere(
     (kind) => kind.wireValue == wireValue,
@@ -1606,6 +1778,7 @@ class ThreadTimelinePageDto {
     required this.contractVersion,
     required this.thread,
     required this.entries,
+    this.pendingUserInput,
     required this.nextBefore,
     required this.hasMoreBefore,
   });
@@ -1613,6 +1786,7 @@ class ThreadTimelinePageDto {
   final String contractVersion;
   final ThreadDetailDto thread;
   final List<ThreadTimelineEntryDto> entries;
+  final PendingUserInputDto? pendingUserInput;
   final String? nextBefore;
   final bool hasMoreBefore;
 
@@ -1645,6 +1819,11 @@ class ThreadTimelinePageDto {
             return ThreadTimelineEntryDto.fromJson(item);
           })
           .toList(growable: false),
+      pendingUserInput: json['pending_user_input'] is Map<String, dynamic>
+          ? PendingUserInputDto.fromJson(
+              json['pending_user_input'] as Map<String, dynamic>,
+            )
+          : null,
       nextBefore: json['next_before'] as String?,
       hasMoreBefore: json['has_more_before'] as bool? ?? false,
     );
@@ -1655,6 +1834,8 @@ class ThreadTimelinePageDto {
       'contract_version': contractVersion,
       'thread': thread.toJson(),
       'entries': entries.map((entry) => entry.toJson()).toList(growable: false),
+      if (pendingUserInput != null)
+        'pending_user_input': pendingUserInput!.toJson(),
       'next_before': nextBefore,
       'has_more_before': hasMoreBefore,
     };

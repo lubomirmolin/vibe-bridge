@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde_json::Value;
 use shared_contracts::{
     AccessMode, ApprovalStatus, ApprovalSummaryDto, BridgeEventEnvelope, BridgeEventKind,
-    ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto, ThreadTimelineEntryDto,
+    PendingUserInputDto, ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto, ThreadTimelineEntryDto,
     ThreadTimelinePageDto,
 };
 use tokio::sync::RwLock;
@@ -121,6 +121,7 @@ impl ProjectionStore {
             contract_version: snapshot.contract_version.clone(),
             thread: snapshot.thread.clone(),
             entries: snapshot.entries[start_index..end_index].to_vec(),
+            pending_user_input: snapshot.pending_user_input.clone(),
             next_before,
             has_more_before,
         })
@@ -174,35 +175,39 @@ impl ProjectionStore {
                 snapshot.thread.status = next_status;
             }
 
-            let existing_entry_index = snapshot
-                .entries
-                .iter()
-                .position(|entry| entry.event_id == event.event_id);
-            let aggregated_payload = merge_live_payload(
-                existing_entry_index
-                    .and_then(|index| snapshot.entries.get(index))
-                    .map(|entry| &entry.payload),
-                event.kind,
-                &event.payload,
-            );
-            let summary = summarize_live_payload(event.kind, &aggregated_payload);
-            if !summary.trim().is_empty() {
-                snapshot.thread.last_turn_summary = summary.clone();
-            }
-
-            let next_entry = ThreadTimelineEntryDto {
-                event_id: event.event_id.clone(),
-                kind: event.kind,
-                occurred_at: event.occurred_at.clone(),
-                summary,
-                payload: aggregated_payload,
-                annotations: event.annotations.clone(),
-            };
-
-            if let Some(index) = existing_entry_index {
-                snapshot.entries[index] = next_entry;
+            if event.kind == BridgeEventKind::UserInputRequested {
+                snapshot.pending_user_input = pending_user_input_from_payload(&event.payload);
             } else {
-                snapshot.entries.push(next_entry);
+                let existing_entry_index = snapshot
+                    .entries
+                    .iter()
+                    .position(|entry| entry.event_id == event.event_id);
+                let aggregated_payload = merge_live_payload(
+                    existing_entry_index
+                        .and_then(|index| snapshot.entries.get(index))
+                        .map(|entry| &entry.payload),
+                    event.kind,
+                    &event.payload,
+                );
+                let summary = summarize_live_payload(event.kind, &aggregated_payload);
+                if !summary.trim().is_empty() {
+                    snapshot.thread.last_turn_summary = summary.clone();
+                }
+
+                let next_entry = ThreadTimelineEntryDto {
+                    event_id: event.event_id.clone(),
+                    kind: event.kind,
+                    occurred_at: event.occurred_at.clone(),
+                    summary,
+                    payload: aggregated_payload,
+                    annotations: event.annotations.clone(),
+                };
+
+                if let Some(index) = existing_entry_index {
+                    snapshot.entries[index] = next_entry;
+                } else {
+                    snapshot.entries.push(next_entry);
+                }
             }
 
             if let Some(approval) = approval_update.as_ref() {
@@ -290,6 +295,17 @@ impl ProjectionStore {
     pub async fn upsert_approval_record(&self, approval: ApprovalRecordDto) {
         let mut state = self.inner.write().await;
         upsert_approval_locked(&mut state, approval);
+    }
+
+    pub async fn set_pending_user_input(
+        &self,
+        thread_id: &str,
+        pending_user_input: Option<PendingUserInputDto>,
+    ) {
+        let mut state = self.inner.write().await;
+        if let Some(snapshot) = state.snapshots.get_mut(thread_id) {
+            snapshot.pending_user_input = pending_user_input;
+        }
     }
 
     pub async fn update_git_state(
@@ -415,11 +431,25 @@ fn approval_summary_from_record(approval: &ApprovalRecordDto) -> ApprovalSummary
     }
 }
 
+fn pending_user_input_from_payload(payload: &Value) -> Option<PendingUserInputDto> {
+    match payload.get("state").and_then(Value::as_str) {
+        Some("resolved") => None,
+        Some("pending") | None => serde_json::from_value(payload.clone()).ok(),
+        Some(_) => None,
+    }
+}
+
 fn summarize_live_payload(kind: BridgeEventKind, payload: &Value) -> String {
     match kind {
         BridgeEventKind::MessageDelta | BridgeEventKind::PlanDelta => payload
             .get("text")
             .or_else(|| payload.get("delta"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        BridgeEventKind::UserInputRequested => payload
+            .get("title")
+            .or_else(|| payload.get("detail"))
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
@@ -549,6 +579,7 @@ fn merge_live_payload(existing: Option<&Value>, kind: BridgeEventKind, incoming:
 
             payload
         }
+        BridgeEventKind::UserInputRequested => incoming.clone(),
         BridgeEventKind::CommandDelta => {
             let replace = incoming
                 .get("replace")
@@ -686,6 +717,7 @@ mod tests {
                 entries: vec![],
                 approvals: vec![],
                 git_status: None,
+                pending_user_input: None,
             })
             .await;
 
@@ -759,6 +791,7 @@ mod tests {
                 entries: vec![],
                 approvals: vec![],
                 git_status: None,
+                pending_user_input: None,
             })
             .await;
 
@@ -825,6 +858,7 @@ mod tests {
                 entries: vec![],
                 approvals: vec![],
                 git_status: None,
+                pending_user_input: None,
             })
             .await;
 
@@ -918,6 +952,7 @@ mod tests {
                 }],
                 approvals: vec![],
                 git_status: None,
+                pending_user_input: None,
             })
             .await;
 
@@ -975,6 +1010,7 @@ mod tests {
                 entries: vec![],
                 approvals: vec![],
                 git_status: None,
+                pending_user_input: None,
             })
             .await;
 

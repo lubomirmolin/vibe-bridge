@@ -13,9 +13,10 @@ use shared_contracts::{
     AccessMode, BootstrapDto, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION,
     GitDiffChangeTypeDto, GitDiffFileSummaryDto, GitStatusDto as SharedGitStatusDto,
     ModelCatalogDto, ModelOptionDto, NetworkSettingsDto, PairingRouteInventoryDto,
-    SecurityAuditEventDto, ServiceHealthDto, ServiceHealthStatus, ThreadGitDiffDto,
-    ThreadGitDiffMode, ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto, ThreadTimelineEntryDto,
-    ThreadTimelinePageDto, TrustStateDto, TurnMutationAcceptedDto,
+    PendingUserInputDto, SecurityAuditEventDto, ServiceHealthDto, ServiceHealthStatus,
+    ThreadGitDiffDto, ThreadGitDiffMode, ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto,
+    ThreadTimelineEntryDto, ThreadTimelinePageDto, TrustStateDto, TurnMode,
+    TurnMutationAcceptedDto, UserInputAnswerDto, UserInputOptionDto, UserInputQuestionDto,
 };
 use tokio::sync::RwLock;
 use tokio::time::{Duration, sleep};
@@ -56,6 +57,8 @@ struct BridgeAppStateInner {
     available_models: RwLock<Vec<ModelOptionDto>>,
     active_turn_ids: RwLock<HashMap<String, String>>,
     pending_bridge_owned_turns: RwLock<HashSet<String>>,
+    awaiting_plan_question_prompts: RwLock<HashMap<String, String>>,
+    pending_user_inputs: RwLock<HashMap<String, PendingUserInputSession>>,
     resumed_notification_threads: RwLock<HashSet<String>>,
     inflight_thread_title_generations: RwLock<HashSet<String>>,
     pending_user_message_images: RwLock<HashMap<String, Vec<String>>>,
@@ -94,6 +97,12 @@ struct PendingApprovalRecord {
 struct GitControlState {
     approvals: HashMap<String, PendingApprovalRecord>,
     next_approval_sequence: u64,
+}
+
+#[derive(Debug, Clone)]
+struct PendingUserInputSession {
+    questionnaire: PendingUserInputDto,
+    original_prompt: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,6 +192,8 @@ impl BridgeAppState {
                 available_models: RwLock::new(Vec::new()),
                 active_turn_ids: RwLock::new(HashMap::new()),
                 pending_bridge_owned_turns: RwLock::new(HashSet::new()),
+                awaiting_plan_question_prompts: RwLock::new(HashMap::new()),
+                pending_user_inputs: RwLock::new(HashMap::new()),
                 resumed_notification_threads: RwLock::new(HashSet::new()),
                 inflight_thread_title_generations: RwLock::new(HashSet::new()),
                 pending_user_message_images: RwLock::new(HashMap::new()),
@@ -1431,9 +1442,21 @@ impl BridgeAppState {
         images: &[String],
         model: Option<&str>,
         effort: Option<&str>,
+        mode: TurnMode,
     ) -> Result<TurnMutationAcceptedDto, String> {
-        self.start_turn_with_visible_prompt(thread_id, prompt, prompt, images, model, effort)
-            .await
+        match mode {
+            TurnMode::Act => {
+                self.clear_pending_user_input(thread_id).await;
+                self.start_turn_with_visible_prompt(
+                    thread_id, prompt, prompt, images, model, effort,
+                )
+                .await
+            }
+            TurnMode::Plan => {
+                self.start_plan_turn(thread_id, prompt, images, model, effort)
+                    .await
+            }
+        }
     }
 
     pub async fn start_commit_action(
@@ -1507,6 +1530,22 @@ impl BridgeAppState {
             model,
             effort,
             move |event| {
+                let state = state.clone();
+                if let Some(user_input_event) = handle.block_on(async {
+                    state
+                        .build_pending_user_input_event_from_live_message(&event)
+                        .await
+                }) {
+                    let state = state.clone();
+                    handle.block_on(async move {
+                        state
+                            .projections()
+                            .apply_live_event(&user_input_event)
+                            .await;
+                        state.event_hub().publish(user_input_event);
+                    });
+                    return;
+                }
                 let mut normalized = compactor
                     .lock()
                     .expect("turn stream compactor lock should not be poisoned")
@@ -1611,6 +1650,87 @@ impl BridgeAppState {
         Ok(result.response)
     }
 
+    async fn start_plan_turn(
+        &self,
+        thread_id: &str,
+        prompt: &str,
+        images: &[String],
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<TurnMutationAcceptedDto, String> {
+        self.clear_pending_user_input(thread_id).await;
+        self.inner
+            .awaiting_plan_question_prompts
+            .write()
+            .await
+            .insert(thread_id.to_string(), prompt.trim().to_string());
+        self.start_turn_with_visible_prompt(
+            thread_id,
+            prompt,
+            &build_hidden_plan_question_prompt(prompt),
+            images,
+            model,
+            effort,
+        )
+        .await
+    }
+
+    pub async fn respond_to_user_input(
+        &self,
+        thread_id: &str,
+        request_id: &str,
+        answers: &[UserInputAnswerDto],
+        free_text: Option<&str>,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<TurnMutationAcceptedDto, String> {
+        let session = {
+            let mut pending = self.inner.pending_user_inputs.write().await;
+            let Some(session) = pending.remove(thread_id) else {
+                return Err("No pending plan questions are available for this thread.".to_string());
+            };
+            if session.questionnaire.request_id != request_id {
+                pending.insert(thread_id.to_string(), session.clone());
+                return Err(
+                    "The pending question set is no longer current. Refresh and try again."
+                        .to_string(),
+                );
+            }
+            session
+        };
+
+        let free_text = free_text.map(str::trim).filter(|value| !value.is_empty());
+        if answers.is_empty() && free_text.is_none() {
+            self.inner
+                .pending_user_inputs
+                .write()
+                .await
+                .insert(thread_id.to_string(), session.clone());
+            return Err("Pick at least one answer or write your own clarification.".to_string());
+        }
+
+        self.projections()
+            .set_pending_user_input(thread_id, None)
+            .await;
+        self.publish_user_input_resolution_event(thread_id, request_id)
+            .await;
+
+        self.start_turn_with_visible_prompt(
+            thread_id,
+            &render_user_input_response_summary(&session.questionnaire, answers, free_text),
+            &build_hidden_plan_followup_prompt(
+                &session.original_prompt,
+                &session.questionnaire,
+                answers,
+                free_text,
+            ),
+            &[],
+            model,
+            effort,
+        )
+        .await
+    }
+
     async fn publish_synthetic_user_message(
         &self,
         thread_id: &str,
@@ -1637,6 +1757,85 @@ impl BridgeAppState {
                 "delta": message,
                 "replace": true,
                 "images": image_payload,
+            }),
+            annotations: None,
+        };
+        self.projections().apply_live_event(&event).await;
+        self.event_hub().publish(event);
+    }
+
+    async fn clear_pending_user_input(&self, thread_id: &str) {
+        self.inner
+            .awaiting_plan_question_prompts
+            .write()
+            .await
+            .remove(thread_id);
+        self.inner
+            .pending_user_inputs
+            .write()
+            .await
+            .remove(thread_id);
+        self.projections()
+            .set_pending_user_input(thread_id, None)
+            .await;
+    }
+
+    async fn build_pending_user_input_event_from_live_message(
+        &self,
+        event: &BridgeEventEnvelope<Value>,
+    ) -> Option<BridgeEventEnvelope<Value>> {
+        if event.kind != BridgeEventKind::MessageDelta {
+            return None;
+        }
+        if event.payload.get("role").and_then(Value::as_str) != Some("assistant") {
+            return None;
+        }
+
+        let original_prompt = self
+            .inner
+            .awaiting_plan_question_prompts
+            .write()
+            .await
+            .remove(&event.thread_id)?;
+        let message_text = extract_text_from_payload(&event.payload)?;
+        let questionnaire = parse_pending_user_input_payload(&message_text, &event.thread_id)?;
+        let request_id = questionnaire.request_id.clone();
+
+        self.inner.pending_user_inputs.write().await.insert(
+            event.thread_id.clone(),
+            PendingUserInputSession {
+                questionnaire: questionnaire.clone(),
+                original_prompt,
+            },
+        );
+
+        Some(BridgeEventEnvelope {
+            contract_version: CONTRACT_VERSION.to_string(),
+            event_id: format!("{}-{}", event.thread_id, request_id),
+            thread_id: event.thread_id.clone(),
+            kind: BridgeEventKind::UserInputRequested,
+            occurred_at: event.occurred_at.clone(),
+            payload: json!({
+                "request_id": questionnaire.request_id,
+                "title": questionnaire.title,
+                "detail": questionnaire.detail,
+                "questions": questionnaire.questions,
+                "state": "pending",
+            }),
+            annotations: None,
+        })
+    }
+
+    async fn publish_user_input_resolution_event(&self, thread_id: &str, request_id: &str) {
+        let event = BridgeEventEnvelope {
+            contract_version: CONTRACT_VERSION.to_string(),
+            event_id: format!("{thread_id}-{request_id}-resolved"),
+            thread_id: thread_id.to_string(),
+            kind: BridgeEventKind::UserInputRequested,
+            occurred_at: Utc::now().to_rfc3339(),
+            payload: json!({
+                "request_id": request_id,
+                "state": "resolved",
             }),
             annotations: None,
         };
@@ -2355,6 +2554,209 @@ fn extract_text_from_payload(payload: &Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn build_hidden_plan_question_prompt(user_prompt: &str) -> String {
+    format!(
+        concat!(
+            "You are running in mobile plan intake mode.\n",
+            "Do not edit files, do not run commands, and do not produce the plan yet.\n",
+            "Return only one XML-like block with no markdown fences and no extra prose.\n",
+            "Use this exact wrapper: <codex-plan-questions>{{JSON}}</codex-plan-questions>\n",
+            "The JSON must contain:\n",
+            "- title: short string\n",
+            "- detail: short string\n",
+            "- questions: array of 1 to 3 questions\n",
+            "Each question must contain question_id, prompt, and exactly 3 options.\n",
+            "Each option must contain option_id, label, description, and is_recommended.\n",
+            "Keep the choices mutually exclusive and concise.\n",
+            "Original user request:\n{user_prompt}\n"
+        ),
+        user_prompt = user_prompt
+    )
+}
+
+fn build_hidden_plan_followup_prompt(
+    original_prompt: &str,
+    questionnaire: &PendingUserInputDto,
+    answers: &[UserInputAnswerDto],
+    free_text: Option<&str>,
+) -> String {
+    format!(
+        concat!(
+            "You are continuing a mobile planning workflow.\n",
+            "Do not edit files or run commands.\n",
+            "Use the user's original request plus their selected answers to produce a concrete execution plan.\n",
+            "If appropriate, emit update_plan with 3 to 7 actionable steps.\n",
+            "After the plan, summarize the main tradeoffs briefly.\n\n",
+            "Original request:\n{original_prompt}\n\n",
+            "Questionnaire:\n{questionnaire_json}\n\n",
+            "Selected answers:\n{answers_json}\n\n",
+            "Additional free text:\n{free_text}\n"
+        ),
+        original_prompt = original_prompt,
+        questionnaire_json =
+            serde_json::to_string_pretty(questionnaire).unwrap_or_else(|_| "{}".to_string()),
+        answers_json = serde_json::to_string_pretty(answers).unwrap_or_else(|_| "[]".to_string()),
+        free_text = free_text.unwrap_or(""),
+    )
+}
+
+fn render_user_input_response_summary(
+    questionnaire: &PendingUserInputDto,
+    answers: &[UserInputAnswerDto],
+    free_text: Option<&str>,
+) -> String {
+    let mut lines = vec!["Plan clarification".to_string()];
+
+    for answer in answers {
+        let question_prompt = questionnaire
+            .questions
+            .iter()
+            .find(|question| question.question_id == answer.question_id)
+            .map(|question| question.prompt.as_str())
+            .unwrap_or("Question");
+        let option_label = questionnaire
+            .questions
+            .iter()
+            .find(|question| question.question_id == answer.question_id)
+            .and_then(|question| {
+                question
+                    .options
+                    .iter()
+                    .find(|option| option.option_id == answer.option_id)
+            })
+            .map(|option| option.label.as_str())
+            .unwrap_or("Selected");
+        lines.push(format!("- {question_prompt}: {option_label}"));
+    }
+
+    if let Some(free_text) = free_text {
+        lines.push(format!("- Something else: {free_text}"));
+    }
+
+    lines.join("\n")
+}
+
+fn parse_pending_user_input_payload(
+    message_text: &str,
+    thread_id: &str,
+) -> Option<PendingUserInputDto> {
+    let start = message_text.find("<codex-plan-questions>")?;
+    let end = message_text.find("</codex-plan-questions>")?;
+    if end <= start {
+        return None;
+    }
+
+    let json_payload = message_text[start + "<codex-plan-questions>".len()..end].trim();
+    let parsed = serde_json::from_str::<Value>(json_payload).ok()?;
+    let title = parsed
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Clarify the plan")
+        .to_string();
+    let detail = parsed
+        .get("detail")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let questions = parsed
+        .get("questions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let prompt = entry
+                .get("prompt")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?;
+            let question_id = entry
+                .get("question_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| sanitize_user_input_id(prompt));
+            let options = entry
+                .get("options")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|option| {
+                    let label = option
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())?;
+                    Some(UserInputOptionDto {
+                        option_id: option
+                            .get("option_id")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| sanitize_user_input_id(label)),
+                        label: label.to_string(),
+                        description: option
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .unwrap_or_default()
+                            .to_string(),
+                        is_recommended: option
+                            .get("is_recommended")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                    })
+                })
+                .take(3)
+                .collect::<Vec<_>>();
+
+            if options.len() != 3 {
+                return None;
+            }
+
+            Some(UserInputQuestionDto {
+                question_id,
+                prompt: prompt.to_string(),
+                options,
+            })
+        })
+        .take(3)
+        .collect::<Vec<_>>();
+
+    if questions.is_empty() {
+        return None;
+    }
+
+    Some(PendingUserInputDto {
+        request_id: format!("user-input-{}-{}", thread_id, Utc::now().timestamp_millis()),
+        title,
+        detail,
+        questions,
+    })
+}
+
+fn sanitize_user_input_id(value: &str) -> String {
+    let mut identifier = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    while identifier.contains("--") {
+        identifier = identifier.replace("--", "-");
+    }
+    identifier.trim_matches('-').to_string()
+}
+
 fn is_placeholder_thread_title(title: &str) -> bool {
     let normalized = title.trim().to_lowercase();
     normalized.is_empty()
@@ -2847,6 +3249,7 @@ mod tests {
             entries: Vec::new(),
             approvals: Vec::new(),
             git_status: None,
+            pending_user_input: None,
         };
         state.projections().put_snapshot(placeholder_snapshot).await;
         state
@@ -2895,6 +3298,7 @@ mod tests {
             entries: Vec::new(),
             approvals: Vec::new(),
             git_status: None,
+            pending_user_input: None,
         };
         let mut next_snapshot = ThreadSnapshotDto {
             contract_version: CONTRACT_VERSION.to_string(),
@@ -2913,6 +3317,7 @@ mod tests {
             }],
             approvals: Vec::new(),
             git_status: None,
+            pending_user_input: None,
         };
 
         ensure_running_status_for_desktop_patch_update(
@@ -2946,6 +3351,7 @@ mod tests {
             entries: Vec::new(),
             approvals: Vec::new(),
             git_status: None,
+            pending_user_input: None,
         };
         let mut next_snapshot = ThreadSnapshotDto {
             contract_version: CONTRACT_VERSION.to_string(),
@@ -2964,6 +3370,7 @@ mod tests {
             }],
             approvals: Vec::new(),
             git_status: None,
+            pending_user_input: None,
         };
 
         ensure_running_status_for_desktop_patch_update(
@@ -3004,6 +3411,7 @@ mod tests {
             }],
             approvals: Vec::new(),
             git_status: None,
+            pending_user_input: None,
         };
         let mut next_snapshot = ThreadSnapshotDto {
             contract_version: CONTRACT_VERSION.to_string(),
@@ -3022,6 +3430,7 @@ mod tests {
             }],
             approvals: Vec::new(),
             git_status: None,
+            pending_user_input: None,
         };
 
         ensure_running_status_for_desktop_patch_update(
@@ -3062,6 +3471,7 @@ mod tests {
             }],
             approvals: Vec::new(),
             git_status: None,
+            pending_user_input: None,
         };
         let mut next_snapshot = previous_snapshot.clone();
 
@@ -3163,6 +3573,7 @@ mod tests {
             }],
             approvals: Vec::new(),
             git_status: None,
+            pending_user_input: None,
         };
 
         preserve_bootstrap_status_for_cached_desktop_snapshot(

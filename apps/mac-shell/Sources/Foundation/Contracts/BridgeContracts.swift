@@ -1,7 +1,7 @@
 import Foundation
 
 enum SharedContract {
-    static let version = "2026-03-23"
+    static let version = "2026-03-29"
 }
 
 enum ThreadStatus: String, Codable {
@@ -152,7 +152,7 @@ struct PairingRevokeResponseDTO: Codable, Equatable {
     }
 }
 
-struct BridgeHealthResponseDTO: Codable, Equatable {
+struct BridgeHealthResponseDTO: Decodable, Equatable {
     let status: String
     let runtime: BridgeRuntimeSnapshotDTO
     let pairingRoute: BridgePairingRouteHealthDTO
@@ -222,13 +222,59 @@ struct BridgeNetworkSettingsDTO: Codable, Equatable {
     }
 }
 
-struct BridgeTrustStatusDTO: Codable, Equatable {
+struct BridgeTrustStatusDTO: Decodable, Equatable {
     let trustedPhone: BridgeTrustedPhoneDTO?
     let activeSession: BridgeActiveSessionDTO?
+    let trustedDevices: [BridgeTrustedDeviceDTO]
+    let trustedSessions: [BridgeTrustedSessionDTO]
 
     enum CodingKeys: String, CodingKey {
         case trustedPhone = "trusted_phone"
         case activeSession = "active_session"
+        case trustedDevices = "trusted_devices"
+        case trustedSessions = "trusted_sessions"
+    }
+
+    init(
+        trustedPhone: BridgeTrustedPhoneDTO?,
+        activeSession: BridgeActiveSessionDTO?,
+        trustedDevices: [BridgeTrustedDeviceDTO] = [],
+        trustedSessions: [BridgeTrustedSessionDTO] = []
+    ) {
+        self.trustedPhone = trustedPhone
+        self.activeSession = activeSession
+        self.trustedDevices = trustedDevices.isEmpty
+            ? trustedPhone.map { [BridgeTrustedDeviceDTO(phone: $0)] } ?? []
+            : trustedDevices
+        self.trustedSessions = trustedSessions.isEmpty
+            ? activeSession.map { [BridgeTrustedSessionDTO(session: $0)] } ?? []
+            : trustedSessions
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let trustedPhone = try container.decodeIfPresent(
+            BridgeTrustedPhoneDTO.self,
+            forKey: .trustedPhone
+        )
+        let activeSession = try container.decodeIfPresent(
+            BridgeActiveSessionDTO.self,
+            forKey: .activeSession
+        )
+        let trustedDevices = try container.decodeIfPresent(
+            [BridgeTrustedDeviceDTO].self,
+            forKey: .trustedDevices
+        ) ?? []
+        let trustedSessions = try container.decodeIfPresent(
+            [BridgeTrustedSessionDTO].self,
+            forKey: .trustedSessions
+        ) ?? []
+        self.init(
+            trustedPhone: trustedPhone,
+            activeSession: activeSession,
+            trustedDevices: trustedDevices,
+            trustedSessions: trustedSessions
+        )
     }
 }
 
@@ -244,6 +290,50 @@ struct BridgeTrustedPhoneDTO: Codable, Equatable {
     }
 }
 
+struct BridgeTrustedDeviceDTO: Decodable, Equatable, Identifiable {
+    let deviceID: String
+    let deviceName: String
+    let pairedAtEpochSeconds: UInt64
+
+    var id: String { deviceID }
+
+    enum CodingKeys: String, CodingKey {
+        case deviceID = "device_id"
+        case deviceName = "device_name"
+        case pairedAtEpochSeconds = "paired_at_epoch_seconds"
+        case phoneID = "phone_id"
+        case phoneName = "phone_name"
+    }
+
+    init(deviceID: String, deviceName: String, pairedAtEpochSeconds: UInt64) {
+        self.deviceID = deviceID
+        self.deviceName = deviceName
+        self.pairedAtEpochSeconds = pairedAtEpochSeconds
+    }
+
+    init(phone: BridgeTrustedPhoneDTO) {
+        self.init(
+            deviceID: phone.phoneID,
+            deviceName: phone.phoneName,
+            pairedAtEpochSeconds: phone.pairedAtEpochSeconds
+        )
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let deviceID = try container.decodeIfPresent(String.self, forKey: .deviceID)
+            ?? container.decode(String.self, forKey: .phoneID)
+        let deviceName = try container.decodeIfPresent(String.self, forKey: .deviceName)
+            ?? container.decode(String.self, forKey: .phoneName)
+        let pairedAtEpochSeconds = try container.decode(UInt64.self, forKey: .pairedAtEpochSeconds)
+        self.init(
+            deviceID: deviceID,
+            deviceName: deviceName,
+            pairedAtEpochSeconds: pairedAtEpochSeconds
+        )
+    }
+}
+
 struct BridgeActiveSessionDTO: Codable, Equatable {
     let phoneID: String
     let sessionID: String
@@ -253,6 +343,51 @@ struct BridgeActiveSessionDTO: Codable, Equatable {
         case phoneID = "phone_id"
         case sessionID = "session_id"
         case finalizedAtEpochSeconds = "finalized_at_epoch_seconds"
+    }
+}
+
+struct BridgeTrustedSessionDTO: Decodable, Equatable, Identifiable {
+    let deviceID: String
+    let sessionID: String
+    let finalizedAtEpochSeconds: UInt64
+
+    var id: String { sessionID }
+
+    enum CodingKeys: String, CodingKey {
+        case deviceID = "device_id"
+        case sessionID = "session_id"
+        case finalizedAtEpochSeconds = "finalized_at_epoch_seconds"
+        case phoneID = "phone_id"
+    }
+
+    init(deviceID: String, sessionID: String, finalizedAtEpochSeconds: UInt64) {
+        self.deviceID = deviceID
+        self.sessionID = sessionID
+        self.finalizedAtEpochSeconds = finalizedAtEpochSeconds
+    }
+
+    init(session: BridgeActiveSessionDTO) {
+        self.init(
+            deviceID: session.phoneID,
+            sessionID: session.sessionID,
+            finalizedAtEpochSeconds: session.finalizedAtEpochSeconds
+        )
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let deviceID = try container.decodeIfPresent(String.self, forKey: .deviceID)
+            ?? container.decode(String.self, forKey: .phoneID)
+        let sessionID = try container.decode(String.self, forKey: .sessionID)
+        let finalizedAtEpochSeconds = try container.decode(
+            UInt64.self,
+            forKey: .finalizedAtEpochSeconds
+        )
+        self.init(
+            deviceID: deviceID,
+            sessionID: sessionID,
+            finalizedAtEpochSeconds: finalizedAtEpochSeconds
+        )
     }
 }
 

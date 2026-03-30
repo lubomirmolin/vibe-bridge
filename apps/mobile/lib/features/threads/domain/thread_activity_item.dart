@@ -139,6 +139,7 @@ class ThreadActivityItem {
     this.presentation,
     this.parsedCommandOutput,
     this.plan,
+    this.startsNewVisualGroup = false,
   });
 
   final String eventId;
@@ -152,6 +153,7 @@ class ThreadActivityItem {
   final ThreadActivityPresentation? presentation;
   final ParsedCommandOutput? parsedCommandOutput;
   final ThreadPlanSnapshot? plan;
+  final bool startsNewVisualGroup;
 
   factory ThreadActivityItem.fromTimelineEntry(ThreadTimelineEntryDto entry) {
     return ThreadActivityItem._fromEvent(
@@ -214,6 +216,23 @@ class ThreadActivityItem {
       plan: plan,
     );
   }
+
+  ThreadActivityItem copyWith({bool? startsNewVisualGroup}) {
+    return ThreadActivityItem(
+      eventId: eventId,
+      kind: kind,
+      type: type,
+      occurredAt: occurredAt,
+      title: title,
+      body: body,
+      payload: payload,
+      messageImageUrls: messageImageUrls,
+      presentation: presentation,
+      parsedCommandOutput: parsedCommandOutput,
+      plan: plan,
+      startsNewVisualGroup: startsNewVisualGroup ?? this.startsNewVisualGroup,
+    );
+  }
 }
 
 ThreadActivityPresentation? _extractPresentation(
@@ -237,6 +256,8 @@ ThreadActivityItemType _mapType(
           : ThreadActivityItemType.assistantOutput;
     case BridgeEventKind.planDelta:
       return ThreadActivityItemType.planUpdate;
+    case BridgeEventKind.userInputRequested:
+      return ThreadActivityItemType.generic;
     case BridgeEventKind.commandDelta:
       if (_isCommandPayloadLikelyFileChange(payload)) {
         return ThreadActivityItemType.fileChange;

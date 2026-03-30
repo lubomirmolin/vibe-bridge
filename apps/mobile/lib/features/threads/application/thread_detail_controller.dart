@@ -181,6 +181,7 @@ class ThreadDetailState {
     this.liveConnectionState = LiveConnectionState.connected,
     this.thread,
     this.items = const <ThreadActivityItem>[],
+    this.pendingUserInput,
     this.errorMessage,
     this.streamErrorMessage,
     this.staleMessage,
@@ -200,6 +201,7 @@ class ThreadDetailState {
   final LiveConnectionState liveConnectionState;
   final ThreadDetailDto? thread;
   final List<ThreadActivityItem> items;
+  final PendingUserInputDto? pendingUserInput;
   final String? errorMessage;
   final String? streamErrorMessage;
   final String? staleMessage;
@@ -270,6 +272,8 @@ class ThreadDetailState {
     ThreadDetailDto? thread,
     bool clearThread = false,
     List<ThreadActivityItem>? items,
+    PendingUserInputDto? pendingUserInput,
+    bool clearPendingUserInput = false,
     String? errorMessage,
     bool clearErrorMessage = false,
     String? streamErrorMessage,
@@ -348,6 +352,9 @@ class ThreadDetailState {
       liveConnectionState: liveConnectionState ?? this.liveConnectionState,
       thread: clearThread ? null : (thread ?? this.thread),
       items: items ?? this.items,
+      pendingUserInput: clearPendingUserInput
+          ? null
+          : (pendingUserInput ?? this.pendingUserInput),
       errorMessage: clearErrorMessage
           ? null
           : (errorMessage ?? this.errorMessage),
@@ -523,6 +530,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   /// (re-)loading the thread or catching up after a reconnect.
   ThreadDetailState _resetTransientState(ThreadDetailState base) {
     return base.copyWith(
+      clearPendingUserInput: true,
       clearErrorMessage: true,
       clearStreamErrorMessage: true,
       clearStaleMessage: true,
@@ -597,6 +605,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       state = _resetTransientState(state).copyWith(
         thread: scopedDetail,
         items: items,
+        pendingUserInput: scopedPage.pendingUserInput,
         liveConnectionState: LiveConnectionState.connected,
         isLoading: true,
         isUnavailable: false,
@@ -855,6 +864,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       state = state.copyWith(
         thread: scopedDetail,
         items: mergedItems,
+        pendingUserInput: scopedPage.pendingUserInput,
         liveConnectionState: LiveConnectionState.connected,
         clearErrorMessage: true,
         clearStreamErrorMessage: true,
@@ -948,9 +958,16 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       return currentItems;
     }
 
+    final currentItemsWithBoundary = currentItems.isEmpty
+        ? currentItems
+        : List<ThreadActivityItem>.unmodifiable(<ThreadActivityItem>[
+            currentItems.first.copyWith(startsNewVisualGroup: true),
+            ...currentItems.skip(1),
+          ]);
+
     return List<ThreadActivityItem>.unmodifiable(<ThreadActivityItem>[
       ...prependedItems,
-      ...currentItems,
+      ...currentItemsWithBoundary,
     ]);
   }
 
@@ -1198,6 +1215,18 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       return;
     }
     if (_isDuplicateLiveFrame(event)) {
+      return;
+    }
+
+    if (event.kind == BridgeEventKind.userInputRequested) {
+      final resolvedState = (event.payload['state'] as String?)?.trim();
+      state = state.copyWith(
+        pendingUserInput: resolvedState == 'resolved'
+            ? null
+            : PendingUserInputDto.fromJson(event.payload),
+        clearStreamErrorMessage: true,
+      );
+      _scheduleThreadDetailRefresh(delay: const Duration(milliseconds: 200));
       return;
     }
 
@@ -1450,6 +1479,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
   Future<bool> submitComposerInput(
     String rawInput, {
+    TurnMode mode = TurnMode.act,
     List<String> images = const <String>[],
     String? model,
     String? reasoningEffort,
@@ -1499,6 +1529,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
         threadId: state.threadId,
         prompt: input,
+        mode: mode,
         images: normalizedImages,
         model: model,
         effort: reasoningEffort,
@@ -1522,6 +1553,77 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         isComposerMutationInFlight: false,
         turnControlErrorMessage:
             'Couldn’t update the turn right now. Please try again.',
+      );
+      return false;
+    }
+  }
+
+  Future<bool> respondToPendingUserInput({
+    required String freeText,
+    required List<UserInputAnswerDto> answers,
+    String? model,
+    String? reasoningEffort,
+  }) async {
+    final pending = state.pendingUserInput;
+    if (pending == null) {
+      state = state.copyWith(
+        turnControlErrorMessage:
+            'There are no pending plan questions for this thread.',
+      );
+      return false;
+    }
+
+    if (!state.canRunMutatingActions) {
+      state = state.copyWith(
+        turnControlErrorMessage:
+            'Turn controls are unavailable while the bridge is offline.',
+      );
+      return false;
+    }
+
+    if (state.isTurnActive) {
+      state = state.copyWith(
+        turnControlErrorMessage:
+            'Wait for the active turn to finish before answering plan questions.',
+      );
+      return false;
+    }
+
+    state = state.copyWith(
+      isComposerMutationInFlight: true,
+      clearTurnControlError: true,
+    );
+
+    try {
+      final mutationResult = await _bridgeApi.respondToUserInput(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: state.threadId,
+        requestId: pending.requestId,
+        answers: answers,
+        freeText: freeText,
+        model: model,
+        effort: reasoningEffort,
+      );
+
+      _pendingPromptSubmittedAt = DateTime.now();
+      _applyTurnMutationResult(mutationResult);
+      state = state.copyWith(
+        isComposerMutationInFlight: false,
+        clearTurnControlError: true,
+        clearPendingUserInput: true,
+      );
+      return true;
+    } on ThreadTurnBridgeException catch (error) {
+      state = state.copyWith(
+        isComposerMutationInFlight: false,
+        turnControlErrorMessage: error.message,
+      );
+      return false;
+    } catch (_) {
+      state = state.copyWith(
+        isComposerMutationInFlight: false,
+        turnControlErrorMessage:
+            'Couldn’t submit the plan clarification right now. Please try again.',
       );
       return false;
     }
@@ -2042,6 +2144,8 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         payload['output'] ??= payload['aggregatedOutput'];
         payload['aggregatedOutput'] = payload['output'];
         payload['type'] = payload['type'] ?? 'command';
+        break;
+      case BridgeEventKind.userInputRequested:
         break;
       case BridgeEventKind.fileChange:
         payload['replace'] = event.payload['replace'] == true;

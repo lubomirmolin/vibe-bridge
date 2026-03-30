@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const CONTRACT_VERSION: &str = "2026-03-23";
+pub const CONTRACT_VERSION: &str = "2026-03-29";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -62,11 +62,19 @@ pub struct NetworkSettingsDto {
 pub enum BridgeEventKind {
     MessageDelta,
     PlanDelta,
+    UserInputRequested,
     CommandDelta,
     FileChange,
     ApprovalRequested,
     ThreadStatusChanged,
     SecurityAudit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnMode {
+    Act,
+    Plan,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,6 +146,8 @@ pub struct ThreadTimelinePageDto {
     pub contract_version: String,
     pub thread: ThreadDetailDto,
     pub entries: Vec<ThreadTimelineEntryDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_user_input: Option<PendingUserInputDto>,
     pub next_before: Option<String>,
     pub has_more_before: bool,
 }
@@ -336,6 +346,41 @@ pub struct ThreadSnapshotDto {
     pub approvals: Vec<ApprovalSummaryDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_status: Option<GitStatusDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_user_input: Option<PendingUserInputDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UserInputOptionDto {
+    pub option_id: String,
+    pub label: String,
+    pub description: String,
+    #[serde(default)]
+    pub is_recommended: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UserInputQuestionDto {
+    pub question_id: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub options: Vec<UserInputOptionDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingUserInputDto {
+    pub request_id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default)]
+    pub questions: Vec<UserInputQuestionDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UserInputAnswerDto {
+    pub question_id: String,
+    pub option_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

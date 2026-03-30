@@ -1743,7 +1743,21 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    TurnMode mode = TurnMode.act,
     List<String> images = const <String>[],
+    String? model,
+    String? effort,
+  }) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<TurnMutationResult> respondToUserInput({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String requestId,
+    List<UserInputAnswerDto> answers = const <UserInputAnswerDto>[],
+    String? freeText,
     String? model,
     String? effort,
   }) async {

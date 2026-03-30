@@ -61,7 +61,7 @@ struct ShellStateResolver {
         trustStatus: BridgeTrustStatusDTO?,
         runningThreadCount: Int
     ) -> ShellRuntimeState {
-        guard trustStatus?.trustedPhone != nil else {
+        guard trustStatus?.trustedDevices.isEmpty == false else {
             return .unpaired
         }
 
@@ -110,6 +110,8 @@ final class PairingEntryViewModel: ObservableObject {
     @Published private(set) var bridgeRuntimeLabel = "Unavailable"
     @Published private(set) var pairedDeviceLabel = "Not paired"
     @Published private(set) var activeSessionLabel = "No active session"
+    @Published private(set) var trustedDevices: [BridgeTrustedDeviceDTO] = []
+    @Published private(set) var trustedSessions: [BridgeTrustedSessionDTO] = []
     @Published private(set) var runningThreadCount = 0
     @Published private(set) var runtimeDetail = "Waiting for bridge supervision…"
     @Published private(set) var speechModelState: SpeechModelStateDTO = .unsupported
@@ -130,8 +132,6 @@ final class PairingEntryViewModel: ObservableObject {
     @Published private(set) var qrImage: NSImage?
     @Published private(set) var errorMessage: String?
 
-    private var trustedPhoneID: String?
-
     private let bridgeClient: ShellBridgeClient
     private let runtimeSupervisor: DesktopRuntimeSupervisorClient
     private var supervisionTask: Task<Void, Never>?
@@ -144,11 +144,15 @@ final class PairingEntryViewModel: ObservableObject {
     }
 
     var shouldShowPairingQR: Bool {
-        shellState == .unpaired
+        shellState != .starting && shellState != .degraded
     }
 
     var canRevokeTrust: Bool {
-        shellState == .pairedIdle || shellState == .pairedActive
+        !trustedDevices.isEmpty
+    }
+
+    var hasTrustedDevices: Bool {
+        !trustedDevices.isEmpty
     }
 
     var canInstallSpeechModel: Bool {
@@ -304,27 +308,29 @@ final class PairingEntryViewModel: ObservableObject {
             runningThreadCount: runningThreadCount
         )
 
-        if let trustedPhone = trustStatus?.trustedPhone {
-            pairedDeviceLabel = "\(trustedPhone.phoneName) (\(trustedPhone.phoneID))"
-            trustedPhoneID = trustedPhone.phoneID
+        let trustedDevices = trustStatus?.trustedDevices ?? []
+        self.trustedDevices = trustedDevices
+        if let primaryDevice = trustedDevices.first {
+            pairedDeviceLabel = trustedDevices.count > 1
+                ? "\(trustedDevices.count) devices"
+                : "\(primaryDevice.deviceName) (\(primaryDevice.deviceID))"
         } else {
             pairedDeviceLabel = "Not paired"
-            trustedPhoneID = nil
         }
 
-        if let activeSession = trustStatus?.activeSession {
-            activeSessionLabel = activeSession.sessionID
+        let trustedSessions = trustStatus?.trustedSessions ?? []
+        self.trustedSessions = trustedSessions
+
+        if let activeSession = trustedSessions.first {
+            activeSessionLabel = trustedSessions.count > 1
+                ? "\(trustedSessions.count) active sessions"
+                : activeSession.sessionID
         } else {
             activeSessionLabel = "No active session"
         }
 
         errorMessage = nil
         runtimeDetail = pairingRoute.message ?? runtimeDetail
-
-        if shellState != .unpaired {
-            pairingSession = nil
-            qrImage = nil
-        }
     }
 
     private func applyStartingState(
@@ -334,9 +340,10 @@ final class PairingEntryViewModel: ObservableObject {
         shellState = .starting
         bridgeRuntimeLabel = bridgeLabel
         runningThreadCount = 0
+        trustedDevices = []
+        trustedSessions = []
         pairedDeviceLabel = "Waiting for bridge"
         activeSessionLabel = "Waiting for bridge"
-        trustedPhoneID = nil
         runtimeDetail = detail
         speechModelStateLabel = "Starting"
         speechModelState = .busy
@@ -351,9 +358,10 @@ final class PairingEntryViewModel: ObservableObject {
         shellState = .degraded
         bridgeRuntimeLabel = "Unavailable"
         runningThreadCount = 0
+        trustedDevices = []
+        trustedSessions = []
         pairedDeviceLabel = "Unavailable"
         activeSessionLabel = "Unavailable"
-        trustedPhoneID = nil
         runtimeDetail = message
         speechModelStateLabel = "Unavailable"
         speechModelState = .unsupported
@@ -437,7 +445,7 @@ final class PairingEntryViewModel: ObservableObject {
         }
     }
 
-    func revokeTrustedPhoneFromDesktop() async {
+    func revokeTrustedDeviceFromDesktop(phoneID: String? = nil) async {
         guard !isRevokingTrust else {
             return
         }
@@ -446,18 +454,22 @@ final class PairingEntryViewModel: ObservableObject {
         defer { isRevokingTrust = false }
 
         do {
-            let response = try await bridgeClient.revokeTrust(phoneID: trustedPhoneID)
+            let response = try await bridgeClient.revokeTrust(phoneID: phoneID)
             if response.revoked {
                 errorMessage = nil
-                runtimeDetail = "Desktop trust revoked. The phone must pair again before reconnecting."
+                runtimeDetail = phoneID == nil
+                    ? "Desktop trust revoked. Devices must pair again before reconnecting."
+                    : "Device removed from desktop trust."
                 await refreshRuntimeState()
-                if shellState == .unpaired {
+                if !hasTrustedDevices {
                     await refreshPairingSessionIfNeeded()
                 }
                 return
             }
 
-            errorMessage = "No trusted phone was available to revoke."
+            errorMessage = phoneID == nil
+                ? "No trusted devices were available to revoke."
+                : "The selected device was not available to revoke."
         } catch {
             errorMessage = "Failed to revoke trust from desktop shell: \(error.localizedDescription)"
         }

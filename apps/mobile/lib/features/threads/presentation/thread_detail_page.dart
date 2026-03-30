@@ -8,6 +8,7 @@ import 'package:vibe_bridge/features/settings/application/desktop_integration_co
 import 'package:vibe_bridge/features/settings/application/device_settings_controller.dart';
 import 'package:vibe_bridge/features/settings/application/runtime_access_mode.dart';
 import 'package:vibe_bridge/features/threads/application/thread_detail_controller.dart';
+import 'package:vibe_bridge/features/threads/data/thread_composer_draft_repository.dart';
 import 'package:vibe_bridge/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:vibe_bridge/features/threads/domain/parsed_command_output.dart';
 import 'package:vibe_bridge/features/threads/domain/thread_activity_item.dart';
@@ -48,6 +49,7 @@ class ThreadDraftCreatedTransition {
     required this.threadId,
     required this.initialComposerInput,
     required this.initialAttachedImages,
+    required this.initialTurnMode,
     required this.initialSelectedModel,
     required this.initialSelectedReasoningEffort,
   });
@@ -55,6 +57,7 @@ class ThreadDraftCreatedTransition {
   final String threadId;
   final String initialComposerInput;
   final List<XFile> initialAttachedImages;
+  final TurnMode initialTurnMode;
   final String initialSelectedModel;
   final String? initialSelectedReasoningEffort;
 }
@@ -67,6 +70,13 @@ class _SpeechUnavailableDialogContent {
 
   final String title;
   final String message;
+}
+
+class _TimelineViewportAnchor {
+  const _TimelineViewportAnchor({required this.blockId, required this.top});
+
+  final String blockId;
+  final double top;
 }
 
 class ThreadDetailPage extends ConsumerStatefulWidget {
@@ -161,6 +171,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   List<ModelOptionDto> _availableModelOptions = fallbackModelCatalog.models;
   List<String> _availableReasoningOptions = const <String>[];
   List<XFile> _attachedImages = const <XFile>[];
+  TurnMode _composerMode = TurnMode.act;
+  String? _lastPendingUserInputRequestId;
+  final Map<String, String> _selectedPlanOptionByQuestionId =
+      <String, String>{};
   String _selectedModel = fallbackModelCatalog.models.first.id;
   String _selectedReasoning = 'Medium';
   SpeechModelStatusDto _speechModelStatus = const SpeechModelStatusDto(
@@ -185,9 +199,16 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   bool _didSubmitInitialComposerInput = false;
   bool _isDraftThreadCreationInFlight = false;
   bool _isResumeReconnectInFlight = false;
+  bool _didRestoreComposerDraft = false;
+  String? _lastPersistedComposerDraftValue;
+  Future<void> _composerDraftPersistence = Future<void>.value();
+  int _timelineBottomFollowRunId = 0;
   Future<void> Function()? _loadEarlierHistory;
   String? _draftThreadErrorMessage;
   final Map<String, bool> _timelineExpansionState = <String, bool>{};
+  final Map<String, GlobalKey> _timelineBlockMeasurementKeys =
+      <String, GlobalKey>{};
+  List<String> _timelineBlockOrder = const <String>[];
   bool? _lastObservedWideLayout;
   bool _isWideLayoutExitScheduled = false;
 
@@ -202,6 +223,20 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   String? get _effectiveThreadId =>
       widget.threadId ?? _localDraftTransition?.threadId;
 
+  String? get _composerDraftStorageId {
+    final effectiveThreadId = _effectiveThreadId?.trim();
+    if (effectiveThreadId != null && effectiveThreadId.isNotEmpty) {
+      return 'thread:$effectiveThreadId';
+    }
+
+    final workspacePath = widget.draftWorkspacePath?.trim();
+    if (workspacePath != null && workspacePath.isNotEmpty) {
+      return 'workspace:$workspacePath';
+    }
+
+    return null;
+  }
+
   String? get _effectiveInitialComposerInput =>
       _localDraftTransition?.initialComposerInput ??
       widget.initialComposerInput;
@@ -209,6 +244,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   List<XFile> get _effectiveInitialAttachedImages =>
       _localDraftTransition?.initialAttachedImages ??
       widget.initialAttachedImages;
+
+  TurnMode get _effectiveInitialTurnMode =>
+      _localDraftTransition?.initialTurnMode ?? _composerMode;
 
   bool get _hasPendingInitialComposerSubmission {
     final initialComposerInput = _effectiveInitialComposerInput?.trim();
@@ -250,12 +288,44 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     _isHeaderCollapsed = ValueNotifier(false);
     _showNewMessagePill = ValueNotifier(false);
     _newMessagePreview = ValueNotifier(null);
+    _composerController.addListener(_handleComposerChanged);
     _composerFocusNode.addListener(_handleComposerFocusChange);
     _timelineScrollController.addListener(_onScroll);
     _setComposerSelectionsFromCatalog(_availableModelOptions);
     _attachedImages = List<XFile>.unmodifiable(_effectiveInitialAttachedImages);
+    unawaited(_restorePersistedComposerDraft());
     unawaited(_loadComposerModelCatalog());
     unawaited(_loadSpeechStatus());
+  }
+
+  Future<void> _restorePersistedComposerDraft() async {
+    if (_didRestoreComposerDraft) {
+      return;
+    }
+
+    _didRestoreComposerDraft = true;
+    if (_hasPendingInitialComposerSubmission) {
+      return;
+    }
+
+    final draftId = _composerDraftStorageId;
+    if (draftId == null) {
+      return;
+    }
+
+    final draftRepository = ref.read(threadComposerDraftRepositoryProvider);
+    final persistedDraft = await draftRepository.readDraft(draftId);
+    if (!mounted || persistedDraft == null || persistedDraft.isEmpty) {
+      return;
+    }
+    if (_composerController.text.trim().isNotEmpty) {
+      return;
+    }
+
+    _composerController.value = TextEditingValue(
+      text: persistedDraft,
+      selection: TextSelection.collapsed(offset: persistedDraft.length),
+    );
   }
 
   Future<void> _loadComposerModelCatalog() async {
@@ -449,6 +519,46 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     });
   }
 
+  void _handleComposerChanged() {
+    _composerDraftPersistence = _composerDraftPersistence.then(
+      (_) => _persistComposerDraft(),
+      onError: (_) => _persistComposerDraft(),
+    );
+  }
+
+  Future<void> _persistComposerDraft() async {
+    final draftId = _composerDraftStorageId;
+    if (draftId == null) {
+      return;
+    }
+
+    final currentValue = _composerController.text.trimRight();
+    if (_lastPersistedComposerDraftValue == currentValue) {
+      return;
+    }
+    _lastPersistedComposerDraftValue = currentValue;
+
+    final draftRepository = ref.read(threadComposerDraftRepositoryProvider);
+    if (currentValue.isEmpty) {
+      await draftRepository.deleteDraft(draftId);
+      return;
+    }
+
+    await draftRepository.saveDraft(draftId, currentValue);
+  }
+
+  Future<void> _clearComposerDraft({String? draftId}) async {
+    final resolvedDraftId = draftId ?? _composerDraftStorageId;
+    if (resolvedDraftId == null) {
+      return;
+    }
+
+    _lastPersistedComposerDraftValue = '';
+    await ref
+        .read(threadComposerDraftRepositoryProvider)
+        .deleteDraft(resolvedDraftId);
+  }
+
   void _onScroll() {
     if (!_timelineScrollController.hasClients) return;
 
@@ -458,6 +568,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       position.minScrollExtent,
       position.maxScrollExtent,
     );
+    final scrollDelta = currentOffset - _lastScrollOffset;
     final isCurrentlyScrollingDown = currentOffset > _lastScrollOffset;
 
     if (isCurrentlyScrollingDown != _isScrollingDown) {
@@ -484,6 +595,8 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     final isNearBottom = _isTimelineNearBottom(currentOffset: currentOffset);
     if (isNearBottom) {
       _isTimelineAutoFollowEnabled = true;
+    } else if (scrollDelta < -24) {
+      _isTimelineAutoFollowEnabled = false;
     }
     if (isNearBottom && _showNewMessagePill.value) {
       _showNewMessagePill.value = false;
@@ -506,7 +619,12 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
           position.minScrollExtent,
           position.maxScrollExtent,
         );
-    return position.maxScrollExtent - effectiveOffset < tolerance;
+    final remainingDistance = position.maxScrollExtent - effectiveOffset;
+    final effectiveTolerance = math.min(
+      tolerance,
+      position.maxScrollExtent * 0.25,
+    );
+    return remainingDistance < effectiveTolerance;
   }
 
   void _maybeAutoLoadEarlierHistory() {
@@ -525,36 +643,79 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
 
     final previousOffset = position.pixels;
     final previousMaxScrollExtent = position.maxScrollExtent;
+    final anchor = _captureLeadingVisibleTimelineAnchor();
     final loadEarlierHistory = _loadEarlierHistory;
     if (loadEarlierHistory == null) {
       return;
     }
     _isAutoLoadingEarlierHistory = true;
     loadEarlierHistory().whenComplete(() {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      _stabilizeEarlierHistoryOffset(
+        anchor: anchor,
+        previousOffset: previousOffset,
+        previousMaxScrollExtent: previousMaxScrollExtent,
+      );
+    });
+  }
+
+  void _stabilizeEarlierHistoryOffset({
+    _TimelineViewportAnchor? anchor,
+    required double previousOffset,
+    required double previousMaxScrollExtent,
+    int remainingFrames = 12,
+    int stableFrameCount = 0,
+    double? previousObservedMaxScrollExtent,
+  }) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_timelineScrollController.hasClients) {
         _isAutoLoadingEarlierHistory = false;
-        if (!mounted || !_timelineScrollController.hasClients) {
-          return;
-        }
+        return;
+      }
 
-        final nextPosition = _timelineScrollController.position;
-        final insertedExtent =
-            nextPosition.maxScrollExtent - previousMaxScrollExtent;
-        if (insertedExtent <= 0) {
-          return;
-        }
-
+      final position = _timelineScrollController.position;
+      final anchorDelta = _timelineAnchorDelta(anchor);
+      if (anchorDelta != null && anchorDelta.abs() >= 0.5) {
         final compensatedOffset = clampDouble(
-          previousOffset + insertedExtent,
-          nextPosition.minScrollExtent,
-          nextPosition.maxScrollExtent,
+          position.pixels + anchorDelta,
+          position.minScrollExtent,
+          position.maxScrollExtent,
         );
-        if ((nextPosition.pixels - compensatedOffset).abs() < 0.5) {
-          return;
+        if ((position.pixels - compensatedOffset).abs() >= 0.5) {
+          _timelineScrollController.jumpTo(compensatedOffset);
         }
+      } else {
+        final insertedExtent =
+            position.maxScrollExtent - previousMaxScrollExtent;
+        if (insertedExtent > 0) {
+          final compensatedOffset = clampDouble(
+            previousOffset + insertedExtent,
+            position.minScrollExtent,
+            position.maxScrollExtent,
+          );
+          if ((position.pixels - compensatedOffset).abs() >= 0.5) {
+            _timelineScrollController.jumpTo(compensatedOffset);
+          }
+        }
+      }
 
-        _timelineScrollController.jumpTo(compensatedOffset);
-      });
+      final hasStableExtent =
+          previousObservedMaxScrollExtent != null &&
+          (position.maxScrollExtent - previousObservedMaxScrollExtent).abs() <
+              0.5;
+      final nextStableFrameCount = hasStableExtent ? stableFrameCount + 1 : 0;
+      if (remainingFrames <= 0 || nextStableFrameCount >= 2) {
+        _isAutoLoadingEarlierHistory = false;
+        return;
+      }
+
+      _stabilizeEarlierHistoryOffset(
+        anchor: anchor,
+        previousOffset: previousOffset,
+        previousMaxScrollExtent: previousMaxScrollExtent,
+        remainingFrames: remainingFrames - 1,
+        stableFrameCount: nextStableFrameCount,
+        previousObservedMaxScrollExtent: position.maxScrollExtent,
+      );
     });
   }
 
@@ -565,8 +726,12 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       _localDraftTransition = null;
       _didInitialScrollToBottom = false;
       _didSubmitInitialComposerInput = false;
+      _didRestoreComposerDraft = false;
+      _lastPersistedComposerDraftValue = null;
       _isTimelineAutoFollowEnabled = true;
+      _timelineBottomFollowRunId += 1;
       _timelineExpansionState.clear();
+      unawaited(_restorePersistedComposerDraft());
     }
     if (oldWidget.bridgeApiBaseUrl != widget.bridgeApiBaseUrl) {
       unawaited(_loadComposerModelCatalog());
@@ -648,7 +813,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     if (speechCapture != null) {
       unawaited(speechCapture.dispose());
     }
-    _composerController.dispose();
+    _composerController
+      ..removeListener(_handleComposerChanged)
+      ..dispose();
     _composerFocusNode
       ..removeListener(_handleComposerFocusChange)
       ..dispose();
@@ -666,30 +833,135 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       return;
     }
     _didInitialScrollToBottom = true;
-    _jumpToTimelineBottom(attempt: 0);
+    _followTimelineBottomUntilSettled();
   }
 
-  void _jumpToTimelineBottom({required int attempt}) {
+  void _followTimelineBottomUntilSettled({
+    int remainingFrames = 12,
+    int stableFrameCount = 0,
+    double? previousMaxScrollExtent,
+    int? runId,
+  }) {
+    final activeRunId = runId ?? ++_timelineBottomFollowRunId;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_timelineScrollController.hasClients) {
-        if (attempt < 6) {
-          _jumpToTimelineBottom(attempt: attempt + 1);
+      if (!mounted || activeRunId != _timelineBottomFollowRunId) {
+        return;
+      }
+
+      if (!_timelineScrollController.hasClients) {
+        if (remainingFrames > 0) {
+          _followTimelineBottomUntilSettled(
+            remainingFrames: remainingFrames - 1,
+            runId: activeRunId,
+          );
         }
         return;
       }
 
-      final position = _timelineScrollController.position;
-      _isTimelineAutoFollowEnabled = true;
-      _timelineScrollController.jumpTo(position.maxScrollExtent);
-
-      if (attempt < 2) {
-        _jumpToTimelineBottom(attempt: attempt + 1);
+      if (!_isTimelineAutoFollowEnabled) {
+        return;
       }
+
+      final position = _timelineScrollController.position;
+      final maxScrollExtent = position.maxScrollExtent;
+      _isTimelineAutoFollowEnabled = true;
+      if ((position.pixels - maxScrollExtent).abs() > 0.5) {
+        _timelineScrollController.jumpTo(maxScrollExtent);
+      }
+
+      final hasStableExtent =
+          previousMaxScrollExtent != null &&
+          (maxScrollExtent - previousMaxScrollExtent).abs() < 0.5;
+      final nextStableFrameCount = hasStableExtent ? stableFrameCount + 1 : 0;
+      if (remainingFrames <= 0 || nextStableFrameCount >= 2) {
+        return;
+      }
+
+      _followTimelineBottomUntilSettled(
+        remainingFrames: remainingFrames - 1,
+        stableFrameCount: nextStableFrameCount,
+        previousMaxScrollExtent: maxScrollExtent,
+        runId: activeRunId,
+      );
     });
   }
 
   bool _isTimelineCardExpanded(String id, {required bool defaultValue}) {
     return _timelineExpansionState[id] ?? defaultValue;
+  }
+
+  GlobalKey _timelineBlockMeasurementKey(String id) {
+    return _timelineBlockMeasurementKeys.putIfAbsent(
+      id,
+      () => GlobalKey(debugLabel: 'timeline-block:$id'),
+    );
+  }
+
+  _TimelineViewportAnchor? _captureLeadingVisibleTimelineAnchor() {
+    final viewportHeight = MediaQuery.sizeOf(context).height;
+    for (final blockId in _timelineBlockOrder) {
+      final renderBox = _timelineBlockRenderBox(blockId);
+      if (renderBox == null) {
+        continue;
+      }
+
+      final top = renderBox.localToGlobal(Offset.zero).dy;
+      final bottom = top + renderBox.size.height;
+      if (bottom <= 0 || top >= viewportHeight) {
+        continue;
+      }
+
+      return _TimelineViewportAnchor(blockId: blockId, top: top);
+    }
+
+    return null;
+  }
+
+  double? _timelineAnchorDelta(_TimelineViewportAnchor? anchor) {
+    if (anchor == null) {
+      return null;
+    }
+
+    final renderBox = _timelineBlockRenderBox(anchor.blockId);
+    if (renderBox == null) {
+      return null;
+    }
+
+    final currentTop = renderBox.localToGlobal(Offset.zero).dy;
+    return currentTop - anchor.top;
+  }
+
+  RenderBox? _timelineBlockRenderBox(String id) {
+    final context = _timelineBlockMeasurementKeys[id]?.currentContext;
+    if (context == null) {
+      return null;
+    }
+
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.attached) {
+      return null;
+    }
+
+    return renderObject;
+  }
+
+  String _timelineBlockId(ThreadTimelineBlock block) {
+    final item = block.item;
+    if (item != null) {
+      return 'activity:${item.eventId}';
+    }
+
+    final exploration = block.exploration;
+    if (exploration != null) {
+      return 'exploration:${exploration.sourceEventIds.join("|")}';
+    }
+
+    final workSummary = block.workSummary;
+    if (workSummary != null) {
+      return 'work-summary:${workSummary.anchorEventId}';
+    }
+
+    return 'timeline-block';
   }
 
   void _setTimelineCardExpanded(String id, bool isExpanded) {
@@ -1091,12 +1363,12 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     }
 
     _markTimelineUserScroll();
-    if (direction == ScrollDirection.forward) {
+    if (!_isTimelineNearBottom(tolerance: 180)) {
       _isTimelineAutoFollowEnabled = false;
       return;
     }
 
-    if (_isTimelineNearBottom(tolerance: 180)) {
+    if (direction == ScrollDirection.reverse) {
       _isTimelineAutoFollowEnabled = true;
     }
   }
@@ -1185,10 +1457,17 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
         threadId: thread.threadId,
         initialComposerInput: input,
         initialAttachedImages: _attachedImages,
+        initialTurnMode: _composerMode,
         initialSelectedModel: _selectedModel,
         initialSelectedReasoningEffort: _selectedReasoningEffortWireValue(),
       );
       if (widget.onDraftThreadCreated != null) {
+        unawaited(
+          ref
+              .read(threadComposerDraftRepositoryProvider)
+              .saveDraft('thread:${thread.threadId}', input),
+        );
+        unawaited(_clearComposerDraft(draftId: 'workspace:$workspacePath'));
         widget.onDraftThreadCreated!(transition);
         return true;
       }
@@ -1204,6 +1483,12 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
           transition.initialAttachedImages,
         );
       });
+      unawaited(
+        ref
+            .read(threadComposerDraftRepositoryProvider)
+            .saveDraft('thread:${thread.threadId}', input),
+      );
+      unawaited(_clearComposerDraft(draftId: 'workspace:$workspacePath'));
       return true;
     } on ThreadCreateBridgeException catch (error) {
       if (!mounted) {
@@ -1230,6 +1515,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   Future<bool> _submitComposerInput(
     ThreadDetailController controller,
     String rawInput, {
+    TurnMode? mode,
     List<XFile>? attachedImages,
   }) async {
     final imageDataUrls = await _encodeAttachedImages(
@@ -1237,6 +1523,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     );
     final success = await controller.submitComposerInput(
       rawInput,
+      mode: mode ?? _composerMode,
       images: imageDataUrls,
       model: _selectedModel,
       reasoningEffort: _selectedReasoningEffortWireValue(),
@@ -1245,9 +1532,39 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       return success;
     }
 
+    await _clearComposerDraft();
     setState(() {
       _attachedImages = const <XFile>[];
       _draftThreadErrorMessage = null;
+    });
+    return true;
+  }
+
+  Future<bool> _submitPendingUserInput(
+    ThreadDetailController controller,
+    PendingUserInputDto pendingUserInput,
+    String rawInput,
+  ) async {
+    final answers = _selectedPlanOptionByQuestionId.entries
+        .map(
+          (entry) =>
+              UserInputAnswerDto(questionId: entry.key, optionId: entry.value),
+        )
+        .toList(growable: false);
+    final success = await controller.respondToPendingUserInput(
+      freeText: rawInput,
+      answers: answers,
+      model: _selectedModel,
+      reasoningEffort: _selectedReasoningEffortWireValue(),
+    );
+    if (!mounted || !success) {
+      return success;
+    }
+
+    await _clearComposerDraft();
+    setState(() {
+      _selectedPlanOptionByQuestionId.clear();
+      _lastPendingUserInputRequestId = null;
     });
     return true;
   }
@@ -1427,6 +1744,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                           speechMessageIsError: _speechMessageIsError,
                           isComposerFocused: _isComposerFocused,
                           attachedImages: _attachedImages,
+                          composerMode: _composerMode,
+                          pendingUserInput: null,
+                          selectedPlanOptionByQuestionId:
+                              _selectedPlanOptionByQuestionId,
                           modelOptions: _availableModelOptions,
                           reasoningOptions: _availableReasoningOptions,
                           selectedModel: _selectedModel,
@@ -1440,6 +1761,17 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                           onPickImages: _pickImages,
                           onToggleSpeechInput: _toggleSpeechInput,
                           onRemoveImage: _removeAttachedImage,
+                          onComposerModeChanged: (mode) {
+                            setState(() {
+                              _composerMode = mode;
+                            });
+                          },
+                          onSelectPlanOption: (questionId, optionId) {
+                            setState(() {
+                              _selectedPlanOptionByQuestionId[questionId] =
+                                  optionId;
+                            });
+                          },
                           onModelChanged: _onComposerModelChanged,
                           onReasoningChanged: (value) {
                             setState(() {
@@ -1448,6 +1780,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                           },
                           onAccessModeChanged: changeAccessMode,
                           onSubmitComposer: _submitDraftComposerInput,
+                          onSubmitPendingUserInput: null,
                         ),
                       ),
                     ),
@@ -1523,13 +1856,26 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
             return;
           }
           unawaited(
-            _submitComposerInput(controller, initialComposerInput ?? ''),
+            _submitComposerInput(
+              controller,
+              initialComposerInput ?? '',
+              mode: _effectiveInitialTurnMode,
+            ),
           );
         });
       }
     }
 
     final threadApprovals = approvalsState.forThread(_effectiveThreadId!);
+    final pendingUserInput = state.pendingUserInput;
+    final pendingUserInputRequestId = pendingUserInput?.requestId;
+    if (_lastPendingUserInputRequestId != pendingUserInputRequestId) {
+      _lastPendingUserInputRequestId = pendingUserInputRequestId;
+      _selectedPlanOptionByQuestionId.clear();
+      if (pendingUserInputRequestId != null) {
+        _composerController.clear();
+      }
+    }
     final effectiveAccessMode =
         runtimeAccessMode ??
         state.thread?.accessMode ??
@@ -1548,8 +1894,13 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     );
     _canLoadEarlierHistory = state.canLoadEarlierHistory;
     _loadEarlierHistory = controller.loadEarlierHistory;
+    _timelineBlockOrder = buildThreadTimelineBlocks(
+      state.visibleItems,
+    ).map(_timelineBlockId).toList(growable: false);
 
-    if (state.hasThread && !_didInitialScrollToBottom) {
+    if (state.hasThread &&
+        !state.isInitialTimelineLoading &&
+        !_didInitialScrollToBottom) {
       _scheduleInitialScrollToBottom();
     }
 
@@ -1624,6 +1975,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                   scrollController: _timelineScrollController,
                   isTimelineCardExpanded: _isTimelineCardExpanded,
                   onTimelineCardExpansionChanged: _setTimelineCardExpanded,
+                  timelineBlockMeasurementKey: _timelineBlockMeasurementKey,
                 ),
                 Positioned(
                   top: 0,
@@ -1703,75 +2055,43 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                                           padding: const EdgeInsets.only(
                                             top: 8,
                                           ),
-                                          child: MagneticButton(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 18,
-                                              vertical: 10,
-                                            ),
-                                            variant:
-                                                MagneticButtonVariant.secondary,
-                                            onClick: () {
-                                              _isTimelineAutoFollowEnabled =
-                                                  true;
-                                              _showNewMessagePill.value = false;
-                                              _newMessagePreview.value = null;
-                                              _jumpToTimelineBottom(attempt: 0);
-                                            },
-                                            child: ValueListenableBuilder<String?>(
-                                              valueListenable:
-                                                  _newMessagePreview,
-                                              builder: (context, preview, child) {
-                                                return Row(
-                                                  mainAxisSize:
-                                                      MainAxisSize.min,
-                                                  children: [
-                                                    Flexible(
-                                                      child: Column(
-                                                        mainAxisSize:
-                                                            MainAxisSize.min,
-                                                        crossAxisAlignment:
-                                                            CrossAxisAlignment
-                                                                .start,
-                                                        children: [
-                                                          const Text(
-                                                            'New messages',
-                                                            style: TextStyle(
-                                                              fontSize: 14,
-                                                              fontWeight:
-                                                                  FontWeight
-                                                                      .w600,
-                                                            ),
-                                                          ),
-                                                          if (preview != null)
-                                                            Padding(
-                                                              padding:
-                                                                  const EdgeInsets.only(
-                                                                    top: 2,
-                                                                  ),
-                                                              child: Text(
-                                                                preview,
-                                                                maxLines: 1,
-                                                                overflow:
-                                                                    TextOverflow
-                                                                        .ellipsis,
-                                                                style: const TextStyle(
-                                                                  fontSize: 12,
-                                                                  color: AppTheme
-                                                                      .textSubtle,
-                                                                ),
-                                                              ),
-                                                            ),
-                                                        ],
-                                                      ),
-                                                    ),
-                                                    const SizedBox(width: 8),
-                                                    PhosphorIcon(
-                                                      PhosphorIcons.arrowDown(),
-                                                      size: 16,
-                                                    ),
-                                                  ],
-                                                );
-                                              },
+                                          child: SizedBox(
+                                            width: 40,
+                                            height: 40,
+                                            child: DecoratedBox(
+                                              decoration: BoxDecoration(
+                                                color: AppTheme.surfaceZinc800
+                                                    .withValues(alpha: 0.94),
+                                                shape: BoxShape.circle,
+                                                border: Border.all(
+                                                  color: Colors.white
+                                                      .withValues(alpha: 0.08),
+                                                ),
+                                              ),
+                                              child: IconButton(
+                                                key: const Key(
+                                                  'thread-detail-new-message-button',
+                                                ),
+                                                tooltip:
+                                                    'Scroll to new messages',
+                                                padding: EdgeInsets.zero,
+                                                visualDensity:
+                                                    VisualDensity.compact,
+                                                iconSize: 18,
+                                                onPressed: () {
+                                                  _isTimelineAutoFollowEnabled =
+                                                      true;
+                                                  _showNewMessagePill.value =
+                                                      false;
+                                                  _newMessagePreview.value =
+                                                      null;
+                                                  _followTimelineBottomUntilSettled();
+                                                },
+                                                icon: PhosphorIcon(
+                                                  PhosphorIcons.arrowDown(),
+                                                  color: AppTheme.textMain,
+                                                ),
+                                              ),
                                             ),
                                           ),
                                         )
@@ -1800,6 +2120,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                               speechMessageIsError: _speechMessageIsError,
                               isComposerFocused: _isComposerFocused,
                               attachedImages: _attachedImages,
+                              composerMode: _composerMode,
+                              pendingUserInput: pendingUserInput,
+                              selectedPlanOptionByQuestionId:
+                                  _selectedPlanOptionByQuestionId,
                               modelOptions: _availableModelOptions,
                               reasoningOptions: _availableReasoningOptions,
                               selectedModel: _selectedModel,
@@ -1813,6 +2137,17 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                               onPickImages: _pickImages,
                               onToggleSpeechInput: _toggleSpeechInput,
                               onRemoveImage: _removeAttachedImage,
+                              onComposerModeChanged: (mode) {
+                                setState(() {
+                                  _composerMode = mode;
+                                });
+                              },
+                              onSelectPlanOption: (questionId, optionId) {
+                                setState(() {
+                                  _selectedPlanOptionByQuestionId[questionId] =
+                                      optionId;
+                                });
+                              },
                               onModelChanged: _onComposerModelChanged,
                               onReasoningChanged: (value) {
                                 setState(() {
@@ -1822,6 +2157,13 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                               onAccessModeChanged: changeAccessMode,
                               onSubmitComposer: (value) =>
                                   _submitComposerInput(controller, value),
+                              onSubmitPendingUserInput: pendingUserInput == null
+                                  ? null
+                                  : (value) => _submitPendingUserInput(
+                                      controller,
+                                      pendingUserInput,
+                                      value,
+                                    ),
                             ),
                           ],
                         ),

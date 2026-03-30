@@ -143,17 +143,26 @@ class HttpPairingBridgeApi implements PairingBridgeApi {
         }
 
         final code = _readOptionalString(response.jsonBody, 'code');
-        final message =
-            _readOptionalString(response.jsonBody, 'message') ??
-            'Stored trust is no longer accepted by the bridge.';
-        return PairingHandshakeResult.untrusted(code: code, message: message);
+        final message = _readOptionalString(response.jsonBody, 'message');
+        if (_isExplicitHandshakeTrustFailure(response.statusCode, code)) {
+          return PairingHandshakeResult.untrusted(
+            code: code,
+            message:
+                message ?? 'Stored trust is no longer accepted by the bridge.',
+          );
+        }
+
+        return PairingHandshakeResult.connectivityUnavailable(
+          message:
+              message ??
+              'Bridge service on this route is unavailable right now. Check that the host bridge is running and retry.',
+        );
       } on BridgeTransportConnectionException {
         continue;
       } on FormatException {
-        return const PairingHandshakeResult.untrusted(
-          code: 'bridge_response_invalid',
+        return const PairingHandshakeResult.connectivityUnavailable(
           message:
-              'Bridge returned an invalid trust response. Re-pair from the host bridge.',
+              'Host bridge is reachable, but did not return a valid pairing response. Check that the host bridge is running and retry.',
         );
       }
     }
@@ -219,6 +228,14 @@ class HttpPairingBridgeApi implements PairingBridgeApi {
       _decodeJsonObject(response.bodyText),
     );
   }
+}
+
+bool _isExplicitHandshakeTrustFailure(int statusCode, String? code) {
+  return statusCode == 403 ||
+      code == 'trust_revoked' ||
+      code == 'bridge_identity_mismatch' ||
+      code == 'session_token_mismatch' ||
+      code == 'trusted_phone_mismatch';
 }
 
 class PairingFinalizeResult {
