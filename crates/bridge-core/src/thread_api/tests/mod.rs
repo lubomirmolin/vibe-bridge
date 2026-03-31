@@ -10,6 +10,7 @@ use super::{
     map_thread_detail, merge_thread_snapshots, provider_thread_id, should_resume_thread,
     unix_timestamp_to_iso8601,
 };
+use crate::thread_api::archive::load_thread_snapshot_from_claude_archive_for_ids;
 use serde_json::{Value, json};
 use shared_contracts::{
     AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ThreadStatus,
@@ -101,4 +102,8 @@ fn unique_test_codex_home() -> PathBuf {
 
 fn codex_thread_id(native_id: &str) -> String {
     provider_thread_id(shared_contracts::ProviderKind::Codex, native_id)
+}
+
+fn claude_thread_id(native_id: &str) -> String {
+    provider_thread_id(shared_contracts::ProviderKind::ClaudeCode, native_id)
 }

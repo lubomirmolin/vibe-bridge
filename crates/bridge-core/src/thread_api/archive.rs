@@ -729,7 +729,7 @@ pub(super) fn load_thread_snapshot_from_codex_archive_for_ids(
     Ok((thread_records, timeline_by_thread_id))
 }
 
-fn load_thread_snapshot_from_claude_archive_for_ids(
+pub(super) fn load_thread_snapshot_from_claude_archive_for_ids(
     claude_home: &Path,
     requested_ids: Option<&HashSet<String>>,
 ) -> Result<ThreadSnapshot, String> {
@@ -840,7 +840,8 @@ fn parse_claude_archived_session(
     let mut cwd = None;
     let mut branch_name = None;
     let mut source = None;
-    let mut slug = None;
+    let mut custom_title = None;
+    let mut ai_title = None;
     let mut created_at = None;
     let mut updated_at = None;
     let mut first_user_message = None;
@@ -894,11 +895,19 @@ fn parse_claude_archived_session(
             .and_then(Value::as_str)
             .map(ToString::to_string)
             .or(source);
-        slug = value
-            .get("slug")
-            .and_then(Value::as_str)
-            .map(ToString::to_string)
-            .or(slug);
+        if value.get("type").and_then(Value::as_str) == Some("custom-title") {
+            custom_title = value
+                .get("customTitle")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+                .or(custom_title);
+        } else if value.get("type").and_then(Value::as_str) == Some("ai-title") {
+            ai_title = value
+                .get("aiTitle")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+                .or(ai_title);
+        }
 
         let native_id = session_id
             .clone()
@@ -950,7 +959,11 @@ fn parse_claude_archived_session(
 
     let workspace_path = cwd.unwrap_or_default();
     let branch_name = branch_name.unwrap_or_else(|| "unknown".to_string());
-    let headline = claude_thread_headline(slug.as_deref(), first_user_message.as_deref());
+    let headline = claude_thread_headline(
+        custom_title.as_deref(),
+        ai_title.as_deref(),
+        first_user_message.as_deref(),
+    );
     let created_at = created_at
         .or_else(|| archive_path_modified_at(path))
         .unwrap_or_else(|| "1970-01-01T00:00:00.000Z".to_string());
@@ -1247,9 +1260,20 @@ fn is_claude_file_change_tool(tool_name: &str) -> bool {
     )
 }
 
-fn claude_thread_headline(slug: Option<&str>, first_user_message: Option<&str>) -> String {
-    if let Some(slug) = slug.map(str::trim).filter(|value| !value.is_empty()) {
-        return truncate_summary(&slug.replace(['-', '_'], " "));
+fn claude_thread_headline(
+    custom_title: Option<&str>,
+    ai_title: Option<&str>,
+    first_user_message: Option<&str>,
+) -> String {
+    if let Some(custom_title) = custom_title
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return truncate_summary(custom_title);
+    }
+
+    if let Some(ai_title) = ai_title.map(str::trim).filter(|value| !value.is_empty()) {
+        return truncate_summary(ai_title);
     }
 
     if let Some(first_user_message) = first_user_message

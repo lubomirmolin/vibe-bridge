@@ -1023,6 +1023,45 @@ fn archived_claude_style_user_message_images_become_data_urls() {
 }
 
 #[test]
+fn claude_archive_prefers_explicit_titles_over_slug() {
+    let claude_home = unique_test_codex_home();
+    let project_directory =
+        claude_home.join("projects/-Users-test-PhpstormProjects-codex-mobile-companion");
+    fs::create_dir_all(&project_directory).expect("test Claude projects directory should exist");
+
+    let session_path = project_directory.join("thread-claude-title.jsonl");
+    fs::write(
+        &session_path,
+        concat!(
+            r#"{"type":"queue-operation","operation":"enqueue","timestamp":"2026-03-31T17:33:19.787Z","sessionId":"thread-claude-title","content":"Hello"}"#,
+            "\n",
+            r#"{"parentUuid":null,"isSidechain":false,"promptId":"prompt-1","type":"user","message":{"role":"user","content":"Hello from Claude"},"uuid":"user-1","timestamp":"2026-03-31T17:33:19.799Z","permissionMode":"default","userType":"external","entrypoint":"sdk-cli","cwd":"/Users/test/PhpstormProjects/codex-mobile-companion","sessionId":"thread-claude-title","version":"2.1.87","gitBranch":"develop","slug":"glistening-sleeping-seahorse"}"#,
+            "\n",
+            r#"{"type":"ai-title","sessionId":"thread-claude-title","aiTitle":"Fix bridge title parsing"}"#,
+            "\n",
+            r#"{"type":"custom-title","sessionId":"thread-claude-title","customTitle":"Bridge title regression"}"#,
+            "\n"
+        ),
+    )
+    .expect("Claude session log should be writable");
+
+    let (threads, _) = super::load_thread_snapshot_from_claude_archive_for_ids(&claude_home, None)
+        .expect("Claude archive should load");
+
+    assert_eq!(threads.len(), 1);
+    assert_eq!(threads[0].id, claude_thread_id("thread-claude-title"));
+    assert_eq!(threads[0].headline, "Bridge title regression");
+    assert_eq!(
+        threads[0].workspace_path,
+        "/Users/test/PhpstormProjects/codex-mobile-companion"
+    );
+    assert_eq!(threads[0].branch_name, "develop");
+    assert_eq!(threads[0].source, "sdk-cli");
+
+    let _ = fs::remove_dir_all(claude_home);
+}
+
+#[test]
 fn archived_update_plan_function_calls_become_plan_timeline_events() {
     let codex_home = unique_test_codex_home();
     let sessions_directory = codex_home.join("sessions/2026/03/19");
