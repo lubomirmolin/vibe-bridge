@@ -14,6 +14,7 @@ class _ThreadDetailHeader extends StatelessWidget {
     required this.onOpenDiff,
     required this.onToggleSidebar,
     required this.onToggleDiff,
+    required this.onOpenSettings,
     required this.isHeaderCollapsed,
     required this.showBackButton,
     required this.isSidebarVisible,
@@ -32,6 +33,7 @@ class _ThreadDetailHeader extends StatelessWidget {
   final Future<void> Function() onOpenDiff;
   final VoidCallback? onToggleSidebar;
   final VoidCallback? onToggleDiff;
+  final VoidCallback? onOpenSettings;
   final ValueListenable<bool> isHeaderCollapsed;
   final bool showBackButton;
   final bool isSidebarVisible;
@@ -51,6 +53,7 @@ class _ThreadDetailHeader extends StatelessWidget {
       onOpenDiff: onOpenDiff,
       onToggleSidebar: onToggleSidebar,
       onToggleDiff: onToggleDiff,
+      onOpenSettings: onOpenSettings,
       isHeaderCollapsed: isHeaderCollapsed,
       connectionState: state.liveConnectionState,
       connectionDetail: _threadDetailConnectionBannerDetail(state),
@@ -74,6 +77,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
     required this.onOpenDiff,
     required this.onToggleSidebar,
     required this.onToggleDiff,
+    required this.onOpenSettings,
     required this.isHeaderCollapsed,
     required this.connectionState,
     required this.connectionDetail,
@@ -93,6 +97,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
   final Future<void> Function() onOpenDiff;
   final VoidCallback? onToggleSidebar;
   final VoidCallback? onToggleDiff;
+  final VoidCallback? onOpenSettings;
   final ValueListenable<bool> isHeaderCollapsed;
   final LiveConnectionState connectionState;
   final String? connectionDetail;
@@ -189,6 +194,16 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
                           color: isDiffVisible
                               ? AppTheme.emerald
                               : AppTheme.textMuted,
+                        ),
+                      ),
+                    if (onOpenSettings != null)
+                      IconButton(
+                        key: const Key('thread-detail-settings-toggle'),
+                        onPressed: onOpenSettings,
+                        icon: PhosphorIcon(
+                          PhosphorIcons.slidersHorizontal(),
+                          size: 20,
+                          color: AppTheme.textMuted,
                         ),
                       ),
                   ],

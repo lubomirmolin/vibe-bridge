@@ -15,10 +15,12 @@ use shared_contracts::{
     ModelCatalogDto, ModelOptionDto, NetworkSettingsDto, PairingRouteInventoryDto,
     PendingUserInputDto, ProviderKind, SecurityAuditEventDto, ServiceHealthDto,
     ServiceHealthStatus, ThreadGitDiffDto, ThreadGitDiffMode, ThreadSnapshotDto, ThreadStatus,
-    ThreadSummaryDto, ThreadTimelineEntryDto, ThreadTimelinePageDto, TrustStateDto, TurnMode,
-    TurnMutationAcceptedDto, UserInputAnswerDto, UserInputOptionDto, UserInputQuestionDto,
+    ThreadSummaryDto, ThreadTimelineEntryDto, ThreadTimelinePageDto, ThreadUsageDto, TrustStateDto,
+    TurnMode, TurnMutationAcceptedDto, UserInputAnswerDto, UserInputOptionDto,
+    UserInputQuestionDto,
 };
 use tokio::sync::RwLock;
+use tokio::sync::oneshot;
 use tokio::time::{Duration, sleep};
 
 use crate::codex_ipc::{
@@ -32,6 +34,7 @@ use crate::pairing::{
     PairingSessionResponse, PairingSessionService, PairingTrustSnapshot,
 };
 use crate::policy::{PolicyAction, PolicyDecision, PolicyEngine};
+use crate::server::codex_usage::{CodexUsageClient, CodexUsageError};
 use crate::server::config::{BridgeCodexConfig, BridgeConfig};
 use crate::server::controls::{
     ApprovalGateResponse, ApprovalRecordDto, ApprovalResolutionResponse, ApprovalStatus,
@@ -39,7 +42,7 @@ use crate::server::controls::{
     read_git_state, read_git_state_for_status,
 };
 use crate::server::events::EventHub;
-use crate::server::gateway::{CodexGateway, TurnStartRequest};
+use crate::server::gateway::{CodexGateway, GatewayTurnControlRequest, TurnStartRequest};
 use crate::server::pairing_route::PairingRouteState;
 use crate::server::projection::ProjectionStore;
 use crate::server::speech::{SpeechError, SpeechService};
@@ -68,6 +71,7 @@ struct BridgeAppStateInner {
     pending_synthetic_user_messages: RwLock<HashMap<String, String>>,
     access_mode: RwLock<AccessMode>,
     security_events: RwLock<Vec<SecurityEventRecordDto>>,
+    codex_usage_client: RwLock<CodexUsageClient>,
     gateway: CodexGateway,
     event_hub: EventHub,
     notification_control_tx: Mutex<Option<mpsc::Sender<NotificationControlMessage>>>,
@@ -102,10 +106,46 @@ struct GitControlState {
     next_approval_sequence: u64,
 }
 
-#[derive(Debug, Clone)]
-struct PendingUserInputSession {
+const USER_INPUT_OPTION_ALLOW_ONCE: &str = "allow_once";
+const USER_INPUT_OPTION_ALLOW_SESSION: &str = "allow_for_session";
+const USER_INPUT_OPTION_DENY: &str = "deny";
+
+#[derive(Debug)]
+enum PendingUserInputSession {
+    PlanQuestionnaire {
+        questionnaire: PendingUserInputDto,
+        original_prompt: String,
+    },
+    ProviderApproval(PendingProviderApprovalSession),
+}
+
+#[derive(Debug)]
+struct PendingProviderApprovalSession {
     questionnaire: PendingUserInputDto,
-    original_prompt: String,
+    provider_request_id: String,
+    context: ProviderApprovalContext,
+    resolution_tx: oneshot::Sender<ProviderApprovalSelection>,
+}
+
+#[derive(Debug, Clone)]
+struct ProviderApprovalPrompt {
+    questionnaire: PendingUserInputDto,
+    provider_request_id: String,
+    context: ProviderApprovalContext,
+}
+
+#[derive(Debug, Clone)]
+enum ProviderApprovalContext {
+    CodexCommandOrFile,
+    CodexPermissions { turn_id: String },
+    ClaudeCanUseTool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProviderApprovalSelection {
+    AllowOnce,
+    AllowForSession,
+    Deny,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,6 +243,7 @@ impl BridgeAppState {
                 pending_synthetic_user_messages: RwLock::new(HashMap::new()),
                 access_mode: RwLock::new(AccessMode::ControlWithApprovals),
                 security_events: RwLock::new(Vec::new()),
+                codex_usage_client: RwLock::new(CodexUsageClient::default()),
                 gateway: CodexGateway::new(config),
                 event_hub: EventHub::new(512),
                 notification_control_tx: Mutex::new(None),
@@ -511,6 +552,35 @@ impl BridgeAppState {
             files: parse_git_diff_file_summaries(&unified_diff),
             unified_diff,
             fetched_at: Utc::now().to_rfc3339(),
+        })
+    }
+
+    pub async fn thread_usage(&self, thread_id: &str) -> Result<ThreadUsageDto, CodexUsageError> {
+        let snapshot = self
+            .ensure_snapshot(thread_id)
+            .await
+            .map_err(CodexUsageError::UpstreamUnavailable)?;
+
+        if snapshot.thread.provider != ProviderKind::Codex {
+            return Err(CodexUsageError::AuthUnavailable(
+                "Usage bars are only available for Codex threads.".to_string(),
+            ));
+        }
+
+        let usage = self
+            .inner
+            .codex_usage_client
+            .read()
+            .await
+            .fetch_usage()
+            .await?;
+        Ok(ThreadUsageDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread_id: snapshot.thread.thread_id,
+            provider: ProviderKind::Codex,
+            plan_type: usage.plan_type,
+            primary_window: usage.primary_window,
+            secondary_window: usage.secondary_window,
         })
     }
 
@@ -1540,6 +1610,9 @@ impl BridgeAppState {
         let completion_handle = handle.clone();
         let compactor = Arc::new(std::sync::Mutex::new(LiveDeltaCompactor::default()));
         let completion_state = self.clone();
+        let control_state = self.clone();
+        let control_handle = handle.clone();
+        let control_thread_id = thread_id.to_string();
         self.inner
             .pending_bridge_owned_turns
             .write()
@@ -1617,6 +1690,15 @@ impl BridgeAppState {
                     state.projections().apply_live_event(&normalized).await;
                     state.event_hub().publish(normalized);
                 });
+            },
+            move |control_request| {
+                let state = control_state.clone();
+                let thread_id = control_thread_id.clone();
+                control_handle.block_on(async move {
+                    state
+                        .handle_turn_control_request(&thread_id, control_request)
+                        .await
+                })
             },
             move |completed_thread_id| {
                 let state = completion_state.clone();
@@ -1711,51 +1793,240 @@ impl BridgeAppState {
         model: Option<&str>,
         effort: Option<&str>,
     ) -> Result<TurnMutationAcceptedDto, String> {
+        let free_text = free_text.map(str::trim).filter(|value| !value.is_empty());
         let session = {
             let mut pending = self.inner.pending_user_inputs.write().await;
-            let Some(session) = pending.remove(thread_id) else {
-                return Err("No pending plan questions are available for this thread.".to_string());
+            let Some(existing_request_id) = pending.get(thread_id).map(|session| match session {
+                PendingUserInputSession::PlanQuestionnaire { questionnaire, .. } => {
+                    questionnaire.request_id.as_str()
+                }
+                PendingUserInputSession::ProviderApproval(session) => {
+                    session.questionnaire.request_id.as_str()
+                }
+            }) else {
+                return Err("There is no pending user input for this thread.".to_string());
             };
-            if session.questionnaire.request_id != request_id {
-                pending.insert(thread_id.to_string(), session.clone());
+            if existing_request_id != request_id {
                 return Err(
                     "The pending question set is no longer current. Refresh and try again."
                         .to_string(),
                 );
             }
-            session
+            pending
+                .remove(thread_id)
+                .expect("pending user input should exist after id check")
         };
 
-        let free_text = free_text.map(str::trim).filter(|value| !value.is_empty());
-        if answers.is_empty() && free_text.is_none() {
-            self.inner
-                .pending_user_inputs
-                .write()
-                .await
-                .insert(thread_id.to_string(), session.clone());
-            return Err("Pick at least one answer or write your own clarification.".to_string());
-        }
+        match session {
+            PendingUserInputSession::PlanQuestionnaire {
+                questionnaire,
+                original_prompt,
+            } => {
+                if answers.is_empty() && free_text.is_none() {
+                    self.inner.pending_user_inputs.write().await.insert(
+                        thread_id.to_string(),
+                        PendingUserInputSession::PlanQuestionnaire {
+                            questionnaire,
+                            original_prompt,
+                        },
+                    );
+                    return Err(
+                        "Pick at least one answer or write your own clarification.".to_string()
+                    );
+                }
 
+                self.projections()
+                    .set_pending_user_input(thread_id, None)
+                    .await;
+                self.publish_user_input_resolution_event(thread_id, request_id)
+                    .await;
+
+                self.start_turn_with_visible_prompt(
+                    thread_id,
+                    &render_user_input_response_summary(&questionnaire, answers, free_text),
+                    &build_hidden_plan_followup_prompt(
+                        &original_prompt,
+                        &questionnaire,
+                        answers,
+                        free_text,
+                    ),
+                    &[],
+                    model,
+                    effort,
+                )
+                .await
+            }
+            PendingUserInputSession::ProviderApproval(provider_session) => {
+                let Some(selection) = parse_provider_approval_selection(answers) else {
+                    self.inner.pending_user_inputs.write().await.insert(
+                        thread_id.to_string(),
+                        PendingUserInputSession::ProviderApproval(provider_session),
+                    );
+                    return Err("Choose Allow once, Allow for session, or Deny.".to_string());
+                };
+
+                self.projections()
+                    .set_pending_user_input(thread_id, None)
+                    .await;
+                self.publish_user_input_resolution_event(thread_id, request_id)
+                    .await;
+
+                let should_interrupt_after_response = matches!(
+                    provider_session.context,
+                    ProviderApprovalContext::CodexPermissions { .. }
+                ) && selection
+                    == ProviderApprovalSelection::Deny;
+                let interrupt_turn_id = match &provider_session.context {
+                    ProviderApprovalContext::CodexPermissions { turn_id, .. } => Some(turn_id),
+                    _ => None,
+                };
+
+                if provider_session.resolution_tx.send(selection).is_err() {
+                    return Err("The provider approval request is no longer active.".to_string());
+                }
+
+                if should_interrupt_after_response && let Some(turn_id) = interrupt_turn_id {
+                    let _ = self.inner.gateway.interrupt_turn(thread_id, turn_id).await;
+                }
+
+                let active_turn_id = self
+                    .inner
+                    .active_turn_ids
+                    .read()
+                    .await
+                    .get(thread_id)
+                    .cloned();
+                Ok(TurnMutationAcceptedDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: thread_id.to_string(),
+                    thread_status: ThreadStatus::Running,
+                    message: "approval response submitted".to_string(),
+                    turn_id: active_turn_id,
+                })
+            }
+        }
+    }
+
+    async fn handle_turn_control_request(
+        &self,
+        thread_id: &str,
+        control_request: GatewayTurnControlRequest,
+    ) -> Result<Option<Value>, String> {
+        match control_request {
+            GatewayTurnControlRequest::CodexApproval {
+                request_id,
+                method,
+                params,
+            } => {
+                let Some(prompt) = build_pending_provider_approval_from_codex(
+                    thread_id,
+                    &request_id,
+                    &method,
+                    &params,
+                )?
+                else {
+                    return Ok(None);
+                };
+                let selection = self
+                    .register_provider_approval_session(thread_id, prompt)
+                    .await?;
+                Ok(Some(build_codex_approval_response(
+                    &method, &params, selection,
+                )?))
+            }
+            GatewayTurnControlRequest::ClaudeCanUseTool {
+                request_id,
+                request,
+            } => {
+                let request_copy = request.clone();
+                let prompt =
+                    build_pending_provider_approval_from_claude(thread_id, request_id, request)?;
+                let selection = self
+                    .register_provider_approval_session(thread_id, prompt)
+                    .await?;
+                Ok(Some(build_claude_tool_approval_response(
+                    selection,
+                    &request_copy,
+                )))
+            }
+            GatewayTurnControlRequest::ClaudeControlCancel { request_id } => {
+                self.cancel_provider_approval_request(thread_id, &request_id)
+                    .await;
+                Ok(None)
+            }
+        }
+    }
+
+    async fn register_provider_approval_session(
+        &self,
+        thread_id: &str,
+        prompt: ProviderApprovalPrompt,
+    ) -> Result<ProviderApprovalSelection, String> {
+        let questionnaire = prompt.questionnaire.clone();
+        let request_id = questionnaire.request_id.clone();
+        let (resolution_tx, resolution_rx) = oneshot::channel();
+        {
+            let mut pending = self.inner.pending_user_inputs.write().await;
+            if let Some(replaced) = pending.insert(
+                thread_id.to_string(),
+                PendingUserInputSession::ProviderApproval(PendingProviderApprovalSession {
+                    questionnaire: questionnaire.clone(),
+                    provider_request_id: prompt.provider_request_id,
+                    context: prompt.context,
+                    resolution_tx,
+                }),
+            ) {
+                self.try_abort_pending_provider_approval(replaced);
+            }
+        }
+        self.publish_user_input_pending_event(thread_id, &questionnaire)
+            .await;
+        resolution_rx
+            .await
+            .map_err(|_| format!("provider approval {request_id} was cancelled before completion"))
+    }
+
+    async fn cancel_provider_approval_request(&self, thread_id: &str, request_id: &str) {
+        let removed = {
+            let mut pending = self.inner.pending_user_inputs.write().await;
+            let should_remove = pending.get(thread_id).is_some_and(|session| {
+                matches!(
+                    session,
+                    PendingUserInputSession::ProviderApproval(provider_session)
+                        if provider_session.provider_request_id == request_id
+                )
+            });
+            if should_remove {
+                pending.remove(thread_id)
+            } else {
+                None
+            }
+        };
+        let Some(removed_session) = removed else {
+            return;
+        };
+        let resolved_request_id = match &removed_session {
+            PendingUserInputSession::ProviderApproval(provider_session) => {
+                provider_session.questionnaire.request_id.clone()
+            }
+            PendingUserInputSession::PlanQuestionnaire { questionnaire, .. } => {
+                questionnaire.request_id.clone()
+            }
+        };
+        self.try_abort_pending_provider_approval(removed_session);
         self.projections()
             .set_pending_user_input(thread_id, None)
             .await;
-        self.publish_user_input_resolution_event(thread_id, request_id)
+        self.publish_user_input_resolution_event(thread_id, &resolved_request_id)
             .await;
+    }
 
-        self.start_turn_with_visible_prompt(
-            thread_id,
-            &render_user_input_response_summary(&session.questionnaire, answers, free_text),
-            &build_hidden_plan_followup_prompt(
-                &session.original_prompt,
-                &session.questionnaire,
-                answers,
-                free_text,
-            ),
-            &[],
-            model,
-            effort,
-        )
-        .await
+    fn try_abort_pending_provider_approval(&self, session: PendingUserInputSession) {
+        if let PendingUserInputSession::ProviderApproval(provider_session) = session {
+            let _ = provider_session
+                .resolution_tx
+                .send(ProviderApprovalSelection::Deny);
+        }
     }
 
     async fn publish_synthetic_user_message(
@@ -1797,11 +2068,15 @@ impl BridgeAppState {
             .write()
             .await
             .remove(thread_id);
-        self.inner
+        let removed = self
+            .inner
             .pending_user_inputs
             .write()
             .await
             .remove(thread_id);
+        if let Some(session) = removed {
+            self.try_abort_pending_provider_approval(session);
+        }
         self.projections()
             .set_pending_user_input(thread_id, None)
             .await;
@@ -1828,13 +2103,15 @@ impl BridgeAppState {
         let questionnaire = parse_pending_user_input_payload(&message_text, &event.thread_id)?;
         let request_id = questionnaire.request_id.clone();
 
-        self.inner.pending_user_inputs.write().await.insert(
+        if let Some(replaced) = self.inner.pending_user_inputs.write().await.insert(
             event.thread_id.clone(),
-            PendingUserInputSession {
+            PendingUserInputSession::PlanQuestionnaire {
                 questionnaire: questionnaire.clone(),
                 original_prompt,
             },
-        );
+        ) {
+            self.try_abort_pending_provider_approval(replaced);
+        }
 
         Some(BridgeEventEnvelope {
             contract_version: CONTRACT_VERSION.to_string(),
@@ -1863,6 +2140,30 @@ impl BridgeAppState {
             payload: json!({
                 "request_id": request_id,
                 "state": "resolved",
+            }),
+            annotations: None,
+        };
+        self.projections().apply_live_event(&event).await;
+        self.event_hub().publish(event);
+    }
+
+    async fn publish_user_input_pending_event(
+        &self,
+        thread_id: &str,
+        pending_user_input: &PendingUserInputDto,
+    ) {
+        let event = BridgeEventEnvelope {
+            contract_version: CONTRACT_VERSION.to_string(),
+            event_id: format!("{thread_id}-{}", pending_user_input.request_id),
+            thread_id: thread_id.to_string(),
+            kind: BridgeEventKind::UserInputRequested,
+            occurred_at: Utc::now().to_rfc3339(),
+            payload: json!({
+                "request_id": pending_user_input.request_id,
+                "title": pending_user_input.title,
+                "detail": pending_user_input.detail,
+                "questions": pending_user_input.questions,
+                "state": "pending",
             }),
             annotations: None,
         };
@@ -2019,6 +2320,11 @@ impl BridgeAppState {
             threads: self.projections().list_summaries().await,
             models,
         }
+    }
+
+    #[cfg(test)]
+    pub async fn set_codex_usage_client_for_tests(&self, client: CodexUsageClient) {
+        *self.inner.codex_usage_client.write().await = client;
     }
 
     pub async fn model_catalog_payload(&self, provider: ProviderKind) -> ModelCatalogDto {
@@ -2689,6 +2995,330 @@ fn render_user_input_response_summary(
     lines.join("\n")
 }
 
+fn parse_provider_approval_selection(
+    answers: &[UserInputAnswerDto],
+) -> Option<ProviderApprovalSelection> {
+    let selected_option_id = answers
+        .iter()
+        .find(|answer| answer.question_id == "approval_decision")
+        .or_else(|| answers.first())
+        .map(|answer| answer.option_id.as_str())?;
+    match selected_option_id {
+        USER_INPUT_OPTION_ALLOW_ONCE => Some(ProviderApprovalSelection::AllowOnce),
+        USER_INPUT_OPTION_ALLOW_SESSION => Some(ProviderApprovalSelection::AllowForSession),
+        USER_INPUT_OPTION_DENY => Some(ProviderApprovalSelection::Deny),
+        _ => None,
+    }
+}
+
+fn build_provider_approval_questionnaire(
+    thread_id: &str,
+    title: String,
+    detail: Option<String>,
+) -> PendingUserInputDto {
+    PendingUserInputDto {
+        request_id: format!(
+            "provider-approval-{}-{}",
+            thread_id,
+            Utc::now().timestamp_millis()
+        ),
+        title,
+        detail,
+        questions: vec![UserInputQuestionDto {
+            question_id: "approval_decision".to_string(),
+            prompt: "Choose an action".to_string(),
+            options: vec![
+                UserInputOptionDto {
+                    option_id: USER_INPUT_OPTION_ALLOW_ONCE.to_string(),
+                    label: "Allow once".to_string(),
+                    description: "Approve this action one time.".to_string(),
+                    is_recommended: true,
+                },
+                UserInputOptionDto {
+                    option_id: USER_INPUT_OPTION_ALLOW_SESSION.to_string(),
+                    label: "Allow for session".to_string(),
+                    description: "Approve now and remember for this session.".to_string(),
+                    is_recommended: false,
+                },
+                UserInputOptionDto {
+                    option_id: USER_INPUT_OPTION_DENY.to_string(),
+                    label: "Deny".to_string(),
+                    description: "Deny this action and interrupt the turn.".to_string(),
+                    is_recommended: false,
+                },
+            ],
+        }],
+    }
+}
+
+fn stringify_provider_request_id(raw_request_id: &Value) -> String {
+    if let Some(text) = raw_request_id.as_str() {
+        return text.to_string();
+    }
+    if let Some(value) = raw_request_id.as_i64() {
+        return value.to_string();
+    }
+    if let Some(value) = raw_request_id.as_u64() {
+        return value.to_string();
+    }
+    raw_request_id.to_string()
+}
+
+fn join_optional_detail_lines(lines: impl IntoIterator<Item = Option<String>>) -> Option<String> {
+    let lines = lines
+        .into_iter()
+        .flatten()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+fn build_pending_provider_approval_from_codex(
+    fallback_thread_id: &str,
+    raw_request_id: &Value,
+    method: &str,
+    params: &Value,
+) -> Result<Option<ProviderApprovalPrompt>, String> {
+    let thread_id = params
+        .get("threadId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(fallback_thread_id);
+    let reason = params
+        .get("reason")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let prompt = match method {
+        "item/commandExecution/requestApproval" => {
+            let command = params
+                .get("command")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| format!("Command: {value}"));
+            let cwd = params
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| format!("Working directory: {value}"));
+            Some(ProviderApprovalPrompt {
+                questionnaire: build_provider_approval_questionnaire(
+                    thread_id,
+                    "Approve command execution?".to_string(),
+                    join_optional_detail_lines([reason, command, cwd]),
+                ),
+                provider_request_id: stringify_provider_request_id(raw_request_id),
+                context: ProviderApprovalContext::CodexCommandOrFile,
+            })
+        }
+        "item/fileChange/requestApproval" => {
+            let grant_root = params
+                .get("grantRoot")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| format!("Requested write root: {value}"));
+            Some(ProviderApprovalPrompt {
+                questionnaire: build_provider_approval_questionnaire(
+                    thread_id,
+                    "Approve file changes?".to_string(),
+                    join_optional_detail_lines([reason, grant_root]),
+                ),
+                provider_request_id: stringify_provider_request_id(raw_request_id),
+                context: ProviderApprovalContext::CodexCommandOrFile,
+            })
+        }
+        "item/permissions/requestApproval" => {
+            let turn_id = params
+                .get("turnId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let requested_permissions = params
+                .get("permissions")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let permission_summary = summarize_codex_requested_permissions(&requested_permissions)
+                .map(|summary| format!("Requested permissions: {summary}"));
+            Some(ProviderApprovalPrompt {
+                questionnaire: build_provider_approval_questionnaire(
+                    thread_id,
+                    "Approve additional permissions?".to_string(),
+                    join_optional_detail_lines([reason, permission_summary]),
+                ),
+                provider_request_id: stringify_provider_request_id(raw_request_id),
+                context: ProviderApprovalContext::CodexPermissions { turn_id },
+            })
+        }
+        _ => None,
+    };
+    Ok(prompt)
+}
+
+fn summarize_codex_requested_permissions(permissions: &Value) -> Option<String> {
+    let mut parts = Vec::new();
+    let file_system = permissions.get("fileSystem");
+    let read_paths = file_system
+        .and_then(|profile| profile.get("read"))
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let write_paths = file_system
+        .and_then(|profile| profile.get("write"))
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    if read_paths > 0 {
+        parts.push(format!("read paths: {read_paths}"));
+    }
+    if write_paths > 0 {
+        parts.push(format!("write paths: {write_paths}"));
+    }
+    if permissions
+        .get("network")
+        .and_then(|profile| profile.get("enabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        parts.push("network access".to_string());
+    }
+    (!parts.is_empty()).then(|| parts.join(", "))
+}
+
+fn build_codex_approval_response(
+    method: &str,
+    params: &Value,
+    selection: ProviderApprovalSelection,
+) -> Result<Value, String> {
+    let response = match method {
+        "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
+            let decision = match selection {
+                ProviderApprovalSelection::AllowOnce => "accept",
+                ProviderApprovalSelection::AllowForSession => "acceptForSession",
+                ProviderApprovalSelection::Deny => "cancel",
+            };
+            json!({ "decision": decision })
+        }
+        "item/permissions/requestApproval" => {
+            let requested_permissions = params
+                .get("permissions")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            match selection {
+                ProviderApprovalSelection::AllowOnce => json!({
+                    "permissions": requested_permissions,
+                    "scope": "turn",
+                }),
+                ProviderApprovalSelection::AllowForSession => json!({
+                    "permissions": requested_permissions,
+                    "scope": "session",
+                }),
+                ProviderApprovalSelection::Deny => json!({
+                    "permissions": {},
+                    "scope": "turn",
+                }),
+            }
+        }
+        _ => return Err(format!("unsupported codex approval method: {method}")),
+    };
+    Ok(response)
+}
+
+fn build_pending_provider_approval_from_claude(
+    thread_id: &str,
+    request_id: String,
+    request: Value,
+) -> Result<ProviderApprovalPrompt, String> {
+    if request.get("subtype").and_then(Value::as_str) != Some("can_use_tool") {
+        return Err("unsupported Claude control request subtype".to_string());
+    }
+    let tool_name = request
+        .get("display_name")
+        .or_else(|| request.get("tool_name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("tool");
+    let detail = join_optional_detail_lines([
+        request
+            .get("description")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        summarize_claude_tool_input(request.get("input")),
+    ]);
+    let context = ProviderApprovalContext::ClaudeCanUseTool;
+    Ok(ProviderApprovalPrompt {
+        questionnaire: build_provider_approval_questionnaire(
+            thread_id,
+            format!("Approve {tool_name}?"),
+            detail,
+        ),
+        provider_request_id: request_id,
+        context,
+    })
+}
+
+fn summarize_claude_tool_input(raw_input: Option<&Value>) -> Option<String> {
+    let Some(input) = raw_input else {
+        return None;
+    };
+    let Some(input_map) = input.as_object() else {
+        return None;
+    };
+    let summary = input_map
+        .iter()
+        .take(3)
+        .map(|(key, value)| {
+            let formatted = value
+                .as_str()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| value.to_string());
+            format!("{key}: {formatted}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    (!summary.is_empty()).then(|| format!("Input: {summary}"))
+}
+
+fn build_claude_tool_approval_response(
+    selection: ProviderApprovalSelection,
+    request: &Value,
+) -> Value {
+    let mut response = match selection {
+        ProviderApprovalSelection::AllowOnce | ProviderApprovalSelection::AllowForSession => {
+            json!({
+                "behavior": "allow",
+                "updatedInput": request
+                    .get("input")
+                    .cloned()
+                    .unwrap_or_else(|| Value::Object(serde_json::Map::new())),
+            })
+        }
+        ProviderApprovalSelection::Deny => json!({
+            "behavior": "deny",
+            "message": "Permission denied by mobile approval.",
+            "interrupt": true,
+        }),
+    };
+    if let Some(object) = response.as_object_mut() {
+        if let Some(tool_use_id) = request.get("tool_use_id").and_then(Value::as_str) {
+            object.insert(
+                "toolUseID".to_string(),
+                Value::String(tool_use_id.to_string()),
+            );
+        }
+        if selection == ProviderApprovalSelection::AllowForSession
+            && let Some(suggestions) = request.get("permission_suggestions")
+        {
+            object.insert("updatedPermissions".to_string(), suggestions.clone());
+        }
+    }
+    response
+}
+
 pub(super) fn parse_pending_user_input_payload(
     message_text: &str,
     thread_id: &str,
@@ -3128,8 +3758,12 @@ mod tests {
 
     use super::{
         BridgeAppState, LiveDeltaCompactor, NotificationControlMessage,
-        build_desktop_ipc_snapshot_update, drain_notification_control_messages,
-        ensure_running_status_for_desktop_patch_update, is_duplicate_synthetic_user_message,
+        PendingProviderApprovalSession, PendingUserInputSession, ProviderApprovalContext,
+        ProviderApprovalSelection, build_claude_tool_approval_response,
+        build_codex_approval_response, build_desktop_ipc_snapshot_update,
+        build_pending_provider_approval_from_codex, build_provider_approval_questionnaire,
+        drain_notification_control_messages, ensure_running_status_for_desktop_patch_update,
+        is_duplicate_synthetic_user_message, parse_provider_approval_selection,
         payload_contains_hidden_message, preserve_bootstrap_status_for_cached_desktop_snapshot,
         resume_notification_threads, should_clear_transient_thread_state,
         should_suppress_desktop_ipc_live_update_for_bridge_active_turn,
@@ -3245,6 +3879,179 @@ mod tests {
         assert!(!payload_contains_hidden_message(&json!({
             "text": "Plan how to cover the critical mobile flows."
         })));
+    }
+
+    #[test]
+    fn codex_command_approval_prompts_map_to_pending_user_input_shape() {
+        let prompt = build_pending_provider_approval_from_codex(
+            "codex:thread-fallback",
+            &json!("req-1"),
+            "item/commandExecution/requestApproval",
+            &json!({
+                "reason": "Need approval to inspect git state",
+                "command": "git status",
+                "cwd": "/repo",
+            }),
+        )
+        .expect("command approval payload should parse")
+        .expect("command approval prompt should be recognized");
+
+        assert_eq!(prompt.provider_request_id, "req-1");
+        assert_eq!(prompt.questionnaire.title, "Approve command execution?");
+        assert_eq!(prompt.questionnaire.questions.len(), 1);
+        assert_eq!(
+            prompt.questionnaire.questions[0]
+                .options
+                .iter()
+                .map(|option| option.option_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["allow_once", "allow_for_session", "deny"]
+        );
+        assert!(
+            prompt
+                .questionnaire
+                .detail
+                .expect("detail should be present")
+                .contains("Command: git status")
+        );
+    }
+
+    #[test]
+    fn codex_permission_responses_map_allow_once_session_and_deny() {
+        let params = json!({
+            "permissions": {
+                "fileSystem": { "read": ["/repo"], "write": ["/repo"] },
+                "network": { "enabled": true }
+            }
+        });
+        let allow_once = build_codex_approval_response(
+            "item/permissions/requestApproval",
+            &params,
+            ProviderApprovalSelection::AllowOnce,
+        )
+        .expect("allow once should map");
+        let allow_session = build_codex_approval_response(
+            "item/permissions/requestApproval",
+            &params,
+            ProviderApprovalSelection::AllowForSession,
+        )
+        .expect("allow for session should map");
+        let deny = build_codex_approval_response(
+            "item/permissions/requestApproval",
+            &params,
+            ProviderApprovalSelection::Deny,
+        )
+        .expect("deny should map");
+
+        assert_eq!(allow_once["scope"], "turn");
+        assert_eq!(allow_once["permissions"], params["permissions"]);
+        assert_eq!(allow_session["scope"], "session");
+        assert_eq!(allow_session["permissions"], params["permissions"]);
+        assert_eq!(deny["scope"], "turn");
+        assert_eq!(deny["permissions"], json!({}));
+    }
+
+    #[test]
+    fn codex_command_and_file_deny_map_to_cancel_decision() {
+        let command_response = build_codex_approval_response(
+            "item/commandExecution/requestApproval",
+            &json!({}),
+            ProviderApprovalSelection::Deny,
+        )
+        .expect("command deny should map");
+        let file_response = build_codex_approval_response(
+            "item/fileChange/requestApproval",
+            &json!({}),
+            ProviderApprovalSelection::Deny,
+        )
+        .expect("file deny should map");
+
+        assert_eq!(command_response, json!({"decision":"cancel"}));
+        assert_eq!(file_response, json!({"decision":"cancel"}));
+    }
+
+    #[test]
+    fn claude_tool_approval_responses_preserve_schema() {
+        let request = json!({
+            "input": { "cmd": "ls -la" },
+            "permission_suggestions": { "allow": ["ls"] },
+            "tool_use_id": "tool-123",
+        });
+        let allow_session = build_claude_tool_approval_response(
+            ProviderApprovalSelection::AllowForSession,
+            &request,
+        );
+        let deny = build_claude_tool_approval_response(ProviderApprovalSelection::Deny, &request);
+
+        assert_eq!(allow_session["behavior"], "allow");
+        assert_eq!(allow_session["updatedInput"], json!({"cmd":"ls -la"}));
+        assert_eq!(allow_session["updatedPermissions"], json!({"allow":["ls"]}));
+        assert_eq!(allow_session["toolUseID"], "tool-123");
+
+        assert_eq!(deny["behavior"], "deny");
+        assert_eq!(deny["interrupt"], true);
+    }
+
+    #[test]
+    fn provider_approval_selection_parser_accepts_allow_session_choice() {
+        let selection =
+            parse_provider_approval_selection(&[shared_contracts::UserInputAnswerDto {
+                question_id: "approval_decision".to_string(),
+                option_id: "allow_for_session".to_string(),
+            }]);
+        assert_eq!(selection, Some(ProviderApprovalSelection::AllowForSession));
+    }
+
+    #[tokio::test]
+    async fn respond_to_provider_approval_returns_mutation_and_resolves_pending_request() {
+        let state = test_bridge_app_state().await;
+        let thread_id = "codex:thread-provider-approval";
+        let questionnaire = build_provider_approval_questionnaire(
+            "thread-provider-approval",
+            "Approve command execution?".to_string(),
+            None,
+        );
+        let request_id = questionnaire.request_id.clone();
+        let (resolution_tx, resolution_rx) = tokio::sync::oneshot::channel();
+        state.inner.pending_user_inputs.write().await.insert(
+            thread_id.to_string(),
+            PendingUserInputSession::ProviderApproval(PendingProviderApprovalSession {
+                questionnaire,
+                provider_request_id: "upstream-approval-1".to_string(),
+                context: ProviderApprovalContext::CodexCommandOrFile,
+                resolution_tx,
+            }),
+        );
+        state
+            .inner
+            .active_turn_ids
+            .write()
+            .await
+            .insert(thread_id.to_string(), "turn-approval-1".to_string());
+
+        let result = state
+            .respond_to_user_input(
+                thread_id,
+                &request_id,
+                &[shared_contracts::UserInputAnswerDto {
+                    question_id: "approval_decision".to_string(),
+                    option_id: "allow_once".to_string(),
+                }],
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("approval response should be accepted");
+
+        assert_eq!(result.message, "approval response submitted");
+        assert_eq!(result.turn_id.as_deref(), Some("turn-approval-1"));
+        assert_eq!(
+            resolution_rx
+                .await
+                .expect("provider selection should resolve"),
+            ProviderApprovalSelection::AllowOnce
+        );
     }
 
     #[test]

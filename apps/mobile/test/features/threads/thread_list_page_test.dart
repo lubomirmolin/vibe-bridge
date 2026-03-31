@@ -77,6 +77,29 @@ void main() {
     },
   );
 
+  testWidgets('thread list shows provider icons per thread', (tester) async {
+    final cacheRepository = _newCacheRepository();
+    final bridgeApi = FakeThreadListBridgeApi(
+      scriptedResults: [_providerTaggedThreads()],
+    );
+
+    await _pumpThreadListPage(
+      tester,
+      bridgeApi: bridgeApi,
+      cacheRepository: cacheRepository,
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('thread-provider-icon-thread-123')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('thread-provider-icon-claude:thread-456')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('wide layout opens draft detail inline from create action', (
     tester,
   ) async {
@@ -802,6 +825,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 3, milliseconds: 100));
 
       expect(find.text('Implement shared contracts'), findsOneWidget);
       expect(find.text('Investigate reconnect dedup'), findsOneWidget);
@@ -1489,6 +1513,34 @@ List<ThreadSummaryDto> _groupedThreads() {
   ];
 }
 
+List<ThreadSummaryDto> _providerTaggedThreads() {
+  return const [
+    ThreadSummaryDto(
+      contractVersion: contractVersion,
+      threadId: 'thread-123',
+      provider: ProviderKind.codex,
+      title: 'Implement shared contracts',
+      status: ThreadStatus.running,
+      workspace: '/workspace/vibe-bridge-companion',
+      repository: 'vibe-bridge-companion',
+      branch: 'master',
+      updatedAt: '2026-03-17T18:00:00Z',
+    ),
+    ThreadSummaryDto(
+      contractVersion: contractVersion,
+      threadId: 'claude:thread-456',
+      nativeThreadId: 'thread-456',
+      provider: ProviderKind.claudeCode,
+      title: 'Investigate reconnect dedup',
+      status: ThreadStatus.completed,
+      workspace: '/workspace/codex-runtime-tools',
+      repository: 'codex-runtime-tools',
+      branch: 'develop',
+      updatedAt: '2026-03-17T17:30:00Z',
+    ),
+  ];
+}
+
 List<ThreadSummaryDto> _threadsWithMissingWorkspace() {
   return const [
     ThreadSummaryDto(
@@ -1642,8 +1694,9 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   @override
   Future<ModelCatalogDto> fetchModelCatalog({
     required String bridgeApiBaseUrl,
+    required ProviderKind provider,
   }) async {
-    return fallbackModelCatalog;
+    return fallbackModelCatalogForProvider(provider);
   }
 
   @override
@@ -1671,6 +1724,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   Future<ThreadSnapshotDto> createThread({
     required String bridgeApiBaseUrl,
     required String workspace,
+    required ProviderKind provider,
     String? model,
   }) async {
     throw const ThreadCreateBridgeException(
@@ -1694,6 +1748,16 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     }
 
     throw StateError('Unsupported detail scripted result: $scriptedResult');
+  }
+
+  @override
+  Future<ThreadUsageDto> fetchThreadUsage({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    throw const ThreadUsageBridgeException(
+      message: 'Usage is unavailable in this test.',
+    );
   }
 
   @override

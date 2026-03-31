@@ -1891,6 +1891,90 @@ class ThreadDetailDto {
   }
 }
 
+class ThreadUsageWindowDto {
+  const ThreadUsageWindowDto({
+    required this.usedPercent,
+    required this.limitWindowSeconds,
+    required this.resetAfterSeconds,
+    required this.resetAt,
+  });
+
+  final int usedPercent;
+  final int limitWindowSeconds;
+  final int resetAfterSeconds;
+  final int resetAt;
+
+  factory ThreadUsageWindowDto.fromJson(Map<String, dynamic> json) {
+    return ThreadUsageWindowDto(
+      usedPercent: (json['used_percent'] as num).toInt(),
+      limitWindowSeconds: (json['limit_window_seconds'] as num).toInt(),
+      resetAfterSeconds: (json['reset_after_seconds'] as num).toInt(),
+      resetAt: (json['reset_at'] as num).toInt(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'used_percent': usedPercent,
+      'limit_window_seconds': limitWindowSeconds,
+      'reset_after_seconds': resetAfterSeconds,
+      'reset_at': resetAt,
+    };
+  }
+}
+
+class ThreadUsageDto {
+  const ThreadUsageDto({
+    required this.contractVersion,
+    required this.threadId,
+    required this.provider,
+    required this.primaryWindow,
+    this.planType,
+    this.secondaryWindow,
+  });
+
+  final String contractVersion;
+  final String threadId;
+  final ProviderKind provider;
+  final String? planType;
+  final ThreadUsageWindowDto primaryWindow;
+  final ThreadUsageWindowDto? secondaryWindow;
+
+  factory ThreadUsageDto.fromJson(Map<String, dynamic> json) {
+    final primaryWindowJson = json['primary_window'];
+    if (primaryWindowJson is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Missing or invalid "primary_window" in thread usage response.',
+      );
+    }
+
+    return ThreadUsageDto(
+      contractVersion: json['contract_version'] as String,
+      threadId: json['thread_id'] as String,
+      provider: providerKindFromWire(json['provider'] as String),
+      planType: json['plan_type'] as String?,
+      primaryWindow: ThreadUsageWindowDto.fromJson(primaryWindowJson),
+      secondaryWindow: json['secondary_window'] is Map<String, dynamic>
+          ? ThreadUsageWindowDto.fromJson(
+              json['secondary_window'] as Map<String, dynamic>,
+            )
+          : null,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'contract_version': contractVersion,
+      'thread_id': threadId,
+      'provider': provider.wireValue,
+      if (planType != null) 'plan_type': planType,
+      'primary_window': primaryWindow.toJson(),
+      if (secondaryWindow != null)
+        'secondary_window': secondaryWindow!.toJson(),
+    };
+  }
+}
+
 class ThreadTimelineEntryDto {
   const ThreadTimelineEntryDto({
     required this.eventId,

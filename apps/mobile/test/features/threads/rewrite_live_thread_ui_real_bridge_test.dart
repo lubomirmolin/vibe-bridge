@@ -43,6 +43,7 @@ void main() {
           .createThread(
             bridgeApiBaseUrl: bridgeApiBaseUrl,
             workspace: workspace,
+            provider: ProviderKind.codex,
           )
           .timeout(
             const Duration(seconds: 15),

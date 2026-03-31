@@ -12,6 +12,7 @@ import 'package:vibe_bridge/foundation/platform/macos_window_chrome.dart';
 import 'package:codex_ui/codex_ui.dart';
 import 'package:vibe_bridge/shared/widgets/badges.dart';
 import 'package:vibe_bridge/shared/widgets/connection_status_banner.dart';
+import 'package:vibe_bridge/shared/widgets/provider_icon.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -1608,14 +1609,6 @@ class _ThreadSummaryCard extends StatelessWidget {
     final displayTitle = thread.title.trim().isEmpty
         ? 'Untitled thread'
         : thread.title.trim();
-    final providerLabel = switch (thread.provider) {
-      ProviderKind.codex => 'CODEX',
-      ProviderKind.claudeCode => 'CLAUDE',
-    };
-    final providerColor = switch (thread.provider) {
-      ProviderKind.codex => AppTheme.emerald,
-      ProviderKind.claudeCode => AppTheme.amber,
-    };
     BadgeVariant variant;
     String statusText;
 
@@ -1670,41 +1663,15 @@ class _ThreadSummaryCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: providerColor.withValues(alpha: 0.14),
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(
-                            color: providerColor.withValues(alpha: 0.32),
-                          ),
-                        ),
-                        child: Text(
-                          providerLabel,
-                          style: GoogleFonts.jetBrainsMono(
-                            color: providerColor,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.6,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        displayTitle,
-                        style: const TextStyle(
-                          color: AppTheme.textMain,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w400,
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    displayTitle,
+                    style: const TextStyle(
+                      color: AppTheme.textMain,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w400,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -1764,14 +1731,9 @@ class _ThreadSummaryCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 12),
-                Text(
-                  thread.threadId.length > 8
-                      ? thread.threadId.substring(0, 8)
-                      : thread.threadId,
-                  style: GoogleFonts.jetBrainsMono(
-                    color: AppTheme.textSubtle,
-                    fontSize: 11,
-                  ),
+                ProviderIcon(
+                  key: Key('thread-provider-icon-${thread.threadId}'),
+                  provider: thread.provider,
                 ),
               ],
             ),

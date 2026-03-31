@@ -20,6 +20,7 @@ class ConnectionStatusBanner extends StatefulWidget {
     this.minimumNotConnectedDurationToShowConnected = const Duration(
       seconds: 1,
     ),
+    this.minimumDisconnectedDurationToShow = const Duration(seconds: 3),
   });
 
   final ConnectionBannerState state;
@@ -28,19 +29,23 @@ class ConnectionStatusBanner extends StatefulWidget {
   final EdgeInsetsGeometry? margin;
   final Duration showConnectedFor;
   final Duration minimumNotConnectedDurationToShowConnected;
+  final Duration minimumDisconnectedDurationToShow;
 
   @override
   State<ConnectionStatusBanner> createState() => _ConnectionStatusBannerState();
 }
 
-class _ConnectionStatusBannerState extends State<ConnectionStatusBanner> {
+class _ConnectionStatusBannerState extends State<ConnectionStatusBanner>
+    with WidgetsBindingObserver {
   Timer? _hideTimer;
+  Timer? _pendingShowTimer;
   bool _isVisible = true;
   Duration? _notConnectedSince;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final now = _currentTimestamp;
     if (widget.state == ConnectionBannerState.connected) {
       _isVisible = false;
@@ -60,12 +65,37 @@ class _ConnectionStatusBannerState extends State<ConnectionStatusBanner> {
     }
 
     if (widget.state != ConnectionBannerState.connected && !_isVisible) {
+      _cancelPendingShow();
       _showBanner();
     }
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState appState) {
+    if (appState != AppLifecycleState.resumed) {
+      return;
+    }
+
+    _hideTimer?.cancel();
+    _cancelPendingShow();
+
+    if (widget.state == ConnectionBannerState.connected) {
+      _notConnectedSince = null;
+      _hideBanner();
+      return;
+    }
+
+    _hideBanner();
+    _notConnectedSince = _currentTimestamp;
+    _pendingShowTimer = Timer(widget.minimumDisconnectedDurationToShow, () {
+      if (!mounted) return;
+      _showBanner();
+    });
+  }
+
   void _syncVisibilityForTransition({required ConnectionBannerState oldState}) {
     _hideTimer?.cancel();
+    _cancelPendingShow();
     final now = _currentTimestamp;
 
     if (widget.state == ConnectionBannerState.connected) {
@@ -87,7 +117,29 @@ class _ConnectionStatusBannerState extends State<ConnectionStatusBanner> {
         _notConnectedSince == null) {
       _notConnectedSince = now;
     }
-    _showBanner();
+
+    final disconnectedDuration = now - (_notConnectedSince ?? now);
+    if (_isVisible) {
+      return;
+    }
+
+    if (disconnectedDuration >= widget.minimumDisconnectedDurationToShow) {
+      _showBanner();
+      return;
+    }
+
+    _pendingShowTimer = Timer(
+      widget.minimumDisconnectedDurationToShow - disconnectedDuration,
+      () {
+        if (!mounted) return;
+        _showBanner();
+      },
+    );
+  }
+
+  void _cancelPendingShow() {
+    _pendingShowTimer?.cancel();
+    _pendingShowTimer = null;
   }
 
   void _showBanner() {
@@ -129,7 +181,9 @@ class _ConnectionStatusBannerState extends State<ConnectionStatusBanner> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _hideTimer?.cancel();
+    _pendingShowTimer?.cancel();
     super.dispose();
   }
 

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:vibe_bridge/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:vibe_bridge/features/threads/data/thread_list_bridge_api.dart';
+import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -39,6 +40,7 @@ void main() {
           .createThread(
             bridgeApiBaseUrl: bridgeApiBaseUrl,
             workspace: workspace,
+            provider: ProviderKind.codex,
           )
           .timeout(
             const Duration(seconds: 15),

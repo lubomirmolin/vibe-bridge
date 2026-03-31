@@ -294,6 +294,7 @@ class _PlanModeThreadDetailBridgeApi extends ThreadDetailBridgeApi {
   Future<ThreadSnapshotDto> createThread({
     required String bridgeApiBaseUrl,
     required String workspace,
+    required ProviderKind provider,
     String? model,
   }) async {
     createThreadCallCount += 1;

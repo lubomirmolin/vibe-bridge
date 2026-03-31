@@ -78,6 +78,8 @@ flutter:
   assets:
     - assets/
     - assets/fonts/google_fonts/
+    - assets/provider_icons/openai_mark.svg
+    - assets/provider_icons/anthropic_mark.svg
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

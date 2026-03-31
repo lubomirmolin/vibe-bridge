@@ -601,10 +601,11 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         context: 'loading thread timeline',
       );
 
-      final items = scopedPage.entries
-          .map(ThreadActivityItem.fromTimelineEntry)
-          .toList(growable: false);
-      _knownEventIds.addAll(items.map((item) => item.eventId));
+      final items = _mergeTimelineEntries(
+        currentItems: const <ThreadActivityItem>[],
+        timeline: scopedPage.entries,
+      );
+      _trackKnownEventIds(items);
 
       if (_isDisposed) {
         return;
@@ -913,11 +914,23 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   List<ThreadActivityItem> _mergeTimeline(
     List<ThreadTimelineEntryDto> timeline,
   ) {
+    final nextItems = _mergeTimelineEntries(
+      currentItems: state.items,
+      timeline: timeline,
+    );
+    _trackKnownEventIds(nextItems);
+    return nextItems;
+  }
+
+  List<ThreadActivityItem> _mergeTimelineEntries({
+    required List<ThreadActivityItem> currentItems,
+    required List<ThreadTimelineEntryDto> timeline,
+  }) {
     if (timeline.isEmpty) {
-      return state.items;
+      return currentItems;
     }
 
-    final nextItems = List<ThreadActivityItem>.from(state.items);
+    final nextItems = List<ThreadActivityItem>.from(currentItems);
     for (final entry in timeline) {
       final nextItem = ThreadActivityItem.fromTimelineEntry(entry);
       final existingIndex = _findTimelineMergeIndex(
@@ -929,14 +942,16 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
           current: nextItems[existingIndex],
           candidate: nextItem,
         );
-        _knownEventIds.add(entry.eventId);
       } else {
         nextItems.add(nextItem);
-        _knownEventIds.add(entry.eventId);
       }
     }
 
-    return nextItems;
+    return List<ThreadActivityItem>.unmodifiable(nextItems);
+  }
+
+  void _trackKnownEventIds(List<ThreadActivityItem> items) {
+    _knownEventIds.addAll(items.map((item) => item.eventId));
   }
 
   List<ThreadActivityItem> _prependTimelineEntries(
@@ -1574,10 +1589,10 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       return false;
     }
 
-    if (state.isTurnActive) {
+    if (state.isTurnActive && normalizedImages.isNotEmpty) {
       state = state.copyWith(
         turnControlErrorMessage:
-            'Active-turn steering is unavailable in this build. Interrupt the turn or wait for it to finish before sending a new prompt.',
+            'Interrupt the active turn or wait for it to finish before attaching images.',
       );
       return false;
     }
@@ -1588,15 +1603,21 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     );
 
     try {
-      final mutationResult = await _bridgeApi.startTurn(
-        bridgeApiBaseUrl: _bridgeApiBaseUrl,
-        threadId: state.threadId,
-        prompt: input,
-        mode: mode,
-        images: normalizedImages,
-        model: model,
-        effort: reasoningEffort,
-      );
+      final mutationResult = state.isTurnActive
+          ? await _bridgeApi.steerTurn(
+              bridgeApiBaseUrl: _bridgeApiBaseUrl,
+              threadId: state.threadId,
+              instruction: input,
+            )
+          : await _bridgeApi.startTurn(
+              bridgeApiBaseUrl: _bridgeApiBaseUrl,
+              threadId: state.threadId,
+              prompt: input,
+              mode: mode,
+              images: normalizedImages,
+              model: model,
+              effort: reasoningEffort,
+            );
 
       _pendingPromptSubmittedAt = DateTime.now();
       _applyTurnMutationResult(mutationResult);
@@ -1631,7 +1652,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     if (pending == null) {
       state = state.copyWith(
         turnControlErrorMessage:
-            'There are no pending plan questions for this thread.',
+            'There is no pending input request for this thread.',
       );
       return false;
     }
@@ -1644,10 +1665,13 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       return false;
     }
 
-    if (state.isTurnActive) {
+    final isProviderApprovalPrompt =
+        pending.questions.length == 1 &&
+        pending.questions.first.questionId == 'approval_decision';
+    if (state.isTurnActive && !isProviderApprovalPrompt) {
       state = state.copyWith(
         turnControlErrorMessage:
-            'Wait for the active turn to finish before answering plan questions.',
+            'Wait for the active turn to finish before submitting this response.',
       );
       return false;
     }
@@ -1686,7 +1710,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       state = state.copyWith(
         isComposerMutationInFlight: false,
         turnControlErrorMessage:
-            'Couldn’t submit the plan clarification right now. Please try again.',
+            'Couldn’t submit this response right now. Please try again.',
       );
       return false;
     }

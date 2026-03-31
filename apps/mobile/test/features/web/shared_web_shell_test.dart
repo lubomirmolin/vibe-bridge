@@ -283,6 +283,7 @@ class _FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   Future<ThreadSnapshotDto> createThread({
     required String bridgeApiBaseUrl,
     required String workspace,
+    required ProviderKind provider,
     String? model,
   }) async {
     return ThreadSnapshotDto(
@@ -300,6 +301,16 @@ class _FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String threadId,
   }) async {
     return detail;
+  }
+
+  @override
+  Future<ThreadUsageDto> fetchThreadUsage({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    throw const ThreadUsageBridgeException(
+      message: 'Usage is unavailable in this test.',
+    );
   }
 
   @override
@@ -321,8 +332,9 @@ class _FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   @override
   Future<ModelCatalogDto> fetchModelCatalog({
     required String bridgeApiBaseUrl,
+    required ProviderKind provider,
   }) async {
-    return fallbackModelCatalog;
+    return fallbackModelCatalogForProvider(provider);
   }
 
   @override

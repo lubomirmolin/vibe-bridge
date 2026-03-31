@@ -6,12 +6,14 @@ class _DraftThreadDetailHeader extends StatelessWidget {
     required this.workspaceLabel,
     required this.onBack,
     required this.showBackButton,
+    required this.onOpenSettings,
   });
 
   final String workspacePath;
   final String workspaceLabel;
   final VoidCallback onBack;
   final bool showBackButton;
+  final VoidCallback? onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -51,6 +53,16 @@ class _DraftThreadDetailHeader extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+              if (onOpenSettings != null)
+                IconButton(
+                  key: const Key('thread-detail-settings-toggle'),
+                  onPressed: onOpenSettings,
+                  icon: PhosphorIcon(
+                    PhosphorIcons.slidersHorizontal(),
+                    size: 20,
+                    color: AppTheme.textMuted,
+                  ),
+                ),
             ],
           ),
           Padding(

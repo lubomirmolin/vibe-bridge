@@ -874,8 +874,9 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   @override
   Future<ModelCatalogDto> fetchModelCatalog({
     required String bridgeApiBaseUrl,
+    required ProviderKind provider,
   }) async {
-    return fallbackModelCatalog;
+    return fallbackModelCatalogForProvider(provider);
   }
 
   @override
@@ -903,6 +904,7 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   Future<ThreadSnapshotDto> createThread({
     required String bridgeApiBaseUrl,
     required String workspace,
+    required ProviderKind provider,
     String? model,
   }) async {
     throw const ThreadCreateBridgeException(
@@ -924,6 +926,16 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       throw scriptedResult;
     }
     throw StateError('Unsupported detail scripted result: $scriptedResult');
+  }
+
+  @override
+  Future<ThreadUsageDto> fetchThreadUsage({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    throw const ThreadUsageBridgeException(
+      message: 'Usage is unavailable in this test.',
+    );
   }
 
   @override

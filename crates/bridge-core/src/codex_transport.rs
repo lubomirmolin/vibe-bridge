@@ -130,6 +130,34 @@ impl CodexJsonTransport {
         }
     }
 
+    pub fn respond(&mut self, request_id: &Value, result: Value) -> Result<(), String> {
+        let payload = json!({
+            "id": request_id,
+            "result": result,
+        });
+        let line = serde_json::to_string(&payload)
+            .map_err(|error| format!("failed to serialize codex rpc response: {error}"))?;
+        self.send_line("rpc/respond", &line)
+    }
+
+    pub fn respond_error(
+        &mut self,
+        request_id: &Value,
+        code: i64,
+        message: &str,
+    ) -> Result<(), String> {
+        let payload = json!({
+            "id": request_id,
+            "error": {
+                "code": code,
+                "message": message,
+            },
+        });
+        let line = serde_json::to_string(&payload)
+            .map_err(|error| format!("failed to serialize codex rpc error response: {error}"))?;
+        self.send_line("rpc/respond_error", &line)
+    }
+
     pub fn next_message(&mut self, context: &str) -> Result<Option<Value>, String> {
         if let Some(message) = self.pending_messages.pop_front() {
             return Ok(Some(message));

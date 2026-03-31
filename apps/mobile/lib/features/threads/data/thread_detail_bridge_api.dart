@@ -133,6 +133,15 @@ abstract class ThreadDetailBridgeApi {
     required String threadId,
   });
 
+  Future<ThreadUsageDto> fetchThreadUsage({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    throw const ThreadUsageBridgeException(
+      message: 'Codex usage is unavailable in this build.',
+    );
+  }
+
   Future<ThreadTimelinePageDto> fetchThreadTimelinePage({
     required String bridgeApiBaseUrl,
     required String threadId,
@@ -165,7 +174,7 @@ abstract class ThreadDetailBridgeApi {
     String? effort,
   }) async {
     throw const ThreadTurnBridgeException(
-      message: 'Pending plan questions are unavailable in this build.',
+      message: 'Pending input responses are unavailable in this build.',
     );
   }
 
@@ -533,6 +542,47 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     return snapshot.thread;
   }
 
+  @override
+  Future<ThreadUsageDto> fetchThreadUsage({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    try {
+      final response = await _transport.get(
+        _buildThreadUsageUri(bridgeApiBaseUrl, threadId),
+        headers: const <String, String>{'accept': 'application/json'},
+      );
+      final decoded = _decodeJsonObject(response.bodyText);
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        try {
+          return ThreadUsageDto.fromJson(decoded);
+        } on FormatException {
+          throw const ThreadUsageBridgeException(
+            message: 'Bridge returned an invalid usage response.',
+          );
+        }
+      }
+
+      throw ThreadUsageBridgeException(
+        message:
+            _readOptionalString(decoded, 'message') ??
+            'Couldn’t load Codex usage right now.',
+        statusCode: response.statusCode,
+        code: _readOptionalString(decoded, 'code'),
+      );
+    } on BridgeTransportConnectionException {
+      throw const ThreadUsageBridgeException(
+        message: 'Cannot reach the bridge. Check your private route.',
+        isConnectivityError: true,
+      );
+    } on FormatException {
+      throw const ThreadUsageBridgeException(
+        message: 'Bridge returned an invalid usage response.',
+      );
+    }
+  }
+
   Future<ThreadSnapshotDto> _fetchThreadSnapshot({
     required String bridgeApiBaseUrl,
     required String threadId,
@@ -698,10 +748,20 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
         },
         body: jsonEncode(body),
       );
-      final decoded = _decodeJsonObject(response.bodyText);
+      Map<String, dynamic>? decoded;
+      try {
+        decoded = _decodeJsonObject(response.bodyText);
+      } on FormatException {
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          rethrow;
+        }
+      }
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
+          if (decoded == null) {
+            throw const FormatException('Expected JSON object response.');
+          }
           final accepted = TurnMutationAcceptedDto.fromJson(decoded);
           return TurnMutationResult(
             contractVersion: accepted.contractVersion,
@@ -714,17 +774,25 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
           );
         } on FormatException {
           throw ThreadTurnBridgeException(
-            message:
-                _readOptionalString(decoded, 'message') ??
-                'Turn control request did not return a valid thread state.',
+            message: _sanitizeTurnErrorMessage(
+              _readOptionalString(
+                    decoded ?? const <String, dynamic>{},
+                    'message',
+                  ) ??
+                  'Turn control request did not return a valid thread state.',
+            ),
           );
         }
       }
 
       throw ThreadTurnBridgeException(
-        message:
-            _readOptionalString(decoded, 'message') ??
-            'Couldn’t update turn state right now.',
+        message: _sanitizeTurnErrorMessage(
+          _readOptionalString(
+                decoded ?? const <String, dynamic>{},
+                'message',
+              ) ??
+              'Couldn’t update turn state right now (HTTP ${response.statusCode}).',
+        ),
       );
     } on BridgeTransportConnectionException {
       throw const ThreadTurnBridgeException(
@@ -1018,6 +1086,23 @@ class ThreadSpeechBridgeException implements Exception {
   String toString() => message;
 }
 
+class ThreadUsageBridgeException implements Exception {
+  const ThreadUsageBridgeException({
+    required this.message,
+    this.statusCode,
+    this.code,
+    this.isConnectivityError = false,
+  });
+
+  final String message;
+  final int? statusCode;
+  final String? code;
+  final bool isConnectivityError;
+
+  @override
+  String toString() => message;
+}
+
 class TurnMutationResult {
   const TurnMutationResult({
     required this.contractVersion,
@@ -1136,6 +1221,16 @@ Uri _buildThreadSnapshotUri(String baseUrl, String threadId) {
   return baseUri.replace(path: fullPath, queryParameters: null);
 }
 
+Uri _buildThreadUsageUri(String baseUrl, String threadId) {
+  final baseUri = Uri.parse(baseUrl);
+  final normalizedBasePath = baseUri.path.endsWith('/')
+      ? baseUri.path.substring(0, baseUri.path.length - 1)
+      : baseUri.path;
+  final fullPath =
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/usage';
+  return baseUri.replace(path: fullPath, queryParameters: null);
+}
+
 Uri _buildThreadHistoryUri(
   String baseUrl,
   String threadId, {
@@ -1234,4 +1329,42 @@ String? _readOptionalString(Map<String, dynamic> json, String key) {
   }
 
   return value.trim();
+}
+
+String _sanitizeTurnErrorMessage(String message) {
+  final trimmed = message.trim();
+  if (trimmed.isEmpty) {
+    return 'Couldn’t update turn state right now.';
+  }
+
+  if (_looksLikeMinifiedClaudeCrash(trimmed)) {
+    if (trimmed.startsWith('Claude process exited with status')) {
+      final colonIndex = trimmed.indexOf(':');
+      final statusPrefix = colonIndex == -1
+          ? trimmed
+          : trimmed.substring(0, colonIndex);
+      return '$statusPrefix: Claude CLI crashed before returning a usable error. Check the bridge logs for details.';
+    }
+    return 'Claude CLI crashed before returning a usable error. Check the bridge logs for details.';
+  }
+
+  return trimmed;
+}
+
+bool _looksLikeMinifiedClaudeCrash(String message) {
+  final normalized = message.toLowerCase();
+  if (!normalized.contains('claude process exited with status') &&
+      !normalized.contains('defaulttransport=') &&
+      !normalized.contains('.error.code') &&
+      !normalized.contains('file:///users/')) {
+    return false;
+  }
+
+  final punctuationMatches = RegExp(
+    r'[{}()\[\];=,]',
+  ).allMatches(message).length;
+  return punctuationMatches > 8 ||
+      normalized.contains('defaulttransport=') ||
+      normalized.contains('.error.code') ||
+      normalized.contains('file:///users/');
 }

@@ -82,7 +82,11 @@ Future<_StatusOrderProbeAttemptReport> _runStatusOrderProbeAttempt({
   final controllerTimeline = <_StatusObservation>[];
 
   final snapshot = await detailApi
-      .createThread(bridgeApiBaseUrl: bridgeApiBaseUrl, workspace: workspace)
+      .createThread(
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        workspace: workspace,
+        provider: ProviderKind.codex,
+      )
       .timeout(
         const Duration(seconds: 15),
         onTimeout: () => throw TestFailure(

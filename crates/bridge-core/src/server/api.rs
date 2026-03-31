@@ -11,7 +11,8 @@ use shared_contracts::{
     AccessMode, BootstrapDto, ModelCatalogDto, NetworkSettingsDto, PairingRouteInventoryDto,
     ProviderKind, SecurityAuditEventDto, SpeechModelMutationAcceptedDto, SpeechModelStatusDto,
     SpeechTranscriptionResultDto, ThreadGitDiffDto, ThreadGitDiffMode, ThreadSnapshotDto,
-    ThreadSummaryDto, ThreadTimelinePageDto, TurnMode, TurnMutationAcceptedDto, UserInputAnswerDto,
+    ThreadSummaryDto, ThreadTimelinePageDto, ThreadUsageDto, TurnMode, TurnMutationAcceptedDto,
+    UserInputAnswerDto,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
@@ -20,6 +21,7 @@ use crate::pairing::{
     PairingTrustSnapshot,
 };
 use crate::policy::{PolicyAction, PolicyDecision};
+use crate::server::codex_usage::CodexUsageError;
 use crate::server::controls::{ApprovalRecordDto, ApprovalResolutionResponse};
 use crate::server::events::{EventSubscriptionQuery, stream_events};
 use crate::server::state::BridgeAppState;
@@ -56,6 +58,7 @@ pub fn router(state: BridgeAppState) -> Router {
         .route("/threads", get(list_threads).post(create_thread))
         .route("/threads/:thread_id/snapshot", get(thread_snapshot))
         .route("/threads/:thread_id/history", get(thread_history))
+        .route("/threads/:thread_id/usage", get(thread_usage))
         .route("/threads/:thread_id/git/status", get(thread_git_status))
         .route("/threads/:thread_id/git/diff", get(thread_git_diff))
         .route(
@@ -578,7 +581,7 @@ async fn start_turn(
     State(state): State<BridgeAppState>,
     Path(thread_id): Path<String>,
     ExtractJson(request): ExtractJson<StartTurnRequest>,
-) -> Result<Json<TurnMutationAcceptedDto>, StatusCode> {
+) -> Result<Json<TurnMutationAcceptedDto>, (StatusCode, Json<ErrorEnvelope>)> {
     match state
         .start_turn(
             &thread_id,
@@ -601,7 +604,7 @@ async fn start_turn(
         Ok(response) => Ok(Json(response)),
         Err(error) => {
             eprintln!("bridge start_turn failed for {thread_id}: {error}");
-            Err(StatusCode::BAD_GATEWAY)
+            Err(turn_error_response(&thread_id, error, "turn_start_failed"))
         }
     }
 }
@@ -718,6 +721,17 @@ async fn thread_git_status(
         .await
         .map(Json)
         .map_err(|error| git_error_response(&thread_id, error, "git_status_unavailable"))
+}
+
+async fn thread_usage(
+    State(state): State<BridgeAppState>,
+    Path(thread_id): Path<String>,
+) -> Result<Json<ThreadUsageDto>, (StatusCode, Json<ErrorEnvelope>)> {
+    state
+        .thread_usage(&thread_id)
+        .await
+        .map(Json)
+        .map_err(|error| thread_usage_error_response(&thread_id, error))
 }
 
 async fn thread_git_diff(
@@ -905,7 +919,7 @@ async fn interrupt_turn(
     State(state): State<BridgeAppState>,
     Path(thread_id): Path<String>,
     request: Option<ExtractJson<InterruptTurnRequest>>,
-) -> Result<Json<TurnMutationAcceptedDto>, StatusCode> {
+) -> Result<Json<TurnMutationAcceptedDto>, (StatusCode, Json<ErrorEnvelope>)> {
     let turn_id = request
         .as_ref()
         .and_then(|ExtractJson(request)| request.turn_id.as_deref());
@@ -913,7 +927,11 @@ async fn interrupt_turn(
         Ok(response) => Ok(Json(response)),
         Err(error) => {
             eprintln!("bridge interrupt_turn failed for {thread_id}: {error}");
-            Err(StatusCode::BAD_GATEWAY)
+            Err(turn_error_response(
+                &thread_id,
+                error,
+                "turn_interrupt_failed",
+            ))
         }
     }
 }
@@ -1223,6 +1241,66 @@ fn git_error_response(
     )
 }
 
+fn thread_usage_error_response(
+    thread_id: &str,
+    error: CodexUsageError,
+) -> (StatusCode, Json<ErrorEnvelope>) {
+    let status = match &error {
+        CodexUsageError::AuthUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+        CodexUsageError::UpstreamUnavailable(message)
+            if message.contains("thread ") && message.contains(" not found") =>
+        {
+            StatusCode::NOT_FOUND
+        }
+        CodexUsageError::UpstreamUnavailable(_) => StatusCode::BAD_GATEWAY,
+        CodexUsageError::InvalidResponse(_) => StatusCode::BAD_GATEWAY,
+    };
+
+    error_response(
+        status,
+        "thread_usage_unavailable",
+        error.code(),
+        format!("{thread_id}: {}", error.message()),
+    )
+}
+
+fn turn_error_response(
+    thread_id: &str,
+    message: String,
+    error_name: impl Into<String>,
+) -> (StatusCode, Json<ErrorEnvelope>) {
+    if message.contains("thread ") && message.contains(" not found") {
+        return error_response(
+            StatusCode::NOT_FOUND,
+            error_name,
+            "thread_not_found",
+            message,
+        );
+    }
+
+    if message.contains("plan mode is not implemented for Claude Code threads yet") {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            error_name,
+            "unsupported_turn_mode",
+            message,
+        );
+    }
+
+    if message.contains("no active Claude turn found")
+        || message.contains("no active turn found for thread")
+    {
+        return error_response(StatusCode::CONFLICT, error_name, "no_active_turn", message);
+    }
+
+    error_response(
+        StatusCode::BAD_GATEWAY,
+        error_name,
+        "upstream_mutation_failed",
+        format!("{thread_id}: {message}"),
+    )
+}
+
 fn git_diff_error_response(thread_id: &str, message: String) -> (StatusCode, Json<ErrorEnvelope>) {
     if message.contains("thread ") && message.contains(" not found") {
         return error_response(
@@ -1327,22 +1405,27 @@ mod tests {
     use std::sync::Arc;
 
     use async_trait::async_trait;
+    use axum::Json as AxumJson;
+    use axum::Router as AxumRouter;
     use axum::body::Body;
     use axum::http::Request;
     use axum::http::StatusCode;
+    use axum::routing::get as axum_get;
     use serde_json::Value;
     use serde_json::json;
+    use tokio::net::TcpListener;
     use tower::util::ServiceExt;
 
     use super::router;
     use crate::pairing::PairingFinalizeRequest;
+    use crate::server::codex_usage::CodexUsageClient;
     use crate::server::config::{BridgeCodexConfig, BridgeConfig};
     use crate::server::pairing_route::PairingRouteState;
     use crate::server::speech::{SpeechBackend, SpeechError, SpeechService};
     use crate::server::state::BridgeAppState;
     use shared_contracts::{
         AccessMode, SpeechModelStateDto, SpeechModelStatusDto, SpeechTranscriptionResultDto,
-        ThreadSnapshotDto, ThreadSummaryDto,
+        ThreadSnapshotDto, ThreadSummaryDto, ThreadUsageDto,
     };
 
     #[tokio::test]
@@ -1375,6 +1458,108 @@ mod tests {
             .expect("request should succeed");
 
         assert_eq!(response.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn thread_usage_route_returns_usage_payload() {
+        let state = test_state();
+        let repo_dir = unique_temp_dir("bridge-usage-route-repo");
+        prime_thread(
+            &state,
+            "codex:thread-usage",
+            &repo_dir,
+            AccessMode::FullControl,
+        )
+        .await;
+
+        let auth_path = unique_temp_dir("bridge-usage-auth").join("auth.json");
+        std::fs::create_dir_all(
+            auth_path
+                .parent()
+                .expect("auth path should have a parent directory"),
+        )
+        .expect("auth parent directory should create");
+        std::fs::write(
+            &auth_path,
+            serde_json::to_vec(&json!({
+                "tokens": {
+                    "access_token": "route-test-token"
+                }
+            }))
+            .expect("auth body should encode"),
+        )
+        .expect("auth body should write");
+
+        let usage_listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("usage listener should bind");
+        let usage_addr = usage_listener
+            .local_addr()
+            .expect("usage listener addr should resolve");
+        let usage_app = AxumRouter::new().route(
+            "/backend-api/wham/usage",
+            axum_get(|| async {
+                AxumJson(json!({
+                    "plan_type": "pro",
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 6,
+                            "limit_window_seconds": 18000,
+                            "reset_after_seconds": 12223,
+                            "reset_at": 1774996694
+                        },
+                        "secondary_window": {
+                            "used_percent": 42,
+                            "limit_window_seconds": 604800,
+                            "reset_after_seconds": 213053,
+                            "reset_at": 1775197525
+                        }
+                    }
+                }))
+            }),
+        );
+        let usage_server = tokio::spawn(async move {
+            axum::serve(usage_listener, usage_app)
+                .await
+                .expect("usage server should run");
+        });
+
+        state
+            .set_codex_usage_client_for_tests(CodexUsageClient::new(
+                auth_path,
+                format!("http://{usage_addr}/backend-api/wham/usage"),
+            ))
+            .await;
+
+        let app = router(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/threads/codex%3Athread-usage/usage")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: ThreadUsageDto = serde_json::from_slice(&body).expect("body should decode");
+        assert_eq!(decoded.thread_id, "codex:thread-usage");
+        assert_eq!(decoded.plan_type.as_deref(), Some("pro"));
+        assert_eq!(decoded.primary_window.used_percent, 6);
+        assert_eq!(
+            decoded
+                .secondary_window
+                .as_ref()
+                .expect("secondary window should exist")
+                .used_percent,
+            42
+        );
+
+        usage_server.abort();
     }
 
     #[tokio::test]
@@ -2541,6 +2726,59 @@ for line in sys.stdin:
         if let Some(parent) = script_path.parent() {
             let _ = fs::remove_dir_all(parent);
         }
+    }
+
+    #[tokio::test]
+    async fn start_turn_route_returns_structured_error_for_claude_plan_mode() {
+        let app = router(test_state());
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/threads/claude:test-thread/turns",
+                json!({
+                    "prompt": "Plan the change",
+                    "mode": "plan",
+                }),
+            ))
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert_eq!(decoded["error"], "turn_start_failed");
+        assert_eq!(decoded["code"], "unsupported_turn_mode");
+        assert_eq!(
+            decoded["message"],
+            "plan mode is not implemented for Claude Code threads yet"
+        );
+    }
+
+    #[tokio::test]
+    async fn interrupt_route_returns_structured_error_when_no_active_turn_exists() {
+        let app = router(test_state());
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/threads/claude:test-thread/interrupt",
+                json!({}),
+            ))
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert_eq!(decoded["error"], "turn_interrupt_failed");
+        assert_eq!(decoded["code"], "no_active_turn");
+        assert_eq!(
+            decoded["message"],
+            "no active Claude turn found for thread claude:test-thread"
+        );
     }
 
     #[derive(Debug)]

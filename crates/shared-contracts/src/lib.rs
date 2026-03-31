@@ -158,6 +158,26 @@ pub struct ThreadDetailDto {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadUsageWindowDto {
+    pub used_percent: u8,
+    pub limit_window_seconds: u64,
+    pub reset_after_seconds: u64,
+    pub reset_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadUsageDto {
+    pub contract_version: String,
+    pub thread_id: String,
+    pub provider: ProviderKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_type: Option<String>,
+    pub primary_window: ThreadUsageWindowDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secondary_window: Option<ThreadUsageWindowDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThreadTimelineEntryDto {
     pub event_id: String,
     pub kind: BridgeEventKind,
@@ -469,10 +489,11 @@ impl<TPayload> BridgeEventEnvelope<TPayload> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BootstrapDto, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION,
+        BootstrapDto, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ProviderKind,
         SecurityAuditEventDto, ServiceHealthDto, ServiceHealthStatus, ThreadDetailDto,
         ThreadStatus, ThreadSummaryDto, ThreadTimelineExplorationKind, ThreadTimelineGroupKind,
-        ThreadTimelinePageDto, TrustStateDto, TurnMutationAcceptedDto,
+        ThreadTimelinePageDto, ThreadUsageDto, ThreadUsageWindowDto, TrustStateDto,
+        TurnMutationAcceptedDto,
     };
 
     #[test]
@@ -594,5 +615,35 @@ mod tests {
         assert_eq!(value["thread_id"], "thread-123");
         assert_eq!(value["thread_status"], "running");
         assert_eq!(value["message"], "turn accepted");
+    }
+
+    #[test]
+    fn thread_usage_contract_serializes_expected_shape() {
+        let usage = ThreadUsageDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread_id: "codex:thread-123".to_string(),
+            provider: ProviderKind::Codex,
+            plan_type: Some("pro".to_string()),
+            primary_window: ThreadUsageWindowDto {
+                used_percent: 6,
+                limit_window_seconds: 18_000,
+                reset_after_seconds: 12_223,
+                reset_at: 1_774_996_694,
+            },
+            secondary_window: Some(ThreadUsageWindowDto {
+                used_percent: 42,
+                limit_window_seconds: 604_800,
+                reset_after_seconds: 213_053,
+                reset_at: 1_775_197_525,
+            }),
+        };
+
+        let value = serde_json::to_value(usage).expect("thread usage should serialize");
+        assert_eq!(value["contract_version"], CONTRACT_VERSION);
+        assert_eq!(value["thread_id"], "codex:thread-123");
+        assert_eq!(value["provider"], "codex");
+        assert_eq!(value["plan_type"], "pro");
+        assert_eq!(value["primary_window"]["used_percent"], 6);
+        assert_eq!(value["secondary_window"]["reset_after_seconds"], 213053);
     }
 }

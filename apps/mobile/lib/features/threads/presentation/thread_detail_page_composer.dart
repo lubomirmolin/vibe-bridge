@@ -1,5 +1,9 @@
 part of 'thread_detail_page.dart';
 
+const double _composerPrimaryButtonSize = 56;
+const double _composerModePeekOffset = 62;
+const double _composerPrimaryRailWidth = 74;
+
 class _PinnedTurnComposer extends StatelessWidget {
   const _PinnedTurnComposer({
     required this.composerController,
@@ -16,28 +20,18 @@ class _PinnedTurnComposer extends StatelessWidget {
     required this.speechMessageIsError,
     required this.isComposerFocused,
     required this.attachedImages,
+    required this.threadUsage,
     required this.composerMode,
     required this.selectedPlanOptionByQuestionId,
-    required this.modelOptions,
-    required this.reasoningOptions,
     required this.selectedProvider,
-    required this.canChangeProvider,
     required this.supportsPlanMode,
-    required this.selectedModel,
-    required this.selectedReasoning,
-    required this.accessMode,
     required this.session,
-    required this.isAccessModeUpdating,
     required this.accessModeErrorMessage,
     required this.onPickImages,
     required this.onToggleSpeechInput,
     required this.onRemoveImage,
     required this.onComposerModeChanged,
     required this.onSelectPlanOption,
-    required this.onProviderChanged,
-    required this.onModelChanged,
-    required this.onReasoningChanged,
-    required this.onAccessModeChanged,
     required this.onSubmitComposer,
     required this.onSubmitPendingUserInput,
     this.pendingUserInput,
@@ -57,29 +51,19 @@ class _PinnedTurnComposer extends StatelessWidget {
   final bool speechMessageIsError;
   final bool isComposerFocused;
   final List<XFile> attachedImages;
+  final ThreadUsageDto? threadUsage;
   final TurnMode composerMode;
   final PendingUserInputDto? pendingUserInput;
   final Map<String, String> selectedPlanOptionByQuestionId;
-  final List<ModelOptionDto> modelOptions;
-  final List<String> reasoningOptions;
   final ProviderKind selectedProvider;
-  final bool canChangeProvider;
   final bool supportsPlanMode;
-  final String selectedModel;
-  final String selectedReasoning;
-  final AccessMode accessMode;
   final AppBridgeSession? session;
-  final bool isAccessModeUpdating;
   final String? accessModeErrorMessage;
   final Future<void> Function() onPickImages;
   final Future<void> Function() onToggleSpeechInput;
   final ValueChanged<XFile> onRemoveImage;
   final ValueChanged<TurnMode> onComposerModeChanged;
   final void Function(String questionId, String optionId) onSelectPlanOption;
-  final Future<void> Function(ProviderKind provider) onProviderChanged;
-  final ValueChanged<String> onModelChanged;
-  final ValueChanged<String> onReasoningChanged;
-  final ValueChanged<AccessMode> onAccessModeChanged;
   final Future<bool> Function(String rawInput) onSubmitComposer;
   final Future<bool> Function(String rawInput)? onSubmitPendingUserInput;
 
@@ -106,6 +90,16 @@ class _PinnedTurnComposer extends StatelessWidget {
           composerFocusNode.unfocus();
         }
       });
+    }
+
+    Future<void> submitCurrentInput() async {
+      final success = hasPendingUserInput
+          ? await onSubmitPendingUserInput?.call(composerController.text) ??
+                false
+          : await onSubmitComposer(composerController.text);
+      if (success) {
+        composerController.clear();
+      }
     }
 
     return Padding(
@@ -153,151 +147,82 @@ class _PinnedTurnComposer extends StatelessWidget {
                     clipBehavior: Clip.none,
                     alignment: Alignment.bottomRight,
                     children: [
-                      _ComposerPrimaryActionRail(
-                        composerController: composerController,
-                        attachedImages: attachedImages,
-                        composerMode: composerMode,
-                        supportsPlanMode: supportsPlanMode,
-                        hasPendingUserInput: hasPendingUserInput,
-                        selectedPlanOptionByQuestionId:
-                            selectedPlanOptionByQuestionId,
-                        controlsEnabled: controlsEnabled,
-                        isTurnActive: isTurnActive,
-                        isComposerMutationInFlight: isComposerMutationInFlight,
-                        isInterruptMutationInFlight:
-                            isInterruptMutationInFlight,
-                        isSpeechRecording: isSpeechRecording,
-                        isSpeechTranscribing: isSpeechTranscribing,
-                        onComposerModeChanged: onComposerModeChanged,
-                        onSubmitComposer: onSubmitComposer,
-                        onSubmitPendingUserInput: onSubmitPendingUserInput,
-                      ),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 220),
-                            switchInCurve: Curves.easeOutCubic,
-                            switchOutCurve: Curves.easeInCubic,
-                            transitionBuilder: (child, animation) {
-                              return FadeTransition(
-                                opacity: animation,
-                                child: SizeTransition(
-                                  axis: Axis.horizontal,
-                                  axisAlignment: -1,
-                                  sizeFactor: animation,
-                                  child: child,
-                                ),
-                              );
-                            },
-                            child: shouldHideLeadingActions
-                                ? const SizedBox(
-                                    key: ValueKey(
-                                      'composer-leading-actions-hidden',
-                                    ),
-                                  )
-                                : Padding(
-                                    key: const ValueKey(
-                                      'composer-leading-actions-visible',
-                                    ),
-                                    padding: const EdgeInsets.only(right: 8),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        _ComposerUtilityButton(
-                                          key: const Key(
-                                            'turn-composer-attach-button',
-                                          ),
-                                          icon: PhosphorIcons.plus(),
-                                          tooltip: 'Attach images',
-                                          onPressed: canEditPinnedControls
-                                              ? () async {
-                                                  await onPickImages();
-                                                }
-                                              : null,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        _ComposerUtilityButton(
-                                          key: const Key(
-                                            'turn-composer-model-button',
-                                          ),
-                                          icon:
-                                              PhosphorIcons.slidersHorizontal(),
-                                          tooltip: 'Composer settings',
-                                          onPressed: canEditPinnedControls
-                                              ? () {
-                                                  composerFocusNode.unfocus();
-                                                  showModalBottomSheet<void>(
-                                                    context: context,
-                                                    backgroundColor:
-                                                        Colors.transparent,
-                                                    isScrollControlled: true,
-                                                    builder: (context) =>
-                                                        _ComposerModelSheet(
-                                                          modelOptions:
-                                                              modelOptions,
-                                                          reasoningOptions:
-                                                              reasoningOptions,
-                                                          initialProvider:
-                                                              selectedProvider,
-                                                          canChangeProvider:
-                                                              canChangeProvider,
-                                                          initialModel:
-                                                              selectedModel,
-                                                          initialReasoning:
-                                                              selectedReasoning,
-                                                          selectedAccessMode:
-                                                              accessMode,
-                                                          session: session,
-                                                          isAccessModeUpdating:
-                                                              isAccessModeUpdating,
-                                                          onProviderChanged:
-                                                              onProviderChanged,
-                                                          onModelChanged:
-                                                              onModelChanged,
-                                                          onReasoningChanged:
-                                                              onReasoningChanged,
-                                                          onAccessModeChanged:
-                                                              onAccessModeChanged,
-                                                        ),
-                                                  );
-                                                }
-                                              : null,
-                                        ),
-                                      ],
-                                    ),
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOutCubic,
+                        decoration: BoxDecoration(
+                          color: AppTheme.surfaceZinc800.withValues(
+                            alpha: isComposerFocused ? 0.98 : 0.9,
+                          ),
+                          borderRadius: BorderRadius.circular(28),
+                          border: Border.all(
+                            color: hasPendingUserInput
+                                ? const Color(0xFFA855F7).withValues(alpha: 0.5)
+                                : Colors.white.withValues(
+                                    alpha: isComposerFocused ? 0.14 : 0.07,
                                   ),
                           ),
-                          Expanded(
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 220),
-                              curve: Curves.easeOutCubic,
-                              decoration: BoxDecoration(
-                                color: AppTheme.surfaceZinc800.withValues(
-                                  alpha: isComposerFocused ? 0.98 : 0.9,
-                                ),
-                                borderRadius: BorderRadius.circular(26),
-                                border: Border.all(
-                                  color: hasPendingUserInput
-                                      ? const Color(
-                                          0xFFA855F7,
-                                        ).withValues(alpha: 0.5)
-                                      : Colors.white.withValues(
-                                          alpha: isComposerFocused
-                                              ? 0.14
-                                              : 0.07,
-                                        ),
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withValues(
-                                      alpha: isComposerFocused ? 0.18 : 0.12,
-                                    ),
-                                    blurRadius: isComposerFocused ? 18 : 12,
-                                    offset: const Offset(0, 8),
-                                  ),
-                                ],
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(
+                                alpha: isComposerFocused ? 0.18 : 0.12,
                               ),
+                              blurRadius: isComposerFocused ? 18 : 12,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 220),
+                              switchInCurve: Curves.easeOutCubic,
+                              switchOutCurve: Curves.easeInCubic,
+                              transitionBuilder: (child, animation) {
+                                return FadeTransition(
+                                  opacity: animation,
+                                  child: SizeTransition(
+                                    axis: Axis.horizontal,
+                                    axisAlignment: -1,
+                                    sizeFactor: animation,
+                                    child: child,
+                                  ),
+                                );
+                              },
+                              child: shouldHideLeadingActions
+                                  ? const SizedBox(
+                                      key: ValueKey(
+                                        'composer-leading-actions-hidden',
+                                      ),
+                                    )
+                                  : Padding(
+                                      key: const ValueKey(
+                                        'composer-leading-actions-visible',
+                                      ),
+                                      padding: const EdgeInsets.only(
+                                        left: 4,
+                                        bottom: 4,
+                                      ),
+                                      child: IconButton(
+                                        key: const Key(
+                                          'turn-composer-attach-button',
+                                        ),
+                                        tooltip: 'Attach images',
+                                        icon: PhosphorIcon(
+                                          PhosphorIcons.plus(),
+                                          size: 22,
+                                          color: AppTheme.textMain,
+                                        ),
+                                        onPressed: canEditPinnedControls
+                                            ? () async {
+                                                await onPickImages();
+                                              }
+                                            : null,
+                                      ),
+                                    ),
+                            ),
+                            Expanded(
                               child: AnimatedSwitcher(
                                 duration: const Duration(milliseconds: 180),
                                 switchInCurve: Curves.easeOutCubic,
@@ -320,8 +245,12 @@ class _PinnedTurnComposer extends StatelessWidget {
                                         keyboardType: TextInputType.multiline,
                                         textCapitalization:
                                             TextCapitalization.sentences,
-                                        textInputAction:
-                                            TextInputAction.newline,
+                                        textInputAction: TextInputAction.send,
+                                        onSubmitted: composerEnabled
+                                            ? (_) {
+                                                unawaited(submitCurrentInput());
+                                              }
+                                            : null,
                                         onTapOutside: (_) =>
                                             composerFocusNode.unfocus(),
                                         style: const TextStyle(
@@ -334,110 +263,136 @@ class _PinnedTurnComposer extends StatelessWidget {
                                               : hasPendingUserInput
                                               ? 'Something else...'
                                               : composerMode == TurnMode.plan
-                                              ? 'Ask ${selectedProvider == ProviderKind.codex ? 'Codex' : 'Claude Code'} to plan...'
-                                              : 'Message ${selectedProvider == ProviderKind.codex ? 'Codex' : 'Claude Code'}...',
+                                              ? 'Ask ${selectedProvider == ProviderKind.codex ? 'Codex' : 'Claude'} to plan...'
+                                              : 'Message ${selectedProvider == ProviderKind.codex ? 'Codex' : 'Claude'}...',
                                           hintStyle: const TextStyle(
                                             color: AppTheme.textSubtle,
                                           ),
                                           border: InputBorder.none,
                                           contentPadding:
                                               const EdgeInsets.symmetric(
-                                                horizontal: 18,
+                                                horizontal: 16,
                                                 vertical: 16,
                                               ),
                                         ),
                                       ),
                               ),
                             ),
-                          ),
-                          AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 220),
-                            switchInCurve: Curves.easeOutCubic,
-                            switchOutCurve: Curves.easeInCubic,
-                            transitionBuilder: (child, animation) {
-                              return FadeTransition(
-                                opacity: animation,
-                                child: SizeTransition(
-                                  axis: Axis.horizontal,
-                                  axisAlignment: -1,
-                                  sizeFactor: animation,
-                                  child: child,
-                                ),
-                              );
-                            },
-                            child:
-                                isComposerFocused ||
-                                    isSpeechRecording ||
-                                    isSpeechTranscribing
-                                ? Padding(
-                                    key: const ValueKey(
-                                      'composer-speech-visible',
-                                    ),
-                                    padding: const EdgeInsets.only(left: 10),
-                                    child: SizedBox(
-                                      width: 56,
-                                      height: 56,
-                                      child: MagneticButton(
-                                        key: const Key(
-                                          'turn-composer-speech-toggle',
-                                        ),
-                                        isCircle: true,
-                                        variant:
-                                            MagneticButtonVariant.secondary,
-                                        onClick:
-                                            (controlsEnabled &&
-                                                !isTurnActive &&
-                                                !isComposerMutationInFlight &&
-                                                !isInterruptMutationInFlight &&
-                                                !isSpeechTranscribing)
-                                            ? () async {
-                                                await onToggleSpeechInput();
-                                              }
-                                            : () {},
-                                        child: AnimatedSwitcher(
-                                          duration: const Duration(
-                                            milliseconds: 180,
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 220),
+                              switchInCurve: Curves.easeOutCubic,
+                              switchOutCurve: Curves.easeInCubic,
+                              transitionBuilder: (child, animation) {
+                                return FadeTransition(
+                                  opacity: animation,
+                                  child: SizeTransition(
+                                    axis: Axis.horizontal,
+                                    axisAlignment: -1,
+                                    sizeFactor: animation,
+                                    child: child,
+                                  ),
+                                );
+                              },
+                              child:
+                                  isComposerFocused ||
+                                      isSpeechRecording ||
+                                      isSpeechTranscribing
+                                  ? Padding(
+                                      key: const ValueKey(
+                                        'composer-speech-visible',
+                                      ),
+                                      padding: const EdgeInsets.only(bottom: 2),
+                                      child: SizedBox(
+                                        width: 52,
+                                        height: 52,
+                                        child: IconButton(
+                                          key: const Key(
+                                            'turn-composer-speech-toggle',
                                           ),
-                                          child: isSpeechTranscribing
-                                              ? const SizedBox.square(
-                                                  key: ValueKey(
-                                                    'speech-loading',
+                                          tooltip: isSpeechRecording
+                                              ? 'Stop recording'
+                                              : 'Voice input',
+                                          onPressed:
+                                              (controlsEnabled &&
+                                                  !isTurnActive &&
+                                                  !isComposerMutationInFlight &&
+                                                  !isInterruptMutationInFlight &&
+                                                  !isSpeechTranscribing)
+                                              ? () async {
+                                                  await onToggleSpeechInput();
+                                                }
+                                              : null,
+                                          icon: AnimatedSwitcher(
+                                            duration: const Duration(
+                                              milliseconds: 180,
+                                            ),
+                                            child: isSpeechTranscribing
+                                                ? const SizedBox.square(
+                                                    key: ValueKey(
+                                                      'speech-loading',
+                                                    ),
+                                                    dimension: 20,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                          strokeWidth: 2,
+                                                          color:
+                                                              AppTheme.textMain,
+                                                        ),
+                                                  )
+                                                : PhosphorIcon(
+                                                    key: ValueKey<bool>(
+                                                      isSpeechRecording,
+                                                    ),
+                                                    isSpeechRecording
+                                                        ? PhosphorIcons.x()
+                                                        : PhosphorIcons.microphone(),
+                                                    size: 22,
+                                                    color: isSpeechRecording
+                                                        ? AppTheme.emerald
+                                                        : AppTheme.textMain,
                                                   ),
-                                                  dimension: 20,
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                        strokeWidth: 2,
-                                                        color:
-                                                            AppTheme.textMain,
-                                                      ),
-                                                )
-                                              : PhosphorIcon(
-                                                  key: ValueKey<bool>(
-                                                    isSpeechRecording,
-                                                  ),
-                                                  isSpeechRecording
-                                                      ? PhosphorIcons.x()
-                                                      : PhosphorIcons.microphone(),
-                                                  size: 24,
-                                                  color: isSpeechRecording
-                                                      ? AppTheme.emerald
-                                                      : null,
-                                                ),
+                                          ),
                                         ),
                                       ),
+                                    )
+                                  : const SizedBox(
+                                      key: ValueKey('composer-speech-hidden'),
                                     ),
-                                  )
-                                : const SizedBox(
-                                    key: ValueKey('composer-speech-hidden'),
-                                  ),
-                          ),
-                          const SizedBox(width: 10),
-                          SizedBox(width: hasPendingUserInput ? 56.0 : 66.0),
-                        ],
+                            ),
+                            SizedBox(
+                              width: hasPendingUserInput
+                                  ? _composerPrimaryButtonSize
+                                  : _composerPrimaryRailWidth,
+                            ),
+                          ],
+                        ),
+                      ),
+                      _ComposerPrimaryActionRail(
+                        composerController: composerController,
+                        attachedImages: attachedImages,
+                        composerMode: composerMode,
+                        supportsPlanMode: supportsPlanMode,
+                        hasPendingUserInput: hasPendingUserInput,
+                        selectedPlanOptionByQuestionId:
+                            selectedPlanOptionByQuestionId,
+                        controlsEnabled: controlsEnabled,
+                        isTurnActive: isTurnActive,
+                        isComposerMutationInFlight: isComposerMutationInFlight,
+                        isInterruptMutationInFlight:
+                            isInterruptMutationInFlight,
+                        isSpeechRecording: isSpeechRecording,
+                        isSpeechTranscribing: isSpeechTranscribing,
+                        onComposerModeChanged: onComposerModeChanged,
+                        onSubmitCurrentInput: submitCurrentInput,
                       ),
                     ],
                   ),
                 ),
+                if (threadUsage != null &&
+                    selectedProvider == ProviderKind.codex) ...[
+                  const SizedBox(height: 8),
+                  _ThreadUsageMicroBars(threadUsage: threadUsage!),
+                ],
                 if (session == null) ...[
                   const SizedBox(height: 10),
                   Align(
@@ -491,6 +446,136 @@ class _PinnedTurnComposer extends StatelessWidget {
   }
 }
 
+class _ThreadUsageMicroBars extends StatelessWidget {
+  const _ThreadUsageMicroBars({required this.threadUsage});
+
+  final ThreadUsageDto threadUsage;
+
+  @override
+  Widget build(BuildContext context) {
+    final windows = <_UsageWindowPresentation>[
+      _UsageWindowPresentation(
+        key: const Key('thread-usage-primary-window'),
+        resetLabel: _formatUsageResetLabel(
+          threadUsage.primaryWindow.resetAfterSeconds,
+        ),
+        usedPercent: threadUsage.primaryWindow.usedPercent,
+      ),
+      if (threadUsage.secondaryWindow != null)
+        _UsageWindowPresentation(
+          key: const Key('thread-usage-secondary-window'),
+          resetLabel: _formatUsageResetLabel(
+            threadUsage.secondaryWindow!.resetAfterSeconds,
+          ),
+          usedPercent: threadUsage.secondaryWindow!.usedPercent,
+        ),
+    ];
+    if (windows.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Wrap(
+        spacing: 10,
+        runSpacing: 6,
+        children: windows
+            .map(
+              (window) => _ThreadUsageWindowBar(
+                key: window.key,
+                resetLabel: window.resetLabel,
+                usedPercent: window.usedPercent,
+              ),
+            )
+            .toList(growable: false),
+      ),
+    );
+  }
+}
+
+class _UsageWindowPresentation {
+  const _UsageWindowPresentation({
+    required this.key,
+    required this.resetLabel,
+    required this.usedPercent,
+  });
+
+  final Key key;
+  final String resetLabel;
+  final int usedPercent;
+}
+
+class _ThreadUsageWindowBar extends StatelessWidget {
+  const _ThreadUsageWindowBar({
+    super.key,
+    required this.resetLabel,
+    required this.usedPercent,
+  });
+
+  final String resetLabel;
+  final int usedPercent;
+
+  @override
+  Widget build(BuildContext context) {
+    final remainingPercent = 100 - usedPercent.clamp(0, 100);
+    final normalizedProgress = remainingPercent.toDouble() / 100;
+    return Semantics(
+      label: 'Usage resets in $resetLabel with $remainingPercent percent left',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            resetLabel,
+            style: GoogleFonts.ibmPlexMono(
+              color: AppTheme.textMuted,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+              letterSpacing: 0.2,
+            ),
+          ),
+          const SizedBox(width: 6),
+          SizedBox(
+            width: 44,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                minHeight: 4,
+                value: normalizedProgress.toDouble(),
+                backgroundColor: Colors.white.withValues(alpha: 0.08),
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  Color.lerp(
+                        const Color(0xFF34D399),
+                        const Color(0xFFF59E0B),
+                        normalizedProgress,
+                      ) ??
+                      const Color(0xFF34D399),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _formatUsageResetLabel(int seconds) {
+  const secondsPerMinute = 60;
+  const secondsPerHour = 60 * secondsPerMinute;
+  const secondsPerDay = 24 * secondsPerHour;
+  final normalizedSeconds = seconds < 0 ? 0 : seconds;
+  if (normalizedSeconds >= secondsPerDay) {
+    return '${(normalizedSeconds / secondsPerDay).ceil()}d';
+  }
+  if (normalizedSeconds >= secondsPerHour) {
+    return '${(normalizedSeconds / secondsPerHour).ceil()}h';
+  }
+  if (normalizedSeconds >= secondsPerMinute) {
+    return '${(normalizedSeconds / secondsPerMinute).ceil()}m';
+  }
+  return '${normalizedSeconds}s';
+}
+
 class _PendingUserInputCard extends StatelessWidget {
   const _PendingUserInputCard({
     required this.pendingUserInput,
@@ -536,6 +621,10 @@ class _PendingUserInputCard extends StatelessWidget {
         option: selectedOption,
       ));
     }
+    final totalQuestions = pendingUserInput.questions.length;
+    final completedCopy = totalQuestions == 1
+        ? 'Selection saved. Add optional context below, or press submit.'
+        : 'All $totalQuestions questions are answered. Add optional context below, or press submit.';
 
     return Container(
       width: double.infinity,
@@ -656,8 +745,8 @@ class _PendingUserInputCard extends StatelessWidget {
                         color: Colors.white.withValues(alpha: 0.06),
                       ),
                     ),
-                    child: const Text(
-                      'All three answers are selected. Add "Something else" below if needed, or press plan to continue.',
+                    child: Text(
+                      completedCopy,
                       style: TextStyle(
                         color: AppTheme.textMuted,
                         fontSize: 13,
@@ -859,8 +948,7 @@ class _ComposerPrimaryActionRail extends StatefulWidget {
     required this.isSpeechRecording,
     required this.isSpeechTranscribing,
     required this.onComposerModeChanged,
-    required this.onSubmitComposer,
-    required this.onSubmitPendingUserInput,
+    required this.onSubmitCurrentInput,
   });
 
   final TextEditingController composerController;
@@ -876,8 +964,7 @@ class _ComposerPrimaryActionRail extends StatefulWidget {
   final bool isSpeechRecording;
   final bool isSpeechTranscribing;
   final ValueChanged<TurnMode> onComposerModeChanged;
-  final Future<bool> Function(String rawInput) onSubmitComposer;
-  final Future<bool> Function(String rawInput)? onSubmitPendingUserInput;
+  final Future<void> Function() onSubmitCurrentInput;
 
   @override
   State<_ComposerPrimaryActionRail> createState() =>
@@ -954,8 +1041,10 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
   Widget build(BuildContext context) {
     return SizedBox(
       key: const Key('turn-composer-primary-rail'),
-      width: widget.hasPendingUserInput ? 56 : 66,
-      height: 56,
+      width: widget.hasPendingUserInput
+          ? _composerPrimaryButtonSize
+          : _composerPrimaryRailWidth,
+      height: _composerPrimaryButtonSize,
       child: ListenableBuilder(
         listenable: widget.composerController,
         builder: (context, _) {
@@ -966,7 +1055,6 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
           final canRunPrimaryAction =
               hasInput &&
               widget.controlsEnabled &&
-              !widget.isTurnActive &&
               !widget.isComposerMutationInFlight &&
               !widget.isInterruptMutationInFlight &&
               !widget.isSpeechRecording &&
@@ -979,15 +1067,7 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
             if (!canRunPrimaryAction) {
               return;
             }
-            final success = widget.hasPendingUserInput
-                ? await widget.onSubmitPendingUserInput?.call(
-                        widget.composerController.text,
-                      ) ??
-                      false
-                : await widget.onSubmitComposer(widget.composerController.text);
-            if (success) {
-              widget.composerController.clear();
-            }
+            await widget.onSubmitCurrentInput();
           }
 
           Widget buildPrimaryButton({
@@ -1064,8 +1144,8 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
             );
 
             return SizedBox(
-              width: 56,
-              height: 56,
+              width: _composerPrimaryButtonSize,
+              height: _composerPrimaryButtonSize,
               child: Container(
                 decoration: BoxDecoration(
                   color: bgColor,
@@ -1083,11 +1163,6 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
                       : null,
                 ),
                 child: MagneticButton(
-                  key: Key(
-                    mode == TurnMode.act
-                        ? 'turn-composer-submit'
-                        : 'turn-composer-plan-submit',
-                  ),
                   isCircle: true,
                   variant: MagneticButtonVariant.primary,
                   backgroundColorOverride: Colors
@@ -1106,15 +1181,21 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
           }
 
           if (widget.hasPendingUserInput) {
-            return buildPrimaryButton(
-              mode: TurnMode.plan,
-              isActive: true,
-              isPurple: true,
+            return SizedBox(
+              key: const Key('turn-composer-plan-submit'),
+              child: buildPrimaryButton(
+                mode: TurnMode.plan,
+                isActive: true,
+                isPurple: true,
+              ),
             );
           }
 
           if (!widget.supportsPlanMode) {
-            return buildPrimaryButton(mode: TurnMode.act, isActive: true);
+            return SizedBox(
+              key: const Key('turn-composer-submit'),
+              child: buildPrimaryButton(mode: TurnMode.act, isActive: true),
+            );
           }
 
           final activeMode = effectiveMode;
@@ -1127,7 +1208,7 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
             builder: (context, child) {
               final effectiveDrag = _dragDx;
 
-              const spacing = 68.0;
+              const spacing = _composerModePeekOffset;
 
               // Calculate progress for color morphing
               // progress = 1.0 when active is fully centered, 0.0 when active is completely offset
@@ -1150,17 +1231,24 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
                   .toDouble();
 
               return GestureDetector(
+                key: Key(
+                  activeMode == TurnMode.act
+                      ? 'turn-composer-submit'
+                      : 'turn-composer-plan-submit',
+                ),
                 behavior: HitTestBehavior.translucent,
                 onTapUp: (details) {
-                  if (details.localPosition.dx >= 56) {
+                  if (details.localPosition.dx >= _composerPrimaryButtonSize) {
                     widget.onComposerModeChanged(secondaryMode);
+                  } else {
+                    handleSubmit();
                   }
                 },
                 onHorizontalDragUpdate: _onDragUpdate,
                 onHorizontalDragEnd: _onDragEnd,
                 child: SizedBox(
-                  width: 66,
-                  height: 56,
+                  width: _composerPrimaryRailWidth,
+                  height: _composerPrimaryButtonSize,
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
@@ -1199,39 +1287,6 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
             },
           );
         },
-      ),
-    );
-  }
-}
-
-class _ComposerUtilityButton extends StatelessWidget {
-  const _ComposerUtilityButton({
-    super.key,
-    required this.icon,
-    required this.tooltip,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 52,
-      height: 52,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: AppTheme.surfaceZinc800.withValues(alpha: 0.86),
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
-        ),
-        child: IconButton(
-          tooltip: tooltip,
-          onPressed: onPressed,
-          icon: PhosphorIcon(icon, size: 22, color: AppTheme.textMain),
-        ),
       ),
     );
   }
@@ -1384,6 +1439,10 @@ class _ComposerModelSheetState extends State<_ComposerModelSheet> {
                                   'turn-composer-provider-option-${provider.wireValue}',
                                 ),
                                 label: _providerLabel(provider),
+                                leadingWidget: ProviderIcon(
+                                  provider: provider,
+                                  size: 17,
+                                ),
                                 selected: _selectedProvider == provider,
                                 trailing:
                                     _isProviderUpdating &&
@@ -1482,6 +1541,10 @@ class _ComposerModelSheetState extends State<_ComposerModelSheet> {
                             ),
                             label: _providerLabel(_selectedProvider),
                             selected: true,
+                            leadingWidget: ProviderIcon(
+                              provider: _selectedProvider,
+                              size: 17,
+                            ),
                             leading: PhosphorIcons.lock(),
                             leadingColor: AppTheme.textSubtle,
                             onTap: () {},
@@ -1666,6 +1729,7 @@ class _ComposerSheetOption extends StatelessWidget {
     required this.selected,
     required this.onTap,
     this.leading,
+    this.leadingWidget,
     this.leadingColor,
     this.trailing,
   });
@@ -1674,6 +1738,7 @@ class _ComposerSheetOption extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
   final IconData? leading;
+  final Widget? leadingWidget;
   final Color? leadingColor;
   final Widget? trailing;
 
@@ -1696,7 +1761,13 @@ class _ComposerSheetOption extends StatelessWidget {
             ),
             child: Row(
               children: [
-                if (leading != null) ...[
+                if (leadingWidget != null) ...[
+                  SizedBox.square(
+                    dimension: 18,
+                    child: Center(child: leadingWidget!),
+                  ),
+                  const SizedBox(width: 10),
+                ] else if (leading != null) ...[
                   PhosphorIcon(
                     leading!,
                     size: 18,

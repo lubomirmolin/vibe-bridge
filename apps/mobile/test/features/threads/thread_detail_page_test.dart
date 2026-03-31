@@ -165,6 +165,61 @@ void main() {
     },
   );
 
+  testWidgets('thread detail shows compact Codex usage bars under composer', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'codex:thread-usage': [
+          _thread123Detail(threadId: 'codex:thread-usage'),
+        ],
+      },
+      timelineScriptByThreadId: {
+        'codex:thread-usage': [const <ThreadTimelineEntryDto>[]],
+      },
+      threadUsageScriptByThreadId: {
+        'codex:thread-usage': [
+          const ThreadUsageDto(
+            contractVersion: contractVersion,
+            threadId: 'codex:thread-usage',
+            provider: ProviderKind.codex,
+            planType: 'pro',
+            primaryWindow: ThreadUsageWindowDto(
+              usedPercent: 6,
+              limitWindowSeconds: 18000,
+              resetAfterSeconds: 12223,
+              resetAt: 1774996694,
+            ),
+            secondaryWindow: ThreadUsageWindowDto(
+              usedPercent: 42,
+              limitWindowSeconds: 604800,
+              resetAfterSeconds: 213053,
+              resetAt: 1775197525,
+            ),
+          ),
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'codex:thread-usage',
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('thread-usage-primary-window')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('thread-usage-secondary-window')),
+      findsOneWidget,
+    );
+    expect(find.text('4h'), findsOneWidget);
+    expect(find.text('3d'), findsOneWidget);
+  });
+
   testWidgets(
     'thread detail shows inline loader until initial timeline page resolves',
     (tester) async {
@@ -297,6 +352,60 @@ void main() {
         findsNothing,
       );
       expect(find.text('No timeline entries yet.'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'thread detail deduplicates duplicate initial timeline event ids',
+    (tester) async {
+      const duplicateEventId = '0c9c581a-534e-46ee-994a-7f55181f6d47-claude-4';
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail(status: ThreadStatus.completed)],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            [
+              _timelineEvent(
+                id: duplicateEventId,
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Claude duplicate output',
+                payload: {
+                  'type': 'agentMessage',
+                  'role': 'assistant',
+                  'text': 'Claude duplicate output',
+                },
+                occurredAt: '2026-03-18T10:02:00Z',
+              ),
+              _timelineEvent(
+                id: duplicateEventId,
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Claude duplicate output',
+                payload: {
+                  'type': 'agentMessage',
+                  'role': 'assistant',
+                  'text': 'Claude duplicate output',
+                },
+                occurredAt: '2026-03-18T10:02:00Z',
+              ),
+            ],
+          ],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Claude duplicate output'), findsOneWidget);
+      expect(
+        find.byKey(Key('thread-message-card-$duplicateEventId')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
     },
   );
 
@@ -603,6 +712,35 @@ void main() {
       );
     },
   );
+
+  testWidgets('thread detail submits composer input from the keyboard action', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-456': [_thread456Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-456': [<ThreadTimelineEntryDto>[]],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-456',
+    );
+
+    final composerInput = find.byKey(const Key('turn-composer-input'));
+    await tester.showKeyboard(composerInput);
+    await tester.enterText(composerInput, 'Send this from the keyboard.');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+
+    expect(detailApi.startTurnPromptsByThreadId['thread-456'], [
+      'Send this from the keyboard.',
+    ]);
+  });
 
   testWidgets(
     'thread detail restores an unsent composer draft after leaving and reopening',
@@ -2637,6 +2775,127 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
   });
 
   testWidgets(
+    'pending approval prompts submit during active turn and clear on resolved event',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail(status: ThreadStatus.running)],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+      );
+      final liveStream = FakeThreadLiveStream();
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+        liveStream: liveStream,
+      );
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-user-input-pending',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.userInputRequested,
+          occurredAt: '2026-03-31T09:00:00Z',
+          payload: {
+            'request_id': 'provider-approval-1',
+            'title': 'Approve command execution?',
+            'detail': 'Command: git status',
+            'questions': [
+              {
+                'question_id': 'approval_decision',
+                'prompt': 'Choose an action',
+                'options': [
+                  {
+                    'option_id': 'allow_once',
+                    'label': 'Allow once',
+                    'description': 'Approve this action one time.',
+                    'is_recommended': true,
+                  },
+                  {
+                    'option_id': 'allow_for_session',
+                    'label': 'Allow for session',
+                    'description': 'Approve now and remember for this session.',
+                    'is_recommended': false,
+                  },
+                  {
+                    'option_id': 'deny',
+                    'label': 'Deny',
+                    'description': 'Deny this action and interrupt the turn.',
+                    'is_recommended': false,
+                  },
+                ],
+              },
+            ],
+            'state': 'pending',
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Approve command execution?'), findsOneWidget);
+      await tester.tap(find.text('Allow once'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          'Selection saved. Add optional context below, or press submit.',
+        ),
+        findsOneWidget,
+      );
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ThreadDetailPage)),
+      );
+      final controller = container.read(
+        threadDetailControllerProvider(
+          const ThreadDetailControllerArgs(
+            bridgeApiBaseUrl: _bridgeApiBaseUrl,
+            threadId: 'thread-123',
+            initialVisibleTimelineEntries: 20,
+          ),
+        ).notifier,
+      );
+      final submitSuccess = await controller.respondToPendingUserInput(
+        freeText: '',
+        answers: const <UserInputAnswerDto>[
+          UserInputAnswerDto(
+            questionId: 'approval_decision',
+            optionId: 'allow_once',
+          ),
+        ],
+      );
+      expect(submitSuccess, isTrue);
+      await tester.pumpAndSettle();
+
+      expect(detailApi.respondToUserInputCalls, hasLength(1));
+      final responseCall = detailApi.respondToUserInputCalls.single;
+      expect(responseCall.threadId, 'thread-123');
+      expect(responseCall.requestId, 'provider-approval-1');
+      expect(responseCall.answers, hasLength(1));
+      expect(responseCall.answers.single.questionId, 'approval_decision');
+      expect(responseCall.answers.single.optionId, 'allow_once');
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-user-input-resolved',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.userInputRequested,
+          occurredAt: '2026-03-31T09:00:01Z',
+          payload: {'request_id': 'provider-approval-1', 'state': 'resolved'},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Approve command execution?'), findsNothing);
+    },
+  );
+
+  testWidgets(
     'composer input stays multiline and collapses leading actions on focus',
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(
@@ -2660,13 +2919,13 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
 
       expect(input.maxLines, 4);
       expect(input.textCapitalization, TextCapitalization.sentences);
-      expect(input.textInputAction, TextInputAction.newline);
+      expect(input.textInputAction, TextInputAction.send);
       expect(
         find.byKey(const Key('turn-composer-attach-button')),
         findsOneWidget,
       );
       expect(
-        find.byKey(const Key('turn-composer-model-button')),
+        find.byKey(const Key('thread-detail-settings-toggle')),
         findsOneWidget,
       );
 
@@ -2677,7 +2936,6 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
         find.byKey(const Key('turn-composer-attach-button')),
         findsNothing,
       );
-      expect(find.byKey(const Key('turn-composer-model-button')), findsNothing);
       expect(find.byKey(const Key('turn-composer-submit')), findsOneWidget);
     },
   );
@@ -3025,6 +3283,47 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       expect(find.text('Thinking'), findsOneWidget);
     },
   );
+
+  testWidgets('running thread uses steering instruction when submitting text', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [<ThreadTimelineEntryDto>[]],
+      },
+      steerTurnScriptByThreadId: {
+        'thread-123': [
+          _turnMutationResult(
+            threadId: 'thread-123',
+            operation: 'turn_steer',
+            status: ThreadStatus.running,
+            message: 'Steer instruction applied to active turn',
+          ),
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+
+    await tester.pumpAndSettle();
+    final composerInput = find.byKey(const Key('turn-composer-input'));
+    await tester.showKeyboard(composerInput);
+    await tester.enterText(composerInput, 'Continue with the next subtask.');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+
+    expect(detailApi.startTurnPromptsByThreadId['thread-123'], isNull);
+    expect(detailApi.steerTurnInstructionsByThreadId['thread-123'], [
+      'Continue with the next subtask.',
+    ]);
+  });
 
   testWidgets('running indicator reflects file reading activity', (
     tester,
@@ -4888,7 +5187,7 @@ Future<void> _openGitSyncSheet(WidgetTester tester) async {
 }
 
 Future<void> _openComposerModelSheet(WidgetTester tester) async {
-  await tester.tap(find.byKey(const Key('turn-composer-model-button')));
+  await tester.tap(find.byKey(const Key('thread-detail-settings-toggle')));
   await tester.pumpAndSettle();
 }
 
@@ -5043,12 +5342,13 @@ List<ThreadSummaryDto> _threadSummaries() {
 }
 
 ThreadDetailDto _thread123Detail({
+  String threadId = 'thread-123',
   AccessMode accessMode = AccessMode.controlWithApprovals,
   ThreadStatus status = ThreadStatus.running,
 }) {
   return ThreadDetailDto(
     contractVersion: contractVersion,
-    threadId: 'thread-123',
+    threadId: threadId,
     title: 'Implement shared contracts',
     status: status,
     workspace: '/workspace/vibe-bridge-companion',
@@ -5264,6 +5564,24 @@ OpenOnMacResponseDto _openOnMacResponse({
   );
 }
 
+class PendingUserInputResponseCall {
+  const PendingUserInputResponseCall({
+    required this.threadId,
+    required this.requestId,
+    required this.answers,
+    required this.freeText,
+    required this.model,
+    required this.effort,
+  });
+
+  final String threadId;
+  final String requestId;
+  final List<UserInputAnswerDto> answers;
+  final String? freeText;
+  final String? model;
+  final String? effort;
+}
+
 class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   FakeThreadDetailBridgeApi({
     required Map<String, List<Object>> detailScriptByThreadId,
@@ -5280,6 +5598,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     Map<String, List<Object>>? pullScriptByThreadId,
     Map<String, List<Object>>? pushScriptByThreadId,
     Map<String, List<Object>>? openOnMacScriptByThreadId,
+    Map<String, List<Object>>? threadUsageScriptByThreadId,
     List<Object>? speechStatusScript,
     this.speechTranscriptionResult,
     this.speechTranscriptionError,
@@ -5287,7 +5606,8 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   }) : _detailScriptByThreadId = detailScriptByThreadId,
        _timelineScriptByThreadId = timelineScriptByThreadId,
        _timelineThreadByThreadId = timelineThreadByThreadId ?? {},
-       _modelCatalog = modelCatalog ?? fallbackModelCatalog,
+       _modelCatalog =
+           modelCatalog ?? fallbackModelCatalogForProvider(ProviderKind.codex),
        _createThreadScript = createThreadScript ?? <Object>[],
        _startTurnScriptByThreadId = startTurnScriptByThreadId ?? {},
        _steerTurnScriptByThreadId = steerTurnScriptByThreadId ?? {},
@@ -5298,6 +5618,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
        _pullScriptByThreadId = pullScriptByThreadId ?? {},
        _pushScriptByThreadId = pushScriptByThreadId ?? {},
        _openOnMacScriptByThreadId = openOnMacScriptByThreadId ?? {},
+       _threadUsageScriptByThreadId = threadUsageScriptByThreadId ?? {},
        _speechStatusScript = speechStatusScript ?? <Object>[];
 
   final Map<String, List<Object>> _detailScriptByThreadId;
@@ -5314,6 +5635,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   final Map<String, List<Object>> _pullScriptByThreadId;
   final Map<String, List<Object>> _pushScriptByThreadId;
   final Map<String, List<Object>> _openOnMacScriptByThreadId;
+  final Map<String, List<Object>> _threadUsageScriptByThreadId;
   final List<Object> _speechStatusScript;
   final SpeechTranscriptionResultDto? speechTranscriptionResult;
   final ThreadSpeechBridgeException? speechTranscriptionError;
@@ -5338,10 +5660,13 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   final Map<String, int> pullCallsByThreadId = <String, int>{};
   final Map<String, int> pushCallsByThreadId = <String, int>{};
   final Map<String, int> openOnMacCallsByThreadId = <String, int>{};
+  final List<PendingUserInputResponseCall> respondToUserInputCalls =
+      <PendingUserInputResponseCall>[];
 
   @override
   Future<ModelCatalogDto> fetchModelCatalog({
     required String bridgeApiBaseUrl,
+    required ProviderKind provider,
   }) async {
     return _modelCatalog;
   }
@@ -5396,6 +5721,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   Future<ThreadSnapshotDto> createThread({
     required String bridgeApiBaseUrl,
     required String workspace,
+    required ProviderKind provider,
     String? model,
   }) async {
     createThreadCallCount += 1;
@@ -5456,6 +5782,29 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     }
 
     throw StateError('Unsupported detail scripted result: $scriptedResult');
+  }
+
+  @override
+  Future<ThreadUsageDto> fetchThreadUsage({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    final script = _threadUsageScriptByThreadId[threadId];
+    if (script == null || script.isEmpty) {
+      throw const ThreadUsageBridgeException(
+        message: 'Usage is unavailable in this test.',
+      );
+    }
+
+    final scriptedResult = _nextResult(_threadUsageScriptByThreadId, threadId);
+    if (scriptedResult is ThreadUsageDto) {
+      return scriptedResult;
+    }
+    if (scriptedResult is ThreadUsageBridgeException) {
+      throw scriptedResult;
+    }
+
+    throw StateError('Unsupported usage scripted result: $scriptedResult');
   }
 
   @override
@@ -5565,11 +5914,21 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     String? model,
     String? effort,
   }) async {
+    respondToUserInputCalls.add(
+      PendingUserInputResponseCall(
+        threadId: threadId,
+        requestId: requestId,
+        answers: List<UserInputAnswerDto>.unmodifiable(answers),
+        freeText: freeText,
+        model: model,
+        effort: effort,
+      ),
+    );
     return _turnMutationResult(
       threadId: threadId,
       operation: 'turn_respond',
       status: ThreadStatus.running,
-      message: 'Plan clarification accepted',
+      message: 'Pending input accepted',
     );
   }
 

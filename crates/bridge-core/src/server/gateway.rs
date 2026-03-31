@@ -12,7 +12,7 @@ use shared_contracts::{
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -62,6 +62,22 @@ pub struct TurnStartRequest {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub permission_mode: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum GatewayTurnControlRequest {
+    CodexApproval {
+        request_id: Value,
+        method: String,
+        params: Value,
+    },
+    ClaudeCanUseTool {
+        request_id: String,
+        request: Value,
+    },
+    ClaudeControlCancel {
+        request_id: String,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -276,15 +292,17 @@ impl CodexGateway {
         self.config.desktop_ipc_socket_path.clone()
     }
 
-    pub fn start_turn_streaming<F, G>(
+    pub fn start_turn_streaming<F, G, H>(
         &self,
         thread_id: &str,
         request: TurnStartRequest,
         on_event: F,
+        on_control_request: H,
         on_turn_completed: G,
     ) -> Result<GatewayTurnMutation, String>
     where
         F: Fn(BridgeEventEnvelope<Value>) + Send + 'static,
+        H: Fn(GatewayTurnControlRequest) -> Result<Option<Value>, String> + Send + 'static,
         G: Fn(String) + Send + 'static,
     {
         if is_provider_thread_id(thread_id, ProviderKind::ClaudeCode) {
@@ -292,6 +310,7 @@ impl CodexGateway {
                 thread_id,
                 request,
                 on_event,
+                on_control_request,
                 on_turn_completed,
             );
         }
@@ -358,7 +377,29 @@ impl CodexGateway {
 
             let mut normalizer = CodexNotificationNormalizer::default();
             while let Ok(Some(message)) = transport.next_message("turn stream") {
-                if message.get("id").is_some() {
+                if let Some(request_id) = message.get("id").cloned() {
+                    let Some(method) = message.get("method").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let params = message.get("params").cloned().unwrap_or(Value::Null);
+                    match on_control_request(GatewayTurnControlRequest::CodexApproval {
+                        request_id: request_id.clone(),
+                        method: method.to_string(),
+                        params,
+                    }) {
+                        Ok(Some(response_payload)) => {
+                            if let Err(error) = transport.respond(&request_id, response_payload) {
+                                eprintln!(
+                                    "failed to send codex control response for {thread_id}: {error}"
+                                );
+                                break;
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            let _ = transport.respond_error(&request_id, -32000, &error);
+                        }
+                    }
                     continue;
                 }
 
@@ -385,15 +426,17 @@ impl CodexGateway {
             .map_err(|error| format!("failed to receive codex turn-start result: {error}"))?
     }
 
-    fn start_claude_turn_streaming<F, G>(
+    fn start_claude_turn_streaming<F, G, H>(
         &self,
         thread_id: &str,
         request: TurnStartRequest,
         on_event: F,
+        on_control_request: H,
         on_turn_completed: G,
     ) -> Result<GatewayTurnMutation, String>
     where
         F: Fn(BridgeEventEnvelope<Value>) + Send + 'static,
+        H: Fn(GatewayTurnControlRequest) -> Result<Option<Value>, String> + Send + 'static,
         G: Fn(String) + Send + 'static,
     {
         if !is_provider_thread_id(thread_id, ProviderKind::ClaudeCode) {
@@ -421,6 +464,20 @@ impl CodexGateway {
         let (result_tx, result_rx) = mpsc::sync_channel(1);
 
         std::thread::spawn(move || {
+            let prompt_char_count = request.prompt.chars().count();
+            let image_count = request.images.len();
+            let session_exists = claude_session_archive_path(&workspace, &native_thread_id)
+                .is_some_and(|path| path.is_file());
+            eprintln!(
+                "starting claude turn thread_id={thread_id} session_id={native_thread_id} workspace={} model={} effort={} permission_mode={} prompt_chars={} images={} launch_mode={}",
+                workspace,
+                request.model.as_deref().unwrap_or("default"),
+                request.effort.as_deref().unwrap_or("default"),
+                request.permission_mode.as_deref().unwrap_or("default"),
+                prompt_char_count,
+                image_count,
+                if session_exists { "resume" } else { "new" },
+            );
             let mut command = Command::new("claude");
             command
                 .current_dir(&workspace)
@@ -434,10 +491,13 @@ impl CodexGateway {
                 .arg("stream-json")
                 .arg("--input-format")
                 .arg("stream-json")
-                .arg("--session-id")
-                .arg(&native_thread_id)
                 .arg("--permission-mode")
                 .arg(request.permission_mode.as_deref().unwrap_or("default"));
+            if session_exists {
+                command.arg("--resume").arg(&native_thread_id);
+            } else {
+                command.arg("--session-id").arg(&native_thread_id);
+            }
             if let Some(model) = request
                 .model
                 .as_deref()
@@ -497,7 +557,6 @@ impl CodexGateway {
                 return;
             }
             let _ = stdin.flush();
-            drop(stdin);
             let child_handle = Arc::new(Mutex::new(child));
             active_claude_processes
                 .lock()
@@ -554,6 +613,57 @@ impl CodexGateway {
                     did_ack = true;
                 }
 
+                if let Some(request_id) = parse_claude_control_request_id(&value) {
+                    let request = value
+                        .get("request")
+                        .cloned()
+                        .unwrap_or(Value::Object(serde_json::Map::new()));
+                    match request.get("subtype").and_then(Value::as_str) {
+                        Some("can_use_tool") => {
+                            match on_control_request(GatewayTurnControlRequest::ClaudeCanUseTool {
+                                request_id: request_id.clone(),
+                                request,
+                            }) {
+                                Ok(Some(response_payload)) => {
+                                    if let Err(error) = write_claude_control_response(
+                                        &mut stdin,
+                                        &request_id,
+                                        response_payload,
+                                    ) {
+                                        eprintln!(
+                                            "failed to write Claude control response for {thread_id}: {error}"
+                                        );
+                                        break;
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(error) => {
+                                    let _ = write_claude_control_error_response(
+                                        &mut stdin,
+                                        &request_id,
+                                        &error,
+                                    );
+                                }
+                            }
+                        }
+                        _ => {
+                            let _ = write_claude_control_error_response(
+                                &mut stdin,
+                                &request_id,
+                                "unsupported control request subtype",
+                            );
+                        }
+                    }
+                    continue;
+                }
+
+                if let Some(cancel_request_id) = parse_claude_control_cancel_request_id(&value) {
+                    let _ = on_control_request(GatewayTurnControlRequest::ClaudeControlCancel {
+                        request_id: cancel_request_id,
+                    });
+                    continue;
+                }
+
                 if let Some(event) = build_claude_assistant_event(&thread_id, &value) {
                     did_emit_assistant_output = true;
                     on_event(event);
@@ -594,6 +704,9 @@ impl CodexGateway {
                 .wait();
             remove_claude_process(&active_claude_processes, &thread_id);
             let stderr_output = stderr_reader.join().unwrap_or_default();
+            if !stderr_output.trim().is_empty() {
+                eprintln!("claude stderr for {thread_id}: {}", stderr_output.trim());
+            }
 
             if !did_emit_completion {
                 let was_interrupted = interrupted_claude_threads
@@ -624,10 +737,10 @@ impl CodexGateway {
                     Ok(_) => "Claude exited before the turn was accepted".to_string(),
                     Err(error) => format!("failed waiting for Claude process: {error}"),
                 };
-                let message = if stderr_output.trim().is_empty() {
-                    exit_message
+                let message = if let Some(summary) = summarize_claude_stderr(&stderr_output) {
+                    format!("{exit_message}: {summary}")
                 } else {
-                    format!("{exit_message}: {}", stderr_output.trim())
+                    exit_message
                 };
                 let _ = result_tx.send(Err(message));
             }
@@ -1585,6 +1698,31 @@ fn derive_repository_name_from_path(path: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn claude_session_archive_path(workspace: &str, session_id: &str) -> Option<PathBuf> {
+    let claude_home = std::env::var_os("CLAUDE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claude")))?;
+    Some(
+        claude_home
+            .join("projects")
+            .join(claude_project_slug(workspace))
+            .join(format!("{session_id}.jsonl")),
+    )
+}
+
+fn claude_project_slug(workspace: &str) -> String {
+    workspace
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
 fn build_claude_input_message(prompt: &str, images: &[String]) -> Result<String, String> {
     let content = build_claude_message_content(prompt, images)?;
     serde_json::to_string(&json!({
@@ -1675,6 +1813,78 @@ fn parse_data_url_image(data_url: &str) -> Result<ParsedDataUrlImage, String> {
     })
 }
 
+fn summarize_claude_stderr(stderr_output: &str) -> Option<String> {
+    let lines = stderr_output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        return None;
+    }
+
+    let preferred = lines
+        .iter()
+        .copied()
+        .find(|line| looks_like_claude_error_summary(line))
+        .map(|line| truncate_for_mobile_error(line, 240));
+    if preferred.is_some() {
+        return preferred;
+    }
+
+    let fallback = lines
+        .iter()
+        .copied()
+        .find(|line| !looks_like_claude_stack_noise(line))
+        .map(|line| truncate_for_mobile_error(line, 240));
+    if fallback.is_some() {
+        return fallback;
+    }
+
+    Some("Claude CLI crashed before it returned a usable error message.".to_string())
+}
+
+fn looks_like_claude_error_summary(line: &str) -> bool {
+    let normalized = line.to_ascii_lowercase();
+    normalized.starts_with("error:")
+        || normalized.contains("invalid session")
+        || normalized.contains("already in use")
+        || normalized.contains("permission denied")
+        || normalized.contains("not found")
+        || normalized.contains("unsupported")
+        || normalized.contains("authentication")
+        || normalized.contains("rate limit")
+        || normalized.contains("timed out")
+}
+
+fn looks_like_claude_stack_noise(line: &str) -> bool {
+    if line.starts_with("file://") || line.starts_with("at ") || line.starts_with("node:") {
+        return true;
+    }
+
+    let punctuation_count = line
+        .chars()
+        .filter(|ch| matches!(ch, '{' | '}' | '(' | ')' | ';' | '=' | ',' | '[' | ']'))
+        .count();
+    (line.len() > 160 && punctuation_count > 20)
+        || (punctuation_count > 8
+            && (line.starts_with("`)}")
+                || line.contains(".error.")
+                || line.contains("function ")
+                || line.contains("exports=")))
+}
+
+fn truncate_for_mobile_error(line: &str, max_chars: usize) -> String {
+    let mut trimmed = line.trim().to_string();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed;
+    }
+
+    trimmed = trimmed.chars().take(max_chars.saturating_sub(3)).collect();
+    trimmed.push_str("...");
+    trimmed
+}
+
 fn build_claude_assistant_event(
     thread_id: &str,
     value: &Value,
@@ -1756,6 +1966,76 @@ fn parse_claude_text_delta(value: &Value) -> Option<String> {
         .get("text")?
         .as_str()
         .map(ToString::to_string)
+}
+
+fn parse_claude_control_request_id(value: &Value) -> Option<String> {
+    if value.get("type").and_then(Value::as_str) != Some("control_request") {
+        return None;
+    }
+    value
+        .get("request_id")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn parse_claude_control_cancel_request_id(value: &Value) -> Option<String> {
+    if value.get("type").and_then(Value::as_str) != Some("control_cancel_request") {
+        return None;
+    }
+    value
+        .get("request_id")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn write_claude_control_response(
+    stdin: &mut ChildStdin,
+    request_id: &str,
+    response_payload: Value,
+) -> Result<(), String> {
+    let line = serde_json::to_string(&json!({
+        "type": "control_response",
+        "response": {
+            "subtype": "success",
+            "request_id": request_id,
+            "response": response_payload,
+        },
+    }))
+    .map_err(|error| format!("failed to serialize Claude control response: {error}"))?;
+    stdin
+        .write_all(line.as_bytes())
+        .map_err(|error| format!("failed to write Claude control response: {error}"))?;
+    stdin
+        .write_all(b"\n")
+        .map_err(|error| format!("failed to terminate Claude control response: {error}"))?;
+    stdin
+        .flush()
+        .map_err(|error| format!("failed to flush Claude control response: {error}"))
+}
+
+fn write_claude_control_error_response(
+    stdin: &mut ChildStdin,
+    request_id: &str,
+    message: &str,
+) -> Result<(), String> {
+    let line = serde_json::to_string(&json!({
+        "type": "control_response",
+        "response": {
+            "subtype": "error",
+            "request_id": request_id,
+            "error": message,
+        },
+    }))
+    .map_err(|error| format!("failed to serialize Claude control error response: {error}"))?;
+    stdin
+        .write_all(line.as_bytes())
+        .map_err(|error| format!("failed to write Claude control error response: {error}"))?;
+    stdin
+        .write_all(b"\n")
+        .map_err(|error| format!("failed to terminate Claude control error response: {error}"))?;
+    stdin
+        .flush()
+        .map_err(|error| format!("failed to flush Claude control error response: {error}"))
 }
 
 fn claude_message_text(message: &Value) -> Option<String> {
@@ -2834,11 +3114,11 @@ mod tests {
     use super::{
         CodexGateway, CodexGitInfo, CodexThread, CodexThreadStatus, CodexTurn, TurnStartRequest,
         build_claude_input_message, build_claude_message_content, build_turn_start_input,
-        derive_repository_name_from_cwd, extract_generated_thread_title,
-        fetch_thread_summaries_from_archive, map_thread_snapshot, map_thread_summary,
-        normalize_codex_item_payload, normalize_generated_thread_title, parse_data_url_image,
-        parse_model_options, parse_repository_name_from_origin,
-        prefer_archive_timeline_when_rpc_lacks_tool_events,
+        claude_project_slug, claude_session_archive_path, derive_repository_name_from_cwd,
+        extract_generated_thread_title, fetch_thread_summaries_from_archive, map_thread_snapshot,
+        map_thread_summary, normalize_codex_item_payload, normalize_generated_thread_title,
+        parse_data_url_image, parse_model_options, parse_repository_name_from_origin,
+        prefer_archive_timeline_when_rpc_lacks_tool_events, summarize_claude_stderr,
     };
     use crate::codex_runtime::CodexRuntimeMode;
     use crate::server::config::BridgeCodexConfig;
@@ -2899,6 +3179,66 @@ mod tests {
             payload["text"].as_str(),
             Some("1 out of 2 tasks completed\n1. Inspect bridge payload\n2. Add Flutter card")
         );
+    }
+
+    #[test]
+    fn summarize_claude_stderr_prefers_human_readable_error_lines() {
+        let stderr =
+            "Error: Session ID 123 is already in use.\n    at main (file:///tmp/cli.js:1:1)";
+        assert_eq!(
+            summarize_claude_stderr(stderr).as_deref(),
+            Some("Error: Session ID 123 is already in use.")
+        );
+    }
+
+    #[test]
+    fn summarize_claude_stderr_hides_minified_stack_noise() {
+        let stderr = "file:///Users/test/node_modules/@anthropic-ai/claude-code/cli.js:489\n`)},Q.code=Z.error.code,Q.errors=Z.error.errors;else Q.message=Z.error.message;";
+        assert_eq!(
+            summarize_claude_stderr(stderr).as_deref(),
+            Some("Claude CLI crashed before it returned a usable error message.")
+        );
+    }
+
+    #[test]
+    fn claude_project_slug_normalizes_workspace_path() {
+        assert_eq!(
+            claude_project_slug("/Users/test/Library/Application Support/CodexBar/ClaudeProbe"),
+            "-Users-test-Library-Application-Support-CodexBar-ClaudeProbe"
+        );
+    }
+
+    #[test]
+    fn claude_session_archive_path_uses_claude_home_override() {
+        let claude_home =
+            std::env::temp_dir().join(format!("gateway-claude-session-{}", std::process::id()));
+        let previous_claude_home = std::env::var_os("CLAUDE_HOME");
+
+        unsafe {
+            std::env::set_var("CLAUDE_HOME", &claude_home);
+        }
+
+        let session_path = claude_session_archive_path(
+            "/Users/test/Library/Application Support/CodexBar/ClaudeProbe",
+            "session-123",
+        )
+        .expect("Claude session path should resolve");
+
+        assert_eq!(
+            session_path,
+            claude_home
+                .join("projects")
+                .join("-Users-test-Library-Application-Support-CodexBar-ClaudeProbe")
+                .join("session-123.jsonl")
+        );
+
+        unsafe {
+            if let Some(previous_claude_home) = previous_claude_home {
+                std::env::set_var("CLAUDE_HOME", previous_claude_home);
+            } else {
+                std::env::remove_var("CLAUDE_HOME");
+            }
+        }
     }
 
     #[test]
@@ -3271,6 +3611,7 @@ mod tests {
                     move |event| {
                         let _ = event_tx.send(event);
                     },
+                    |_| Ok(None),
                     |_| {},
                 )
                 .expect("turn should start");

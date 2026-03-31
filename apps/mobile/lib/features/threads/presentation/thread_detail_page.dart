@@ -23,6 +23,7 @@ import 'package:codex_ui/codex_ui.dart';
 
 import 'package:vibe_bridge/shared/widgets/badges.dart';
 import 'package:vibe_bridge/shared/widgets/connection_status_banner.dart';
+import 'package:vibe_bridge/shared/widgets/provider_icon.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -210,6 +211,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   int _timelineBottomFollowRunId = 0;
   Future<void> Function()? _loadEarlierHistory;
   String? _draftThreadErrorMessage;
+  ThreadUsageDto? _threadUsage;
   final Map<String, bool> _timelineExpansionState = <String, bool>{};
   final Map<String, GlobalKey> _timelineBlockMeasurementKeys =
       <String, GlobalKey>{};
@@ -217,6 +219,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   bool? _lastObservedWideLayout;
   bool _isWideLayoutExitScheduled = false;
   int _modelCatalogLoadEpoch = 0;
+  int _threadUsageLoadEpoch = 0;
 
   double _lastScrollOffset = 0;
   double _scrollOffsetOnDirectionChange = 0;
@@ -313,6 +316,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     unawaited(_restorePersistedComposerDraft());
     unawaited(_loadComposerModelCatalog());
     unawaited(_loadSpeechStatus());
+    unawaited(_loadThreadUsage());
   }
 
   Future<void> _restorePersistedComposerDraft() async {
@@ -405,6 +409,48 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
           state: SpeechModelState.failed,
           lastError: error.message,
         );
+      });
+    }
+  }
+
+  Future<void> _loadThreadUsage() async {
+    final threadId = _effectiveThreadId?.trim();
+    if (threadId == null || threadId.isEmpty) {
+      if (mounted && _threadUsage != null) {
+        setState(() {
+          _threadUsage = null;
+        });
+      }
+      return;
+    }
+    if (providerKindFromThreadId(threadId) != ProviderKind.codex) {
+      if (mounted && _threadUsage != null) {
+        setState(() {
+          _threadUsage = null;
+        });
+      }
+      return;
+    }
+
+    final requestEpoch = ++_threadUsageLoadEpoch;
+    final bridgeApi = ref.read(threadDetailBridgeApiProvider);
+    try {
+      final usage = await bridgeApi.fetchThreadUsage(
+        bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+        threadId: threadId,
+      );
+      if (!mounted || requestEpoch != _threadUsageLoadEpoch) {
+        return;
+      }
+      setState(() {
+        _threadUsage = usage;
+      });
+    } on ThreadUsageBridgeException {
+      if (!mounted || requestEpoch != _threadUsageLoadEpoch) {
+        return;
+      }
+      setState(() {
+        _threadUsage = null;
       });
     }
   }
@@ -777,12 +823,15 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       _isTimelineAutoFollowEnabled = true;
       _timelineBottomFollowRunId += 1;
       _timelineExpansionState.clear();
+      _threadUsage = null;
       unawaited(_restorePersistedComposerDraft());
       unawaited(_loadComposerModelCatalog());
+      unawaited(_loadThreadUsage());
     }
     if (oldWidget.bridgeApiBaseUrl != widget.bridgeApiBaseUrl) {
       unawaited(_loadComposerModelCatalog());
       unawaited(_loadSpeechStatus());
+      unawaited(_loadThreadUsage());
     }
     if (oldWidget.initialComposerInput != widget.initialComposerInput) {
       _didSubmitInitialComposerInput = false;
@@ -844,6 +893,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       await ref
           .read(threadDetailControllerProvider(args).notifier)
           .retryReconnectCatchUp();
+      await _loadThreadUsage();
     } finally {
       _isResumeReconnectInFlight = false;
     }
@@ -1531,6 +1581,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
           transition.initialAttachedImages,
         );
       });
+      unawaited(_loadThreadUsage());
       unawaited(
         ref
             .read(threadComposerDraftRepositoryProvider)
@@ -1585,6 +1636,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       _attachedImages = const <XFile>[];
       _draftThreadErrorMessage = null;
     });
+    unawaited(_loadThreadUsage());
     return true;
   }
 
@@ -1614,6 +1666,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       _selectedPlanOptionByQuestionId.clear();
       _lastPendingUserInputRequestId = null;
     });
+    unawaited(_loadThreadUsage());
     return true;
   }
 
@@ -1729,6 +1782,34 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       final isReadOnlyMode = effectiveAccessMode == AccessMode.readOnly;
       final controlsEnabled = !isReadOnlyMode;
 
+      Future<void> openSettingsSheet() async {
+        _composerFocusNode.unfocus();
+        await showModalBottomSheet<void>(
+          context: context,
+          backgroundColor: Colors.transparent,
+          isScrollControlled: true,
+          builder: (context) => _ComposerModelSheet(
+            modelOptions: _availableModelOptions,
+            reasoningOptions: _availableReasoningOptions,
+            initialProvider: _selectedProvider,
+            canChangeProvider: _canChangeComposerProvider,
+            initialModel: _selectedModel,
+            initialReasoning: _selectedReasoning,
+            selectedAccessMode: effectiveAccessMode,
+            session: currentSession,
+            isAccessModeUpdating: deviceSettingsState.isAccessModeUpdating,
+            onProviderChanged: _onComposerProviderChanged,
+            onModelChanged: _onComposerModelChanged,
+            onReasoningChanged: (value) {
+              setState(() {
+                _selectedReasoning = value;
+              });
+            },
+            onAccessModeChanged: changeAccessMode,
+          ),
+        );
+      }
+
       return _wrapContent(
         Column(
           children: [
@@ -1751,6 +1832,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                       onBack:
                           widget.onBack ?? () => Navigator.of(context).pop(),
                       showBackButton: widget.showBackButton,
+                      onOpenSettings: openSettingsSheet,
                     ),
                   ),
                   Positioned(
@@ -1792,21 +1874,14 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                           speechMessageIsError: _speechMessageIsError,
                           isComposerFocused: _isComposerFocused,
                           attachedImages: _attachedImages,
+                          threadUsage: _threadUsage,
                           composerMode: _composerMode,
                           pendingUserInput: null,
                           selectedPlanOptionByQuestionId:
                               _selectedPlanOptionByQuestionId,
-                          modelOptions: _availableModelOptions,
-                          reasoningOptions: _availableReasoningOptions,
                           selectedProvider: _selectedProvider,
-                          canChangeProvider: _canChangeComposerProvider,
                           supportsPlanMode: _supportsPlanMode,
-                          selectedModel: _selectedModel,
-                          selectedReasoning: _selectedReasoning,
-                          accessMode: effectiveAccessMode,
                           session: currentSession,
-                          isAccessModeUpdating:
-                              deviceSettingsState.isAccessModeUpdating,
                           accessModeErrorMessage:
                               deviceSettingsState.accessModeErrorMessage,
                           onPickImages: _pickImages,
@@ -1823,14 +1898,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                                   optionId;
                             });
                           },
-                          onProviderChanged: _onComposerProviderChanged,
-                          onModelChanged: _onComposerModelChanged,
-                          onReasoningChanged: (value) {
-                            setState(() {
-                              _selectedReasoning = value;
-                            });
-                          },
-                          onAccessModeChanged: changeAccessMode,
                           onSubmitComposer: _submitDraftComposerInput,
                           onSubmitPendingUserInput: null,
                         ),
@@ -1944,6 +2011,35 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       isGitMutationInFlight: state.isGitMutationInFlight,
       gitControlsUnavailableReason: state.gitControlsUnavailableReason,
     );
+
+    Future<void> openSettingsSheet() async {
+      _composerFocusNode.unfocus();
+      await showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        isScrollControlled: true,
+        builder: (context) => _ComposerModelSheet(
+          modelOptions: _availableModelOptions,
+          reasoningOptions: _availableReasoningOptions,
+          initialProvider: _selectedProvider,
+          canChangeProvider: _canChangeComposerProvider,
+          initialModel: _selectedModel,
+          initialReasoning: _selectedReasoning,
+          selectedAccessMode: effectiveAccessMode,
+          session: currentSession,
+          isAccessModeUpdating: deviceSettingsState.isAccessModeUpdating,
+          onProviderChanged: _onComposerProviderChanged,
+          onModelChanged: _onComposerModelChanged,
+          onReasoningChanged: (value) {
+            setState(() {
+              _selectedReasoning = value;
+            });
+          },
+          onAccessModeChanged: changeAccessMode,
+        ),
+      );
+    }
+
     _canLoadEarlierHistory = state.canLoadEarlierHistory;
     _loadEarlierHistory = controller.loadEarlierHistory;
     _timelineBlockOrder = buildThreadTimelineBlocks(
@@ -2051,6 +2147,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                     onOpenDiff: _openDiffView,
                     onToggleSidebar: widget.onToggleSidebar,
                     onToggleDiff: _toggleDiffView,
+                    onOpenSettings: openSettingsSheet,
                     isHeaderCollapsed: _isHeaderCollapsed,
                     showBackButton: widget.showBackButton,
                     isSidebarVisible: widget.isSidebarVisible ?? true,
@@ -2172,21 +2269,14 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                               speechMessageIsError: _speechMessageIsError,
                               isComposerFocused: _isComposerFocused,
                               attachedImages: _attachedImages,
+                              threadUsage: _threadUsage,
                               composerMode: _composerMode,
                               pendingUserInput: pendingUserInput,
                               selectedPlanOptionByQuestionId:
                                   _selectedPlanOptionByQuestionId,
-                              modelOptions: _availableModelOptions,
-                              reasoningOptions: _availableReasoningOptions,
                               selectedProvider: _selectedProvider,
-                              canChangeProvider: _canChangeComposerProvider,
                               supportsPlanMode: _supportsPlanMode,
-                              selectedModel: _selectedModel,
-                              selectedReasoning: _selectedReasoning,
-                              accessMode: effectiveAccessMode,
                               session: currentSession,
-                              isAccessModeUpdating:
-                                  deviceSettingsState.isAccessModeUpdating,
                               accessModeErrorMessage:
                                   deviceSettingsState.accessModeErrorMessage,
                               onPickImages: _pickImages,
@@ -2203,14 +2293,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                                       optionId;
                                 });
                               },
-                              onProviderChanged: _onComposerProviderChanged,
-                              onModelChanged: _onComposerModelChanged,
-                              onReasoningChanged: (value) {
-                                setState(() {
-                                  _selectedReasoning = value;
-                                });
-                              },
-                              onAccessModeChanged: changeAccessMode,
                               onSubmitComposer: (value) =>
                                   _submitComposerInput(controller, value),
                               onSubmitPendingUserInput: pendingUserInput == null
