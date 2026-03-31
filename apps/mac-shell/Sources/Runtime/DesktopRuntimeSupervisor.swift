@@ -335,31 +335,50 @@ final class DesktopRuntimeSupervisor: DesktopRuntimeSupervisorClient {
         }
 
         let homeDirectoryPath = environment["HOME"] ?? NSHomeDirectory()
-        let extraPathEntries = [
-            "\(homeDirectoryPath)/.bun/bin",
-            "\(homeDirectoryPath)/.nvm/versions/node",
+        let existingPath = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        environment["PATH"] = Self.bridgePathEntries(
+            homeDirectoryPath: homeDirectoryPath,
+            existingPath: existingPath,
+            fileManager: fileManager
+        ).joined(separator: ":")
+
+        return environment
+    }
+
+    static func bridgePathEntries(
+        homeDirectoryPath: String,
+        existingPath: String,
+        fileManager: FileManager = .default
+    ) -> [String] {
+        var entries = [
             "\(homeDirectoryPath)/.local/bin",
             "\(homeDirectoryPath)/.cargo/bin",
-            "/opt/homebrew/bin",
-            "/usr/local/bin",
+            "\(homeDirectoryPath)/.bun/bin",
         ]
 
-        var nvmNodeBins: [String] = []
         let nvmVersionsPath = "\(homeDirectoryPath)/.nvm/versions/node"
-        if let entries = try? fileManager.contentsOfDirectory(atPath: nvmVersionsPath) {
-            for entry in entries.sorted().reversed() {
-                let binPath = "\(nvmVersionsPath)/\(entry)/bin"
+        if let versions = try? fileManager.contentsOfDirectory(atPath: nvmVersionsPath) {
+            for version in versions.sorted().reversed() {
+                let binPath = "\(nvmVersionsPath)/\(version)/bin"
                 if fileManager.isExecutableFile(atPath: "\(binPath)/node") {
-                    nvmNodeBins.append(binPath)
+                    entries.append(binPath)
                 }
             }
         }
 
-        let existingPath = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        let allEntries = extraPathEntries + nvmNodeBins + [existingPath]
-        environment["PATH"] = allEntries.joined(separator: ":")
+        entries.append(contentsOf: [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+        ])
+        entries.append(
+            contentsOf: existingPath
+                .split(separator: ":")
+                .map(String.init)
+                .filter { !$0.isEmpty }
+        )
 
-        return environment
+        var seen = Set<String>()
+        return entries.filter { seen.insert($0).inserted }
     }
 
     static func defaultStateDirectoryURL() -> URL {

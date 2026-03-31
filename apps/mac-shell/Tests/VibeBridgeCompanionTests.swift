@@ -360,6 +360,70 @@ final class VibeBridgeCompanionTests: XCTestCase {
         XCTAssertEqual(resolver.resolveCodexBinaryURL()?.path, codexBinary.path)
     }
 
+    func testDesktopRuntimeSupervisorBridgePathEntriesPreferNativeClaudeAndUserNodeBins() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let homeDirectory = tempDirectory.appendingPathComponent("home", isDirectory: true)
+        let localClaude = homeDirectory
+            .appendingPathComponent(".local", isDirectory: true)
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("claude")
+        let bunClaude = homeDirectory
+            .appendingPathComponent(".bun", isDirectory: true)
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("claude")
+        let nvmNode = homeDirectory
+            .appendingPathComponent(".nvm", isDirectory: true)
+            .appendingPathComponent("versions", isDirectory: true)
+            .appendingPathComponent("node", isDirectory: true)
+            .appendingPathComponent("v22.16.0", isDirectory: true)
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("node")
+
+        try FileManager.default.createDirectory(
+            at: localClaude.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: bunClaude.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: nvmNode.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("local".utf8).write(to: localClaude)
+        try Data("bun".utf8).write(to: bunClaude)
+        try Data("node".utf8).write(to: nvmNode)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: localClaude.path
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: bunClaude.path
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: nvmNode.path
+        )
+
+        let pathEntries = DesktopRuntimeSupervisor.bridgePathEntries(
+            homeDirectoryPath: homeDirectory.path,
+            existingPath: "/opt/homebrew/bin:/usr/bin",
+            fileManager: .default
+        )
+
+        let localIndex = try XCTUnwrap(pathEntries.firstIndex(of: localClaude.deletingLastPathComponent().path))
+        let bunIndex = try XCTUnwrap(pathEntries.firstIndex(of: bunClaude.deletingLastPathComponent().path))
+        let nvmIndex = try XCTUnwrap(pathEntries.firstIndex(of: nvmNode.deletingLastPathComponent().path))
+        let homebrewIndex = try XCTUnwrap(pathEntries.firstIndex(of: "/opt/homebrew/bin"))
+
+        XCTAssertLessThan(localIndex, bunIndex)
+        XCTAssertLessThan(nvmIndex, homebrewIndex)
+        XCTAssertEqual(pathEntries.filter { $0 == "/opt/homebrew/bin" }.count, 1)
+    }
+
     func testBridgeBinaryPathResolverPrefersBundledSpeechHelper() {
         let tempDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
