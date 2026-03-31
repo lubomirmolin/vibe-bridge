@@ -72,3 +72,5 @@ xcodebuild -project apps/mac-shell/VibeBridgeCompanion.xcodeproj -scheme VibeBri
 - **Formatting**: Always apply native formatters (`cargo fmt`, `dart format`) to modified files.
 - **Consistency**: Keep mobile UI code dense, prioritizing a coding-tool aesthetic with clear monospaced outputs for logs and terminal content.
 - **Resilience**: Assume mobile connections drop often; ensure WebSockets in the mobile app handle reconnections securely.
+
+You can read claude code source code in the /claudecodesrc folder
