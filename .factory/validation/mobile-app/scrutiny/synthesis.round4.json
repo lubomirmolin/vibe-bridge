@@ -1,0 +1,58 @@
+{
+  "milestone": "mobile-app",
+  "round": 4,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then (cd \"$ROOT/apps/mobile\" && flutter test --concurrency=5); fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo test --manifest-path \"$ROOT/Cargo.toml\" --workspace --jobs 5; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild test -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS'; fi",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then flutter analyze \"$ROOT/apps/mobile\"; fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo check --manifest-path \"$ROOT/Cargo.toml\" --workspace --all-targets; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then flutter analyze \"$ROOT/apps/mobile\"; fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo fmt --manifest-path \"$ROOT/Cargo.toml\" --all --check && cargo clippy --manifest-path \"$ROOT/Cargo.toml\" --workspace --all-targets -- -D warnings; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 2,
+    "failed": 1,
+    "failedFeatures": [
+      "mobile-app-fix-notification-delivery-preferences"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "mobile-app-fix-notification-delivery-preferences",
+      "severity": "blocking",
+      "description": "Runtime notifications are still not app-wide because `runtimeNotificationDeliveryControllerProvider` is only consumed from thread list/detail pages and both handlers return unless their route is current, so approval or live-activity events can remain stranded while the user is on Settings or Approvals Queue."
+    },
+    {
+      "featureId": "mobile-app-fix-notification-delivery-preferences",
+      "severity": "blocking",
+      "description": "Persisted disabled notification preferences are not fully honored on relaunch because the runtime delivery controller subscribes before async preference restore completes, allowing approval or live-activity notifications to leak during startup even when the saved toggles are off."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skill:integration-worker",
+      "suggestion": "Relax the integration-worker requirement for manual lifecycle walkthroughs in non-interactive Exec sessions, or explicitly mark automated lifecycle/integration coverage as an acceptable substitute when manual device interaction is not feasible.",
+      "evidence": "The reconnect retry fix review found the worker had to record a justified skill deviation because `.factory/skills/integration-worker/SKILL.md` still treats manual lifecycle walkthroughs as mandatory even in Exec runs, despite explicit integration and regression coverage being the only realistic validation path in this environment.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Update `.factory/library/api.md` to describe that branch-switch approvals now carry the exact target branch instead of the generic `git.branch_switch` identifier.",
+      "reason": "documentation-update-out-of-scope-for-this-validation-run"
+    }
+  ],
+  "previousRound": ".factory/validation/mobile-app/scrutiny/synthesis.round3.json"
+}

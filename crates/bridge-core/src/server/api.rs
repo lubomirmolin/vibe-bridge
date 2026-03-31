@@ -9,7 +9,7 @@ use serde::Serialize;
 use serde_json::json;
 use shared_contracts::{
     AccessMode, BootstrapDto, ModelCatalogDto, NetworkSettingsDto, PairingRouteInventoryDto,
-    SecurityAuditEventDto, SpeechModelMutationAcceptedDto, SpeechModelStatusDto,
+    ProviderKind, SecurityAuditEventDto, SpeechModelMutationAcceptedDto, SpeechModelStatusDto,
     SpeechTranscriptionResultDto, ThreadGitDiffDto, ThreadGitDiffMode, ThreadSnapshotDto,
     ThreadSummaryDto, ThreadTimelinePageDto, TurnMode, TurnMutationAcceptedDto, UserInputAnswerDto,
 };
@@ -125,8 +125,21 @@ async fn bootstrap(State(state): State<BridgeAppState>) -> Json<BootstrapDto> {
     Json(state.bootstrap_payload().await)
 }
 
-async fn model_catalog(State(state): State<BridgeAppState>) -> Json<ModelCatalogDto> {
-    Json(state.model_catalog_payload().await)
+#[derive(Debug, Deserialize)]
+struct ModelCatalogQuery {
+    #[serde(default)]
+    provider: Option<ProviderKind>,
+}
+
+async fn model_catalog(
+    State(state): State<BridgeAppState>,
+    Query(query): Query<ModelCatalogQuery>,
+) -> Json<ModelCatalogDto> {
+    Json(
+        state
+            .model_catalog_payload(query.provider.unwrap_or(ProviderKind::Codex))
+            .await,
+    )
 }
 
 async fn get_speech_model(State(state): State<BridgeAppState>) -> Json<SpeechModelStatusDto> {
@@ -462,6 +475,8 @@ struct UserInputResponseRequest {
 #[derive(Debug, Deserialize)]
 struct CreateThreadRequest {
     workspace: String,
+    #[serde(default)]
+    provider: Option<ProviderKind>,
     #[serde(default)]
     model: Option<String>,
 }
@@ -868,7 +883,11 @@ async fn create_thread(
     ExtractJson(request): ExtractJson<CreateThreadRequest>,
 ) -> Result<Json<ThreadSnapshotDto>, StatusCode> {
     match state
-        .create_thread(&request.workspace, request.model.as_deref())
+        .create_thread(
+            request.provider.unwrap_or(ProviderKind::Codex),
+            &request.workspace,
+            request.model.as_deref(),
+        )
         .await
     {
         Ok(snapshot) => Ok(Json(snapshot)),
@@ -2261,6 +2280,9 @@ mod tests {
             thread: shared_contracts::ThreadDetailDto {
                 contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
                 thread_id: thread_id.to_string(),
+                native_thread_id: thread_id.to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
                 title: "Git thread".to_string(),
                 status: shared_contracts::ThreadStatus::Idle,
                 workspace: workspace.clone(),
@@ -2271,6 +2293,7 @@ mod tests {
                 source: "cli".to_string(),
                 access_mode,
                 last_turn_summary: String::new(),
+                active_turn_id: None,
             },
             entries: vec![],
             approvals: vec![],
@@ -2291,6 +2314,9 @@ mod tests {
             .replace_summaries(vec![ThreadSummaryDto {
                 contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
                 thread_id: thread_id.to_string(),
+                native_thread_id: thread_id.to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
                 title: snapshot.thread.title,
                 status: snapshot.thread.status,
                 workspace,
@@ -2394,7 +2420,7 @@ for line in sys.stdin:
         let response = app
             .oneshot(
                 Request::builder()
-                    .uri("/threads/thread-plan/history")
+                    .uri("/threads/codex:thread-plan/history")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2416,9 +2442,102 @@ for line in sys.stdin:
             decoded["pending_user_input"]["questions"][0]["question_id"],
             "scope"
         );
-        assert_eq!(decoded["thread"]["thread_id"], "thread-plan");
+        assert_eq!(decoded["thread"]["thread_id"], "codex:thread-plan");
+        assert_eq!(decoded["thread"]["native_thread_id"], "thread-plan");
 
         let _ = fs::remove_file(&script_path);
+        if let Some(parent) = script_path.parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
+    }
+
+    #[tokio::test]
+    async fn interrupt_route_resolves_active_turn_when_bridge_cache_is_empty() {
+        let temp_dir = unique_temp_dir("interrupt-active-turn");
+        let log_path = temp_dir.join("requests.log");
+        let script_body = format!(
+            r#"#!/usr/bin/env python3
+import json
+import sys
+
+log_path = {log_path:?}
+
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request.get("method")
+    with open(log_path, "a", encoding="utf-8") as log_file:
+        log_file.write(method + "\n")
+    response = {{"id": request.get("id")}}
+
+    if method == "initialize":
+        response["result"] = {{}}
+    elif method == "thread/read":
+        response["result"] = {{
+            "thread": {{
+                "id": "thread-running",
+                "name": "Running thread",
+                "preview": "preview",
+                "status": {{"type": "running"}},
+                "cwd": "/workspace/repo",
+                "gitInfo": {{
+                    "branch": "main",
+                    "originUrl": "git@github.com:example/repo.git",
+                }},
+                "createdAt": 1710000000,
+                "updatedAt": 1710000300,
+                "source": "cli",
+                "turns": [
+                    {{
+                        "id": "turn-live",
+                        "items": []
+                    }}
+                ],
+            }}
+        }}
+    elif method == "turn/interrupt":
+        response["result"] = {{}}
+    else:
+        response["result"] = {{}}
+
+    sys.stdout.write(json.dumps(response) + "\n")
+    sys.stdout.flush()
+"#,
+            log_path = log_path.to_string_lossy(),
+        );
+        let script_path = write_fake_codex_script("interrupt-active-turn", &script_body);
+
+        let state = test_state_with_codex_command(&script_path);
+        prime_thread(&state, "thread-running", &temp_dir, AccessMode::FullControl).await;
+        state
+            .projections()
+            .mark_thread_running("thread-running", "2026-03-31T12:00:00Z", None)
+            .await;
+        let app = router(state);
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/threads/thread-running/interrupt",
+                json!({}),
+            ))
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert_eq!(decoded["thread_status"], "interrupted");
+        assert_eq!(decoded["message"], "interrupt requested");
+
+        let request_log = fs::read_to_string(&log_path).expect("request log should exist");
+        assert!(request_log.contains("thread/read"));
+        assert!(request_log.contains("turn/interrupt"));
+
+        let _ = fs::remove_file(&script_path);
+        let _ = fs::remove_file(&log_path);
+        let _ = fs::remove_dir_all(&temp_dir);
         if let Some(parent) = script_path.parent() {
             let _ = fs::remove_dir_all(parent);
         }

@@ -1,0 +1,15 @@
+{
+  "featureId": "desktop-shell-fix-launch-supervision-and-recovery-startup",
+  "reviewedAt": "2026-03-18T18:04:59Z",
+  "commitId": "46769b9d47252fbb624f8c09042d6487b75aaec8",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed the prior failure report, both feature metadata entries and handoffs, the original failing diff in `fa424a652beabb4d30da7a27d3e56321d38e87b8`, the fix diff in `46769b9d47252fbb624f8c09042d6487b75aaec8`, the fix feature transcript skeleton, the desktop-worker skill, and the relevant shared-state docs. The original blocking issue was that supervision only started from `PairingEntryView`'s menu-content lifecycle, so a launched-but-never-opened menu bar app could sit in the background without polling or recovery. The fix moves view-model creation into `CodexMobileCompanionApp.init` with `startSupervisionOnInit: true` (`apps/mac-shell/Sources/CodexMobileCompanionApp.swift`:11-14), removes the menu-view startup dependency, and keeps the supervision loop in `PairingEntryViewModel` itself (`apps/mac-shell/Sources/CodexMobileCompanionApp.swift`:208-220,227-239). The new XCTest `testPairingViewModelAutoStartsSupervisionAndRecoversWithoutManualRefresh` (`apps/mac-shell/Tests/CodexMobileCompanionTests.swift`:183-203) specifically covers degraded-to-recovered behavior without manual refresh or menu opening. Within the reviewed scope, this adequately resolves the prior blocking issue and restores the launch/background supervision behavior required by VAL-DESKTOP-001 and VAL-DESKTOP-007.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/validation/desktop-shell/scrutiny/reviews/desktop-shell-runtime-states-and-recovery.json",
+  "summary": "Pass. The fix resolves the original scrutiny failure by starting bridge supervision at shell launch rather than from the menu content lifecycle, and it adds automated coverage showing recovery still occurs while the menu bar app remains unopened in the background. No remaining blocking or non-blocking issues were found in the reviewed scope."
+}

@@ -230,7 +230,12 @@ impl ProjectionStore {
         }
     }
 
-    pub async fn mark_thread_running(&self, thread_id: &str, occurred_at: &str) {
+    pub async fn mark_thread_running(
+        &self,
+        thread_id: &str,
+        occurred_at: &str,
+        active_turn_id: Option<&str>,
+    ) {
         let mut state = self.inner.write().await;
         if let Some(summary) = state.summaries.get_mut(thread_id) {
             summary.status = ThreadStatus::Running;
@@ -239,6 +244,7 @@ impl ProjectionStore {
         if let Some(snapshot) = state.snapshots.get_mut(thread_id) {
             snapshot.thread.status = ThreadStatus::Running;
             snapshot.thread.updated_at = occurred_at.to_string();
+            snapshot.thread.active_turn_id = active_turn_id.map(ToString::to_string);
         }
     }
 
@@ -256,6 +262,9 @@ impl ProjectionStore {
         if let Some(snapshot) = state.snapshots.get_mut(thread_id) {
             snapshot.thread.status = status;
             snapshot.thread.updated_at = occurred_at.to_string();
+            if status != ThreadStatus::Running {
+                snapshot.thread.active_turn_id = None;
+            }
         }
     }
 
@@ -656,6 +665,9 @@ mod tests {
                 ThreadSummaryDto {
                     contract_version: CONTRACT_VERSION.to_string(),
                     thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
                     title: "Older".to_string(),
                     status: ThreadStatus::Idle,
                     workspace: "/tmp/a".to_string(),
@@ -666,6 +678,9 @@ mod tests {
                 ThreadSummaryDto {
                     contract_version: CONTRACT_VERSION.to_string(),
                     thread_id: "thread-2".to_string(),
+                    native_thread_id: "thread-2".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
                     title: "Newer".to_string(),
                     status: ThreadStatus::Running,
                     workspace: "/tmp/b".to_string(),
@@ -689,6 +704,9 @@ mod tests {
             .replace_summaries(vec![ThreadSummaryDto {
                 contract_version: CONTRACT_VERSION.to_string(),
                 thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
                 title: "Hot thread".to_string(),
                 status: ThreadStatus::Idle,
                 workspace: "/tmp/a".to_string(),
@@ -703,6 +721,9 @@ mod tests {
                 thread: ThreadDetailDto {
                     contract_version: CONTRACT_VERSION.to_string(),
                     thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
                     title: "Hot thread".to_string(),
                     status: ThreadStatus::Idle,
                     workspace: "/tmp/a".to_string(),
@@ -713,6 +734,7 @@ mod tests {
                     source: "cli".to_string(),
                     access_mode: AccessMode::ControlWithApprovals,
                     last_turn_summary: "initial".to_string(),
+                    active_turn_id: None,
                 },
                 entries: vec![],
                 approvals: vec![],
@@ -763,6 +785,9 @@ mod tests {
             .replace_summaries(vec![ThreadSummaryDto {
                 contract_version: CONTRACT_VERSION.to_string(),
                 thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
                 title: "Hot thread".to_string(),
                 status: ThreadStatus::Idle,
                 workspace: "/tmp/a".to_string(),
@@ -777,6 +802,9 @@ mod tests {
                 thread: ThreadDetailDto {
                     contract_version: CONTRACT_VERSION.to_string(),
                     thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
                     title: "Hot thread".to_string(),
                     status: ThreadStatus::Idle,
                     workspace: "/tmp/a".to_string(),
@@ -787,6 +815,7 @@ mod tests {
                     source: "cli".to_string(),
                     access_mode: AccessMode::ControlWithApprovals,
                     last_turn_summary: "initial".to_string(),
+                    active_turn_id: None,
                 },
                 entries: vec![],
                 approvals: vec![],
@@ -830,6 +859,9 @@ mod tests {
             .replace_summaries(vec![ThreadSummaryDto {
                 contract_version: CONTRACT_VERSION.to_string(),
                 thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
                 title: "Hot thread".to_string(),
                 status: ThreadStatus::Running,
                 workspace: "/tmp/a".to_string(),
@@ -844,6 +876,9 @@ mod tests {
                 thread: ThreadDetailDto {
                     contract_version: CONTRACT_VERSION.to_string(),
                     thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
                     title: "Hot thread".to_string(),
                     status: ThreadStatus::Running,
                     workspace: "/tmp/a".to_string(),
@@ -854,6 +889,7 @@ mod tests {
                     source: "cli".to_string(),
                     access_mode: AccessMode::ControlWithApprovals,
                     last_turn_summary: "initial".to_string(),
+                    active_turn_id: None,
                 },
                 entries: vec![],
                 approvals: vec![],
@@ -912,6 +948,9 @@ mod tests {
             .replace_summaries(vec![ThreadSummaryDto {
                 contract_version: CONTRACT_VERSION.to_string(),
                 thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
                 title: "Thread".to_string(),
                 status: ThreadStatus::Idle,
                 workspace: "/tmp/a".to_string(),
@@ -926,6 +965,9 @@ mod tests {
                 thread: ThreadDetailDto {
                     contract_version: CONTRACT_VERSION.to_string(),
                     thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
                     title: "Thread".to_string(),
                     status: ThreadStatus::Idle,
                     workspace: "/tmp/a".to_string(),
@@ -936,6 +978,7 @@ mod tests {
                     source: "cli".to_string(),
                     access_mode: AccessMode::ControlWithApprovals,
                     last_turn_summary: "older summary".to_string(),
+                    active_turn_id: None,
                 },
                 entries: vec![ThreadTimelineEntryDto {
                     event_id: "evt-1".to_string(),
@@ -960,6 +1003,9 @@ mod tests {
             .replace_summaries(vec![ThreadSummaryDto {
                 contract_version: CONTRACT_VERSION.to_string(),
                 thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
                 title: "Thread".to_string(),
                 status: ThreadStatus::Idle,
                 workspace: "/tmp/a".to_string(),
@@ -982,6 +1028,9 @@ mod tests {
             .replace_summaries(vec![ThreadSummaryDto {
                 contract_version: CONTRACT_VERSION.to_string(),
                 thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
                 title: "Thread".to_string(),
                 status: ThreadStatus::Running,
                 workspace: "/tmp/a".to_string(),
@@ -996,6 +1045,9 @@ mod tests {
                 thread: ThreadDetailDto {
                     contract_version: CONTRACT_VERSION.to_string(),
                     thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
                     title: "Thread".to_string(),
                     status: ThreadStatus::Running,
                     workspace: "/tmp/a".to_string(),
@@ -1006,6 +1058,7 @@ mod tests {
                     source: "cli".to_string(),
                     access_mode: AccessMode::ControlWithApprovals,
                     last_turn_summary: "initial".to_string(),
+                    active_turn_id: None,
                 },
                 entries: vec![],
                 approvals: vec![],

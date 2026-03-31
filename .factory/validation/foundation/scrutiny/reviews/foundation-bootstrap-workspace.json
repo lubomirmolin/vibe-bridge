@@ -1,0 +1,33 @@
+{
+  "featureId": "foundation-bootstrap-workspace",
+  "reviewedAt": "2026-03-17T19:47:41Z",
+  "commitId": "4ee87dc",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The commit successfully bootstraps the required Flutter, Rust, and macOS shell skeletons at the mission-defined paths, but it leaves one shared service command inconsistent with the scaffolded workspace.",
+    "issues": [
+      {
+        "file": ".factory/services.yaml",
+        "line": 30,
+        "severity": "blocking",
+        "description": "The shared build command still runs `flutter build macos --project-dir \"$ROOT/apps/mobile\"`, but this feature scaffolded `apps/mobile` with only iOS and Android targets. Because `apps/mobile` has no `macos/` runner, the shared build command cannot succeed against this workspace, so later workers cannot fully rely on the shared service commands promised by the feature."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `foundation-worker` skill example still documents an invalid Flutter test invocation from the repo root, even though mission guidance requires running Flutter tests from `apps/mobile` (or via the shared service command). This can mislead later workers into a known failure mode.",
+      "evidence": "SKILL.md:40 shows `flutter test --concurrency=5 /repo/apps/mobile/test`; mission AGENTS.md:51 says to run `cd apps/mobile && flutter test ...` or use `.factory/services.yaml`."
+    },
+    {
+      "area": "services",
+      "observation": "The shared build command remains out of sync with the mission architecture: it assumes a Flutter macOS target under `apps/mobile`, while the mission explicitly separates the SwiftUI macOS shell into `apps/mac-shell` and treats the Flutter app as the iOS/Android client.",
+      "evidence": ".factory/services.yaml:30 runs `flutter build macos --project-dir \"$ROOT/apps/mobile\"`; mission AGENTS.md requires `apps/mobile` for Flutter and `apps/mac-shell/CodexMobileCompanion.xcodeproj` for the macOS shell."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed commit 4ee87dc and the worker transcript/handoff for `foundation-bootstrap-workspace`. The scaffold paths, names, and minimal stubs are in place, but the feature should be treated as failing review because the shared build service still targets a nonexistent Flutter macOS runner under `apps/mobile`, leaving the shared command set inconsistent with the scaffold it introduced."
+}

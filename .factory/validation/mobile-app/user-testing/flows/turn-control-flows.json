@@ -1,0 +1,101 @@
+{
+  "groupId": "turn-control-flows",
+  "testedAt": "2026-03-18T14:56:56.054363+00:00",
+  "surface": "flutter-mobile-widget-tests",
+  "toolsUsed": [
+    "flutter",
+    "python3"
+  ],
+  "commandsRun": [
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"idle composer starts turn and transitions to active controls\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; an idle thread showed Start turn with no interrupt control, then submitting a prompt moved the visible thread detail into Running with Steer turn and Interrupt controls."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"active composer steers and interrupt stops the active turn\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; the active-thread composer routed the new instruction through steerTurn on the same thread and the subsequent interrupt returned the thread to an Interrupted/idle-control state."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"start failure surfaces clear error and keeps thread usable\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; a simulated start failure surfaced a clear user-facing error, kept Start turn visible, and allowed an immediate retry that returned the thread to Running state."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"interrupt failure keeps active status and reports clear error\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; a simulated interrupt failure showed the Interrupt failed message while preserving Running state, Steer turn, and the interrupt control."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"live stream updates detail and syncs lifecycle status back to list\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; the thread detail rendered a streamed assistant-output delta without manual refresh and later reflected a lifecycle status change back into the list."
+    }
+  ],
+  "assertions": [
+    {
+      "id": "VAL-TURN-001",
+      "status": "pass",
+      "reason": "The idle-composer widget flow passed after submitting a prompt from thread-456, confirming the current thread entered Running state and switched from Start turn to active controls; a second passing live-stream widget flow on the same detail surface showed assistant output arriving without manual refresh, providing user-surface evidence that active thread detail begins showing live output.",
+      "evidence": [
+        "mobile-app/turn-control-flows/VAL-TURN-001-004-start-active-controls.log",
+        "mobile-app/turn-control-flows/VAL-TURN-001-live-output.log"
+      ]
+    },
+    {
+      "id": "VAL-TURN-002",
+      "status": "pass",
+      "reason": "The active-composer widget flow passed while recording the new instruction through steerTurn for thread-123 and keeping the thread in Running state, which matches steering the existing turn rather than creating a separate one.",
+      "evidence": [
+        "mobile-app/turn-control-flows/VAL-TURN-002-003-steer-interrupt.log"
+      ]
+    },
+    {
+      "id": "VAL-TURN-003",
+      "status": "pass",
+      "reason": "The same active-composer widget flow passed after tapping Interrupt, observing one interrupt call for thread-123, showing Interrupted state, restoring Start turn, and hiding the interrupt button.",
+      "evidence": [
+        "mobile-app/turn-control-flows/VAL-TURN-002-003-steer-interrupt.log"
+      ]
+    },
+    {
+      "id": "VAL-TURN-004",
+      "status": "pass",
+      "reason": "The idle-to-active widget flow passed while the idle thread exposed Start turn with no interrupt control, then the running thread exposed Steer turn and Interrupt with no contradictory idle controls left behind.",
+      "evidence": [
+        "mobile-app/turn-control-flows/VAL-TURN-001-004-start-active-controls.log"
+      ]
+    },
+    {
+      "id": "VAL-TURN-005",
+      "status": "blocked",
+      "reason": "The saved start-failure widget flow is sufficient for the start-failure half of the assertion, but the available targeted flutter-mobile-widget-tests harness for this group did not include a steer-failure user-surface case, so the full start-or-steer failure assertion could not be concluded honestly from user-surface evidence alone.",
+      "evidence": [
+        "mobile-app/turn-control-flows/VAL-TURN-005-start-failure.log"
+      ]
+    },
+    {
+      "id": "VAL-TURN-006",
+      "status": "pass",
+      "reason": "The interrupt-failure widget flow passed by showing a clear Interrupt failed message while preserving Running state, Steer turn, and the interrupt affordance, which avoids a false idle/completed UI.",
+      "evidence": [
+        "mobile-app/turn-control-flows/VAL-TURN-006-interrupt-failure.log"
+      ]
+    }
+  ],
+  "frictions": [
+    "The flutter-mobile-widget-tests surface provides assertion-backed Flutter logs rather than standalone screenshots, videos, API captures, or websocket traces, so this report relies on saved command logs for user-surface evidence.",
+    "The suggested turn/composer harnesses covered start success, steer success, start failure, and interrupt failure, but not a dedicated steer-failure flow, leaving VAL-TURN-005 only partially evidenced."
+  ],
+  "blockers": [
+    {
+      "description": "No targeted flutter-mobile-widget-tests case exercised a failed steer interaction on an already running turn.",
+      "affectedAssertions": [
+        "VAL-TURN-005"
+      ],
+      "quickFixAttempted": "Searched the existing thread detail widget harness for a steer-failure case and found only the named start-failure and interrupt-failure flows plus success-path steering."
+    }
+  ],
+  "summary": "Tested 6 assertions: 5 passed, 0 failed, 1 blocked."
+}

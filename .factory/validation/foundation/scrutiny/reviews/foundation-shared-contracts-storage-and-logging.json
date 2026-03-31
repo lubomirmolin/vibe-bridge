@@ -1,0 +1,33 @@
+{
+  "featureId": "foundation-shared-contracts-storage-and-logging",
+  "reviewedAt": "2026-03-17T19:49:26Z",
+  "commitId": "4cc6919",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature establishes shared DTO/event models, secure-storage boundaries, persistence scopes, and logging scaffolds across Rust, Flutter, and Swift, but the Flutter contract decoder does not preserve cross-platform contract semantics when it receives an unexpected enum wire value.",
+    "issues": [
+      {
+        "file": "apps/mobile/lib/foundation/contracts/bridge_contracts.dart",
+        "line": 68,
+        "severity": "blocking",
+        "description": "The Flutter wire decoders silently coerce unknown enum values to `ThreadStatus.idle`, `AccessMode.readOnly`, and `BridgeEventKind.messageDelta` instead of rejecting invalid contract data. Rust and Swift rely on enum decoding that fails on unknown values, so the mobile layer can now hide contract drift and mis-render live state or permissions while the other platforms treat the same payload as invalid. That breaks the promised single agreed contract layer across bridge, mobile, and shell."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `foundation-worker` skill still includes a Flutter test example that fails from the repo root, and this feature's transcript/handoff shows the worker hit that exact failure before rerunning from `apps/mobile`.",
+      "evidence": ".factory/skills/foundation-worker/SKILL.md:40 shows `flutter test --concurrency=5 /repo/apps/mobile/test`; the handoff file `2026-03-17T19-32-03-722Z__foundation-shared-contracts-storage-and-logging__1a2d0225-06c3-435f-95ce-0b8db1ca52a2.json` records the same root-level command failing with `No pubspec.yaml file found` before the worker switched to `cd apps/mobile && flutter test --concurrency=5 test`."
+    },
+    {
+      "area": "knowledge",
+      "observation": "Mission shared-state docs still do not record the canonical shared-contract locations introduced by this feature, so later workers must rediscover where the source fixtures and Rust contract crate live.",
+      "evidence": ".factory/library/architecture.md:9-17 lists canonical project paths but omits both `shared/contracts` and `crates/shared-contracts`; a grep across `.factory/` for `shared/contracts|shared-contracts` returns no matches even though commit `4cc6919` added those paths as the contract source-of-truth artifacts."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed commit `4cc6919`, the worker handoff, and the transcript skeleton for `foundation-shared-contracts-storage-and-logging`. The feature largely lands the requested shared contract/storage/logging foundation, but it should fail scrutiny because Flutter currently masks invalid wire enum values instead of honoring the same strict contract semantics used by Rust and Swift."
+}

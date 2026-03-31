@@ -1,0 +1,21 @@
+{
+  "featureId": "pairing-security-fix-access-mode-authz-and-approval-consistency",
+  "reviewedAt": "2026-03-17T23:40:50Z",
+  "commitId": "1b50e90235eddfa4fbd1c33d2a76e418a6e9e3ef",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix addresses both prior failure points in scope: `POST /policy/access-mode` now requires trusted-session handshake credentials before mutating policy state, and approval resolution rolls the approval back to pending when the gated action can no longer dispatch because its target is unavailable.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "Shared API/security notes still describe the handshake inputs themselves, but they do not record that `POST /policy/access-mode` now requires those same trusted-session parameters and fails closed without them. Future workers touching policy/settings flows may have to rediscover that contract from `bridge-core` code.",
+      "evidence": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/library/security.md:14-20 and .factory/library/api.md:23-26 document handshake/auth surfaces but not the new access-mode auth requirement; crates/bridge-core/src/lib.rs:914-969 now rejects unauthenticated access-mode mutations unless `phone_id`, `bridge_id`, and `session_token` pass trusted-session authorization."
+    }
+  ],
+  "addressesFailureFrom": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/validation/pairing-security/scrutiny/reviews/security-policy-engine-and-access-mode-foundations.json",
+  "summary": "Reviewed the prior failed review, fix handoff/transcript skeleton, skill, mission docs, and commit `1b50e90235eddfa4fbd1c33d2a76e418a6e9e3ef`. Result: pass; the access-mode escalation hole is closed and stale-target approval attempts no longer leave approvals falsely resolved."
+}

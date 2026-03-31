@@ -1,0 +1,33 @@
+{
+  "featureId": "integration-platform-parity-and-build-closure",
+  "reviewedAt": "2026-03-18T19:57:06.252486Z",
+  "commitId": "097196f25d4735333e8baebde79596ffea21ecd8",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Reviewed the feature metadata, worker handoff/transcript skeleton, commit `097196f25d4735333e8baebde79596ffea21ecd8`, and the touched approval-flow files. The handoff shows broad validator/build execution, but the only code change is `apps/mobile/integration_test/live_bridge_approval_flow_test.dart`. That new test validates direct bridge API behavior on iOS and Android runtimes, yet it never boots the Flutter app or exercises the approval detail surface/actionability it claims to cover. Because the worker also recorded that manual tap-through lifecycle checks were skipped, the feature still lacks live-target evidence that the mobile approval detail/approve/reject experience works end-to-end against the real bridge on either platform.",
+    "issues": [
+      {
+        "file": "apps/mobile/integration_test/live_bridge_approval_flow_test.dart",
+        "line": 15,
+        "severity": "blocking",
+        "description": "The new `live bridge approval queue/detail/approve/reject flow` test never renders `CodexMobileApp`, navigates to the approvals queue, or opens `ApprovalDetailPage`; it only issues direct API calls through `HttpThreadDetailBridgeApi`, `HttpApprovalBridgeApi`, and `HttpSettingsBridgeApi`, then asserts queue statuses and resolution responses (`apps/mobile/integration_test/live_bridge_approval_flow_test.dart:18-137`). The handoff therefore overstates live queue/detail validation (`/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525/handoffs/2026-03-18T19-50-34-804Z__integration-platform-parity-and-build-closure__fbd913d8-c54a-4aa2-a939-dff1ef40d34e.json:10-12,45-53,87-99`), and because manual tap-through checks were skipped (`...:12,101-119`), there is still no live iOS/Android evidence for the user-visible approval detail context and approve/reject actionability that the actual screen renders (`apps/mobile/lib/features/approvals/presentation/approval_detail_page.dart:109-247`)."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `integration-worker` skill still treats manual lifecycle walkthroughs as mandatory even in non-interactive Exec sessions, so workers on release-readiness/parity features must record a justified deviation instead of following a documented Exec-mode path.",
+      "evidence": "`.factory/skills/integration-worker/SKILL.md:20-24` requires manual lifecycle verification and only says to record a deviation when that cannot be done. This worker hit the same gap in the handoff at `/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525/handoffs/2026-03-18T19-50-34-804Z__integration-platform-parity-and-build-closure__fbd913d8-c54a-4aa2-a939-dff1ef40d34e.json:108-119`, where `followedProcedure` is `false` and the suggested change is to allow explicit simulator/emulator integration tests as the Exec-mode substitute."
+    },
+    {
+      "area": "knowledge",
+      "observation": "`.factory/library/user-testing.md` still does not document the new live-bridge approval integration harness or how hardening reviewers/validators should invoke it on device targets, even though this feature relies on that test as core evidence.",
+      "evidence": "The mobile integration guidance in `.factory/library/user-testing.md:81-86` only names `integration_test/reconnect_offline_cache_test.dart`. This feature introduced and relied on `apps/mobile/integration_test/live_bridge_approval_flow_test.dart` as key parity evidence (`/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525/handoffs/2026-03-18T19-50-34-804Z__integration-platform-parity-and-build-closure__fbd913d8-c54a-4aa2-a939-dff1ef40d34e.json:45-53,87-99`)."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail. The worker added a new live-bridge approval integration test and recorded successful parity/build commands, but the only new validation code stops at direct bridge API calls and does not provide live-device evidence for the actual mobile approval detail/approve/reject user flow it claims to cover."
+}

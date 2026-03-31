@@ -7,7 +7,8 @@ use super::{
     THREAD_SYNC_REUSE_WINDOW_MILLIS, ThreadApiService, ThreadSyncConfig, UpstreamThreadRecord,
     UpstreamTimelineEvent, current_unix_epoch_millis, load_thread_snapshot_from_codex_archive,
     load_thread_snapshot_from_codex_archive_for_ids, map_codex_thread_to_timeline_events,
-    map_thread_detail, merge_thread_snapshots, should_resume_thread, unix_timestamp_to_iso8601,
+    map_thread_detail, merge_thread_snapshots, provider_thread_id, should_resume_thread,
+    unix_timestamp_to_iso8601,
 };
 use serde_json::{Value, json};
 use shared_contracts::{
@@ -96,4 +97,8 @@ fn unique_test_codex_home() -> PathBuf {
     );
 
     std::env::temp_dir().join(unique)
+}
+
+fn codex_thread_id(native_id: &str) -> String {
+    provider_thread_id(shared_contracts::ProviderKind::Codex, native_id)
 }

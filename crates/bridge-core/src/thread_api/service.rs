@@ -308,6 +308,9 @@ impl ThreadApiService {
         let thread_records = vec![
             UpstreamThreadRecord {
                 id: "thread-123".to_string(),
+                native_id: "thread-123".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
                 headline: "Implement shared contracts".to_string(),
                 lifecycle_state: "active".to_string(),
                 workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -325,6 +328,9 @@ impl ThreadApiService {
             },
             UpstreamThreadRecord {
                 id: "thread-456".to_string(),
+                native_id: "thread-456".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Vscode,
                 headline: "Investigate reconnect dedup".to_string(),
                 lifecycle_state: "done".to_string(),
                 workspace_path: "/workspace/codex-runtime-tools".to_string(),

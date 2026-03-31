@@ -1000,6 +1000,7 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   Future<TurnMutationResult> interruptTurn({
     required String bridgeApiBaseUrl,
     required String threadId,
+    String? turnId,
   }) {
     throw UnimplementedError();
   }

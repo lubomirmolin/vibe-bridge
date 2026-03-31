@@ -113,8 +113,8 @@ run_macos_checks() {
   CODEX_MOBILE_COMPANION_CARGO_BIN="$(command -v cargo)" \
   CODEX_MOBILE_COMPANION_RUSTC_BIN="$(command -v rustc)" \
   xcodebuild test \
-    -project "${REPO_ROOT}/apps/mac-shell/CodexMobileCompanion.xcodeproj" \
-    -scheme CodexMobileCompanion \
+    -project "${REPO_ROOT}/apps/mac-shell/VibeBridgeCompanion.xcodeproj" \
+    -scheme VibeBridgeCompanion \
     -destination "platform=macOS,arch=${macos_arch}" \
     ONLY_ACTIVE_ARCH=YES \
     CODE_SIGNING_ALLOWED=NO
@@ -122,8 +122,8 @@ run_macos_checks() {
   CODEX_MOBILE_COMPANION_CARGO_BIN="$(command -v cargo)" \
   CODEX_MOBILE_COMPANION_RUSTC_BIN="$(command -v rustc)" \
   xcodebuild \
-    -project "${REPO_ROOT}/apps/mac-shell/CodexMobileCompanion.xcodeproj" \
-    -scheme CodexMobileCompanion \
+    -project "${REPO_ROOT}/apps/mac-shell/VibeBridgeCompanion.xcodeproj" \
+    -scheme VibeBridgeCompanion \
     -configuration Release \
     -destination "platform=macOS,arch=${macos_arch}" \
     ONLY_ACTIVE_ARCH=YES \

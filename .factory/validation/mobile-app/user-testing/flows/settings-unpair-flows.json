@@ -1,0 +1,154 @@
+{
+  "groupId": "settings-unpair-flows",
+  "testedAt": "2026-03-18T15:20:51.141663+00:00",
+  "surface": "flutter-mobile-widget-tests",
+  "toolsUsed": [
+    "flutter",
+    "python3"
+  ],
+  "commandsRun": [
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/settings/settings_page_test.dart --plain-name \"settings shows paired bridge info, access mode, notification preferences, and security events\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; the settings surface showed the paired bridge identity, a Connected state, Control-with-approvals mode, notification toggles, and a security event with actor, target, and outcome details."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/settings/settings_page_test.dart --plain-name \"settings access mode switch updates bridge policy\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; selecting Read-only from settings sent a bridge policy update for phone-a1 and left the approval notification toggle visibly switched off after the tap."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"changing access mode from settings immediately gates turn and git controls\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; after the runtime access mode changed to read-only, the already-open thread detail surface disabled both the turn submit button and the git pull button immediately."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/settings/runtime_notification_delivery_surface_test.dart --plain-name \"runtime notifications surface globally while user is off thread routes\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; while the user was on Device settings, a runtime approval event surfaced as a visible global notification banner."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/pairing/pairing_flow_test.dart --plain-name \"unpairing from settings clears local trust and returns to unpaired UI\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; opening device settings and tapping Unpair returned the app to the pairing screen, cleared local trust/session state, and invoked the revoke-trust bridge call once."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"idle composer starts turn and transitions to active controls\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; in control-with-approvals mode, an idle thread accepted a new prompt, switched from Start turn to Steer turn, and exposed the interrupt control while the thread entered Running state."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"active composer steers and interrupt stops the active turn\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; in control-with-approvals mode, the thread detail surface accepted a steer instruction and then interrupted the active turn, returning the UI to an Interrupted / Start turn state."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"git status and mutations show context and refresh state\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; on the same control-with-approvals thread detail surface, branch switch, pull, and push executed immediately with visible success messages and refreshed git state instead of stopping behind an approval gate."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/approvals/approvals_queue_page_test.dart --plain-name \"full-control mode can approve pending approvals\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; full-control mode exposed an actionable Approve button and updated the approval detail to approved / already resolved as approved after the tap."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/approvals/approvals_queue_page_test.dart --plain-name \"lower-permission mode keeps approve/reject disabled\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; the lower-permission approvals surface kept Approve and Reject disabled and showed that approval actions are available only in full-control mode."
+    }
+  ],
+  "assertions": [
+    {
+      "id": "VAL-PAIR-007",
+      "status": "blocked",
+      "reason": "I found only partial read-only coverage: one widget flow proves a read-only mode change disables the turn submit and git pull buttons on an open thread, but there is no targeted flutter-mobile-widget-tests case that exercises the full read-only matrix from the contract (viewing while blocking steer, interrupt, approve, reject, push, pull, and branch switch).",
+      "evidence": [
+        "mobile-app/settings-unpair-flows/03-runtime-access-mode-gates-controls.log",
+        "mobile-app/settings-unpair-flows/10-lower-mode-approval-disabled.log"
+      ]
+    },
+    {
+      "id": "VAL-PAIR-008",
+      "status": "fail",
+      "reason": "Control-with-approvals mode did permit normal turn control: an idle thread could start a turn, and a running thread could steer and interrupt it. But dangerous git actions were not approval-gated from that same mode: branch switch, pull, and push all executed immediately with success feedback instead of stopping for explicit approval.",
+      "evidence": [
+        "mobile-app/settings-unpair-flows/06-control-with-approvals-start-turn.log",
+        "mobile-app/settings-unpair-flows/07-control-with-approvals-steer-interrupt.log",
+        "mobile-app/settings-unpair-flows/08-control-with-approvals-git-mutations.log"
+      ]
+    },
+    {
+      "id": "VAL-PAIR-009",
+      "status": "pass",
+      "reason": "The approvals widget harness showed the mode split clearly: full-control mode exposed an actionable Approve button, while the lower-permission mode kept Approve and Reject disabled with a user-facing only-in-full-control message.",
+      "evidence": [
+        "mobile-app/settings-unpair-flows/09-full-control-approval-enabled.log",
+        "mobile-app/settings-unpair-flows/10-lower-mode-approval-disabled.log"
+      ]
+    },
+    {
+      "id": "VAL-PAIR-010",
+      "status": "pass",
+      "reason": "The mobile unpair flow passed by navigating through device settings, tapping Unpair, clearing trusted bridge/session state, calling revokeTrust once, and returning the app to the fresh pairing UI.",
+      "evidence": [
+        "mobile-app/settings-unpair-flows/05-unpairing-from-settings.log"
+      ]
+    },
+    {
+      "id": "VAL-SETTINGS-001",
+      "status": "pass",
+      "reason": "The settings surface passed while showing the paired bridge identity, Connected state, current access mode, notification preferences, and visible security-event details.",
+      "evidence": [
+        "mobile-app/settings-unpair-flows/01-settings-surface.log"
+      ]
+    },
+    {
+      "id": "VAL-SETTINGS-003",
+      "status": "pass",
+      "reason": "Changing access mode from settings succeeded and had immediate visible effect: the settings surface issued the bridge policy update for Read-only, and the already-open thread detail surface immediately disabled turn and git controls.",
+      "evidence": [
+        "mobile-app/settings-unpair-flows/02-settings-access-mode.log",
+        "mobile-app/settings-unpair-flows/03-runtime-access-mode-gates-controls.log"
+      ]
+    },
+    {
+      "id": "VAL-SETTINGS-004",
+      "status": "blocked",
+      "reason": "The available widget coverage is split between a settings page that shows/toggles notification preferences and a separate runtime-notification surface that shows a global banner, but there is no targeted flutter-mobile-widget-tests flow that changes a notification preference and then proves delivered-versus-suppressed runtime behavior through the visible UI.",
+      "evidence": [
+        "mobile-app/settings-unpair-flows/01-settings-surface.log",
+        "mobile-app/settings-unpair-flows/04-runtime-notifications-global-surface.log"
+      ]
+    },
+    {
+      "id": "VAL-SETTINGS-006",
+      "status": "pass",
+      "reason": "The settings/device-management surface exposed recent security activity with enough detail to identify the actor, the target policy field, and the allowed outcome for the sensitive access-mode change event.",
+      "evidence": [
+        "mobile-app/settings-unpair-flows/01-settings-surface.log"
+      ]
+    }
+  ],
+  "frictions": [
+    "The flutter-mobile-widget-tests surface provides command logs rather than screenshots or videos, so this report relies on saved Flutter widget-test logs for user-surface evidence.",
+    "The assigned access-mode assertions are split across settings, threads, approvals, and pairing harnesses rather than a single device-management flow, so I had to combine multiple targeted widget flows to evaluate them."
+  ],
+  "blockers": [
+    {
+      "description": "No targeted flutter-mobile-widget-tests flow exercises the complete read-only access-mode contract across all blocked mutating controls while preserving the viewing surfaces.",
+      "affectedAssertions": [
+        "VAL-PAIR-007"
+      ],
+      "quickFixAttempted": "Searched the existing settings, pairing, threads, and approvals widget harnesses and ran the closest read-only gating flow plus the lower-permission approvals flow; neither covers the full read-only control matrix from the contract."
+    },
+    {
+      "description": "No targeted flutter-mobile-widget-tests flow ties a settings notification toggle change to delivered-versus-suppressed runtime notification banners in the visible UI.",
+      "affectedAssertions": [
+        "VAL-SETTINGS-004"
+      ],
+      "quickFixAttempted": "Ran the settings surface test and the runtime notification surface test, then reviewed the existing settings harnesses; only controller-level tests cover suppression/re-enable behavior after preference changes."
+    }
+  ],
+  "summary": "Tested 8 assertions: 5 passed, 1 failed, 2 blocked."
+}

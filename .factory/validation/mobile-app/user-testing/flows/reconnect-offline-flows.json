@@ -1,0 +1,107 @@
+{
+  "groupId": "reconnect-offline-flows",
+  "testedAt": "2026-03-18T14:52:56.167688+00:00",
+  "surfaces": [
+    "flutter-mobile-widget-tests",
+    "flutter-mobile-integration-tests"
+  ],
+  "toolsUsed": [
+    "flutter",
+    "python3"
+  ],
+  "commandsRun": [
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test integration_test/reconnect_offline_cache_test.dart --plain-name \"offline relaunch restores selected thread from cache and blocks mutating actions\"",
+      "exitCode": 0,
+      "observation": "Passed; the integration harness restored cached thread-456 after relaunch, showed the offline cached-thread banner, and kept mutating actions blocked."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test integration_test/reconnect_offline_cache_test.dart --plain-name \"disconnect keeps thread readable and deduplicated with reconnect controls\"",
+      "exitCode": 0,
+      "observation": "Passed; after a simulated disconnect the thread stayed readable, reconnect controls appeared, and the live item remained de-duplicated through catch-up."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_list_page_test.dart --plain-name \"offline bridge keeps cached thread list readable with stale state\"",
+      "exitCode": 0,
+      "observation": "Passed; the widget harness kept cached thread rows visible with an explicit stale/offline message while the bridge was unavailable."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"offline mode keeps cached thread detail readable and blocks mutating actions\"",
+      "exitCode": 0,
+      "observation": "Passed; cached thread detail stayed visible offline and the UI rendered the mutating-actions-blocked message."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"disconnect reconnects and keeps items deduplicated\"",
+      "exitCode": 0,
+      "observation": "Passed; a disconnect surfaced retry-reconnect controls and reconnect catch-up preserved a single copy of the live item while adding the catch-up item."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"reopening threads restores previously selected thread context\"",
+      "exitCode": 0,
+      "observation": "Passed; the widget reopened directly into the previously selected thread-456 context instead of dropping back to an unselected list state."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/pairing/pairing_flow_test.dart --plain-name \"unreachable trusted bridge path on reconnect preserves trust with explicit disconnected state\"",
+      "exitCode": 0,
+      "observation": "Passed; the paired UI stayed trusted, surfaced an explicit Bridge disconnected state, and showed reconnect guidance instead of forcing re-pairing."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/pairing/pairing_flow_test.dart --plain-name \"disconnected trusted bridge reconnects automatically without manual retry\"",
+      "exitCode": 0,
+      "observation": "Passed; the trusted disconnected state auto-retried and recovered back to the paired UI without manual retry or a new pairing flow."
+    }
+  ],
+  "assertions": [
+    {
+      "id": "VAL-THREAD-010",
+      "status": "pass",
+      "reason": "The reconnect/catch-up user surface passed in both integration and widget harnesses: disconnect left the thread readable, exposed reconnect controls, and restored missed items without duplicating the already streamed live item.",
+      "evidence": [
+        "mobile-app/reconnect-offline-flows/integration-disconnect-readable-deduplicated.log",
+        "mobile-app/reconnect-offline-flows/widget-disconnect-reconnect-deduplicated.log"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-003",
+      "status": "blocked",
+      "reason": "Partial reconnect evidence passed for preserved trust/no re-pairing and restored selected thread context, but the available reconnect/offline user-surface harnesses did not exercise pending approvals restoration or a full auth/subscription/repo-context restore bundle together, so the complete assertion could not be concluded honestly from user-surface evidence alone.",
+      "evidence": [
+        "mobile-app/reconnect-offline-flows/widget-disconnected-trusted-bridge-auto-reconnect.log",
+        "mobile-app/reconnect-offline-flows/widget-reopen-restores-selected-thread-context.log"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-005",
+      "status": "pass",
+      "reason": "Offline and disconnected states were explicit across the tested surfaces: cached thread views showed clear offline messaging, mutating actions were blocked, and the trusted pairing surface preserved trust while surfacing Bridge disconnected instead of silently queuing control actions.",
+      "evidence": [
+        "mobile-app/reconnect-offline-flows/integration-offline-relaunch-restores-selected-thread.log",
+        "mobile-app/reconnect-offline-flows/widget-offline-thread-detail-readable.log",
+        "mobile-app/reconnect-offline-flows/widget-unreachable-trusted-bridge-explicit-disconnected.log"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-007",
+      "status": "pass",
+      "reason": "Previously synced thread data remained readable offline in both list and detail flows, and the relaunch integration restored the cached selected thread with visible offline/stale messaging while keeping mutating actions disabled.",
+      "evidence": [
+        "mobile-app/reconnect-offline-flows/widget-offline-thread-list-readable.log",
+        "mobile-app/reconnect-offline-flows/widget-offline-thread-detail-readable.log",
+        "mobile-app/reconnect-offline-flows/integration-offline-relaunch-restores-selected-thread.log"
+      ]
+    }
+  ],
+  "frictions": [
+    "The flutter-mobile-widget-tests and flutter-mobile-integration-tests surfaces provide assertion-backed Flutter command logs rather than standalone screenshots, videos, or websocket captures, so this report relies on saved test logs for user-surface evidence.",
+    "Each targeted integration assertion rebuilt and reinstalled the Android debug app before execution, adding roughly 50-55 seconds of harness startup time per run."
+  ],
+  "blockers": [
+    {
+      "description": "No targeted reconnect/offline Flutter harness exercised pending approvals restoration or a combined reconnect flow proving auth, subscriptions, active thread, approvals, and repo context together.",
+      "affectedAssertions": [
+        "VAL-CROSS-003"
+      ]
+    }
+  ],
+  "summary": "Tested 4 assertions: 3 passed, 0 failed, 1 blocked."
+}

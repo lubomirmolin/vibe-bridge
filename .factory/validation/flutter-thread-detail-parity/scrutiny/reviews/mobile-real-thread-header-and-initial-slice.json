@@ -1,0 +1,21 @@
+{
+  "featureId": "mobile-real-thread-header-and-initial-slice",
+  "reviewedAt": "2026-03-21T01:02:58Z",
+  "commitId": "3f35a41311dfe7cd70506d21c7723005a480ce65",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed commit `3f35a41311dfe7cd70506d21c7723005a480ce65`, the feature handoff/progress entry, and the transcript skeleton. The implementation correctly changes initial thread-detail hydration to fetch `GET /threads/:id` directly, with wrapped/unwrapped decode support, so the header now comes from the bridge detail source of truth instead of the timeline page metadata. The added real-thread fixtures and widget assertions directly cover the scoped parity goals for thread `019d0d0c-07df-7632-81fa-a1636651400a`: header title/repository/status fidelity and an initial 80-entry chronological slice that still exposes meaningful command and file-change activity alongside the latest substantive message context. The reconnect retry test update is consistent with the extra initial detail fetch. I did not identify blocking or non-blocking issues within this feature’s scope.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The mobile-worker skill should explicitly document real-thread-backed widget tests plus payload comparison as the approved fallback when manual simulator/device verification is impossible in a headless worker session.",
+      "evidence": "The handoff for session `f32fd85b-456b-434b-bcb2-d81c4ad39421` marks `followedProcedure=false` only because step 6 was replaced with fixture-backed widget assertions and payload inspection (`/Users/lubomirmolin/.factory/missions/3baf4434-fe59-474d-9c04-6c493c6d5792/handoffs/2026-03-21T00-10-54-687Z__mobile-real-thread-header-and-initial-slice__f32fd85b-456b-434b-bcb2-d81c4ad39421.json`), while `.factory/skills/mobile-worker/SKILL.md` still frames manual local-target verification as the required procedure."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Pass. I reviewed the feature handoff/progress context, transcript skeleton, existing scrutiny-review style, and commit `3f35a41311dfe7cd70506d21c7723005a480ce65`. The change set is coherent with VAL-FLUTTER-001/002: initial header metadata now comes from the bridge detail endpoint, and new real-payload widget coverage proves the target thread’s header parity and initial 80-entry activity mix. No blocking or non-blocking code issues were identified; one shared-state observation was recorded about mobile-worker manual-verification guidance."
+}

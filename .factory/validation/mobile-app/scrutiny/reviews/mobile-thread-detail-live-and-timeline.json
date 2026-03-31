@@ -1,0 +1,28 @@
+{
+  "featureId": "mobile-thread-detail-live-and-timeline",
+  "reviewedAt": "2026-03-18T11:00:51Z",
+  "commitId": "a8ef8d6",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Reviewed commit a8ef8d6, the worker handoff, the transcript skeleton, and the relevant mission/library context. The feature does deliver thread detail rendering, mixed-item presentation, live updates for the currently open thread, timeline browsing, and a retryable unavailable-thread screen, but it does not fully satisfy VAL-THREAD-011 because off-screen thread activity never reaches the thread list/status UI while another thread detail is open.",
+    "issues": [
+      {
+        "file": "apps/mobile/lib/features/threads/application/thread_detail_controller.dart",
+        "line": 234,
+        "severity": "blocking",
+        "description": "The live-update path subscribes only to `state.threadId` and ignores every other thread (`thread_live_stream.dart:13-16, 35-39, 103-106` plus `thread_detail_controller.dart:257-325`). That means while the user is viewing thread A, live activity for thread B is never observed by the mobile client and therefore cannot surface as the list/status-only update required by VAL-THREAD-011. The bridge API already supports `thread_ids=<id1,id2>` or unfiltered subscriptions (`.factory/library/api.md:19-20`), but this feature never uses that capability; the accompanying test at `apps/mobile/test/features/threads/thread_detail_page_test.dart:193-275` only proves that off-thread events stay hidden from the open detail view, not that the list reflects off-screen activity."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The mobile-worker skill's strict failing-tests-first step is too rigid for this kind of greenfield cross-layer Flutter slice. The worker had to scaffold contracts/controllers/pages before meaningful widget tests could compile, and the handoff explicitly requested a skill update to allow that sequence.",
+      "evidence": "`.factory/skills/mobile-worker/SKILL.md` step 3 requires failing tests first; the handoff for session `31def650-5c36-48fb-834e-1ca6439f0913` sets `skillFeedback.followedProcedure=false` and explains that the detail/live thread slice had to be implemented before comprehensive widget scenarios could compile, with a suggested skill change to allow brief scaffolding-first work."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail. The reviewed implementation covers the selected-thread detail experience well, but it misses the off-screen thread list/status propagation required for VAL-THREAD-011 because its websocket subscription is hard-scoped to a single thread. I also recorded one mobile-worker skill-gap observation about the current test-first guidance being too rigid for this style of feature."
+}

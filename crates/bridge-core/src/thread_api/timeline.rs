@@ -4,14 +4,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde_json::Value;
 use shared_contracts::{
-    AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ThreadDetailDto,
-    ThreadStatus, ThreadSummaryDto, ThreadTimelineAnnotationsDto, ThreadTimelineEntryDto,
-    ThreadTimelineExplorationKind, ThreadTimelineGroupKind,
+    AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ProviderKind,
+    ThreadClientKind, ThreadDetailDto, ThreadStatus, ThreadSummaryDto,
+    ThreadTimelineAnnotationsDto, ThreadTimelineEntryDto, ThreadTimelineExplorationKind,
+    ThreadTimelineGroupKind,
 };
 
 use super::notifications::normalize_codex_item_payload;
 use super::rpc::CodexThread;
-use super::{GitStatusDto, RepositoryContextDto, UpstreamThreadRecord, UpstreamTimelineEvent};
+use super::{
+    GitStatusDto, RepositoryContextDto, UpstreamThreadRecord, UpstreamTimelineEvent,
+    provider_thread_id,
+};
 
 pub(super) fn payload_contains_hidden_message(payload: &Value) -> bool {
     payload_primary_text(payload)
@@ -100,6 +104,7 @@ pub(super) fn map_codex_thread_to_upstream_record(thread: &CodexThread) -> Upstr
     };
 
     let source = thread.source.as_str().unwrap_or("unknown").to_string();
+    let client = map_thread_client_kind_from_source(&source);
 
     let title = thread
         .name
@@ -109,7 +114,10 @@ pub(super) fn map_codex_thread_to_upstream_record(thread: &CodexThread) -> Upstr
         .to_string();
 
     UpstreamThreadRecord {
-        id: thread.id.clone(),
+        id: provider_thread_id(ProviderKind::Codex, &thread.id),
+        native_id: thread.id.clone(),
+        provider: ProviderKind::Codex,
+        client,
         headline: title,
         lifecycle_state: map_codex_status_to_lifecycle_state(&thread.status.kind),
         workspace_path: thread.cwd.clone(),
@@ -256,6 +264,9 @@ pub(super) fn map_thread_summary(upstream: &UpstreamThreadRecord) -> ThreadSumma
     ThreadSummaryDto {
         contract_version: CONTRACT_VERSION.to_string(),
         thread_id: upstream.id.clone(),
+        native_thread_id: upstream.native_id.clone(),
+        provider: upstream.provider,
+        client: upstream.client,
         title: upstream.headline.clone(),
         status: map_thread_status(&upstream.lifecycle_state),
         workspace: upstream.workspace_path.clone(),
@@ -269,6 +280,9 @@ pub(super) fn map_thread_detail(upstream: &UpstreamThreadRecord) -> ThreadDetail
     ThreadDetailDto {
         contract_version: CONTRACT_VERSION.to_string(),
         thread_id: upstream.id.clone(),
+        native_thread_id: upstream.native_id.clone(),
+        provider: upstream.provider,
+        client: upstream.client,
         title: upstream.headline.clone(),
         status: map_thread_status(&upstream.lifecycle_state),
         workspace: upstream.workspace_path.clone(),
@@ -279,6 +293,19 @@ pub(super) fn map_thread_detail(upstream: &UpstreamThreadRecord) -> ThreadDetail
         source: upstream.source.clone(),
         access_mode: map_access_mode(&upstream.approval_mode),
         last_turn_summary: upstream.last_turn_summary.clone(),
+        active_turn_id: None,
+    }
+}
+
+pub(crate) fn map_thread_client_kind_from_source(source: &str) -> ThreadClientKind {
+    match source.trim().to_ascii_lowercase().as_str() {
+        "cli" => ThreadClientKind::Cli,
+        "vscode" => ThreadClientKind::Vscode,
+        "remote_control" | "remote-control" => ThreadClientKind::RemoteControl,
+        "archive" => ThreadClientKind::Archive,
+        "bridge" => ThreadClientKind::Bridge,
+        "desktop_ipc" | "codex_app_ipc" => ThreadClientKind::DesktopIpc,
+        _ => ThreadClientKind::Unknown,
     }
 }
 
@@ -736,6 +763,9 @@ mod tests {
     fn summary_mapping_preserves_thread_identity() {
         let summary = map_thread_summary(&UpstreamThreadRecord {
             id: "thread-1".to_string(),
+            native_id: "thread-1".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Title".to_string(),
             lifecycle_state: "active".to_string(),
             workspace_path: "/repo".to_string(),

@@ -1,0 +1,28 @@
+{
+  "featureId": "mobile-git-controls-and-context",
+  "reviewedAt": "2026-03-18T11:00:48Z",
+  "commitId": "9cfdf0efa0d18363b2af22ffd06f0ec25c41fd56",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Reviewed the feature handoff, commit 9cfdf0efa0d18363b2af22ffd06f0ec25c41fd56, the transcript skeleton, and the current mobile git-controls implementation. The feature covers the requested git status surfaces, mutation flows, thread retargeting, and blank-branch client validation, but it does not fully satisfy the required safe disabled-state behavior: when git status fails to load, the UI still enables git mutation buttons even though the controller rejects those actions because no resolved git status is present.",
+    "issues": [
+      {
+        "file": "apps/mobile/lib/features/threads/presentation/thread_detail_page.dart",
+        "line": 578,
+        "severity": "blocking",
+        "description": "`_GitControlsCard` derives `hasRepositoryContext` from a fallback built from `thread.repository`/`thread.branch` when `gitStatus` is null, so the branch/pull/push buttons stay enabled after a git-status load failure (`thread_detail_page.dart:569-583,654-709`). But the controller only allows mutations when `state.gitStatus` exists (`thread_detail_controller.dart:107-115,809-837,891-955`). In that state, the user sees actionable git controls that always fail with a client-side 'no repository context' error instead of a safe disabled state, which violates the feature's disabled-state requirement and can expose stale repo context from thread detail rather than the last verified git context."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `mobile-worker` skill still treats manual local-target verification as a required procedural step, but this worker session recorded only automated checks and still marked `followedProcedure: true`. The skill or handoff expectations should be clarified so scrutiny can distinguish acceptable headless verification from an actual process miss.",
+      "evidence": "`.factory/skills/mobile-worker/SKILL.md` step 6 requires manual verification on a local target; the `worker-transcripts.jsonl` entry for session `c40b76a4-014f-415a-8938-f9369bef1667` shows reads, edits, tests, analyze, and commit commands but no simulator/device run; the handoff for `2026-03-18T10-24-43-707Z__mobile-git-controls-and-context__c40b76a4-014f-415a-8938-f9369bef1667.json` reports `skillFeedback.followedProcedure: true` without any interactive verification record."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail. The reviewed git-controls feature contains a blocking correctness issue in its disabled-state handling: mutation buttons remain enabled when git status is unavailable even though the controller cannot execute them. One shared-state skill/procedure observation was also recorded."
+}

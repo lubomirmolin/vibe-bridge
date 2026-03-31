@@ -1,0 +1,41 @@
+{
+  "milestone": "flutter-thread-detail-parity",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; ... commands.test equivalent ...",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; ... commands.typecheck equivalent ...",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; ... commands.lint equivalent ...",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 4,
+    "passed": 4,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [],
+  "rejectedObservations": [
+    {
+      "observation": "The mobile-worker skill should be updated to allow payload-backed evidence when manual simulator verification is impossible in headless sessions.",
+      "reason": "Rejected as already substantially covered: `.factory/skills/mobile-worker/SKILL.md` already requires explicit deviation reporting and strongest available widget/integration evidence when manual simulator/device verification is blocked in non-interactive sessions."
+    },
+    {
+      "observation": "The built-in scrutiny validator worker for this milestone exited unexpectedly before producing synthesis.",
+      "reason": "Manual scrutiny synthesis was completed from the committed diffs, review artifacts, and the latest passing full-suite validator runs so the milestone could proceed without rerunning unchanged checks."
+    }
+  ]
+}

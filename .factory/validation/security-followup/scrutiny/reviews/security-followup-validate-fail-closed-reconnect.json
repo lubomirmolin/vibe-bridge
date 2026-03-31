@@ -1,0 +1,21 @@
+{
+  "featureId": "security-followup-validate-fail-closed-reconnect",
+  "reviewedAt": "2026-03-18T22:33:16.043339+00:00",
+  "commitId": "205a621",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Commit 205a621 correctly routes revoked-trust and bridge-identity-mismatch reconnects into an explicit fail-closed re-pair-required state. The controller clears stored trust/session data on untrusted handshake results, the pairing UI surfaces a dedicated security banner instead of silently restoring the session, and the added widget plus integration coverage exercises both VAL-CROSS-006 paths against the bridge error codes.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The integration-worker skill should explicitly note that Flutter unit/widget tests and integration tests must be run in separate invocations; otherwise workers can waste time on an invalid combined command.",
+      "evidence": "The skill guidance only says to run targeted tests plus shared validators and to select an explicit device for Flutter integration tests (.factory/skills/integration-worker/SKILL.md:20-21). This worker still attempted `flutter test --concurrency=5 test integration_test`, and the handoff records the resulting failure plus the same suggested skill update (/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525/handoffs/2026-03-18T22-27-40-936Z__security-followup-validate-fail-closed-reconnect__d425ff28-b7c9-4ff5-800e-80688c192158.json:76-87)."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Pass. I reviewed the transcript skeleton, handoff, and commit diff for 205a621 and found the feature aligned with the security-followup requirement and VAL-CROSS-006 intent. No blocking or non-blocking code issues were identified; one shared-state observation was recorded about missing integration-worker guidance for separate Flutter test and integration_test invocations."
+}

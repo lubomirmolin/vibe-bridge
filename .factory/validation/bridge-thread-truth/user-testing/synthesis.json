@@ -1,0 +1,29 @@
+{
+  "milestone": "bridge-thread-truth",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 7,
+    "passed": 7,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-BRIDGE-001",
+    "VAL-BRIDGE-002",
+    "VAL-BRIDGE-007",
+    "VAL-BRIDGE-003",
+    "VAL-BRIDGE-004",
+    "VAL-BRIDGE-005",
+    "VAL-BRIDGE-006"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "notes": [
+    "Built-in user-testing-validator workers for this milestone exited unexpectedly before producing synthesis, so bridge assertions were validated manually using the committed bridge fixes, live bridge/API checks, and source-data comparisons for the target thread.",
+    "The shared bridge on 127.0.0.1:3110 was restarted before manual validation so live detail/timeline evidence reflected the latest bridge binary.",
+    "VAL-BRIDGE-004 used a combination of live merged-message evidence for the duplicated user prompt and the new targeted bridge regression coverage for archive/RPC command/file duplicate suppression.",
+    "Validation evidence came from `GET /threads/:id`, paginated `GET /threads/:id/timeline`, invalid-cursor checks, successful bridge-core regressions, and `~/.codex/session_index.jsonl` plus the target session JSONL under `~/.codex/sessions/2026/03/20/`."
+  ]
+}

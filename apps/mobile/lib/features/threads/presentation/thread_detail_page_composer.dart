@@ -20,6 +20,9 @@ class _PinnedTurnComposer extends StatelessWidget {
     required this.selectedPlanOptionByQuestionId,
     required this.modelOptions,
     required this.reasoningOptions,
+    required this.selectedProvider,
+    required this.canChangeProvider,
+    required this.supportsPlanMode,
     required this.selectedModel,
     required this.selectedReasoning,
     required this.accessMode,
@@ -31,6 +34,7 @@ class _PinnedTurnComposer extends StatelessWidget {
     required this.onRemoveImage,
     required this.onComposerModeChanged,
     required this.onSelectPlanOption,
+    required this.onProviderChanged,
     required this.onModelChanged,
     required this.onReasoningChanged,
     required this.onAccessModeChanged,
@@ -58,6 +62,9 @@ class _PinnedTurnComposer extends StatelessWidget {
   final Map<String, String> selectedPlanOptionByQuestionId;
   final List<ModelOptionDto> modelOptions;
   final List<String> reasoningOptions;
+  final ProviderKind selectedProvider;
+  final bool canChangeProvider;
+  final bool supportsPlanMode;
   final String selectedModel;
   final String selectedReasoning;
   final AccessMode accessMode;
@@ -69,6 +76,7 @@ class _PinnedTurnComposer extends StatelessWidget {
   final ValueChanged<XFile> onRemoveImage;
   final ValueChanged<TurnMode> onComposerModeChanged;
   final void Function(String questionId, String optionId) onSelectPlanOption;
+  final Future<void> Function(ProviderKind provider) onProviderChanged;
   final ValueChanged<String> onModelChanged;
   final ValueChanged<String> onReasoningChanged;
   final ValueChanged<AccessMode> onAccessModeChanged;
@@ -149,6 +157,7 @@ class _PinnedTurnComposer extends StatelessWidget {
                         composerController: composerController,
                         attachedImages: attachedImages,
                         composerMode: composerMode,
+                        supportsPlanMode: supportsPlanMode,
                         hasPendingUserInput: hasPendingUserInput,
                         selectedPlanOptionByQuestionId:
                             selectedPlanOptionByQuestionId,
@@ -229,6 +238,10 @@ class _PinnedTurnComposer extends StatelessWidget {
                                                               modelOptions,
                                                           reasoningOptions:
                                                               reasoningOptions,
+                                                          initialProvider:
+                                                              selectedProvider,
+                                                          canChangeProvider:
+                                                              canChangeProvider,
                                                           initialModel:
                                                               selectedModel,
                                                           initialReasoning:
@@ -238,6 +251,8 @@ class _PinnedTurnComposer extends StatelessWidget {
                                                           session: session,
                                                           isAccessModeUpdating:
                                                               isAccessModeUpdating,
+                                                          onProviderChanged:
+                                                              onProviderChanged,
                                                           onModelChanged:
                                                               onModelChanged,
                                                           onReasoningChanged:
@@ -319,8 +334,8 @@ class _PinnedTurnComposer extends StatelessWidget {
                                               : hasPendingUserInput
                                               ? 'Something else...'
                                               : composerMode == TurnMode.plan
-                                              ? 'Ask Codex to plan...'
-                                              : 'Message Codex...',
+                                              ? 'Ask ${selectedProvider == ProviderKind.codex ? 'Codex' : 'Claude Code'} to plan...'
+                                              : 'Message ${selectedProvider == ProviderKind.codex ? 'Codex' : 'Claude Code'}...',
                                           hintStyle: const TextStyle(
                                             color: AppTheme.textSubtle,
                                           ),
@@ -831,10 +846,10 @@ class _PendingUserInputOptionChip extends StatelessWidget {
 
 class _ComposerPrimaryActionRail extends StatefulWidget {
   const _ComposerPrimaryActionRail({
-    super.key,
     required this.composerController,
     required this.attachedImages,
     required this.composerMode,
+    required this.supportsPlanMode,
     required this.hasPendingUserInput,
     required this.selectedPlanOptionByQuestionId,
     required this.controlsEnabled,
@@ -851,6 +866,7 @@ class _ComposerPrimaryActionRail extends StatefulWidget {
   final TextEditingController composerController;
   final List<XFile> attachedImages;
   final TurnMode composerMode;
+  final bool supportsPlanMode;
   final bool hasPendingUserInput;
   final Map<String, String> selectedPlanOptionByQuestionId;
   final bool controlsEnabled;
@@ -896,7 +912,7 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
   }
 
   void _onDragUpdate(DragUpdateDetails details) {
-    if (widget.hasPendingUserInput) return;
+    if (widget.hasPendingUserInput || !widget.supportsPlanMode) return;
     _snapController.stop();
     setState(() {
       _dragDx += details.delta.dx;
@@ -906,7 +922,7 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
   }
 
   void _onDragEnd(DragEndDetails details) {
-    if (widget.hasPendingUserInput) return;
+    if (widget.hasPendingUserInput || !widget.supportsPlanMode) return;
     final velocity = details.primaryVelocity ?? 0;
 
     if (_dragDx < -20 || velocity < -180) {
@@ -1097,6 +1113,10 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
             );
           }
 
+          if (!widget.supportsPlanMode) {
+            return buildPrimaryButton(mode: TurnMode.act, isActive: true);
+          }
+
           final activeMode = effectiveMode;
           final secondaryMode = activeMode == TurnMode.act
               ? TurnMode.plan
@@ -1221,11 +1241,14 @@ class _ComposerModelSheet extends StatefulWidget {
   const _ComposerModelSheet({
     required this.modelOptions,
     required this.reasoningOptions,
+    required this.initialProvider,
+    required this.canChangeProvider,
     required this.initialModel,
     required this.initialReasoning,
     required this.selectedAccessMode,
     required this.session,
     required this.isAccessModeUpdating,
+    required this.onProviderChanged,
     required this.onModelChanged,
     required this.onReasoningChanged,
     required this.onAccessModeChanged,
@@ -1233,11 +1256,14 @@ class _ComposerModelSheet extends StatefulWidget {
 
   final List<ModelOptionDto> modelOptions;
   final List<String> reasoningOptions;
+  final ProviderKind initialProvider;
+  final bool canChangeProvider;
   final String initialModel;
   final String initialReasoning;
   final AccessMode selectedAccessMode;
   final AppBridgeSession? session;
   final bool isAccessModeUpdating;
+  final Future<void> Function(ProviderKind provider) onProviderChanged;
   final ValueChanged<String> onModelChanged;
   final ValueChanged<String> onReasoningChanged;
   final ValueChanged<AccessMode> onAccessModeChanged;
@@ -1247,17 +1273,35 @@ class _ComposerModelSheet extends StatefulWidget {
 }
 
 class _ComposerModelSheetState extends State<_ComposerModelSheet> {
+  late ProviderKind _selectedProvider;
+  late List<ModelOptionDto> _modelOptions;
+  late List<String> _reasoningOptions;
   late String _selectedModel;
   late String _selectedReasoning;
   late AccessMode _selectedAccessMode;
+  bool _isProviderUpdating = false;
 
   @override
   void initState() {
     super.initState();
+    _selectedProvider = widget.initialProvider;
+    _modelOptions = widget.modelOptions;
+    _reasoningOptions = widget.reasoningOptions;
     _selectedModel = widget.initialModel;
     _selectedReasoning = widget.initialReasoning;
     _selectedAccessMode = widget.selectedAccessMode;
   }
+
+  String _providerLabel(ProviderKind provider) {
+    switch (provider) {
+      case ProviderKind.codex:
+        return 'Codex';
+      case ProviderKind.claudeCode:
+        return 'Claude Code';
+    }
+  }
+
+  bool get _supportsPlanMode => _selectedProvider == ProviderKind.codex;
 
   @override
   Widget build(BuildContext context) {
@@ -1313,14 +1357,141 @@ class _ComposerModelSheetState extends State<_ComposerModelSheet> {
                   ],
                 ),
                 const SizedBox(height: 4),
-                const Text(
-                  'Pick the model and intelligence level for the next turn.',
-                  style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
+                Text(
+                  widget.canChangeProvider
+                      ? (_supportsPlanMode
+                            ? 'Pick the provider, model, and intelligence level for the next turn.'
+                            : 'Pick the provider and model for the next Claude turn. Plan mode stays on Codex-only threads.')
+                      : (_supportsPlanMode
+                            ? 'This thread stays on Codex. You can still adjust the model and intelligence level.'
+                            : 'This thread stays on Claude Code. You can still adjust the model. Plan mode stays on Codex-only threads.'),
+                  style: const TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                _ComposerSheetSection(
+                  title: 'Provider',
+                  subtitle: widget.canChangeProvider
+                      ? null
+                      : 'Provider is fixed once the thread is created.',
+                  children: widget.canChangeProvider
+                      ? ProviderKind.values
+                            .map(
+                              (provider) => _ComposerSheetOption(
+                                key: Key(
+                                  'turn-composer-provider-option-${provider.wireValue}',
+                                ),
+                                label: _providerLabel(provider),
+                                selected: _selectedProvider == provider,
+                                trailing:
+                                    _isProviderUpdating &&
+                                        _selectedProvider == provider
+                                    ? const SizedBox.square(
+                                        dimension: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: AppTheme.textMain,
+                                        ),
+                                      )
+                                    : null,
+                                onTap:
+                                    _isProviderUpdating ||
+                                        _selectedProvider == provider
+                                    ? () {}
+                                    : () async {
+                                        setState(() {
+                                          _selectedProvider = provider;
+                                          _isProviderUpdating = true;
+                                        });
+                                        try {
+                                          await widget.onProviderChanged(
+                                            provider,
+                                          );
+                                        } catch (_) {
+                                          if (mounted) {
+                                            setState(() {
+                                              _isProviderUpdating = false;
+                                            });
+                                          }
+                                          return;
+                                        }
+                                        if (!mounted) {
+                                          return;
+                                        }
+                                        setState(() {
+                                          _modelOptions =
+                                              fallbackModelCatalogForProvider(
+                                                provider,
+                                              ).models;
+                                          _selectedModel = _modelOptions
+                                              .firstWhere(
+                                                (model) => model.isDefault,
+                                                orElse: () =>
+                                                    _modelOptions.first,
+                                              )
+                                              .id;
+                                          final selectedModel = _modelOptions
+                                              .firstWhere(
+                                                (model) =>
+                                                    model.id == _selectedModel,
+                                                orElse: () =>
+                                                    _modelOptions.first,
+                                              );
+                                          _reasoningOptions = selectedModel
+                                              .supportedReasoningEfforts
+                                              .map(
+                                                (option) =>
+                                                    option.reasoningEffort,
+                                              )
+                                              .map(
+                                                (value) => value
+                                                    .split('_')
+                                                    .map(
+                                                      (word) => word.isEmpty
+                                                          ? word
+                                                          : '${word[0].toUpperCase()}${word.substring(1)}',
+                                                    )
+                                                    .join(' '),
+                                              )
+                                              .toList(growable: false);
+                                          _selectedReasoning =
+                                              selectedModel
+                                                  .defaultReasoningEffort
+                                                  ?.split('_')
+                                                  .map(
+                                                    (word) => word.isEmpty
+                                                        ? word
+                                                        : '${word[0].toUpperCase()}${word.substring(1)}',
+                                                  )
+                                                  .join(' ') ??
+                                              (_reasoningOptions.isEmpty
+                                                  ? 'Medium'
+                                                  : _reasoningOptions.first);
+                                          _isProviderUpdating = false;
+                                        });
+                                      },
+                              ),
+                            )
+                            .toList(growable: false)
+                      : <Widget>[
+                          _ComposerSheetOption(
+                            key: Key(
+                              'turn-composer-provider-option-${_selectedProvider.wireValue}',
+                            ),
+                            label: _providerLabel(_selectedProvider),
+                            selected: true,
+                            leading: PhosphorIcons.lock(),
+                            leadingColor: AppTheme.textSubtle,
+                            onTap: () {},
+                          ),
+                        ],
                 ),
                 const SizedBox(height: 18),
                 _ComposerSheetSection(
                   title: 'Models',
-                  children: widget.modelOptions
+                  children: _modelOptions
                       .map(
                         (model) => _ComposerSheetOption(
                           key: Key('turn-composer-model-option-${model.id}'),
@@ -1329,6 +1500,32 @@ class _ComposerModelSheetState extends State<_ComposerModelSheet> {
                           onTap: () {
                             setState(() {
                               _selectedModel = model.id;
+                              _reasoningOptions = model
+                                  .supportedReasoningEfforts
+                                  .map((option) => option.reasoningEffort)
+                                  .map(
+                                    (value) => value
+                                        .split('_')
+                                        .map(
+                                          (word) => word.isEmpty
+                                              ? word
+                                              : '${word[0].toUpperCase()}${word.substring(1)}',
+                                        )
+                                        .join(' '),
+                                  )
+                                  .toList(growable: false);
+                              _selectedReasoning =
+                                  model.defaultReasoningEffort
+                                      ?.split('_')
+                                      .map(
+                                        (word) => word.isEmpty
+                                            ? word
+                                            : '${word[0].toUpperCase()}${word.substring(1)}',
+                                      )
+                                      .join(' ') ??
+                                  (_reasoningOptions.isEmpty
+                                      ? _selectedReasoning
+                                      : _reasoningOptions.first);
                             });
                             widget.onModelChanged(model.id);
                           },
@@ -1339,7 +1536,10 @@ class _ComposerModelSheetState extends State<_ComposerModelSheet> {
                 const SizedBox(height: 18),
                 _ComposerSheetSection(
                   title: 'Intelligence',
-                  children: widget.reasoningOptions
+                  subtitle: _supportsPlanMode
+                      ? null
+                      : 'Claude uses its own effort scale and plan mode stays disabled.',
+                  children: _reasoningOptions
                       .map(
                         (reasoning) => _ComposerSheetOption(
                           key: Key('turn-composer-reasoning-option-$reasoning'),

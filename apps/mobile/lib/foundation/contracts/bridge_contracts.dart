@@ -8,6 +8,18 @@ enum AccessMode { readOnly, controlWithApprovals, fullControl }
 
 enum BridgeApiRouteKind { tailscale, localNetwork }
 
+enum ProviderKind { codex, claudeCode }
+
+enum ThreadClientKind {
+  cli,
+  vscode,
+  remoteControl,
+  desktopIpc,
+  archive,
+  bridge,
+  unknown,
+}
+
 enum ApprovalStatus { pending, approved, rejected }
 
 enum SpeechModelState {
@@ -46,6 +58,108 @@ enum GitDiffChangeType {
 enum ThreadTimelineGroupKind { exploration }
 
 enum ThreadTimelineExplorationKind { read, search }
+
+ProviderKind providerKindFromWire(String wireValue) {
+  switch (wireValue) {
+    case 'codex':
+      return ProviderKind.codex;
+    case 'claude_code':
+      return ProviderKind.claudeCode;
+    default:
+      throw FormatException('Unknown ProviderKind wire value "$wireValue".');
+  }
+}
+
+extension ProviderKindWire on ProviderKind {
+  String get wireValue {
+    switch (this) {
+      case ProviderKind.codex:
+        return 'codex';
+      case ProviderKind.claudeCode:
+        return 'claude_code';
+    }
+  }
+}
+
+ThreadClientKind threadClientKindFromWire(String wireValue) {
+  switch (wireValue) {
+    case 'cli':
+      return ThreadClientKind.cli;
+    case 'vscode':
+      return ThreadClientKind.vscode;
+    case 'remote_control':
+      return ThreadClientKind.remoteControl;
+    case 'desktop_ipc':
+      return ThreadClientKind.desktopIpc;
+    case 'archive':
+      return ThreadClientKind.archive;
+    case 'bridge':
+      return ThreadClientKind.bridge;
+    case 'unknown':
+      return ThreadClientKind.unknown;
+    default:
+      throw FormatException(
+        'Unknown ThreadClientKind wire value "$wireValue".',
+      );
+  }
+}
+
+ThreadClientKind threadClientKindFromSource(String source) {
+  switch (source) {
+    case 'cli':
+      return ThreadClientKind.cli;
+    case 'vscode':
+      return ThreadClientKind.vscode;
+    case 'remote_control':
+    case 'remote-control':
+      return ThreadClientKind.remoteControl;
+    case 'desktop_ipc':
+    case 'codex_app_ipc':
+      return ThreadClientKind.desktopIpc;
+    case 'archive':
+      return ThreadClientKind.archive;
+    case 'bridge':
+      return ThreadClientKind.bridge;
+    default:
+      return ThreadClientKind.unknown;
+  }
+}
+
+ProviderKind providerKindFromThreadId(String threadId) {
+  if (threadId.startsWith('claude:')) {
+    return ProviderKind.claudeCode;
+  }
+  return ProviderKind.codex;
+}
+
+String nativeThreadIdFromThreadId(String threadId) {
+  final separator = threadId.indexOf(':');
+  if (separator <= 0 || separator == threadId.length - 1) {
+    return threadId;
+  }
+  return threadId.substring(separator + 1);
+}
+
+extension ThreadClientKindWire on ThreadClientKind {
+  String get wireValue {
+    switch (this) {
+      case ThreadClientKind.cli:
+        return 'cli';
+      case ThreadClientKind.vscode:
+        return 'vscode';
+      case ThreadClientKind.remoteControl:
+        return 'remote_control';
+      case ThreadClientKind.desktopIpc:
+        return 'desktop_ipc';
+      case ThreadClientKind.archive:
+        return 'archive';
+      case ThreadClientKind.bridge:
+        return 'bridge';
+      case ThreadClientKind.unknown:
+        return 'unknown';
+    }
+  }
+}
 
 BridgeApiRouteKind bridgeApiRouteKindFromWire(String wireValue) {
   switch (wireValue) {
@@ -956,12 +1070,14 @@ class TurnMutationAcceptedDto {
     required this.threadId,
     required this.threadStatus,
     required this.message,
+    this.turnId,
   });
 
   final String contractVersion;
   final String threadId;
   final ThreadStatus threadStatus;
   final String message;
+  final String? turnId;
 
   factory TurnMutationAcceptedDto.fromJson(Map<String, dynamic> json) {
     return TurnMutationAcceptedDto(
@@ -969,6 +1085,7 @@ class TurnMutationAcceptedDto {
       threadId: json['thread_id'] as String,
       threadStatus: threadStatusFromWire(json['thread_status'] as String),
       message: json['message'] as String,
+      turnId: json['turn_id'] as String?,
     );
   }
 
@@ -978,6 +1095,7 @@ class TurnMutationAcceptedDto {
       'thread_id': threadId,
       'thread_status': threadStatus.wireValue,
       'message': message,
+      'turn_id': turnId,
     };
   }
 }
@@ -1584,16 +1702,22 @@ class ThreadSummaryDto {
   const ThreadSummaryDto({
     required this.contractVersion,
     required this.threadId,
+    String? nativeThreadId,
+    this.provider = ProviderKind.codex,
+    this.client = ThreadClientKind.cli,
     required this.title,
     required this.status,
     required this.workspace,
     required this.repository,
     required this.branch,
     required this.updatedAt,
-  });
+  }) : nativeThreadId = nativeThreadId ?? threadId;
 
   final String contractVersion;
   final String threadId;
+  final String nativeThreadId;
+  final ProviderKind provider;
+  final ThreadClientKind client;
   final String title;
   final ThreadStatus status;
   final String workspace;
@@ -1602,9 +1726,19 @@ class ThreadSummaryDto {
   final String updatedAt;
 
   factory ThreadSummaryDto.fromJson(Map<String, dynamic> json) {
+    final threadId = json['thread_id'] as String;
     return ThreadSummaryDto(
       contractVersion: json['contract_version'] as String,
-      threadId: json['thread_id'] as String,
+      threadId: threadId,
+      nativeThreadId:
+          json['native_thread_id'] as String? ??
+          nativeThreadIdFromThreadId(threadId),
+      provider: json['provider'] is String
+          ? providerKindFromWire(json['provider'] as String)
+          : providerKindFromThreadId(threadId),
+      client: json['client'] is String
+          ? threadClientKindFromWire(json['client'] as String)
+          : threadClientKindFromSource(json['source'] as String? ?? 'cli'),
       title: json['title'] as String,
       status: threadStatusFromWire(json['status'] as String),
       workspace: json['workspace'] as String,
@@ -1618,6 +1752,9 @@ class ThreadSummaryDto {
     return <String, dynamic>{
       'contract_version': contractVersion,
       'thread_id': threadId,
+      'native_thread_id': nativeThreadId,
+      'provider': provider.wireValue,
+      'client': client.wireValue,
       'title': title,
       'status': status.wireValue,
       'workspace': workspace,
@@ -1632,6 +1769,9 @@ class ThreadDetailDto {
   const ThreadDetailDto({
     required this.contractVersion,
     required this.threadId,
+    String? nativeThreadId,
+    this.provider = ProviderKind.codex,
+    this.client = ThreadClientKind.cli,
     required this.title,
     required this.status,
     required this.workspace,
@@ -1642,10 +1782,14 @@ class ThreadDetailDto {
     required this.source,
     required this.accessMode,
     required this.lastTurnSummary,
-  });
+    this.activeTurnId,
+  }) : nativeThreadId = nativeThreadId ?? threadId;
 
   final String contractVersion;
   final String threadId;
+  final String nativeThreadId;
+  final ProviderKind provider;
+  final ThreadClientKind client;
   final String title;
   final ThreadStatus status;
   final String workspace;
@@ -1656,10 +1800,14 @@ class ThreadDetailDto {
   final String source;
   final AccessMode accessMode;
   final String lastTurnSummary;
+  final String? activeTurnId;
 
   ThreadDetailDto copyWith({
     String? contractVersion,
     String? threadId,
+    String? nativeThreadId,
+    ProviderKind? provider,
+    ThreadClientKind? client,
     String? title,
     ThreadStatus? status,
     String? workspace,
@@ -1670,10 +1818,14 @@ class ThreadDetailDto {
     String? source,
     AccessMode? accessMode,
     String? lastTurnSummary,
+    String? activeTurnId,
   }) {
     return ThreadDetailDto(
       contractVersion: contractVersion ?? this.contractVersion,
       threadId: threadId ?? this.threadId,
+      nativeThreadId: nativeThreadId ?? this.nativeThreadId,
+      provider: provider ?? this.provider,
+      client: client ?? this.client,
       title: title ?? this.title,
       status: status ?? this.status,
       workspace: workspace ?? this.workspace,
@@ -1684,13 +1836,25 @@ class ThreadDetailDto {
       source: source ?? this.source,
       accessMode: accessMode ?? this.accessMode,
       lastTurnSummary: lastTurnSummary ?? this.lastTurnSummary,
+      activeTurnId: activeTurnId ?? this.activeTurnId,
     );
   }
 
   factory ThreadDetailDto.fromJson(Map<String, dynamic> json) {
+    final threadId = json['thread_id'] as String;
+    final source = json['source'] as String? ?? 'cli';
     return ThreadDetailDto(
       contractVersion: json['contract_version'] as String,
-      threadId: json['thread_id'] as String,
+      threadId: threadId,
+      nativeThreadId:
+          json['native_thread_id'] as String? ??
+          nativeThreadIdFromThreadId(threadId),
+      provider: json['provider'] is String
+          ? providerKindFromWire(json['provider'] as String)
+          : providerKindFromThreadId(threadId),
+      client: json['client'] is String
+          ? threadClientKindFromWire(json['client'] as String)
+          : threadClientKindFromSource(source),
       title: json['title'] as String,
       status: threadStatusFromWire(json['status'] as String),
       workspace: json['workspace'] as String,
@@ -1698,9 +1862,10 @@ class ThreadDetailDto {
       branch: json['branch'] as String,
       createdAt: json['created_at'] as String,
       updatedAt: json['updated_at'] as String,
-      source: json['source'] as String,
+      source: source,
       accessMode: accessModeFromWire(json['access_mode'] as String),
       lastTurnSummary: json['last_turn_summary'] as String,
+      activeTurnId: json['active_turn_id'] as String?,
     );
   }
 
@@ -1708,6 +1873,9 @@ class ThreadDetailDto {
     return <String, dynamic>{
       'contract_version': contractVersion,
       'thread_id': threadId,
+      'native_thread_id': nativeThreadId,
+      'provider': provider.wireValue,
+      'client': client.wireValue,
       'title': title,
       'status': status.wireValue,
       'workspace': workspace,
@@ -1718,6 +1886,7 @@ class ThreadDetailDto {
       'source': source,
       'access_mode': accessMode.wireValue,
       'last_turn_summary': lastTurnSummary,
+      'active_turn_id': activeTurnId,
     };
   }
 }

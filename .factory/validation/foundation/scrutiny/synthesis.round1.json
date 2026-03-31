@@ -1,0 +1,75 @@
+{
+  "milestone": "foundation",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then (cd \"$ROOT/apps/mobile\" && flutter test --concurrency=5); fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo test --manifest-path \"$ROOT/Cargo.toml\" --workspace --jobs 5; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild test -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS'; fi",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then flutter analyze \"$ROOT/apps/mobile\"; fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo check --manifest-path \"$ROOT/Cargo.toml\" --workspace --all-targets; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then flutter analyze \"$ROOT/apps/mobile\"; fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo fmt --manifest-path \"$ROOT/Cargo.toml\" --all --check && cargo clippy --manifest-path \"$ROOT/Cargo.toml\" --workspace --all-targets -- -D warnings; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 1,
+    "failed": 2,
+    "failedFeatures": [
+      "foundation-bootstrap-workspace",
+      "foundation-shared-contracts-storage-and-logging"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "foundation-bootstrap-workspace",
+      "severity": "blocking",
+      "description": "`.factory/services.yaml` still exposes a shared build command that runs `flutter build macos --project-dir \"$ROOT/apps/mobile\"`, but `apps/mobile` has no Flutter macOS runner and the installed Flutter CLI rejects the `--project-dir` flag for that command. The shared command set is therefore inconsistent with the canonical workspace scaffold promised by the feature."
+    },
+    {
+      "featureId": "foundation-shared-contracts-storage-and-logging",
+      "severity": "blocking",
+      "description": "`apps/mobile/lib/foundation/contracts/bridge_contracts.dart` silently coerces unknown enum wire values to defaults instead of rejecting invalid payloads. Rust and Swift keep strict enum decoding, so Flutter can mask contract drift and misrepresent status, access mode, or event kind while the other platforms fail closed."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Added canonical shared contract locations (`crates/shared-contracts` and `shared/contracts`) to `.factory/library/architecture.md`.",
+      "sourceFeature": "foundation-shared-contracts-storage-and-logging"
+    },
+    {
+      "target": "library",
+      "description": "Added the `android-repair` and `android-validate` harness guidance to `.factory/library/environment.md`.",
+      "sourceFeature": "foundation-repair-android-validation-environment"
+    },
+    {
+      "target": "library",
+      "description": "Updated `.factory/library/user-testing.md` to route Android validation through the shared harness commands.",
+      "sourceFeature": "foundation-repair-android-validation-environment"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skill:foundation-worker",
+      "suggestion": "Replace the root-level Flutter test example with `cd apps/mobile && flutter test --concurrency=5 test` (or the shared service command) so the skill matches mission guidance.",
+      "evidence": "Both failing foundation reviews flagged the same issue, and the `foundation-shared-contracts-storage-and-logging` handoff/transcript recorded `No pubspec.yaml file found` before the worker reran tests from `apps/mobile`.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Update `.factory/services.yaml` build command to align with the split Flutter/mobile and SwiftUI/mac-shell workspace.",
+      "reason": "Not applied during scrutiny because the required fix is non-additive and is already captured as a blocking implementation issue for `foundation-bootstrap-workspace`."
+    }
+  ],
+  "previousRound": null
+}

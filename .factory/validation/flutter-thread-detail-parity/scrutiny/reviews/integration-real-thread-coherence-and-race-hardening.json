@@ -1,0 +1,15 @@
+{
+  "featureId": "integration-real-thread-coherence-and-race-hardening",
+  "reviewedAt": "2026-03-21T01:03:23Z",
+  "commitId": "c696e807180e99fbcd15719e3540788a845c7138",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed the feature metadata/validation contract, the handoff in `progress_log.jsonl`, the worker transcript skeleton, and commit `c696e807180e99fbcd15719e3540788a845c7138`. The controller changes in `apps/mobile/lib/features/threads/application/thread_detail_controller.dart` consistently scope initial load, older-history pagination, and reconnect catch-up to the requested thread by capturing the expected thread id, bailing out when the request is no longer current, and failing closed when fetched detail or timeline-page payloads carry a different `thread_id`. That closes the cross-thread mutation hole without weakening the existing live-event gate that already ignores foreign-thread stream events. The integration-harness changes in `apps/mobile/integration_test/reconnect_offline_cache_test.dart` add deferred timeline-page scripting plus a targeted thread-switch/reconnect case that proves late live updates and stale catch-up payloads from thread A do not render after switching to thread B, which matches the VAL-CROSS-002 requirement. The handoff also records passing emulator-backed integration validation, real target-thread `/threads` + `/timeline` + `/policy/access-mode` coherence checks, and full workspace validators. I did not find remaining blocking or non-blocking issues in the reviewed scope.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Pass. I reviewed the feature handoff/progress context, transcript skeleton, and commit `c696e807180e99fbcd15719e3540788a845c7138`, and the implementation is coherent with the feature goals: thread-detail state updates now fail closed when detail/timeline responses fall out of scope, and the added integration coverage demonstrates that stale previous-thread reconnect payloads do not bleed into the selected thread view. No blocking or non-blocking issues were identified."
+}

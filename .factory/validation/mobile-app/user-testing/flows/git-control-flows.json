@@ -1,0 +1,142 @@
+{
+  "groupId": "git-control-flows",
+  "testedAt": "2026-03-18T15:08:25.211508+00:00",
+  "surface": "flutter-mobile-widget-tests",
+  "toolsUsed": [
+    "flutter",
+    "python3"
+  ],
+  "commandsRun": [
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"git status and mutations show context and refresh state\"",
+      "exitCode": 0,
+      "observation": "Passed; the thread detail surface showed Repository codex-mobile-companion, Branch master, Remote origin, a Dirty/Ahead 2/Behind 3 status summary, then executed branch switch, pull, and push with visible success messages and refreshed git state."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"blank branch switch is rejected client-side\"",
+      "exitCode": 0,
+      "observation": "Passed; entering only whitespace into the branch field surfaced a Bad request (client validation): branch name cannot be blank message and did not send a switch request."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"git mutation buttons stay disabled until git status resolves\"",
+      "exitCode": 0,
+      "observation": "Passed; when git status failed to resolve, the UI showed Couldn\u2019t load git status right now and left switch, pull, and push disabled."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"non-repository context disables git mutations safely\"",
+      "exitCode": 0,
+      "observation": "Passed; a non-repository thread showed the git-controls unavailable message and left branch switch, pull, and push disabled."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"switching threads retargets git actions to new context\"",
+      "exitCode": 0,
+      "observation": "Passed; after moving from thread-123 to thread-456, the repository label changed to codex-runtime-tools and the pull action targeted only thread-456."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"failed git mutation still refreshes git state\"",
+      "exitCode": 0,
+      "observation": "Passed; a failed pull surfaced Pull failed: remote rejected fetch request and refreshed visible git status from Behind 2 to Behind 1."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"changing access mode from settings immediately gates turn and git controls\"",
+      "exitCode": 0,
+      "observation": "Passed; changing runtime access mode to read-only disabled the turn submit control and the git pull button on the already open thread detail surface."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/approvals/approvals_queue_page_test.dart --plain-name \"queue and detail show action, origin, and command/file context\"",
+      "exitCode": 0,
+      "observation": "Passed; the approvals surface rendered a pending Git pull request with the reason, workspace, repository, current branch, remote, command output context, and file-change context."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/approvals/approvals_queue_page_test.dart --plain-name \"branch-switch approvals show the exact target branch\"",
+      "exitCode": 0,
+      "observation": "Passed; the pending branch-switch approval detail showed the exact target branch release/hotfix-42."
+    }
+  ],
+  "assertions": [
+    {
+      "id": "VAL-GIT-001",
+      "status": "pass",
+      "reason": "The git-controls widget flow passed while showing repository, current branch, remote, workspace, and a git-status summary before any mutation ran.",
+      "evidence": [
+        "mobile-app/git-control-flows/01-git-status-and-mutations.log"
+      ]
+    },
+    {
+      "id": "VAL-GIT-002",
+      "status": "pass",
+      "reason": "The same thread-detail widget flow exposed a visible git status surface on mobile, including the status card and readable Dirty/Ahead/Behind summary.",
+      "evidence": [
+        "mobile-app/git-control-flows/01-git-status-and-mutations.log"
+      ]
+    },
+    {
+      "id": "VAL-GIT-003",
+      "status": "pass",
+      "reason": "The branch-switch widget flow passed after entering release/2026, tapping Switch branch, and observing the branch label update to release/2026 with a success message; the separate blank-branch flow also confirmed client-side rejection of an empty branch name.",
+      "evidence": [
+        "mobile-app/git-control-flows/01-git-status-and-mutations.log",
+        "mobile-app/git-control-flows/02-blank-branch-switch.log"
+      ]
+    },
+    {
+      "id": "VAL-GIT-004",
+      "status": "pass",
+      "reason": "The pull path passed by showing a clear success result, Pulled latest changes from origin for release/2026, directly in the git-controls surface.",
+      "evidence": [
+        "mobile-app/git-control-flows/01-git-status-and-mutations.log"
+      ]
+    },
+    {
+      "id": "VAL-GIT-005",
+      "status": "pass",
+      "reason": "The push path passed by showing a clear success result and leaving the visible status refreshed to Clean \u2022 Ahead 0 \u2022 Behind 0 after the push completed.",
+      "evidence": [
+        "mobile-app/git-control-flows/01-git-status-and-mutations.log"
+      ]
+    },
+    {
+      "id": "VAL-GIT-006",
+      "status": "fail",
+      "reason": "On the control-with-approvals thread-detail surface, branch switch, pull, and push executed immediately and showed direct mutation success messages instead of creating an approval request from the git controls flow. Separate approvals widget tests prove git approvals can be displayed with repo/branch context, but they do not show a git action producing that approval request before execution.",
+      "evidence": [
+        "mobile-app/git-control-flows/01-git-status-and-mutations.log",
+        "mobile-app/git-control-flows/07-settings-access-mode-gates-controls.log",
+        "mobile-app/git-control-flows/08-approval-queue-context.log",
+        "mobile-app/git-control-flows/09-approval-branch-target.log"
+      ]
+    },
+    {
+      "id": "VAL-GIT-007",
+      "status": "pass",
+      "reason": "The success-path git flow refreshed visible branch/status state after each mutation, and the failed-pull flow also refreshed status afterward, moving the visible Behind count from 2 to 1 rather than leaving stale data behind.",
+      "evidence": [
+        "mobile-app/git-control-flows/01-git-status-and-mutations.log",
+        "mobile-app/git-control-flows/06-failed-git-mutation-refreshes.log"
+      ]
+    },
+    {
+      "id": "VAL-GIT-008",
+      "status": "pass",
+      "reason": "The non-repository widget flow passed by surfacing an explicit unavailability message and disabling all git mutation buttons; the unresolved-status flow likewise kept all mutation buttons disabled until status was available.",
+      "evidence": [
+        "mobile-app/git-control-flows/03-git-buttons-disabled-until-status.log",
+        "mobile-app/git-control-flows/04-non-repo-disables-git.log"
+      ]
+    },
+    {
+      "id": "VAL-GIT-009",
+      "status": "pass",
+      "reason": "The thread-switching widget flow passed after the visible repository context changed from codex-mobile-companion to codex-runtime-tools and the subsequent pull targeted only the newly selected thread context.",
+      "evidence": [
+        "mobile-app/git-control-flows/05-switching-threads-retargets-git.log"
+      ]
+    }
+  ],
+  "frictions": [
+    "The flutter-mobile-widget-tests surface provides assertion-backed Flutter command logs rather than standalone screenshots, videos, API captures, or policy logs, so this report relies on saved widget-test logs for user-surface evidence.",
+    "The current git-control widget harness does not include a test where tapping branch switch, pull, or push creates an approval request; I had to combine the direct git-mutation flow with separate approval-display tests to assess VAL-GIT-006."
+  ],
+  "blockers": [],
+  "summary": "Tested 9 assertions: 8 passed, 1 failed, 0 blocked."
+}

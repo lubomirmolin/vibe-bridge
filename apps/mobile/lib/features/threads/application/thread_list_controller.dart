@@ -317,6 +317,9 @@ class ThreadListController extends StateNotifier<ThreadListState> {
     final nextSummary = ThreadSummaryDto(
       contractVersion: detail.contractVersion,
       threadId: detail.threadId,
+      nativeThreadId: detail.nativeThreadId,
+      provider: detail.provider,
+      client: detail.client,
       title: detail.title,
       status: detail.status,
       workspace: detail.workspace,
@@ -353,6 +356,9 @@ class ThreadListController extends StateNotifier<ThreadListState> {
         return ThreadSummaryDto(
           contractVersion: thread.contractVersion,
           threadId: thread.threadId,
+          nativeThreadId: thread.nativeThreadId,
+          provider: thread.provider,
+          client: thread.client,
           title: title ?? thread.title,
           status: status,
           workspace: thread.workspace,
@@ -447,6 +453,9 @@ class ThreadListController extends StateNotifier<ThreadListState> {
             return ThreadSummaryDto(
               contractVersion: thread.contractVersion,
               threadId: thread.threadId,
+              nativeThreadId: thread.nativeThreadId,
+              provider: thread.provider,
+              client: thread.client,
               title: nextTitle,
               status: thread.status,
               workspace: thread.workspace,
@@ -473,6 +482,9 @@ class ThreadListController extends StateNotifier<ThreadListState> {
         return ThreadSummaryDto(
           contractVersion: thread.contractVersion,
           threadId: thread.threadId,
+          nativeThreadId: thread.nativeThreadId,
+          provider: thread.provider,
+          client: thread.client,
           title: thread.title,
           status: thread.status,
           workspace: thread.workspace,

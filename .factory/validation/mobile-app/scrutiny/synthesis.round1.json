@@ -1,0 +1,113 @@
+{
+  "milestone": "mobile-app",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then (cd \"$ROOT/apps/mobile\" && flutter test --concurrency=5); fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo test --manifest-path \"$ROOT/Cargo.toml\" --workspace --jobs 5; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild test -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS'; fi",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then flutter analyze \"$ROOT/apps/mobile\"; fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo check --manifest-path \"$ROOT/Cargo.toml\" --workspace --all-targets; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then flutter analyze \"$ROOT/apps/mobile\"; fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo fmt --manifest-path \"$ROOT/Cargo.toml\" --all --check && cargo clippy --manifest-path \"$ROOT/Cargo.toml\" --workspace --all-targets -- -D warnings; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 7,
+    "passed": 2,
+    "failed": 5,
+    "failedFeatures": [
+      "mobile-thread-detail-live-and-timeline",
+      "integration-reconnect-catchup-and-offline-cache",
+      "mobile-approvals-queue-and-resolution",
+      "mobile-git-controls-and-context",
+      "mobile-settings-access-modes-and-unpair"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "mobile-thread-detail-live-and-timeline",
+      "severity": "blocking",
+      "description": "The mobile client subscribes only to the currently open thread's websocket stream, so off-screen thread activity never updates list/status UI as required by VAL-THREAD-011."
+    },
+    {
+      "featureId": "integration-reconnect-catchup-and-offline-cache",
+      "severity": "blocking",
+      "description": "Mobile secure storage is still backed by InMemorySecureStore, so trusted-session, selected-thread, and cached-thread state do not survive real app process death or relaunch."
+    },
+    {
+      "featureId": "integration-reconnect-catchup-and-offline-cache",
+      "severity": "blocking",
+      "description": "Thread live-stream disconnect handling marks the UI stale/offline but never schedules automatic reconnect/catch-up, leaving recovery dependent on a manual Retry tap."
+    },
+    {
+      "featureId": "mobile-approvals-queue-and-resolution",
+      "severity": "blocking",
+      "description": "Live approval_requested events update the timeline only; the approvals queue and thread approval surfaces do not refresh automatically, so newly gated actions can stay invisible until manual refresh."
+    },
+    {
+      "featureId": "mobile-approvals-queue-and-resolution",
+      "severity": "blocking",
+      "description": "Branch-switch approvals do not expose the exact target branch under review in the mobile detail UI, missing the exact decision context required by VAL-APPROVAL-002."
+    },
+    {
+      "featureId": "mobile-approvals-queue-and-resolution",
+      "severity": "blocking",
+      "description": "Late approval resolution conflicts such as approval_not_pending leave queue/thread state stale as pending until manual refresh, breaking approval status synchronization."
+    },
+    {
+      "featureId": "mobile-git-controls-and-context",
+      "severity": "blocking",
+      "description": "Git mutation buttons can remain enabled when git status failed to load even though the controller refuses those mutations without resolved git status, violating the required safe disabled state."
+    },
+    {
+      "featureId": "mobile-settings-access-modes-and-unpair",
+      "severity": "blocking",
+      "description": "Notification preference toggles are only persisted locally and affect UI chrome, not actual approval/live-activity notification delivery or suppression, so VAL-SETTINGS-004 is not met."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Documented that the current mobile secure-store provider is still backed by InMemorySecureStore, so app relaunch does not yet persist trusted-session or cached-thread state.",
+      "sourceFeature": "integration-reconnect-catchup-and-offline-cache"
+    },
+    {
+      "target": "library",
+      "description": "Documented that approval records currently expose generic git target identifiers instead of concrete branch/remote destination values.",
+      "sourceFeature": "mobile-approvals-queue-and-resolution"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skill:mobile-worker",
+      "suggestion": "Clarify how mobile workers should handle manual verification in headless sessions: either explicitly permit widget/integration-test-based fallback evidence when no simulator/device session is feasible, or require workers to record the missing manual check as a deviation instead of marking followedProcedure true.",
+      "evidence": "Reviews for mobile-thread-list-and-search, mobile-approvals-queue-and-resolution, mobile-git-controls-and-context, and mobile-settings-access-modes-and-unpair all flagged that the current skill mandates manual local-target verification, while headless worker handoffs either used widget-test fallback or omitted interactive evidence entirely.",
+      "isSystemic": true
+    },
+    {
+      "target": "skill:mobile-worker",
+      "suggestion": "Relax the strict 'write failing tests first' instruction for cross-layer Flutter slices so workers may add the minimal interface/controller scaffolding needed before the first meaningful failing assertions when test doubles or contracts do not yet exist.",
+      "evidence": "Reviews for mobile-thread-detail-live-and-timeline and mobile-composer-and-turn-controls both recorded justified deviations because the current skill wording required failing tests before the bridge/controller/page contract existed well enough to compile realistic widget scenarios.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Repeated manual-verification skill observations from multiple mobile reviews.",
+      "reason": "duplicate of the single systemic mobile-worker guidance recommendation captured in suggestedGuidanceUpdates."
+    },
+    {
+      "observation": "The composer-controls review repeated the scaffold-before-tests concern already captured by the thread-detail review.",
+      "reason": "duplicate of the single systemic mobile-worker test-order recommendation captured in suggestedGuidanceUpdates."
+    }
+  ],
+  "previousRound": null
+}

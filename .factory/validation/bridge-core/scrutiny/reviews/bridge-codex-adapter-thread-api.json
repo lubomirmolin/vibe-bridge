@@ -1,0 +1,40 @@
+{
+  "featureId": "bridge-codex-adapter-thread-api",
+  "reviewedAt": "2026-03-17T21:02:07Z",
+  "commitId": "0e7c0be4ea3466a98348f0efad4e4fc64d1e1326",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The commit adds normalized DTOs, fixtures, and HTTP routes, but the bridge-side behavior is still largely stubbed: default runtime supervision never verifies or starts a real Codex runtime, and the shipped thread endpoints are backed by hard-coded sample records instead of local Codex data.",
+    "issues": [
+      {
+        "file": "crates/bridge-core/src/codex_runtime.rs",
+        "line": 101,
+        "severity": "blocking",
+        "description": "`CodexRuntimeSupervisor::initialize()` treats auto mode as successfully attached whenever `config.endpoint` is set, and the CLI defaults always provide `ws://127.0.0.1:4222` (`crates/bridge-core/src/lib.rs:101-103`). As a result, `/health` can report `attached` without checking whether any Codex runtime is reachable and without falling back to spawning one, so the promised 'start or attach to local Codex runtime processes' behavior is not actually implemented." 
+      },
+      {
+        "file": "crates/bridge-core/src/lib.rs",
+        "line": 61,
+        "severity": "blocking",
+        "description": "The live bridge application is constructed with `ThreadApiService::sample()`, and that service hard-codes fixture threads/timeline events (`crates/bridge-core/src/thread_api.rs:70-120`) rather than querying a local Codex runtime or persisted thread store. In this state, `GET /threads`, `GET /threads/:id`, and `GET /threads/:id/timeline` only ever expose seeded demo payloads, so the feature does not deliver real normalized thread list/detail/timeline access." 
+      },
+      {
+        "file": "crates/bridge-core/src/thread_api.rs",
+        "line": 144,
+        "severity": "non_blocking",
+        "description": "`timeline_response()` returns `None` unless the thread ID exists in `timeline_by_thread_id`, so an existing thread with no timeline entries is surfaced as 404 instead of a valid empty normalized timeline. That conflates 'thread exists but has no events yet' with 'thread not found' and would make newly created or idle threads look broken to clients." 
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "services",
+      "observation": "The shared bridge healthcheck is too shallow for bridge-core lifecycle work: it only curls `/health`, so it cannot detect false-positive runtime states where the bridge claims to be attached without having verified Codex reachability.",
+      "evidence": ".factory/services.yaml:42-45 defines the bridge healthcheck as `curl -sf http://127.0.0.1:3110/health`; this review found `crates/bridge-core/src/codex_runtime.rs:100-104` marks auto mode as `attached` purely from configured endpoint presence."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed commit `0e7c0be4ea3466a98348f0efad4e4fc64d1e1326`, the worker handoff, the transcript skeleton, and the bridge-worker guidance. The feature should fail scrutiny: it adds normalized contracts and routes, but the runtime lifecycle is not a real attach/spawn implementation in the default path, and the thread APIs are still wired to static sample data rather than actual Codex thread state."
+}

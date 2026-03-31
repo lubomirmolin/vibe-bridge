@@ -518,6 +518,13 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
   late final ReconnectScheduler _reconnectScheduler;
   ThreadLiveSubscription? _liveSubscription;
+
+  void showTurnControlError(String message) {
+    state = state.copyWith(turnControlErrorMessage: message);
+  }
+
+  ThreadDetailDto? get currentThread => state.thread;
+
   StreamSubscription<BridgeEventEnvelope<Map<String, dynamic>>>?
   _liveEventSubscription;
   Timer? _detailRefreshTimer;
@@ -1777,6 +1784,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       final mutationResult = await _bridgeApi.interruptTurn(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
         threadId: state.threadId,
+        turnId: state.thread?.activeTurnId,
       );
       _applyTurnMutationResult(mutationResult);
       state = state.copyWith(
@@ -2063,11 +2071,20 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     }
 
     final updatedAt = DateTime.now().toUtc().toIso8601String();
-    _updateThreadStatus(
-      status: mutationResult.threadStatus,
-      updatedAt: updatedAt,
-      lastTurnSummary: mutationResult.message,
+    state = state.copyWith(
+      thread: thread.copyWith(
+        status: mutationResult.threadStatus,
+        updatedAt: updatedAt,
+        lastTurnSummary: mutationResult.message,
+        activeTurnId: mutationResult.threadStatus == ThreadStatus.running
+            ? (mutationResult.turnId ?? thread.activeTurnId)
+            : null,
+      ),
     );
+    if (mutationResult.threadStatus != ThreadStatus.running) {
+      _pendingPromptSubmittedAt = null;
+      _lastActiveTurnSignalAt = null;
+    }
     if (mutationResult.threadStatus == ThreadStatus.running) {
       _recordActiveTurnSignal();
     }
@@ -2095,6 +2112,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         status: status,
         updatedAt: updatedAt,
         lastTurnSummary: lastTurnSummary,
+        activeTurnId: status == ThreadStatus.running
+            ? thread.activeTurnId
+            : null,
       ),
     );
 

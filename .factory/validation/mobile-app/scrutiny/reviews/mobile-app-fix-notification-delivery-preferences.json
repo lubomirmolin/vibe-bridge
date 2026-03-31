@@ -1,0 +1,34 @@
+{
+  "featureId": "mobile-app-fix-notification-delivery-preferences",
+  "reviewedAt": "2026-03-18T13:58:30.181933Z",
+  "commitId": "04025a2b246b3964f4816e00a4209136e769a430",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Reviewed the original failed feature (`integration-mobile-runtime-sync-and-safe-affordances-fix`, commit `33425a4`) together with the current fix feature (`mobile-app-fix-notification-delivery-preferences`, commit `04025a2`) and the intervening branch-target fix now at HEAD (`8c32448`). The original branch-switch approval-target failure is resolved: bridge approvals now carry the exact branch and the mobile presenter renders it. The new notification work does introduce a live-stream-backed delivery/suppression path controlled by the settings toggles, so this is no longer only local UI state. However, two blocking gaps remain: runtime notifications are only surfaced while ThreadListPage/ThreadDetailPage is the current route, and persisted disabled preferences can still leak notifications during app startup before async preference restore completes.",
+    "issues": [
+      {
+        "file": "apps/mobile/lib/features/threads/presentation/thread_list_page.dart",
+        "line": 54,
+        "severity": "blocking",
+        "description": "The new delivery path is still not app-wide. `runtimeNotificationDeliveryControllerProvider` is only consumed from `ThreadListPage` and `ThreadDetailPage` (`thread_list_page.dart:49-57`, `thread_detail_page.dart:66-74`), and both handlers immediately return whenever their route is not current (`thread_list_page.dart:205-211`, `thread_detail_page.dart:151-157`). But Settings/Approvals are pushed on top of those routes (`thread_list_page.dart:84-87,105-107`; `thread_detail_page.dart:100-102`), and no other page consumes the controller. If an approval or live-activity event arrives while the user is on Settings or Approvals Queue, it stays stranded in `pendingNotifications` until some later provider change occurs, so runtime delivery is still unreliable in normal navigation flows." 
+      },
+      {
+        "file": "apps/mobile/lib/features/settings/application/runtime_notification_delivery_controller.dart",
+        "line": 18,
+        "severity": "blocking",
+        "description": "Persisted disabled preferences are not fully honored on relaunch/cold start. The provider seeds the controller from `ref.read(notificationPreferencesControllerProvider)` and starts the live subscription immediately (`runtime_notification_delivery_controller.dart:18,94-100`), but `NotificationPreferencesController` defaults both toggles to `true` while `isLoading` is still true and only restores secure-store values asynchronously (`notification_preferences_controller.dart:19-22,49-50`). A user who previously disabled approval or live-activity notifications can therefore still receive early runtime notifications before restore completes, which means the saved preferences do not yet fully control delivery/suppression behavior across relaunches." 
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "`.factory/library/api.md` is now stale about approval targets and can mislead future workers reviewing approval-context behavior.",
+      "evidence": "`.factory/library/api.md:23` still says `ApprovalRecordDto.target` only carries generic identifiers like `git.branch_switch`, but the live bridge contract now returns the exact branch via `PendingApprovalAction::target_name()` (`crates/bridge-core/src/lib.rs:580-583,660-663`) and the branch-target fix commit `8c32448` added coverage asserting `approval.target == \"release/2026\"` (`crates/bridge-core/src/lib.rs:2653-2684`)."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/mobile-app/scrutiny/reviews/integration-mobile-runtime-sync-and-safe-affordances-fix.json",
+  "summary": "Fail. The original branch-target contract/UI gap is fixed at current HEAD, and notification preferences now drive a real live-stream-backed delivery path instead of only UI chrome. But notification delivery is still unreliable because it only surfaces on current thread list/detail routes and can leak disabled notifications during async preference restore after relaunch."
+}

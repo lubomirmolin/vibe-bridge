@@ -1,31 +1,39 @@
+use base64::Engine;
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use shared_contracts::{
     AccessMode, ApprovalSummaryDto, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION,
-    GitStatusDto, ModelOptionDto, PendingUserInputDto, ReasoningEffortOptionDto, ThreadDetailDto,
-    ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto, ThreadTimelineAnnotationsDto,
-    ThreadTimelineEntryDto, ThreadTimelineExplorationKind, ThreadTimelineGroupKind,
-    TurnMutationAcceptedDto,
+    GitStatusDto, ModelOptionDto, PendingUserInputDto, ProviderKind, ReasoningEffortOptionDto,
+    ThreadDetailDto, ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto,
+    ThreadTimelineAnnotationsDto, ThreadTimelineEntryDto, ThreadTimelineExplorationKind,
+    ThreadTimelineGroupKind, TurnMutationAcceptedDto,
 };
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
+use uuid::Uuid;
 
 use crate::codex_runtime::CodexRuntimeMode;
 use crate::codex_transport::CodexJsonTransport;
 use crate::server::config::BridgeCodexConfig;
 use crate::server::state::parse_pending_user_input_payload;
 use crate::thread_api::{
-    CodexNotificationNormalizer, CodexNotificationStream, ThreadApiService,
+    CodexNotificationNormalizer, CodexNotificationStream, ThreadApiService, is_provider_thread_id,
     load_archive_timeline_entries_for_session_path, load_archive_timeline_entries_for_thread,
+    map_thread_client_kind_from_source, native_thread_id_for_provider, provider_thread_id,
 };
 
 #[derive(Debug, Clone)]
 pub struct CodexGateway {
     config: BridgeCodexConfig,
     reserved_transports: Arc<Mutex<HashMap<String, ReservedTransport>>>,
+    claude_thread_workspaces: Arc<Mutex<HashMap<String, String>>>,
+    active_claude_processes: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
+    interrupted_claude_threads: Arc<Mutex<HashSet<String>>>,
 }
 
 #[derive(Debug)]
@@ -53,6 +61,7 @@ pub struct TurnStartRequest {
     pub images: Vec<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
+    pub permission_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,6 +148,9 @@ impl CodexGateway {
         Self {
             config,
             reserved_transports: Arc::new(Mutex::new(HashMap::new())),
+            claude_thread_workspaces: Arc::new(Mutex::new(HashMap::new())),
+            active_claude_processes: Arc::new(Mutex::new(HashMap::new())),
+            interrupted_claude_threads: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -166,10 +178,18 @@ impl CodexGateway {
         let thread_id = thread_id.to_string();
         let reserved_transports = Arc::clone(&self.reserved_transports);
         tokio::task::spawn_blocking(move || {
+            if !is_provider_thread_id(&thread_id, ProviderKind::Codex) {
+                return fetch_thread_snapshot_from_archive(&config, &thread_id);
+            }
             let mut transport = take_reserved_transport(&reserved_transports, &thread_id)
                 .unwrap_or(connect_read_transport(&config)?);
-            let payload = read_thread_with_resume(&mut transport, &thread_id, true)?;
-            let snapshot = map_thread_snapshot(payload.thread);
+            let snapshot = match read_thread_with_resume(&mut transport, &thread_id, true) {
+                Ok(payload) => map_thread_snapshot(payload.thread),
+                Err(error) if error.contains("not found") => {
+                    return fetch_thread_snapshot_from_archive(&config, &thread_id);
+                }
+                Err(error) => return Err(error),
+            };
             reserve_transport(&reserved_transports, thread_id, transport);
             Ok(snapshot)
         })
@@ -179,9 +199,13 @@ impl CodexGateway {
 
     pub async fn create_thread(
         &self,
+        provider: ProviderKind,
         workspace: &str,
         model: Option<&str>,
     ) -> Result<ThreadSnapshotDto, String> {
+        if provider == ProviderKind::ClaudeCode {
+            return self.create_claude_thread(workspace).await;
+        }
         let config = self.config.clone();
         let workspace = workspace.to_string();
         let model = model.map(str::to_string);
@@ -218,6 +242,28 @@ impl CodexGateway {
         .map_err(|error| format!("codex create_thread task failed: {error}"))?
     }
 
+    async fn create_claude_thread(&self, workspace: &str) -> Result<ThreadSnapshotDto, String> {
+        let normalized_workspace = workspace.trim();
+        if normalized_workspace.is_empty() {
+            return Err("workspace path cannot be empty".to_string());
+        }
+
+        let thread_id = provider_thread_id(ProviderKind::ClaudeCode, &Uuid::new_v4().to_string());
+        let snapshot = build_claude_placeholder_snapshot(&thread_id, normalized_workspace);
+        self.claude_thread_workspaces
+            .lock()
+            .expect("claude thread workspace lock should not be poisoned")
+            .insert(thread_id, normalized_workspace.to_string());
+        Ok(snapshot)
+    }
+
+    pub fn model_catalog(&self, provider: ProviderKind) -> Vec<ModelOptionDto> {
+        match provider {
+            ProviderKind::Codex => fallback_model_options(),
+            ProviderKind::ClaudeCode => fallback_claude_model_options(),
+        }
+    }
+
     pub fn notification_stream(&self) -> Result<CodexNotificationStream, String> {
         let endpoint = match self.config.mode {
             CodexRuntimeMode::Spawn => None,
@@ -241,6 +287,15 @@ impl CodexGateway {
         F: Fn(BridgeEventEnvelope<Value>) + Send + 'static,
         G: Fn(String) + Send + 'static,
     {
+        if is_provider_thread_id(thread_id, ProviderKind::ClaudeCode) {
+            return self.start_claude_turn_streaming(
+                thread_id,
+                request,
+                on_event,
+                on_turn_completed,
+            );
+        }
+
         let config = self.config.clone();
         let thread_id = thread_id.to_string();
         let TurnStartRequest {
@@ -248,6 +303,7 @@ impl CodexGateway {
             images,
             model,
             effort,
+            permission_mode: _,
         } = request;
         let reserved_transports = Arc::clone(&self.reserved_transports);
         let (result_tx, result_rx) = mpsc::sync_channel(1);
@@ -291,6 +347,7 @@ impl CodexGateway {
                     thread_id: thread_id.clone(),
                     thread_status: ThreadStatus::Running,
                     message: format!("turn {} started", payload.turn.id),
+                    turn_id: Some(payload.turn.id.clone()),
                 },
                 turn_id: Some(payload.turn.id),
             };
@@ -328,20 +385,305 @@ impl CodexGateway {
             .map_err(|error| format!("failed to receive codex turn-start result: {error}"))?
     }
 
+    fn start_claude_turn_streaming<F, G>(
+        &self,
+        thread_id: &str,
+        request: TurnStartRequest,
+        on_event: F,
+        on_turn_completed: G,
+    ) -> Result<GatewayTurnMutation, String>
+    where
+        F: Fn(BridgeEventEnvelope<Value>) + Send + 'static,
+        G: Fn(String) + Send + 'static,
+    {
+        if !is_provider_thread_id(thread_id, ProviderKind::ClaudeCode) {
+            return Err(format!("thread {thread_id} is not a Claude Code thread"));
+        }
+
+        let thread_id = thread_id.to_string();
+        let native_thread_id = native_thread_id_for_provider(&thread_id, ProviderKind::ClaudeCode)
+            .ok_or_else(|| format!("thread {thread_id} is not a Claude Code thread"))?
+            .to_string();
+        let workspace = self
+            .claude_thread_workspaces
+            .lock()
+            .expect("claude thread workspace lock should not be poisoned")
+            .get(&thread_id)
+            .cloned()
+            .or_else(|| {
+                fetch_thread_snapshot_from_archive(&self.config, &thread_id)
+                    .ok()
+                    .map(|snapshot| snapshot.thread.workspace)
+            })
+            .ok_or_else(|| format!("workspace for Claude thread {thread_id} is unavailable"))?;
+        let active_claude_processes = Arc::clone(&self.active_claude_processes);
+        let interrupted_claude_threads = Arc::clone(&self.interrupted_claude_threads);
+        let (result_tx, result_rx) = mpsc::sync_channel(1);
+
+        std::thread::spawn(move || {
+            let mut command = Command::new("claude");
+            command
+                .current_dir(&workspace)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .arg("-p")
+                .arg("--verbose")
+                .arg("--include-partial-messages")
+                .arg("--output-format")
+                .arg("stream-json")
+                .arg("--input-format")
+                .arg("stream-json")
+                .arg("--session-id")
+                .arg(&native_thread_id)
+                .arg("--permission-mode")
+                .arg(request.permission_mode.as_deref().unwrap_or("default"));
+            if let Some(model) = request
+                .model
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                command.arg("--model").arg(model);
+            }
+            if let Some(effort) = request
+                .effort
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                command.arg("--effort").arg(effort);
+            }
+
+            let mut child = match command.spawn() {
+                Ok(child) => child,
+                Err(error) => {
+                    let _ = result_tx.send(Err(format!("failed to start claude: {error}")));
+                    return;
+                }
+            };
+            let stdout = match child.stdout.take() {
+                Some(stdout) => stdout,
+                None => {
+                    let _ = result_tx.send(Err("Claude process did not expose stdout".to_string()));
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return;
+                }
+            };
+            let mut stdin = match child.stdin.take() {
+                Some(stdin) => stdin,
+                None => {
+                    let _ = result_tx.send(Err("Claude process did not expose stdin".to_string()));
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return;
+                }
+            };
+            let stderr = child.stderr.take();
+            let input_line = match build_claude_input_message(&request.prompt, &request.images) {
+                Ok(line) => line,
+                Err(error) => {
+                    let _ = result_tx.send(Err(error));
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return;
+                }
+            };
+            if let Err(error) = stdin.write_all(input_line.as_bytes()) {
+                let _ = result_tx.send(Err(format!("failed to write Claude turn input: {error}")));
+                let _ = child.kill();
+                let _ = child.wait();
+                return;
+            }
+            let _ = stdin.flush();
+            drop(stdin);
+            let child_handle = Arc::new(Mutex::new(child));
+            active_claude_processes
+                .lock()
+                .expect("active claude process lock should not be poisoned")
+                .insert(thread_id.clone(), Arc::clone(&child_handle));
+
+            let stderr_reader = std::thread::spawn(move || {
+                let mut stderr_output = String::new();
+                if let Some(mut stderr) = stderr {
+                    let _ = stderr.read_to_string(&mut stderr_output);
+                }
+                stderr_output
+            });
+
+            let turn_id = format!("claude-turn-{native_thread_id}");
+            let accepted = GatewayTurnMutation {
+                response: TurnMutationAcceptedDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: thread_id.clone(),
+                    thread_status: ThreadStatus::Running,
+                    message: format!("turn {turn_id} started"),
+                    turn_id: Some(turn_id.clone()),
+                },
+                turn_id: Some(turn_id),
+            };
+            let mut did_ack = false;
+            let mut did_emit_completion = false;
+            let mut did_emit_assistant_output = false;
+            let mut current_assistant_message_id: Option<String> = None;
+            let mut current_assistant_text = String::new();
+
+            for line in BufReader::new(stdout).lines() {
+                let Ok(line) = line else {
+                    break;
+                };
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                let value = match serde_json::from_str::<Value>(trimmed) {
+                    Ok(value) => value,
+                    Err(_) => continue,
+                };
+
+                if !did_ack
+                    && value.get("type").and_then(Value::as_str) == Some("system")
+                    && value.get("subtype").and_then(Value::as_str) == Some("init")
+                {
+                    if result_tx.send(Ok(accepted.clone())).is_err() {
+                        remove_claude_process(&active_claude_processes, &thread_id);
+                        return;
+                    }
+                    did_ack = true;
+                }
+
+                if let Some(event) = build_claude_assistant_event(&thread_id, &value) {
+                    did_emit_assistant_output = true;
+                    on_event(event);
+                }
+
+                if let Some(message_id) = parse_claude_message_start(&value) {
+                    current_assistant_message_id = Some(message_id);
+                    current_assistant_text.clear();
+                }
+
+                if let Some(delta) = parse_claude_text_delta(&value)
+                    && let Some(message_id) = current_assistant_message_id.as_deref()
+                {
+                    current_assistant_text.push_str(&delta);
+                    did_emit_assistant_output = true;
+                    on_event(build_claude_partial_assistant_event(
+                        &thread_id,
+                        message_id,
+                        &current_assistant_text,
+                    ));
+                }
+
+                if let Some(status_event) = build_claude_status_event(&thread_id, &value) {
+                    if !did_ack {
+                        let _ = result_tx.send(Ok(accepted.clone()));
+                        did_ack = true;
+                    }
+                    on_event(status_event);
+                    did_emit_completion = true;
+                    on_turn_completed(thread_id.clone());
+                    break;
+                }
+            }
+
+            let exit_status = child_handle
+                .lock()
+                .expect("claude child lock should not be poisoned")
+                .wait();
+            remove_claude_process(&active_claude_processes, &thread_id);
+            let stderr_output = stderr_reader.join().unwrap_or_default();
+
+            if !did_emit_completion {
+                let was_interrupted = interrupted_claude_threads
+                    .lock()
+                    .expect("interrupted claude thread lock should not be poisoned")
+                    .remove(&thread_id);
+                let status = if was_interrupted {
+                    ThreadStatus::Interrupted
+                } else {
+                    ThreadStatus::Failed
+                };
+                let reason = if was_interrupted {
+                    "interrupt_requested"
+                } else {
+                    "claude_process_exited"
+                };
+                on_event(build_thread_status_event(&thread_id, status, reason));
+                on_turn_completed(thread_id.clone());
+            }
+
+            if !did_ack {
+                let exit_message = match exit_status {
+                    Ok(status) if !status.success() => format!(
+                        "Claude process exited with status {}",
+                        status.code().unwrap_or_default()
+                    ),
+                    Ok(_) if did_emit_assistant_output => "Claude turn completed".to_string(),
+                    Ok(_) => "Claude exited before the turn was accepted".to_string(),
+                    Err(error) => format!("failed waiting for Claude process: {error}"),
+                };
+                let message = if stderr_output.trim().is_empty() {
+                    exit_message
+                } else {
+                    format!("{exit_message}: {}", stderr_output.trim())
+                };
+                let _ = result_tx.send(Err(message));
+            }
+        });
+
+        result_rx
+            .recv()
+            .map_err(|error| format!("failed to receive Claude turn-start result: {error}"))?
+    }
+
     pub async fn interrupt_turn(
         &self,
         thread_id: &str,
         turn_id: &str,
     ) -> Result<GatewayTurnMutation, String> {
+        if is_provider_thread_id(thread_id, ProviderKind::ClaudeCode) {
+            let thread_id = thread_id.to_string();
+            let active_process = self
+                .active_claude_processes
+                .lock()
+                .expect("active claude process lock should not be poisoned")
+                .get(&thread_id)
+                .cloned()
+                .ok_or_else(|| format!("no active Claude turn found for thread {thread_id}"))?;
+            self.interrupted_claude_threads
+                .lock()
+                .expect("interrupted claude thread lock should not be poisoned")
+                .insert(thread_id.clone());
+            active_process
+                .lock()
+                .expect("claude child lock should not be poisoned")
+                .kill()
+                .map_err(|error| format!("failed to interrupt Claude turn: {error}"))?;
+            return Ok(GatewayTurnMutation {
+                response: TurnMutationAcceptedDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id,
+                    thread_status: ThreadStatus::Interrupted,
+                    message: "interrupt requested".to_string(),
+                    turn_id: None,
+                },
+                turn_id: None,
+            });
+        }
         let config = self.config.clone();
         let thread_id = thread_id.to_string();
         let turn_id = turn_id.to_string();
         tokio::task::spawn_blocking(move || -> Result<GatewayTurnMutation, String> {
+            let native_thread_id =
+                native_thread_id_for_provider(&thread_id, ProviderKind::Codex)
+                    .ok_or_else(|| format!("thread {thread_id} is not a codex thread"))?;
             let mut transport = connect_transport(&config)?;
             transport.request(
                 "turn/interrupt",
                 serde_json::json!({
-                    "threadId": thread_id,
+                    "threadId": native_thread_id,
                     "turnId": turn_id,
                 }),
             )?;
@@ -351,6 +693,7 @@ impl CodexGateway {
                     thread_id,
                     thread_status: ThreadStatus::Interrupted,
                     message: "interrupt requested".to_string(),
+                    turn_id: None,
                 },
                 turn_id: None,
             })
@@ -359,7 +702,43 @@ impl CodexGateway {
         .map_err(|error| format!("codex interrupt_turn task failed: {error}"))?
     }
 
+    pub async fn resolve_active_turn_id(&self, thread_id: &str) -> Result<String, String> {
+        if is_provider_thread_id(thread_id, ProviderKind::ClaudeCode) {
+            let thread_id = thread_id.to_string();
+            return self
+                .active_claude_processes
+                .lock()
+                .expect("active claude process lock should not be poisoned")
+                .contains_key(&thread_id)
+                .then_some(thread_id.clone())
+                .ok_or_else(|| format!("no active Claude turn found for thread {thread_id}"));
+        }
+        let config = self.config.clone();
+        let thread_id = thread_id.to_string();
+        let reserved_transports = Arc::clone(&self.reserved_transports);
+        tokio::task::spawn_blocking(move || -> Result<String, String> {
+            let mut transport = take_reserved_transport(&reserved_transports, &thread_id)
+                .unwrap_or(connect_read_transport(&config)?);
+            let payload = read_thread_with_resume(&mut transport, &thread_id, true)?;
+            let active_turn_id = payload
+                .thread
+                .turns
+                .last()
+                .map(|turn| turn.id.clone())
+                .ok_or_else(|| format!("no active turn found for thread {thread_id}"))?;
+            reserve_transport(&reserved_transports, thread_id, transport);
+            Ok(active_turn_id)
+        })
+        .await
+        .map_err(|error| format!("codex resolve_active_turn_id task failed: {error}"))?
+    }
+
     pub async fn set_thread_name(&self, thread_id: &str, name: &str) -> Result<(), String> {
+        if !is_provider_thread_id(thread_id, ProviderKind::Codex) {
+            return Err(format!(
+                "thread {thread_id} belongs to a read-only provider; renaming is only implemented for codex threads"
+            ));
+        }
         let config = self.config.clone();
         let thread_id = thread_id.to_string();
         let name = name.trim().to_string();
@@ -368,11 +747,14 @@ impl CodexGateway {
                 return Ok(());
             }
 
+            let native_thread_id =
+                native_thread_id_for_provider(&thread_id, ProviderKind::Codex)
+                    .ok_or_else(|| format!("thread {thread_id} is not a codex thread"))?;
             let mut transport = connect_transport(&config)?;
             transport.request(
                 "thread/name/set",
                 json!({
-                    "threadId": thread_id,
+                    "threadId": native_thread_id,
                     "name": name,
                 }),
             )?;
@@ -451,10 +833,12 @@ fn read_thread(
     thread_id: &str,
     include_turns: bool,
 ) -> Result<CodexThreadReadResult, String> {
+    let native_thread_id = native_thread_id_for_provider(thread_id, ProviderKind::Codex)
+        .ok_or_else(|| format!("thread {thread_id} is not a codex thread"))?;
     let response = transport.request(
         "thread/read",
         serde_json::json!({
-            "threadId": thread_id,
+            "threadId": native_thread_id,
             "includeTurns": include_turns,
         }),
     )?;
@@ -466,10 +850,12 @@ fn resume_thread(
     transport: &mut CodexJsonTransport,
     thread_id: &str,
 ) -> Result<CodexThread, String> {
+    let native_thread_id = native_thread_id_for_provider(thread_id, ProviderKind::Codex)
+        .ok_or_else(|| format!("thread {thread_id} is not a codex thread"))?;
     let response = transport.request(
         "thread/resume",
         serde_json::json!({
-            "threadId": thread_id,
+            "threadId": native_thread_id,
         }),
     )?;
     let payload: CodexThreadResumeResult = serde_json::from_value(response)
@@ -538,8 +924,13 @@ fn start_turn(
     model: Option<&str>,
     effort: Option<&str>,
 ) -> Result<CodexTurnStartResult, String> {
+    let native_thread_id = native_thread_id_for_provider(thread_id, ProviderKind::Codex)
+        .ok_or_else(|| format!("thread {thread_id} is not a codex thread"))?;
     let mut params = serde_json::Map::new();
-    params.insert("threadId".to_string(), Value::String(thread_id.to_string()));
+    params.insert(
+        "threadId".to_string(),
+        Value::String(native_thread_id.to_string()),
+    );
     params.insert("input".to_string(), build_turn_start_input(prompt, images));
     if let Some(model) = model {
         params.insert("model".to_string(), Value::String(model.to_string()));
@@ -840,7 +1231,10 @@ fn fetch_thread_summaries(
     config: &BridgeCodexConfig,
 ) -> Result<Vec<ThreadSummaryDto>, String> {
     match fetch_live_thread_summaries(transport) {
-        Ok(summaries) if !summaries.is_empty() => Ok(summaries),
+        Ok(summaries) if !summaries.is_empty() => {
+            let archive_summaries = fetch_thread_summaries_from_archive(config)?;
+            Ok(merge_thread_summaries(summaries, archive_summaries))
+        }
         Ok(_) => fetch_thread_summaries_from_archive(config),
         Err(live_error) => {
             let fallback = fetch_thread_summaries_from_archive(config)?;
@@ -906,6 +1300,61 @@ fn fetch_thread_summaries_from_archive(
     )
 }
 
+fn merge_thread_summaries(
+    live_summaries: Vec<ThreadSummaryDto>,
+    archive_summaries: Vec<ThreadSummaryDto>,
+) -> Vec<ThreadSummaryDto> {
+    let mut merged = live_summaries;
+    let live_thread_ids = merged
+        .iter()
+        .map(|summary| summary.thread_id.clone())
+        .collect::<std::collections::HashSet<_>>();
+    merged.extend(
+        archive_summaries
+            .into_iter()
+            .filter(|summary| !live_thread_ids.contains(&summary.thread_id)),
+    );
+    merged
+}
+
+fn fetch_thread_snapshot_from_archive(
+    config: &BridgeCodexConfig,
+    thread_id: &str,
+) -> Result<ThreadSnapshotDto, String> {
+    let endpoint = match config.mode {
+        CodexRuntimeMode::Spawn => None,
+        _ => config.endpoint.as_deref(),
+    };
+    let service = ThreadApiService::from_codex_app_server(&config.command, &config.args, endpoint)?;
+    let detail = service
+        .detail_response(thread_id)
+        .ok_or_else(|| format!("thread {thread_id} not found"))?;
+    let timeline = service
+        .timeline_page_response(thread_id, None, 500)
+        .ok_or_else(|| format!("thread {thread_id} not found"))?;
+    let git_status = service
+        .git_status_response(thread_id)
+        .map(|response| GitStatusDto {
+            workspace: response.repository.workspace,
+            repository: response.repository.repository,
+            branch: response.repository.branch,
+            remote: (!response.repository.remote.trim().is_empty())
+                .then_some(response.repository.remote),
+            dirty: response.status.dirty,
+            ahead_by: response.status.ahead_by,
+            behind_by: response.status.behind_by,
+        });
+
+    Ok(ThreadSnapshotDto {
+        contract_version: CONTRACT_VERSION.to_string(),
+        thread: detail.thread,
+        entries: timeline.entries,
+        approvals: Vec::new(),
+        git_status,
+        pending_user_input: timeline.pending_user_input,
+    })
+}
+
 fn fetch_model_catalog(transport: &mut CodexJsonTransport) -> Vec<ModelOptionDto> {
     match transport.request(
         "model/list",
@@ -925,6 +1374,47 @@ fn fetch_model_catalog(transport: &mut CodexJsonTransport) -> Vec<ModelOptionDto
         }
         Err(_) => fallback_model_options(),
     }
+}
+
+fn fallback_claude_model_options() -> Vec<ModelOptionDto> {
+    vec![
+        ModelOptionDto {
+            id: "claude-sonnet-4-6".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
+            display_name: "Claude Sonnet 4.6".to_string(),
+            description: String::new(),
+            is_default: true,
+            default_reasoning_effort: Some("medium".to_string()),
+            supported_reasoning_efforts: claude_reasoning_efforts(),
+        },
+        ModelOptionDto {
+            id: "claude-opus-4-6".to_string(),
+            model: "claude-opus-4-6".to_string(),
+            display_name: "Claude Opus 4.6".to_string(),
+            description: String::new(),
+            is_default: false,
+            default_reasoning_effort: Some("high".to_string()),
+            supported_reasoning_efforts: claude_reasoning_efforts(),
+        },
+        ModelOptionDto {
+            id: "claude-sonnet-4-5".to_string(),
+            model: "claude-sonnet-4-5".to_string(),
+            display_name: "Claude Sonnet 4.5".to_string(),
+            description: String::new(),
+            is_default: false,
+            default_reasoning_effort: Some("medium".to_string()),
+            supported_reasoning_efforts: claude_reasoning_efforts(),
+        },
+        ModelOptionDto {
+            id: "claude-opus-4-5".to_string(),
+            model: "claude-opus-4-5".to_string(),
+            display_name: "Claude Opus 4.5".to_string(),
+            description: String::new(),
+            is_default: false,
+            default_reasoning_effort: Some("high".to_string()),
+            supported_reasoning_efforts: claude_reasoning_efforts(),
+        },
+    ]
 }
 
 fn fallback_model_options() -> Vec<ModelOptionDto> {
@@ -959,6 +1449,27 @@ fn fallback_model_options() -> Vec<ModelOptionDto> {
     ]
 }
 
+fn claude_reasoning_efforts() -> Vec<ReasoningEffortOptionDto> {
+    vec![
+        ReasoningEffortOptionDto {
+            reasoning_effort: "low".to_string(),
+            description: None,
+        },
+        ReasoningEffortOptionDto {
+            reasoning_effort: "medium".to_string(),
+            description: None,
+        },
+        ReasoningEffortOptionDto {
+            reasoning_effort: "high".to_string(),
+            description: None,
+        },
+        ReasoningEffortOptionDto {
+            reasoning_effort: "max".to_string(),
+            description: None,
+        },
+    ]
+}
+
 fn fallback_reasoning_efforts() -> Vec<ReasoningEffortOptionDto> {
     vec![
         ReasoningEffortOptionDto {
@@ -974,6 +1485,345 @@ fn fallback_reasoning_efforts() -> Vec<ReasoningEffortOptionDto> {
             description: None,
         },
     ]
+}
+
+fn build_claude_placeholder_snapshot(thread_id: &str, workspace: &str) -> ThreadSnapshotDto {
+    let timestamp = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+    let git_context = detect_git_context(workspace);
+    let repository = git_context.repository.clone();
+    let branch = git_context.branch.clone();
+    ThreadSnapshotDto {
+        contract_version: CONTRACT_VERSION.to_string(),
+        thread: ThreadDetailDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread_id: thread_id.to_string(),
+            native_thread_id: native_thread_id_for_provider(thread_id, ProviderKind::ClaudeCode)
+                .unwrap_or(thread_id)
+                .to_string(),
+            provider: ProviderKind::ClaudeCode,
+            client: shared_contracts::ThreadClientKind::Bridge,
+            title: "New thread".to_string(),
+            status: ThreadStatus::Idle,
+            workspace: workspace.to_string(),
+            repository: repository.clone(),
+            branch: branch.clone(),
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+            source: "bridge".to_string(),
+            access_mode: AccessMode::ControlWithApprovals,
+            last_turn_summary: String::new(),
+            active_turn_id: None,
+        },
+        entries: Vec::new(),
+        approvals: Vec::new(),
+        git_status: Some(GitStatusDto {
+            workspace: workspace.to_string(),
+            repository,
+            branch,
+            remote: git_context.remote,
+            dirty: false,
+            ahead_by: 0,
+            behind_by: 0,
+        }),
+        pending_user_input: None,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct WorkspaceGitContext {
+    repository: String,
+    branch: String,
+    remote: Option<String>,
+}
+
+fn detect_git_context(workspace: &str) -> WorkspaceGitContext {
+    let repository = run_git_output(workspace, ["rev-parse", "--show-toplevel"])
+        .ok()
+        .as_deref()
+        .and_then(derive_repository_name_from_path)
+        .or_else(|| derive_repository_name_from_cwd(workspace))
+        .unwrap_or_else(|| "unknown-repository".to_string());
+    let branch = run_git_output(workspace, ["rev-parse", "--abbrev-ref", "HEAD"])
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    let remote = run_git_output(workspace, ["remote", "get-url", "origin"])
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+
+    WorkspaceGitContext {
+        repository,
+        branch,
+        remote,
+    }
+}
+
+fn run_git_output<I, S>(workspace: &str, args: I) -> Result<String, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(workspace)
+        .args(args)
+        .output()
+        .map_err(|error| format!("failed to run git: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn derive_repository_name_from_path(path: &str) -> Option<String> {
+    Path::new(path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn build_claude_input_message(prompt: &str, images: &[String]) -> Result<String, String> {
+    let content = build_claude_message_content(prompt, images)?;
+    serde_json::to_string(&json!({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": content,
+        },
+        "parent_tool_use_id": Value::Null,
+    }))
+    .map(|line| format!("{line}\n"))
+    .map_err(|error| format!("failed to encode Claude turn input: {error}"))
+}
+
+fn build_claude_message_content(prompt: &str, images: &[String]) -> Result<Value, String> {
+    let trimmed_prompt = prompt.trim();
+    if images.is_empty() {
+        return Ok(Value::String(trimmed_prompt.to_string()));
+    }
+
+    let mut blocks = Vec::new();
+    if !trimmed_prompt.is_empty() {
+        blocks.push(json!({
+            "type": "text",
+            "text": trimmed_prompt,
+        }));
+    }
+    for (index, image) in images.iter().enumerate() {
+        let parsed = parse_data_url_image(image)
+            .map_err(|error| format!("image attachment {} is invalid: {error}", index + 1))?;
+        blocks.push(json!({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": parsed.mime_type,
+                "data": parsed.base64_data,
+            },
+        }));
+    }
+
+    Ok(Value::Array(blocks))
+}
+
+struct ParsedDataUrlImage {
+    mime_type: String,
+    base64_data: String,
+}
+
+fn parse_data_url_image(data_url: &str) -> Result<ParsedDataUrlImage, String> {
+    let trimmed = data_url.trim();
+    let Some((metadata, payload)) = trimmed.split_once(',') else {
+        return Err("data URL is missing a payload".to_string());
+    };
+    if !metadata.starts_with("data:") {
+        return Err("image must be a data URL".to_string());
+    }
+    if !metadata.contains(";base64") {
+        return Err("image data URL must be base64-encoded".to_string());
+    }
+
+    let mime_type = metadata
+        .trim_start_matches("data:")
+        .split(';')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "image data URL is missing a MIME type".to_string())?;
+    if !matches!(
+        mime_type,
+        "image/jpeg" | "image/png" | "image/gif" | "image/webp"
+    ) {
+        return Err(format!(
+            "unsupported MIME type {mime_type}; Claude Code currently supports image/jpeg, image/png, image/gif, and image/webp"
+        ));
+    }
+
+    let base64_data = payload.trim();
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(base64_data)
+        .map_err(|error| format!("invalid base64 payload: {error}"))?;
+    if decoded.is_empty() {
+        return Err("image payload is empty".to_string());
+    }
+
+    Ok(ParsedDataUrlImage {
+        mime_type: mime_type.to_string(),
+        base64_data: base64_data.to_string(),
+    })
+}
+
+fn build_claude_assistant_event(
+    thread_id: &str,
+    value: &Value,
+) -> Option<BridgeEventEnvelope<Value>> {
+    if value.get("type").and_then(Value::as_str) != Some("assistant") {
+        return None;
+    }
+    let message = value.get("message")?;
+    let message_id = message.get("id").and_then(Value::as_str)?.trim();
+    if message_id.is_empty() {
+        return None;
+    }
+    let text = claude_message_text(message)?;
+    if text.trim().is_empty() {
+        return None;
+    }
+
+    Some(BridgeEventEnvelope::new(
+        message_id.to_string(),
+        thread_id.to_string(),
+        BridgeEventKind::MessageDelta,
+        Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+        json!({
+            "id": message_id,
+            "type": "message",
+            "role": "assistant",
+            "text": text,
+        }),
+    ))
+}
+
+fn build_claude_partial_assistant_event(
+    thread_id: &str,
+    message_id: &str,
+    text: &str,
+) -> BridgeEventEnvelope<Value> {
+    BridgeEventEnvelope::new(
+        message_id.to_string(),
+        thread_id.to_string(),
+        BridgeEventKind::MessageDelta,
+        Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+        json!({
+            "id": message_id,
+            "type": "message",
+            "role": "assistant",
+            "text": text,
+        }),
+    )
+}
+
+fn parse_claude_message_start(value: &Value) -> Option<String> {
+    if value.get("type").and_then(Value::as_str) != Some("stream_event") {
+        return None;
+    }
+    let event = value.get("event")?;
+    if event.get("type").and_then(Value::as_str) != Some("message_start") {
+        return None;
+    }
+    event
+        .get("message")?
+        .get("id")?
+        .as_str()
+        .map(ToString::to_string)
+}
+
+fn parse_claude_text_delta(value: &Value) -> Option<String> {
+    if value.get("type").and_then(Value::as_str) != Some("stream_event") {
+        return None;
+    }
+    let event = value.get("event")?;
+    if event.get("type").and_then(Value::as_str) != Some("content_block_delta") {
+        return None;
+    }
+    if event.get("delta")?.get("type")?.as_str() != Some("text_delta") {
+        return None;
+    }
+    event
+        .get("delta")?
+        .get("text")?
+        .as_str()
+        .map(ToString::to_string)
+}
+
+fn claude_message_text(message: &Value) -> Option<String> {
+    let content = message.get("content")?.as_array()?;
+    let text = content
+        .iter()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|item| item.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let trimmed = text.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn build_claude_status_event(thread_id: &str, value: &Value) -> Option<BridgeEventEnvelope<Value>> {
+    if value.get("type").and_then(Value::as_str) != Some("result") {
+        return None;
+    }
+
+    let is_error = value
+        .get("is_error")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let status = if is_error {
+        ThreadStatus::Failed
+    } else {
+        ThreadStatus::Completed
+    };
+    let reason = if is_error {
+        "claude_result_error"
+    } else {
+        "claude_result"
+    };
+    Some(build_thread_status_event(thread_id, status, reason))
+}
+
+fn build_thread_status_event(
+    thread_id: &str,
+    status: ThreadStatus,
+    reason: &str,
+) -> BridgeEventEnvelope<Value> {
+    let occurred_at = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+    BridgeEventEnvelope::new(
+        format!("{thread_id}-status-{occurred_at}"),
+        thread_id.to_string(),
+        BridgeEventKind::ThreadStatusChanged,
+        occurred_at,
+        json!({
+            "status": match status {
+                ThreadStatus::Idle => "idle",
+                ThreadStatus::Running => "running",
+                ThreadStatus::Completed => "completed",
+                ThreadStatus::Interrupted => "interrupted",
+                ThreadStatus::Failed => "failed",
+            },
+            "reason": reason,
+        }),
+    )
+}
+
+fn remove_claude_process(
+    active_claude_processes: &Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
+    thread_id: &str,
+) {
+    active_claude_processes
+        .lock()
+        .expect("active claude process lock should not be poisoned")
+        .remove(thread_id);
 }
 
 fn parse_model_options(result: Value) -> Vec<ModelOptionDto> {
@@ -1081,7 +1931,10 @@ fn map_thread_summary(thread: CodexThread) -> ThreadSummaryDto {
 
     ThreadSummaryDto {
         contract_version: CONTRACT_VERSION.to_string(),
-        thread_id: thread.id,
+        thread_id: format!("codex:{}", thread.id),
+        native_thread_id: thread.id,
+        provider: ProviderKind::Codex,
+        client: map_thread_client_kind_from_source(thread.source.as_str().unwrap_or("unknown")),
         title,
         status: map_thread_status(&thread.status.kind),
         workspace: thread.cwd,
@@ -1185,10 +2038,16 @@ fn map_thread_detail(thread: &CodexThread) -> ThreadDetailDto {
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("Untitled thread")
         .to_string();
+    let active_turn_id = (map_thread_status(&thread.status.kind) == ThreadStatus::Running)
+        .then(|| thread.turns.last().map(|turn| turn.id.clone()))
+        .flatten();
 
     ThreadDetailDto {
         contract_version: CONTRACT_VERSION.to_string(),
-        thread_id: thread.id.clone(),
+        thread_id: format!("codex:{}", thread.id),
+        native_thread_id: thread.id.clone(),
+        provider: ProviderKind::Codex,
+        client: map_thread_client_kind_from_source(thread.source.as_str().unwrap_or("unknown")),
         title,
         status: map_thread_status(&thread.status.kind),
         workspace: thread.cwd.clone(),
@@ -1199,6 +2058,7 @@ fn map_thread_detail(thread: &CodexThread) -> ThreadDetailDto {
         source: thread.source.as_str().unwrap_or("unknown").to_string(),
         access_mode: AccessMode::ControlWithApprovals,
         last_turn_summary: thread.preview.clone().unwrap_or_default(),
+        active_turn_id,
     }
 }
 
@@ -1973,15 +2833,17 @@ fn extract_file_name_from_command(command: &str) -> Option<String> {
 mod tests {
     use super::{
         CodexGateway, CodexGitInfo, CodexThread, CodexThreadStatus, CodexTurn, TurnStartRequest,
-        build_turn_start_input, derive_repository_name_from_cwd, extract_generated_thread_title,
+        build_claude_input_message, build_claude_message_content, build_turn_start_input,
+        derive_repository_name_from_cwd, extract_generated_thread_title,
         fetch_thread_summaries_from_archive, map_thread_snapshot, map_thread_summary,
-        normalize_codex_item_payload, normalize_generated_thread_title, parse_model_options,
-        parse_repository_name_from_origin, prefer_archive_timeline_when_rpc_lacks_tool_events,
+        normalize_codex_item_payload, normalize_generated_thread_title, parse_data_url_image,
+        parse_model_options, parse_repository_name_from_origin,
+        prefer_archive_timeline_when_rpc_lacks_tool_events,
     };
     use crate::codex_runtime::CodexRuntimeMode;
     use crate::server::config::BridgeCodexConfig;
     use serde_json::{Value, json};
-    use shared_contracts::{BridgeEventKind, ThreadTimelineEntryDto};
+    use shared_contracts::{BridgeEventKind, ProviderKind, ThreadTimelineEntryDto};
     use std::fs;
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
@@ -2060,6 +2922,60 @@ mod tests {
                 }
             ])
         );
+    }
+
+    #[test]
+    fn parse_data_url_image_decodes_png_payload() {
+        let parsed = parse_data_url_image("data:image/png;base64,QUJD")
+            .expect("data URL image should decode");
+
+        assert_eq!(parsed.mime_type, "image/png");
+        assert_eq!(parsed.base64_data, "QUJD");
+    }
+
+    #[test]
+    fn build_claude_message_content_emits_native_image_blocks() {
+        let content = build_claude_message_content(
+            "Describe the screenshot",
+            &["data:image/png;base64,QUJD".to_string()],
+        )
+        .expect("Claude turn content should prepare");
+
+        assert_eq!(
+            content,
+            json!([
+                {
+                    "type": "text",
+                    "text": "Describe the screenshot",
+                },
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "QUJD",
+                    },
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn build_claude_input_message_emits_sdk_user_message_ndjson() {
+        let line = build_claude_input_message(
+            "Describe the screenshot",
+            &["data:image/png;base64,QUJD".to_string()],
+        )
+        .expect("Claude turn input line should encode");
+
+        let decoded: Value = serde_json::from_str(line.trim()).expect("line should decode");
+        assert_eq!(decoded["type"], "user");
+        assert_eq!(decoded["message"]["role"], "user");
+        assert_eq!(
+            decoded["message"]["content"][1]["source"]["media_type"],
+            "image/png"
+        );
+        assert_eq!(decoded["message"]["content"][1]["source"]["data"], "QUJD");
     }
 
     #[test]
@@ -2239,8 +3155,13 @@ mod tests {
     fn archive_fallback_surfaces_threads_when_live_list_is_empty() {
         let codex_home =
             std::env::temp_dir().join(format!("gateway-archive-fallback-{}", std::process::id()));
+        let claude_home = std::env::temp_dir().join(format!(
+            "gateway-claude-archive-fallback-{}",
+            std::process::id()
+        ));
         let sessions_directory = codex_home.join("sessions/2026/03/23");
         fs::create_dir_all(&sessions_directory).expect("test sessions directory should exist");
+        fs::create_dir_all(&claude_home).expect("test Claude home directory should exist");
         fs::write(
             sessions_directory.join("rollout-2026-03-23T18-04-18-thread-archive-no-index.jsonl"),
             concat!(
@@ -2253,8 +3174,10 @@ mod tests {
         .expect("session log should be writable");
 
         let previous_codex_home = std::env::var_os("CODEX_HOME");
+        let previous_claude_home = std::env::var_os("CLAUDE_HOME");
         unsafe {
             std::env::set_var("CODEX_HOME", &codex_home);
+            std::env::set_var("CLAUDE_HOME", &claude_home);
         }
 
         let summaries = fetch_thread_summaries_from_archive(&BridgeCodexConfig {
@@ -2272,11 +3195,17 @@ mod tests {
             } else {
                 std::env::remove_var("CODEX_HOME");
             }
+            if let Some(previous_claude_home) = previous_claude_home {
+                std::env::set_var("CLAUDE_HOME", previous_claude_home);
+            } else {
+                std::env::remove_var("CLAUDE_HOME");
+            }
         }
         let _ = fs::remove_dir_all(&codex_home);
+        let _ = fs::remove_dir_all(&claude_home);
 
         assert_eq!(summaries.len(), 1);
-        assert_eq!(summaries[0].thread_id, "thread-archive-no-index");
+        assert_eq!(summaries[0].thread_id, "codex:thread-archive-no-index");
         assert_eq!(summaries[0].repository, "codex-mobile-companion");
     }
 
@@ -2310,7 +3239,7 @@ mod tests {
             let create_started_at = Instant::now();
             let snapshot = tokio::time::timeout(
                 Duration::from_secs(10),
-                gateway.create_thread(&workspace, None),
+                gateway.create_thread(ProviderKind::Codex, &workspace, None),
             )
             .await
             .expect("create_thread should not hang")
@@ -2337,6 +3266,7 @@ mod tests {
                         images: Vec::new(),
                         model: None,
                         effort: None,
+                        permission_mode: None,
                     },
                     move |event| {
                         let _ = event_tx.send(event);

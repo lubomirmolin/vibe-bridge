@@ -1,0 +1,34 @@
+{
+  "featureId": "desktop-codex-app-compatibility-and-desktop-unpair",
+  "reviewedAt": "2026-03-18T17:39:44Z",
+  "commitId": "b425764bf91be26042423490c63299c4fce96c47",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation covers the requested bridge, mobile, and macOS shell slices: the bridge adds a best-effort open-on-Mac route with graceful 503 feedback, mobile persists the desktop-integration toggle and updates thread-detail affordances/messages, and the desktop shell can revoke trust and return to an unpaired QR flow. I did not find a blocking miss against the targeted validation assertions, but there are two non-blocking follow-ups in the touched code.",
+    "issues": [
+      {
+        "file": "apps/mobile/lib/features/threads/presentation/thread_detail_page.dart",
+        "line": 74,
+        "severity": "non_blocking",
+        "description": "`controlsEnabled` folds `!isReadOnlyMode` into every downstream affordance, and the desktop-integration card reuses that flag at line 331. That means read-only sessions disable `Open on Mac` even though the controller itself only blocks the action when the bridge is offline (`apps/mobile/lib/features/threads/application/thread_detail_controller.dart:733-739`) and read-only mode is otherwise defined around mutating controls. The feature still works in the default modes, but paired read-only users unnecessarily lose a view-style desktop action."
+      },
+      {
+        "file": "crates/bridge-core/src/lib.rs",
+        "line": 1373,
+        "severity": "non_blocking",
+        "description": "`POST /pairing/trust/revoke` revokes the trusted session and phone, but this route does not emit a `record_security_audit(...)` entry before returning. As a result, desktop- or mobile-initiated unpairing will not appear in `GET /security/events`, which leaves an important trust-change action out of the user-visible audit trail."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "`.factory/library/api.md` is now stale about the bridge surface added by this feature. Future workers consulting the shared API notes will not see the new `POST /threads/:id/open-on-mac` endpoint or its best-effort response semantics documented there.",
+      "evidence": "`.factory/library/api.md:8-24` still summarizes the thread/pairing/policy/approval/security surfaces without mentioning open-on-Mac, while `crates/bridge-core/src/lib.rs:1132,1474-1493,2094-2149` advertises and implements `POST /threads/:id/open-on-mac` plus the `OpenOnMacResponse` contract."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed mission docs, the worker transcript skeleton, handoff, skill guidance, and commit `b425764bf91be26042423490c63299c4fce96c47`. Result: pass for the scoped feature, with two non-blocking follow-ups (read-only unnecessarily disables Open on Mac, and trust revocation is not added to security events) plus one shared-state note about stale API library docs."
+}

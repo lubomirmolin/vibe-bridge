@@ -41,6 +41,22 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  codex-mobile-c
     );
   });
 
+  test('parseSha256Sums finds matching digest when manifest includes dist prefix', () {
+    const manifest = '''
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  dist/codex-mobile-companion-linux-x86_64-1.0.0.tar.gz
+''';
+
+    final digest = parseSha256Sums(
+      manifest,
+      'codex-mobile-companion-linux-x86_64-1.0.0.tar.gz',
+    );
+
+    expect(
+      digest,
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    );
+  });
+
   test('semantic version orders pre-release before stable', () {
     expect(
       SemanticVersion.parse(

@@ -27,7 +27,7 @@ fn archived_codex_sessions_load_as_thread_fallback() {
         .expect("archive fallback should load");
 
     assert_eq!(threads.len(), 1);
-    assert_eq!(threads[0].id, "thread-archive-1");
+    assert_eq!(threads[0].id, codex_thread_id("thread-archive-1"));
     assert_eq!(threads[0].headline, "Investigate fallback");
     assert_eq!(threads[0].repository_name, "project");
     assert_eq!(threads[0].branch_name, "main");
@@ -35,7 +35,7 @@ fn archived_codex_sessions_load_as_thread_fallback() {
     assert_eq!(threads[0].source, "cli");
 
     let thread_timeline = timeline
-        .get("thread-archive-1")
+        .get(&codex_thread_id("thread-archive-1"))
         .expect("timeline should exist for archived thread");
     assert_eq!(thread_timeline.len(), 2);
     assert_eq!(thread_timeline[0].event_type, "agent_message_delta");
@@ -64,7 +64,7 @@ fn archived_codex_sessions_load_without_session_index() {
         .expect("archive fallback should load without session index");
 
     assert_eq!(threads.len(), 1);
-    assert_eq!(threads[0].id, "thread-archive-no-index");
+    assert_eq!(threads[0].id, codex_thread_id("thread-archive-no-index"));
     assert_eq!(
         threads[0].workspace_path,
         "/home/lubo/codex-mobile-companion/apps/linux-shell"
@@ -72,7 +72,7 @@ fn archived_codex_sessions_load_without_session_index() {
     assert_eq!(threads[0].repository_name, "codex-mobile-companion");
     assert_eq!(threads[0].branch_name, "main");
     assert!(
-        timeline.contains_key("thread-archive-no-index"),
+        timeline.contains_key(&codex_thread_id("thread-archive-no-index")),
         "timeline should exist for discovered archive thread"
     );
 
@@ -153,7 +153,7 @@ fn archived_custom_tool_file_changes_map_to_file_change_events() {
         .expect("archive fallback should load");
 
     let thread_timeline = timeline
-        .get("thread-archive-tools")
+        .get(&codex_thread_id("thread-archive-tools"))
         .expect("timeline should exist for archived thread");
     assert_eq!(thread_timeline.len(), 2);
     assert_eq!(thread_timeline[0].event_type, "file_change_delta");
@@ -241,7 +241,7 @@ fn archived_delete_file_patch_resolves_to_deleted_unified_diff() {
         .expect("archive fallback should load");
 
     let thread_timeline = timeline
-        .get("thread-archive-delete")
+        .get(&codex_thread_id("thread-archive-delete"))
         .expect("timeline should exist for archived thread");
     assert_eq!(thread_timeline.len(), 1);
     assert_eq!(thread_timeline[0].event_type, "file_change_delta");
@@ -299,7 +299,7 @@ fn archived_sessions_hide_internal_messages_and_deduplicate_assistant_text() {
         .expect("archive fallback should load");
 
     let thread_timeline = timeline
-        .get("thread-archive-filtered")
+        .get(&codex_thread_id("thread-archive-filtered"))
         .expect("timeline should exist for archived thread");
 
     assert_eq!(thread_timeline.len(), 3);
@@ -353,7 +353,7 @@ fn archived_sessions_keep_visible_user_messages_when_event_msg_is_missing() {
         .expect("archive fallback should load");
 
     let thread_timeline = timeline
-        .get("thread-archive-legacy")
+        .get(&codex_thread_id("thread-archive-legacy"))
         .expect("timeline should exist for archived thread");
 
     assert_eq!(thread_timeline.len(), 2);
@@ -398,13 +398,13 @@ fn archive_loader_can_fetch_requested_thread_outside_latest_archive_window() {
     )
     .expect("session index should be writable");
 
-    let requested_ids = HashSet::from(["thread-target".to_string()]);
+    let requested_ids = HashSet::from([codex_thread_id("thread-target")]);
     let (_, timeline_by_thread_id) =
         super::load_thread_snapshot_from_codex_archive_for_ids(&codex_home, Some(&requested_ids))
             .expect("requested archive snapshot should load");
 
     let timeline = timeline_by_thread_id
-        .get("thread-target")
+        .get(&codex_thread_id("thread-target"))
         .expect("requested thread timeline should be present");
     assert_eq!(timeline.len(), 1);
     assert_eq!(timeline[0].event_type, "command_output_delta");
@@ -452,9 +452,9 @@ fn archive_loader_can_fetch_requested_thread_when_session_index_entry_is_missing
             .expect("requested archive snapshot should load");
 
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].id, requested_id);
+    assert_eq!(records[0].id, codex_thread_id(requested_id));
     let timeline = timeline_by_thread_id
-        .get(requested_id)
+        .get(&codex_thread_id(requested_id))
         .expect("requested thread timeline should be present");
     assert_eq!(timeline.len(), 2);
     assert_eq!(timeline[0].event_type, "command_output_delta");
@@ -494,7 +494,7 @@ fn debug_local_archive_thread_event_mix() {
             .expect("archive snapshot should load");
 
     let timeline = timeline_by_thread_id
-        .get(&thread_id)
+        .get(&codex_thread_id(&thread_id))
         .expect("timeline should exist");
     let mut counts = HashMap::new();
     for event in timeline {
@@ -540,7 +540,7 @@ fn debug_live_snapshot_thread_event_mix() {
             .expect("live snapshot should load");
     let timeline = service
         .timeline_by_thread_id
-        .get(&thread_id)
+        .get(&codex_thread_id(&thread_id))
         .expect("timeline should exist");
     let mut counts = HashMap::new();
     for event in timeline {
@@ -580,7 +580,10 @@ fn debug_live_snapshot_thread_event_mix() {
 fn merge_thread_snapshots_supplements_rpc_with_archive_tool_events() {
     let rpc_snapshot = (
         vec![UpstreamThreadRecord {
-            id: "thread-123".to_string(),
+            id: codex_thread_id("thread-123"),
+            native_id: "thread-123".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Inspect snapshot merge".to_string(),
             lifecycle_state: "active".to_string(),
             workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -597,7 +600,7 @@ fn merge_thread_snapshots_supplements_rpc_with_archive_tool_events() {
             last_turn_summary: "Inspecting".to_string(),
         }],
         HashMap::from([(
-            "thread-123".to_string(),
+            codex_thread_id("thread-123"),
             vec![
                 UpstreamTimelineEvent {
                     id: "evt-user".to_string(),
@@ -618,7 +621,10 @@ fn merge_thread_snapshots_supplements_rpc_with_archive_tool_events() {
     );
     let archive_snapshot = (
         vec![UpstreamThreadRecord {
-            id: "thread-123".to_string(),
+            id: codex_thread_id("thread-123"),
+            native_id: "thread-123".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Inspect snapshot merge".to_string(),
             lifecycle_state: "done".to_string(),
             workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -635,7 +641,7 @@ fn merge_thread_snapshots_supplements_rpc_with_archive_tool_events() {
             last_turn_summary: "Edited files".to_string(),
         }],
         HashMap::from([(
-            "thread-123".to_string(),
+            codex_thread_id("thread-123"),
             vec![
                 UpstreamTimelineEvent {
                     id: "archive-user".to_string(),
@@ -660,7 +666,7 @@ fn merge_thread_snapshots_supplements_rpc_with_archive_tool_events() {
 
     let (_, timeline_by_thread_id) = super::merge_thread_snapshots(rpc_snapshot, archive_snapshot);
     let timeline = timeline_by_thread_id
-        .get("thread-123")
+        .get(&codex_thread_id("thread-123"))
         .expect("merged timeline should exist");
 
     assert_eq!(timeline.len(), 3);
@@ -678,7 +684,10 @@ fn merge_thread_snapshots_supplements_rpc_with_archive_tool_events() {
 fn merge_thread_snapshots_deduplicates_archive_and_rpc_command_and_file_change_candidates() {
     let rpc_snapshot = (
         vec![UpstreamThreadRecord {
-            id: "thread-merge-dedupe".to_string(),
+            id: codex_thread_id("thread-merge-dedupe"),
+            native_id: "thread-merge-dedupe".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Inspect dedupe".to_string(),
             lifecycle_state: "active".to_string(),
             workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -695,7 +704,7 @@ fn merge_thread_snapshots_deduplicates_archive_and_rpc_command_and_file_change_c
             last_turn_summary: "Inspecting".to_string(),
         }],
         HashMap::from([(
-            "thread-merge-dedupe".to_string(),
+            codex_thread_id("thread-merge-dedupe"),
             vec![
                 UpstreamTimelineEvent {
                     id: "rpc-command".to_string(),
@@ -743,7 +752,10 @@ fn merge_thread_snapshots_deduplicates_archive_and_rpc_command_and_file_change_c
 
     let archive_snapshot = (
         vec![UpstreamThreadRecord {
-            id: "thread-merge-dedupe".to_string(),
+            id: codex_thread_id("thread-merge-dedupe"),
+            native_id: "thread-merge-dedupe".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Inspect dedupe".to_string(),
             lifecycle_state: "done".to_string(),
             workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -760,7 +772,7 @@ fn merge_thread_snapshots_deduplicates_archive_and_rpc_command_and_file_change_c
             last_turn_summary: "Edited files".to_string(),
         }],
         HashMap::from([(
-            "thread-merge-dedupe".to_string(),
+            codex_thread_id("thread-merge-dedupe"),
             vec![
                 UpstreamTimelineEvent {
                     id: "archive-command".to_string(),
@@ -799,7 +811,7 @@ fn merge_thread_snapshots_deduplicates_archive_and_rpc_command_and_file_change_c
 
     let (_, timeline_by_thread_id) = super::merge_thread_snapshots(rpc_snapshot, archive_snapshot);
     let timeline = timeline_by_thread_id
-        .get("thread-merge-dedupe")
+        .get(&codex_thread_id("thread-merge-dedupe"))
         .expect("merged timeline should exist");
 
     assert_eq!(timeline.len(), 3);
@@ -820,10 +832,13 @@ fn merge_thread_snapshots_deduplicates_archive_and_rpc_command_and_file_change_c
 
 #[test]
 fn merge_thread_snapshots_prefers_fresher_archive_metadata_for_real_thread_detail_parity() {
-    let thread_id = "019d0d0c-07df-7632-81fa-a1636651400a";
+    let thread_id = codex_thread_id("019d0d0c-07df-7632-81fa-a1636651400a");
     let rpc_snapshot = (
         vec![UpstreamThreadRecord {
-            id: thread_id.to_string(),
+            id: thread_id.clone(),
+            native_id: thread_id.to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Delegate subagents to fix tests".to_string(),
             lifecycle_state: "idle".to_string(),
             workspace_path: "/Users/lubomirmolin/PhpstormProjects/wrong-workspace".to_string(),
@@ -841,7 +856,7 @@ fn merge_thread_snapshots_prefers_fresher_archive_metadata_for_real_thread_detai
                 .to_string(),
         }],
         HashMap::from([(
-            thread_id.to_string(),
+            thread_id.clone(),
             vec![UpstreamTimelineEvent {
                 id: "rpc-last-event".to_string(),
                 event_type: "command_output_delta".to_string(),
@@ -854,7 +869,10 @@ fn merge_thread_snapshots_prefers_fresher_archive_metadata_for_real_thread_detai
 
     let archive_snapshot = (
         vec![UpstreamThreadRecord {
-            id: thread_id.to_string(),
+            id: thread_id.clone(),
+            native_id: thread_id.to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Investigate thread detail sync".to_string(),
             lifecycle_state: "done".to_string(),
             workspace_path: "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion"
@@ -872,7 +890,7 @@ fn merge_thread_snapshots_prefers_fresher_archive_metadata_for_real_thread_detai
             last_turn_summary: "kill all old servers or apps".to_string(),
         }],
         HashMap::from([(
-            thread_id.to_string(),
+            thread_id.clone(),
             vec![UpstreamTimelineEvent {
                 id: format!("{thread_id}-archive-2"),
                 event_type: "agent_message_delta".to_string(),
@@ -914,7 +932,7 @@ fn merge_thread_snapshots_prefers_fresher_archive_metadata_for_real_thread_detai
     assert_eq!(detail.updated_at, "2026-03-20T21:40:09.107Z");
 
     let timeline = timeline_by_thread_id
-        .get(thread_id)
+        .get(&thread_id)
         .expect("merged timeline should exist");
     assert_eq!(timeline.len(), 2);
     assert_eq!(timeline[1].id, format!("{thread_id}-archive-2"));
@@ -945,7 +963,7 @@ fn archived_sessions_preserve_user_message_images() {
         .expect("archive fallback should load");
 
     let thread_timeline = timeline
-        .get("thread-archive-images")
+        .get(&codex_thread_id("thread-archive-images"))
         .expect("timeline should exist for archived thread");
 
     assert_eq!(thread_timeline.len(), 1);
@@ -957,6 +975,48 @@ fn archived_sessions_preserve_user_message_images() {
     assert_eq!(
         thread_timeline[0].data["content"][1]["image_url"],
         "data:image/png;base64,AAA"
+    );
+
+    let _ = fs::remove_dir_all(codex_home);
+}
+
+#[test]
+fn archived_claude_style_user_message_images_become_data_urls() {
+    let codex_home = unique_test_codex_home();
+    let sessions_directory = codex_home.join("sessions/2026/03/19");
+    fs::create_dir_all(&sessions_directory).expect("test sessions directory should exist");
+    fs::write(
+        codex_home.join("session_index.jsonl"),
+        r#"{"id":"thread-archive-claude-images","thread_name":"Archive Claude images","updated_at":"2026-03-19T10:00:00Z"}"#,
+    )
+    .expect("session index should be writable");
+    fs::write(
+        sessions_directory.join("rollout-2026-03-19T10-00-00-thread-archive-claude-images.jsonl"),
+        concat!(
+            r#"{"timestamp":"2026-03-19T09:55:00Z","type":"session_meta","payload":{"id":"thread-archive-claude-images","timestamp":"2026-03-19T09:55:00Z","cwd":"/Users/test/workspace","source":"cli","git":{"branch":"main","repository_url":"git@github.com:example/project.git"}}}"#,
+            "\n",
+            r#"{"timestamp":"2026-03-19T09:56:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Here is the screenshot."},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"QUJD"}}]}}"#,
+            "\n"
+        ),
+    )
+    .expect("session log should be writable");
+
+    let (_, timeline) = super::load_thread_snapshot_from_codex_archive(&codex_home)
+        .expect("archive fallback should load");
+
+    let thread_timeline = timeline
+        .get(&codex_thread_id("thread-archive-claude-images"))
+        .expect("timeline should exist for archived thread");
+
+    assert_eq!(thread_timeline.len(), 1);
+    assert_eq!(thread_timeline[0].data["type"], "userMessage");
+    assert_eq!(
+        thread_timeline[0].data["content"][0]["text"],
+        "Here is the screenshot."
+    );
+    assert_eq!(
+        thread_timeline[0].data["content"][1]["image_url"],
+        "data:image/png;base64,QUJD"
     );
 
     let _ = fs::remove_dir_all(codex_home);
@@ -987,7 +1047,7 @@ fn archived_update_plan_function_calls_become_plan_timeline_events() {
         .expect("archive fallback should load");
 
     let thread_timeline = timeline
-        .get("thread-archive-plan")
+        .get(&codex_thread_id("thread-archive-plan"))
         .expect("timeline should exist for archived thread");
 
     assert_eq!(thread_timeline.len(), 1);

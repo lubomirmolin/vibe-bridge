@@ -1,0 +1,15 @@
+{
+  "featureId": "integration-late-response-race-dedupe-proof",
+  "reviewedAt": "2026-03-21T01:51:09Z",
+  "commitId": "f4b3e102ff689b43e5f2f22c711d64255763dd81",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed the feature metadata/validation contract, the handoff in `progress_log.jsonl`, the worker transcript skeleton, and commit `f4b3e102ff689b43e5f2f22c711d64255763dd81`, then independently re-ran `cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test integration_test/reconnect_offline_cache_test.dart -d emulator-5554 --plain-name \"thread switch reconnect catch-up ignores late previous-thread detail and deduplicates selected-thread event ids\"`. The change set is coherent with the feature goals: it extends the existing reconnect/thread-switch harness to deliver a mismatched late detail payload after the active thread has switched, confirms the selected thread remains scoped to `thread-456`, verifies foreign live data from `thread-123` stays absent, and asserts reconnect catch-up leaves event IDs unique by collapsing duplicate `evt-thread456-base` and `evt-thread456-catchup` entries to single instances. I did not identify blocking or non-blocking issues in the reviewed scope.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Pass. I reviewed the feature handoff/progress context, transcript skeleton, existing scrutiny-review style, and commit `f4b3e102ff689b43e5f2f22c711d64255763dd81`, then independently re-ran the new emulator-backed integration test case. The implementation cleanly proves VAL-CROSS-002 for the late-detail race and selected-thread event-id dedupe path without introducing code-review concerns."
+}

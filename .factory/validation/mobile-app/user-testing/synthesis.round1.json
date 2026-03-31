@@ -1,0 +1,96 @@
+{
+  "milestone": "mobile-app",
+  "round": 1,
+  "status": "fail",
+  "assertionsSummary": {
+    "total": 46,
+    "passed": 38,
+    "failed": 2,
+    "blocked": 6
+  },
+  "passedAssertions": [
+    "VAL-APPROVAL-001",
+    "VAL-APPROVAL-002",
+    "VAL-APPROVAL-003",
+    "VAL-APPROVAL-005",
+    "VAL-APPROVAL-006",
+    "VAL-APPROVAL-007",
+    "VAL-CROSS-005",
+    "VAL-CROSS-007",
+    "VAL-GIT-001",
+    "VAL-GIT-002",
+    "VAL-GIT-003",
+    "VAL-GIT-004",
+    "VAL-GIT-005",
+    "VAL-GIT-007",
+    "VAL-GIT-008",
+    "VAL-GIT-009",
+    "VAL-PAIR-009",
+    "VAL-PAIR-010",
+    "VAL-SETTINGS-001",
+    "VAL-SETTINGS-003",
+    "VAL-SETTINGS-006",
+    "VAL-THREAD-001",
+    "VAL-THREAD-002",
+    "VAL-THREAD-003",
+    "VAL-THREAD-004",
+    "VAL-THREAD-005",
+    "VAL-THREAD-006",
+    "VAL-THREAD-007",
+    "VAL-THREAD-008",
+    "VAL-THREAD-009",
+    "VAL-THREAD-010",
+    "VAL-THREAD-011",
+    "VAL-THREAD-012",
+    "VAL-TURN-001",
+    "VAL-TURN-002",
+    "VAL-TURN-003",
+    "VAL-TURN-004",
+    "VAL-TURN-006"
+  ],
+  "failedAssertions": [
+    {
+      "id": "VAL-GIT-006",
+      "reason": "On the control-with-approvals thread-detail surface, branch switch, pull, and push executed immediately and showed direct mutation success messages instead of creating an approval request from the git controls flow. Separate approvals widget tests prove git approvals can be displayed with repo/branch context, but they do not show a git action producing that approval request before execution."
+    },
+    {
+      "id": "VAL-PAIR-008",
+      "reason": "Control-with-approvals mode did permit normal turn control: an idle thread could start a turn, and a running thread could steer and interrupt it. But dangerous git actions were not approval-gated from that same mode: branch switch, pull, and push all executed immediately with success feedback instead of stopping for explicit approval."
+    }
+  ],
+  "blockedAssertions": [
+    {
+      "id": "VAL-APPROVAL-004",
+      "blockedBy": "I could not conclude the reject-path assertion honestly from user-surface evidence because the available flutter-mobile-widget-tests harness did not include a targeted full-control reject flow; a direct targeted invocation reported that no tests matched the expected reject case."
+    },
+    {
+      "id": "VAL-CROSS-003",
+      "blockedBy": "Partial reconnect evidence passed for preserved trust/no re-pairing and restored selected thread context, but the available reconnect/offline user-surface harnesses did not exercise pending approvals restoration or a full auth/subscription/repo-context restore bundle together, so the complete assertion could not be concluded honestly from user-surface evidence alone."
+    },
+    {
+      "id": "VAL-CROSS-004",
+      "blockedBy": "Blocked on evidence sufficiency: the assigned widget surface proves immediate turn/git gating and separate mode-dependent approval states, but it does not directly exercise an already open approvals surface changing policy in-place or any in-flight approval attempt during a runtime mode switch."
+    },
+    {
+      "id": "VAL-PAIR-007",
+      "blockedBy": "I found only partial read-only coverage: one widget flow proves a read-only mode change disables the turn submit and git pull buttons on an open thread, but there is no targeted flutter-mobile-widget-tests case that exercises the full read-only matrix from the contract (viewing while blocking steer, interrupt, approve, reject, push, pull, and branch switch)."
+    },
+    {
+      "id": "VAL-SETTINGS-004",
+      "blockedBy": "The available widget coverage is split between a settings page that shows/toggles notification preferences and a separate runtime-notification surface that shows a global banner, but there is no targeted flutter-mobile-widget-tests flow that changes a notification preference and then proves delivered-versus-suppressed runtime behavior through the visible UI."
+    },
+    {
+      "id": "VAL-TURN-005",
+      "blockedBy": "The saved start-failure widget flow is sufficient for the start-failure half of the assertion, but the available targeted flutter-mobile-widget-tests harness for this group did not include a steer-failure user-surface case, so the full start-or-steer failure assertion could not be concluded honestly from user-surface evidence alone."
+    }
+  ],
+  "appliedUpdates": [],
+  "notes": [
+    "Synthesized eight mobile-app flow reports under .factory/validation/mobile-app/user-testing/flows while respecting the documented concurrency ceiling of one Flutter validator at a time.",
+    "User-surface validation relied on targeted Flutter widget and integration harnesses under apps/mobile; no live bridge/Tailscale service startup was required for these flows.",
+    "Where duplicate assertion reports existed, synthesis kept the strongest non-pass outcome (fail over blocked over pass); this specifically preserved later direct evidence that dangerous git mutations still execute immediately in control-with-approvals mode.",
+    "Observed product failures: VAL-PAIR-008 and VAL-GIT-006 show dangerous git mutations executing immediately in control-with-approvals mode instead of being approval-gated.",
+    "Observed harness coverage gaps left VAL-APPROVAL-004, VAL-CROSS-003, VAL-CROSS-004, VAL-PAIR-007, VAL-SETTINGS-004, and VAL-TURN-005 blocked from honest user-surface conclusion."
+  ],
+  "previousRound": null
+}

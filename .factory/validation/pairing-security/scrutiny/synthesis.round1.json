@@ -1,0 +1,102 @@
+{
+  "milestone": "pairing-security",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then (cd \"$ROOT/apps/mobile\" && flutter test --concurrency=5); fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo test --manifest-path \"$ROOT/Cargo.toml\" --workspace --jobs 5; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild test -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS'; fi",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then flutter analyze \"$ROOT/apps/mobile\"; fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo check --manifest-path \"$ROOT/Cargo.toml\" --workspace --all-targets; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then flutter analyze \"$ROOT/apps/mobile\"; fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo fmt --manifest-path \"$ROOT/Cargo.toml\" --all --check && cargo clippy --manifest-path \"$ROOT/Cargo.toml\" --workspace --all-targets -- -D warnings; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 4,
+    "passed": 0,
+    "failed": 4,
+    "failedFeatures": [
+      "desktop-pairing-qr-entrypoint",
+      "mobile-qr-pairing-and-trust-confirmation",
+      "security-trust-registry-and-private-handshake",
+      "security-policy-engine-and-access-mode-foundations"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "desktop-pairing-qr-entrypoint",
+      "severity": "blocking",
+      "description": "The desktop QR entrypoint derives `bridge_id` from the bind host/port and advertises `http://127.0.0.1:3110` in the QR payload, so default-config Macs share the same pseudo-identity and scanned phones are pointed at localhost instead of a reachable private bridge route."
+    },
+    {
+      "featureId": "mobile-qr-pairing-and-trust-confirmation",
+      "severity": "blocking",
+      "description": "The mobile pairing flow originally finalized trust entirely in local storage, restored paired state without a fail-closed bridge handshake, and only enforced reused-session/private-route checks at scan time with ephemeral client state."
+    },
+    {
+      "featureId": "security-trust-registry-and-private-handshake",
+      "severity": "blocking",
+      "description": "The shared bridge startup path still falls back to localhost QR base URLs because it does not pass `--pairing-base-url`, and persisted consumed session IDs can collide with reset `pairing-session-N` sequences after a bridge restart, breaking legitimate future re-pair flows."
+    },
+    {
+      "featureId": "security-policy-engine-and-access-mode-foundations",
+      "severity": "blocking",
+      "description": "`POST /policy/access-mode` updates the global mode with no trust/session/authorization check, allowing any reachable client to escalate itself to `full_control` and bypass the intended approval model."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Expanded `.factory/library/api.md` with the concrete pairing QR payload fields, finalize/handshake request-response contracts, policy/approval/security endpoints, and shared security event record shape exposed by the bridge.",
+      "sourceFeature": "mobile-qr-pairing-and-trust-confirmation"
+    },
+    {
+      "target": "library",
+      "description": "Expanded `.factory/library/security.md` with the device-unique bridge identity invariant, private-route QR requirement, bridge-owned finalize/session-token trust semantics, and handshake fail-closed expectations.",
+      "sourceFeature": "security-trust-registry-and-private-handshake"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": ".factory/skills/desktop-worker/SKILL.md",
+      "suggestion": "Clarify the minimum manual verification expected for early pairing-only shell slices so workers do not mark the full shell-state checklist as completed when only QR generation or liveness was actually exercised.",
+      "evidence": "The `desktop-pairing-qr-entrypoint` handoff recorded only a liveness/manual sanity check, while the current desktop-worker skill still reads like the worker must verify unpaired, paired-idle, paired-active, and bridge-offline shell states for every desktop feature.",
+      "isSystemic": false
+    },
+    {
+      "target": ".factory/skills/mobile-worker/SKILL.md",
+      "suggestion": "Document when non-interactive Exec runs may substitute comprehensive automated coverage for manual simulator/device verification, and require workers to record what evidence they used for permission/error-state coverage in that case.",
+      "evidence": "The `mobile-qr-pairing-and-trust-confirmation` worker explicitly deviated from the manual verification step because Exec mode is non-interactive, but the current mobile-worker skill does not explain the acceptable substitute or evidence standard.",
+      "isSystemic": false
+    },
+    {
+      "target": ".factory/skills/security-worker/SKILL.md",
+      "suggestion": "Require security workers to either execute and record the manual fail-closed verification step or explicitly mark the deviation when only automated checks were run; do not allow `followedProcedure: true` when the user-visible fail-closed walkthrough was skipped.",
+      "evidence": "Both `security-trust-registry-and-private-handshake` and `security-policy-engine-and-access-mode-foundations` handoffs marked `followedProcedure` true even though their review evidence shows the manual fail-closed/user-visible verification step was not actually performed.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "The shared bridge service in `.factory/services.yaml` should be updated to pass `--pairing-base-url` so the canonical startup path emits private pairing URLs.",
+      "reason": "rejected because fixing the existing bridge command is a non-additive service change and should be handled by a dedicated fix feature alongside the underlying code issues, not by the validator."
+    },
+    {
+      "observation": "`.factory/library/security.md` was missing the concrete long-lived bridge-identity invariant for pairing trust.",
+      "reason": "already-documented via the applied security library update in this scrutiny round."
+    },
+    {
+      "observation": "`.factory/library/api.md` was too high-level to capture the concrete pairing, policy, approval-resolution, and security-event contracts now exposed by the bridge.",
+      "reason": "already-documented via the applied API library update in this scrutiny round."
+    }
+  ],
+  "previousRound": null
+}

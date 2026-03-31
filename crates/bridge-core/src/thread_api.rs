@@ -13,7 +13,8 @@ use std::collections::HashMap;
 use serde::Serialize;
 use serde_json::Value;
 use shared_contracts::{
-    BridgeEventEnvelope, ThreadDetailDto, ThreadGitDiffMode, ThreadStatus, ThreadSummaryDto,
+    BridgeEventEnvelope, ProviderKind, ThreadClientKind, ThreadDetailDto, ThreadGitDiffMode,
+    ThreadStatus, ThreadSummaryDto,
 };
 
 use self::archive::{is_file_change_custom_tool, is_file_change_text};
@@ -35,16 +36,56 @@ use self::sync::THREAD_SYNC_REUSE_WINDOW_MILLIS;
 use self::sync::{ThreadSyncConfig, ThreadSyncReceipt};
 pub(crate) use self::timeline::{
     build_timeline_event_envelope, current_timestamp_string, derive_repository_name_from_cwd,
-    summarize_live_payload, unix_timestamp_to_iso8601,
+    map_thread_client_kind_from_source, summarize_live_payload, unix_timestamp_to_iso8601,
 };
 #[cfg(test)]
 use self::timeline::{
     current_unix_epoch_millis, map_codex_thread_to_timeline_events, map_thread_detail,
 };
 
+pub(crate) fn provider_thread_id(provider: ProviderKind, native_id: &str) -> String {
+    format!("{}:{native_id}", provider_prefix(provider))
+}
+
+pub(crate) fn provider_prefix(provider: ProviderKind) -> &'static str {
+    match provider {
+        ProviderKind::Codex => "codex",
+        ProviderKind::ClaudeCode => "claude",
+    }
+}
+
+pub(crate) fn provider_from_thread_id(thread_id: &str) -> Option<ProviderKind> {
+    let (prefix, _) = thread_id.split_once(':')?;
+    match prefix {
+        "codex" => Some(ProviderKind::Codex),
+        "claude" => Some(ProviderKind::ClaudeCode),
+        _ => None,
+    }
+}
+
+pub(crate) fn native_thread_id_for_provider<'a>(
+    thread_id: &'a str,
+    provider: ProviderKind,
+) -> Option<&'a str> {
+    match provider_from_thread_id(thread_id) {
+        Some(found_provider) if found_provider == provider => {
+            thread_id.split_once(':').map(|(_, native_id)| native_id)
+        }
+        None if provider == ProviderKind::Codex => Some(thread_id),
+        _ => None,
+    }
+}
+
+pub(crate) fn is_provider_thread_id(thread_id: &str, provider: ProviderKind) -> bool {
+    native_thread_id_for_provider(thread_id, provider).is_some()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpstreamThreadRecord {
     pub id: String,
+    pub native_id: String,
+    pub provider: ProviderKind,
+    pub client: ThreadClientKind,
     pub headline: String,
     pub lifecycle_state: String,
     pub workspace_path: String,

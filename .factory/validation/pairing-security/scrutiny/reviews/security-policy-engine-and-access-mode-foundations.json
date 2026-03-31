@@ -1,0 +1,39 @@
+{
+  "featureId": "security-policy-engine-and-access-mode-foundations",
+  "reviewedAt": "2026-03-17T23:59:00Z",
+  "commitId": "8b56c9e18c9c47504a37af0e1bb43b0c21075049",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature adds a clear policy engine, approval queue, and security-audit surface, but it does not securely protect access-mode changes and it resolves approvals before confirming the gated action can still execute.",
+    "issues": [
+      {
+        "file": "crates/bridge-core/src/lib.rs",
+        "line": 839,
+        "severity": "blocking",
+        "description": "`POST /policy/access-mode` updates the global access mode immediately with no trust, session-auth, or authorization check. Any client that can reach the bridge can switch itself to `full_control`, then approve dangerous actions that were supposed to stay gated, which undermines the policy model this feature is introducing."
+      },
+      {
+        "file": "crates/bridge-core/src/lib.rs",
+        "line": 1402,
+        "severity": "non_blocking",
+        "description": "Approval resolution mutates the stored approval state before the pending action is executed. If `execute_pending_approval_action` later returns `None` (for example because the thread disappeared at line 1446), the API returns `approval_target_not_found` but the approval has already been marked approved/rejected and is no longer actionable, leaving approval state inconsistent with the underlying operation result."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `security-worker` skill requires a manual fail-closed verification step, but this run recorded only automated `commandsRun` and still marked `skillFeedback.followedProcedure` as true. Either the skill needs to explicitly allow automated-only validation in this environment or the review/handoff guidance should require workers to record the missing manual check as a deviation.",
+      "evidence": ".factory/skills/security-worker/SKILL.md:24 says to manually verify fail-closed behavior and record what the user sees; the handoff at /Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525/handoffs/2026-03-17T22-49-02-471Z__security-policy-engine-and-access-mode-foundations__98cc869e-5921-4a18-9954-c83de761fa45.json:13-17 only lists automated commands, and :63-65 still marks `followedProcedure` true."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The shared API notes do not yet capture the concrete policy/security surfaces added here (`/policy/access-mode`, approval resolution endpoints, `/security/events`, and the new approval/security event types), so later workers will have to rediscover them from code or transcripts.",
+      "evidence": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/library/api.md:10-18 only documents generic planned surfaces, while crates/bridge-core/src/lib.rs:809-824 lists the concrete policy, approval-resolution, and security-events endpoints now exposed by the bridge."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the worker transcript skeleton, handoff, skill, mission docs, and commit `8b56c9e18c9c47504a37af0e1bb43b0c21075049`. Result: fail, due to an unprotected access-mode escalation path; also noted an approval-state consistency edge case and two shared-state gaps."
+}

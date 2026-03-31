@@ -859,6 +859,7 @@ struct GitHubInAppUpdater: Sendable {
             throw InAppUpdaterError.invalidDigestFormat(source: "SHA256SUMS")
         }
 
+        let expectedNames = expectedManifestNames(for: assetName)
         for line in text.split(whereSeparator: \.isNewline) {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
@@ -873,7 +874,7 @@ struct GitHubInAppUpdater: Sendable {
             let fileName = remainder.trimmingCharacters(in: CharacterSet.whitespaces)
                 .replacingOccurrences(of: "*", with: "")
                 .trimmingCharacters(in: CharacterSet.whitespaces)
-            if fileName == assetName {
+            if expectedNames.contains(normalizeManifestFileName(fileName)) {
                 guard digest.count == 64, digest.allSatisfy({ $0.isHexDigit }) else {
                     throw InAppUpdaterError.invalidDigestFormat(source: "SHA256SUMS")
                 }
@@ -882,6 +883,24 @@ struct GitHubInAppUpdater: Sendable {
         }
 
         throw InAppUpdaterError.missingDigest(assetName: assetName)
+    }
+
+    private static func expectedManifestNames(for assetName: String) -> Set<String> {
+        var names: Set<String> = [normalizeManifestFileName(assetName)]
+        if let basename = assetName.split(separator: "/").last {
+            names.insert(normalizeManifestFileName(String(basename)))
+        }
+        return names
+    }
+
+    private static func normalizeManifestFileName(_ rawValue: String) -> String {
+        rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\", with: "/")
+            .split(separator: "/")
+            .last
+            .map(String.init)?
+            .lowercased() ?? rawValue.lowercased()
     }
 }
 

@@ -1,0 +1,132 @@
+{
+  "groupId": "hardening-platform-parity",
+  "testedAt": "2026-03-18T22:05:41.558473+00:00",
+  "isolation": {
+    "surface": "hardening-mobile-integration",
+    "repoRoot": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion",
+    "missionDir": "/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525",
+    "workspace": "apps/mobile",
+    "bridgeUrl": "http://127.0.0.1:3110",
+    "iosDeviceId": "E236B428-DF10-459D-B72A-7FADC15BA725",
+    "androidDeviceId": "emulator-5554",
+    "serialization": "All Flutter runs were executed one at a time with no overlap across devices.",
+    "sharedState": "Reused the existing bridge and current simulator/emulator state without killing or restarting shared services."
+  },
+  "surface": "hardening-mobile-integration",
+  "toolsUsed": [
+    "flutter",
+    "curl",
+    "python3"
+  ],
+  "commandsRun": [
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test integration_test/reconnect_offline_cache_test.dart -d E236B428-DF10-459D-B72A-7FADC15BA725 -r expanded",
+      "target": "iOS simulator",
+      "exitCode": 0,
+      "log": "hardening/hardening-platform-parity/ios-reconnect_offline_cache_test.log",
+      "observation": "Passed on iOS; all four reconnect/offline cache cases succeeded, covering first-run pairing to a live thread list, offline cached thread restoration, reconnect controls, and deduplicated reconnect recovery."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test integration_test/notification_deep_links_and_dedup_test.dart -d E236B428-DF10-459D-B72A-7FADC15BA725 -r expanded",
+      "target": "iOS simulator",
+      "exitCode": 0,
+      "log": "hardening/hardening-platform-parity/ios-notification_deep_links_and_dedup_test.log",
+      "observation": "Passed on iOS; all seven notification routing and dedup cases succeeded, including approval-detail routing, thread-detail opens, cold-start targets, stale notification suppression, and duplicate event suppression."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test integration_test/live_bridge_approval_flow_test.dart -d E236B428-DF10-459D-B72A-7FADC15BA725 --dart-define=LIVE_BRIDGE_BASE_URL=http://127.0.0.1:3110 -r expanded",
+      "target": "iOS simulator",
+      "exitCode": 0,
+      "log": "hardening/hardening-platform-parity/ios-live_bridge_approval_flow_test.log",
+      "observation": "Passed on iOS; the real bridge-backed approval queue/detail flow completed through approve and reject actions in the mobile UI, exercising git approval gating against the shared bridge."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test integration_test/reconnect_offline_cache_test.dart -d emulator-5554 -r expanded",
+      "target": "Android emulator",
+      "exitCode": 0,
+      "log": "hardening/hardening-platform-parity/android-reconnect_offline_cache_test.log",
+      "observation": "Passed on Android; the same four reconnect/offline cache cases succeeded, matching the iOS coverage for pairing into threads, offline readability, reconnect controls, and reconnect deduplication."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test integration_test/notification_deep_links_and_dedup_test.dart -d emulator-5554 -r expanded",
+      "target": "Android emulator",
+      "exitCode": 0,
+      "log": "hardening/hardening-platform-parity/android-notification_deep_links_and_dedup_test.log",
+      "observation": "Passed on Android; the same seven notification routing and dedup cases succeeded, matching iOS for approval/thread deep links, cold-start routing, stale suppression, and duplicate suppression."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test integration_test/live_bridge_approval_flow_test.dart -d emulator-5554 --dart-define=LIVE_BRIDGE_BASE_URL=http://10.0.2.2:3110 -r expanded",
+      "target": "Android emulator",
+      "exitCode": 0,
+      "log": "hardening/hardening-platform-parity/android-live_bridge_approval_flow_test.log",
+      "observation": "Passed on Android; the real bridge-backed approval queue/detail flow completed through approve and reject actions in the mobile UI using the emulator bridge mapping, with no adb install repair needed."
+    }
+  ],
+  "assertions": [
+    {
+      "id": "VAL-PLATFORM-001",
+      "title": "Core mobile flows behave equivalently on iOS and Android",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run reconnect_offline_cache_test.dart with -r expanded on the configured iOS simulator and Android emulator.",
+          "expected": "Both platforms should prove the same pairing, live thread list, offline cache readability, reconnect controls, and reconnect dedup behavior.",
+          "observed": "Both iOS and Android passed all 4 reconnect/offline cases; each platform reached a live thread list after pairing, restored cached thread content offline, kept thread detail readable through disconnects, and restored trusted session/thread/approvals/repo context without duplication."
+        },
+        {
+          "action": "Run notification_deep_links_and_dedup_test.dart with -r expanded on both targets.",
+          "expected": "Both platforms should surface the same foreground notification routing and dedup behavior for approvals and threads.",
+          "observed": "Both iOS and Android passed all 7 notification cases; approval-detail opens, live thread-detail opens, cold-start launch targets, stale approval suppression, and duplicate notification suppression behaved the same on both targets."
+        },
+        {
+          "action": "Run live_bridge_approval_flow_test.dart with -r expanded on both targets against the shared bridge.",
+          "expected": "Both platforms should complete the same real mobile approval queue/detail/approve/reject flow backed by live bridge git approval gating.",
+          "observed": "Both iOS and Android passed the real bridge-backed approval UI flow, including queue access, approval detail rendering, approve/reject actions, and final approved/rejected bridge state, demonstrating parity for approvals and git-control gating."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "hardening/hardening-platform-parity/ios-reconnect_offline_cache_test.log",
+          "hardening/hardening-platform-parity/ios-notification_deep_links_and_dedup_test.log",
+          "hardening/hardening-platform-parity/ios-live_bridge_approval_flow_test.log",
+          "hardening/hardening-platform-parity/android-reconnect_offline_cache_test.log",
+          "hardening/hardening-platform-parity/android-notification_deep_links_and_dedup_test.log",
+          "hardening/hardening-platform-parity/android-live_bridge_approval_flow_test.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "none observed in the expanded Flutter test logs on either platform",
+        "network": "The live approval suite exercised the shared bridge at http://127.0.0.1:3110 on iOS and http://10.0.2.2:3110 on Android; reconnect/offline and notification suites used the app integration harness rather than external network capture.",
+        "platformNotes": "Parity evidence comes from identical suite files passing on both configured targets: reconnect/offline cache (4 cases), notification routing/dedup (7 cases), and live bridge approval flow (1 case)."
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "Multiple attached Flutter devices were present on the host, so every command needed an explicit -d target to stay inside the assigned simulator/emulator isolation boundary.",
+      "resolved": true,
+      "resolution": "Ran each suite with the exact configured device ID and serialized all six commands.",
+      "affectedAssertions": [
+        "VAL-PLATFORM-001"
+      ]
+    },
+    {
+      "description": "The live bridge approval suite needs platform-specific bridge reachability because iOS can use 127.0.0.1 directly while the Android emulator must reach the host bridge through 10.0.2.2.",
+      "resolved": true,
+      "resolution": "Ran iOS with --dart-define=LIVE_BRIDGE_BASE_URL=http://127.0.0.1:3110 and Android with --dart-define=LIVE_BRIDGE_BASE_URL=http://10.0.2.2:3110.",
+      "affectedAssertions": [
+        "VAL-PLATFORM-001"
+      ]
+    },
+    {
+      "description": "This validation surface produces per-command Flutter logs rather than standalone simulator/emulator screenshots or videos.",
+      "resolved": true,
+      "resolution": "Saved one expanded log per suite command under the assigned evidence directory and tied parity conclusions directly to those logs.",
+      "affectedAssertions": [
+        "VAL-PLATFORM-001"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Ran 6 serialized Flutter integration suite commands (3 on iOS, 3 on Android). All reconnect/offline, notification routing/dedup, and live bridge approval flows passed on both targets, so VAL-PLATFORM-001 passed with no blockers and no Android adb repair required."
+}

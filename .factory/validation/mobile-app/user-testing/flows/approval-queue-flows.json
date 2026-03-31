@@ -1,0 +1,124 @@
+{
+  "groupId": "approval-queue-flows",
+  "testedAt": "2026-03-18T15:02:17.408542+00:00",
+  "surface": "flutter-mobile-widget-tests",
+  "toolsUsed": [
+    "flutter",
+    "python3"
+  ],
+  "commandsRun": [
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/approvals/approvals_queue_page_test.dart --plain-name \"queue and detail show action, origin, and command/file context\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; opening the pending approval detail rendered the exact action, approval reason, workspace, repository, current branch, remote, command output context, and file-change context."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/approvals/approvals_queue_page_test.dart --plain-name \"branch-switch approvals show the exact target branch\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; the pending branch-switch approval detail showed the exact target branch release/hotfix-42."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/approvals/approvals_queue_page_test.dart --plain-name \"full-control mode can approve pending approvals\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; full-control mode exposed an actionable approve button and the detail updated to approved / already resolved as approved after the tap."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/approvals/approvals_queue_page_test.dart --plain-name \"lower-permission mode keeps approve/reject disabled\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; control-with-approvals mode left approve and reject buttons disabled and showed that approval actions are only available in full-control mode."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/approvals/approvals_queue_page_test.dart --plain-name \"stale approvals become non-actionable after late resolve attempt\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; a late approve attempt surfaced Approval is no longer actionable and refreshed the approval into an already resolved approved state."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/approvals/approvals_queue_page_test.dart --plain-name \"live approval events refresh queue and originating thread surfaces\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; after a live approvalRequested event, the originating thread panel showed the pending approval state and the approvals queue then listed the same request."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/approvals/approvals_queue_page_test.dart --plain-name \"resolved approvals sync from queue to thread context panel\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; approving from the queue and returning to the thread detail showed the linked thread approval status as Approved."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/approvals/approvals_queue_page_test.dart --plain-name \"full-control mode can reject pending approvals\" -r expanded",
+      "exitCode": 79,
+      "observation": "Blocked evidence attempt; the harness reported No tests match full-control mode can reject pending approvals, so no targeted reject user-surface case was available."
+    }
+  ],
+  "assertions": [
+    {
+      "id": "VAL-APPROVAL-001",
+      "status": "pass",
+      "reason": "The live approval-events widget flow passed after emitting an approvalRequested event for thread-123, and the UI showed the linked pending approval inside the originating thread before the same request appeared in the approvals queue.",
+      "evidence": [
+        "mobile-app/approval-queue-flows/VAL-APPROVAL-001-live-refresh.log"
+      ]
+    },
+    {
+      "id": "VAL-APPROVAL-002",
+      "status": "pass",
+      "reason": "The approval-detail widget flows passed while showing the exact action under review, the approval reason, workspace, repository, current branch, remote, command/file context, and, for branch-switch approvals, the exact target branch release/hotfix-42.",
+      "evidence": [
+        "mobile-app/approval-queue-flows/VAL-APPROVAL-002-detail-context.log",
+        "mobile-app/approval-queue-flows/VAL-APPROVAL-002-target-branch.log"
+      ]
+    },
+    {
+      "id": "VAL-APPROVAL-003",
+      "status": "pass",
+      "reason": "The full-control approval widget flow passed after tapping Approve, and the approval detail updated to approved / already resolved as approved, which is the user-surface signal that the pending request was resolved and the blocked action resumed.",
+      "evidence": [
+        "mobile-app/approval-queue-flows/VAL-APPROVAL-003-approve.log"
+      ]
+    },
+    {
+      "id": "VAL-APPROVAL-004",
+      "status": "blocked",
+      "reason": "I could not conclude the reject-path assertion honestly from user-surface evidence because the available flutter-mobile-widget-tests harness did not include a targeted full-control reject flow; a direct targeted invocation reported that no tests matched the expected reject case.",
+      "evidence": [
+        "mobile-app/approval-queue-flows/VAL-APPROVAL-004-no-reject-harness.log"
+      ]
+    },
+    {
+      "id": "VAL-APPROVAL-005",
+      "status": "pass",
+      "reason": "The resolved-approval sync widget flow passed after approving from the queue and reopening the originating thread, where the thread context panel showed the linked approval as Approved instead of leaving stale pending state behind.",
+      "evidence": [
+        "mobile-app/approval-queue-flows/VAL-APPROVAL-005-resolved-sync.log"
+      ]
+    },
+    {
+      "id": "VAL-APPROVAL-006",
+      "status": "pass",
+      "reason": "The lower-permission widget flow passed in control-with-approvals mode with both approve and reject buttons disabled and a user-facing message that approval actions are available only in full-control mode.",
+      "evidence": [
+        "mobile-app/approval-queue-flows/VAL-APPROVAL-006-lower-mode-disabled.log"
+      ]
+    },
+    {
+      "id": "VAL-APPROVAL-007",
+      "status": "pass",
+      "reason": "The stale-approval widget flow passed when a late approve attempt surfaced Approval is no longer actionable, refreshed the record, and marked the approval as already resolved as approved, making it non-actionable from the mobile UI.",
+      "evidence": [
+        "mobile-app/approval-queue-flows/VAL-APPROVAL-007-stale-non-actionable.log"
+      ]
+    }
+  ],
+  "frictions": [
+    "The flutter-mobile-widget-tests surface provides assertion-backed Flutter command logs rather than standalone screenshots, videos, policy logs, or API/websocket captures, so this report relies on saved widget-test logs for user-surface evidence.",
+    "The available approvals widget harness covered detail context, approve, lower-permission disablement, stale/non-actionable handling, live refresh, and resolution sync, but not a dedicated full-control reject flow."
+  ],
+  "blockers": [
+    {
+      "description": "No targeted flutter-mobile-widget-tests case exercised rejecting a pending approval in full-control mode.",
+      "affectedAssertions": [
+        "VAL-APPROVAL-004"
+      ],
+      "quickFixAttempted": "Ran a direct flutter test --plain-name \"full-control mode can reject pending approvals\" probe against approvals_queue_page_test.dart and received No tests match that name."
+    }
+  ],
+  "summary": "Tested 7 assertions: 6 passed, 0 failed, 1 blocked."
+}

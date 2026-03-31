@@ -1,0 +1,33 @@
+{
+  "featureId": "pairing-security-launch-and-verify-tailscale-serve",
+  "reviewedAt": "2026-03-18T07:03:14Z",
+  "commitId": "b36f4d620e4989bd583e2ba31d61bd93610e6938",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "This rerun does fix the main omission from the prior review in the happy path: default bridge startup now attempts `tailscale serve --bg 3110`, rechecks Serve state before advertising the default pairing URL, and `/pairing/session` fails closed once runtime route health drops. However, the verification logic is still too loose to satisfy the original blocking requirement in all cases, because it accepts any Serve-status JSON that merely contains `3110` somewhere as proof that the advertised HTTPS route is valid.",
+    "issues": [
+      {
+        "file": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/lib.rs",
+        "line": 435,
+        "severity": "blocking",
+        "description": "`pairing_base_url_from_tailscale_status()` treats the route as verified whenever `serve_status_mentions_port()` finds any `3110` mention in `tailscale serve status --json`, and `string_mentions_serve_port()` explicitly accepts a bare `\"3110\"` value/key as sufficient (`crates/bridge-core/src/lib.rs:435-470`). That means a stale or different Serve config that happens to reference port 3110 can still make startup accept `https://Self.DNSName` as the pairing base URL even without a verified HTTPS proxy to `localhost:3110`. In that state the bridge would keep issuing pairing sessions for an advertised private URL that is not actually the required reachable route, so the original reachable-private-route failure is not fully closed yet."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "services",
+      "observation": "The shared `tailscale-serve` service healthcheck is still weaker than the product invariant this feature is trying to enforce, so future workers/validators could get a false sense of readiness from the manifest.",
+      "evidence": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/services.yaml:60-67 still defines health as `tailscale serve status | grep 3110`, while `crates/bridge-core/src/lib.rs:345-470` now expects a verified Serve mapping to the bridge's localhost port before pairing is considered reachable."
+    },
+    {
+      "area": "knowledge",
+      "observation": "Shared security notes still capture that QR payloads need a private base URL, but they do not record the newer startup invariant that the canonical path must provision/revalidate Tailscale Serve and fail closed when that mapping disappears.",
+      "evidence": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/library/security.md:9-20 documents private-route and fail-closed trust expectations generally, but not the startup Serve-provision/revalidation contract now implemented in `crates/bridge-core/src/lib.rs:75-93`, `:345-383`, and `:1235-1245`."
+    }
+  ],
+  "addressesFailureFrom": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/validation/pairing-security/scrutiny/reviews/pairing-security-fix-private-route-identity-and-session-stability.json",
+  "summary": "Reviewed the prior failed review, original failed feature context, fix handoff/transcript skeleton, mission docs, shared state files, and commit `b36f4d620e4989bd583e2ba31d61bd93610e6938`. Result: fail. The new code now launches Serve and fail-closes pairing when runtime checks see the mapping disappear, but its verification heuristic can still misclassify unrelated `3110` mentions in Serve JSON as a valid pairing route, so the blocking reachable-private-route guarantee is not fully met."
+}

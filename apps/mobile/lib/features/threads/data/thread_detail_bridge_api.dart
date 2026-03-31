@@ -11,7 +11,7 @@ final threadDetailBridgeApiProvider = Provider<ThreadDetailBridgeApi>((ref) {
   );
 });
 
-const ModelCatalogDto fallbackModelCatalog = ModelCatalogDto(
+const ModelCatalogDto fallbackCodexModelCatalog = ModelCatalogDto(
   contractVersion: contractVersion,
   models: <ModelOptionDto>[
     ModelOptionDto(
@@ -56,16 +56,75 @@ const ModelCatalogDto fallbackModelCatalog = ModelCatalogDto(
   ],
 );
 
+const ModelCatalogDto fallbackClaudeModelCatalog = ModelCatalogDto(
+  contractVersion: contractVersion,
+  models: <ModelOptionDto>[
+    ModelOptionDto(
+      id: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-4-6',
+      displayName: 'Claude Sonnet 4.6',
+      description: '',
+      isDefault: true,
+      defaultReasoningEffort: 'medium',
+      supportedReasoningEfforts: <ReasoningEffortOptionDto>[
+        ReasoningEffortOptionDto(reasoningEffort: 'low'),
+        ReasoningEffortOptionDto(reasoningEffort: 'medium'),
+        ReasoningEffortOptionDto(reasoningEffort: 'high'),
+        ReasoningEffortOptionDto(reasoningEffort: 'max'),
+      ],
+    ),
+    ModelOptionDto(
+      id: 'claude-opus-4-6',
+      model: 'claude-opus-4-6',
+      displayName: 'Claude Opus 4.6',
+      description: '',
+      isDefault: false,
+      defaultReasoningEffort: 'high',
+      supportedReasoningEfforts: <ReasoningEffortOptionDto>[
+        ReasoningEffortOptionDto(reasoningEffort: 'low'),
+        ReasoningEffortOptionDto(reasoningEffort: 'medium'),
+        ReasoningEffortOptionDto(reasoningEffort: 'high'),
+        ReasoningEffortOptionDto(reasoningEffort: 'max'),
+      ],
+    ),
+    ModelOptionDto(
+      id: 'claude-sonnet-4-5',
+      model: 'claude-sonnet-4-5',
+      displayName: 'Claude Sonnet 4.5',
+      description: '',
+      isDefault: false,
+      defaultReasoningEffort: 'medium',
+      supportedReasoningEfforts: <ReasoningEffortOptionDto>[
+        ReasoningEffortOptionDto(reasoningEffort: 'low'),
+        ReasoningEffortOptionDto(reasoningEffort: 'medium'),
+        ReasoningEffortOptionDto(reasoningEffort: 'high'),
+        ReasoningEffortOptionDto(reasoningEffort: 'max'),
+      ],
+    ),
+  ],
+);
+
+ModelCatalogDto fallbackModelCatalogForProvider(ProviderKind provider) {
+  switch (provider) {
+    case ProviderKind.codex:
+      return fallbackCodexModelCatalog;
+    case ProviderKind.claudeCode:
+      return fallbackClaudeModelCatalog;
+  }
+}
+
 abstract class ThreadDetailBridgeApi {
   Future<ModelCatalogDto> fetchModelCatalog({
     required String bridgeApiBaseUrl,
+    required ProviderKind provider,
   }) async {
-    return fallbackModelCatalog;
+    return fallbackModelCatalogForProvider(provider);
   }
 
   Future<ThreadSnapshotDto> createThread({
     required String bridgeApiBaseUrl,
     required String workspace,
+    required ProviderKind provider,
     String? model,
   });
 
@@ -119,6 +178,7 @@ abstract class ThreadDetailBridgeApi {
   Future<TurnMutationResult> interruptTurn({
     required String bridgeApiBaseUrl,
     required String threadId,
+    String? turnId,
   });
 
   Future<TurnMutationResult> startCommitAction({
@@ -194,6 +254,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   Future<ThreadSnapshotDto> createThread({
     required String bridgeApiBaseUrl,
     required String workspace,
+    required ProviderKind provider,
     String? model,
   }) async {
     try {
@@ -205,6 +266,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
         },
         body: jsonEncode(<String, dynamic>{
           'workspace': workspace,
+          'provider': provider.wireValue,
           if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
         }),
       );
@@ -240,17 +302,16 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   @override
   Future<ModelCatalogDto> fetchModelCatalog({
     required String bridgeApiBaseUrl,
+    required ProviderKind provider,
   }) async {
-    final bootstrap = await _getBootstrap(_transport, bridgeApiBaseUrl);
-    if (bootstrap?.models.isNotEmpty == true) {
-      return ModelCatalogDto(
-        contractVersion: bootstrap!.contractVersion,
-        models: bootstrap.models,
-      );
-    }
-
-    final catalog = await _getModelCatalog(_transport, bridgeApiBaseUrl);
-    return catalog?.models.isNotEmpty == true ? catalog! : fallbackModelCatalog;
+    final catalog = await _getModelCatalog(
+      _transport,
+      bridgeApiBaseUrl,
+      provider,
+    );
+    return catalog?.models.isNotEmpty == true
+        ? catalog!
+        : fallbackModelCatalogForProvider(provider);
   }
 
   @override
@@ -417,13 +478,17 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   Future<TurnMutationResult> interruptTurn({
     required String bridgeApiBaseUrl,
     required String threadId,
+    String? turnId,
   }) {
     return _postTurnMutation(
       bridgeApiBaseUrl: bridgeApiBaseUrl,
       threadId: threadId,
       operation: 'interrupt',
       routeSegment: 'interrupt',
-      body: const <String, dynamic>{},
+      body: <String, dynamic>{
+        if (turnId != null && turnId.trim().isNotEmpty)
+          'turn_id': turnId.trim(),
+      },
     );
   }
 
@@ -645,6 +710,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
             outcome: 'accepted',
             message: accepted.message,
             threadStatus: accepted.threadStatus,
+            turnId: accepted.turnId,
           );
         } on FormatException {
           throw ThreadTurnBridgeException(
@@ -960,6 +1026,7 @@ class TurnMutationResult {
     required this.outcome,
     required this.message,
     required this.threadStatus,
+    this.turnId,
   });
 
   final String contractVersion;
@@ -968,6 +1035,7 @@ class TurnMutationResult {
   final String outcome;
   final String message;
   final ThreadStatus threadStatus;
+  final String? turnId;
 
   factory TurnMutationResult.fromJson(Map<String, dynamic> json) {
     final threadStatusWire = json['thread_status'];
@@ -982,44 +1050,19 @@ class TurnMutationResult {
       outcome: json['outcome'] as String,
       message: json['message'] as String,
       threadStatus: threadStatusFromWire(threadStatusWire),
+      turnId: json['turn_id'] as String?,
     );
-  }
-}
-
-Future<BootstrapDto?> _getBootstrap(
-  BridgeTransport transport,
-  String bridgeApiBaseUrl,
-) async {
-  try {
-    final response = await transport.get(
-      _buildBootstrapUri(bridgeApiBaseUrl),
-      headers: const <String, String>{'accept': 'application/json'},
-    );
-    final decoded = _decodeJsonObject(response.bodyText);
-
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      try {
-        return BootstrapDto.fromJson(decoded);
-      } on FormatException {
-        return null;
-      }
-    }
-
-    return null;
-  } on BridgeTransportConnectionException {
-    return null;
-  } on FormatException {
-    return null;
   }
 }
 
 Future<ModelCatalogDto?> _getModelCatalog(
   BridgeTransport transport,
   String bridgeApiBaseUrl,
+  ProviderKind provider,
 ) async {
   try {
     final response = await transport.get(
-      _buildModelsUri(bridgeApiBaseUrl),
+      _buildModelsUri(bridgeApiBaseUrl, provider),
       headers: const <String, String>{'accept': 'application/json'},
     );
     final decoded = _decodeJsonObject(response.bodyText);
@@ -1040,24 +1083,17 @@ Future<ModelCatalogDto?> _getModelCatalog(
   }
 }
 
-Uri _buildBootstrapUri(String baseUrl) {
-  final baseUri = Uri.parse(baseUrl);
-  final normalizedBasePath = baseUri.path.endsWith('/')
-      ? baseUri.path.substring(0, baseUri.path.length - 1)
-      : baseUri.path;
-  final fullPath =
-      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/bootstrap';
-  return baseUri.replace(path: fullPath, queryParameters: null);
-}
-
-Uri _buildModelsUri(String baseUrl) {
+Uri _buildModelsUri(String baseUrl, ProviderKind provider) {
   final baseUri = Uri.parse(baseUrl);
   final normalizedBasePath = baseUri.path.endsWith('/')
       ? baseUri.path.substring(0, baseUri.path.length - 1)
       : baseUri.path;
   final fullPath =
       '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/models';
-  return baseUri.replace(path: fullPath, queryParameters: null);
+  return baseUri.replace(
+    path: fullPath,
+    queryParameters: <String, String>{'provider': provider.wireValue},
+  );
 }
 
 Uri _buildSpeechModelUri(String baseUrl) {

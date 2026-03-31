@@ -18,7 +18,7 @@ struct UpdateRepositorySettings {
             bundleIdentifier: bundle.bundleIdentifier ?? "com.codex.mobile.companion.shell",
             appName: (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
                 ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
-                ?? "CodexMobileCompanion"
+                ?? "Vibe Bridge Companion"
         )
     }
 }

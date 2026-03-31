@@ -1,0 +1,38 @@
+{
+  "milestone": "flutter-thread-detail-parity",
+  "round": 2,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; ... commands.test equivalent ...",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; ... commands.typecheck equivalent ...",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; ... commands.lint equivalent ...",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [],
+  "rejectedObservations": [
+    {
+      "observation": "Built-in scrutiny-validator retries were not used after additional flutter-thread-detail-parity fix features landed.",
+      "reason": "Round 2 scrutiny was synthesized manually from the three new completed fix-feature diffs, targeted reruns, and latest passing full-suite validator output to avoid repeating the earlier validator-worker crash path."
+    }
+  ],
+  "previousRound": ".factory/validation/flutter-thread-detail-parity/scrutiny/synthesis.round1.json"
+}

@@ -1,0 +1,26 @@
+{
+  "featureId": "bridge-fix-runtime-attach-and-thread-data",
+  "reviewedAt": "2026-03-17T21:37:22Z",
+  "commitId": "edb2bb8ddd7e15fbaf8892c4e35a6b51eceb30fc",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "This fix adequately addresses the original scrutiny failure. Auto runtime mode now verifies endpoint reachability before reporting `attached` and truthfully falls back to managed or degraded states (`crates/bridge-core/src/codex_runtime.rs:87-143,211-242`), the bridge is now constructed from Codex-backed thread data instead of `ThreadApiService::sample()` (`crates/bridge-core/src/lib.rs:67-74`), and existing threads without timeline entries now return an empty normalized timeline payload rather than 404 (`crates/bridge-core/src/thread_api.rs:228-243`). I did not find a remaining blocking regression in the fix commit relative to the prior review.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The mission library still does not capture the upstream `codex app-server` RPC methods and field shapes this bridge feature had to reverse-engineer (`initialize`, `thread/list`, `thread/read`, turn item kinds). Future bridge workers are likely to repeat the same schema/protocol discovery work.",
+      "evidence": "`/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525/worker-transcripts.jsonl:12` shows repeated `codex app-server --help`, `generate-json-schema`, and live protocol-probing commands before implementation; `/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/library/api.md` only documents the bridge-owned API surface, not the upstream Codex RPC contract details used here."
+    },
+    {
+      "area": "services",
+      "observation": "Bridge-core validation now depends on manually launching a local `codex app-server` listener for truthful auto-attach checks, but there is still no shared service entry for that dependency in `.factory/services.yaml`.",
+      "evidence": "The fix handoff at `/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525/handoffs/2026-03-17T21-31-52-051Z__bridge-fix-runtime-attach-and-thread-data__4f5bb3ce-a1e5-48b4-ad3f-1f3205b7d2f6.json` records manual checks starting `codex app-server --listen ws://127.0.0.1:4222`; `/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/services.yaml` defines `bridge` and `tailscale-serve` only."
+    }
+  ],
+  "addressesFailureFrom": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/validation/bridge-core/scrutiny/reviews/bridge-codex-adapter-thread-api.json",
+  "summary": "Reviewed the original failed feature, prior synthesis, the fix feature handoff/transcript skeleton, the bridge-worker skill, and commit `edb2bb8ddd7e15fbaf8892c4e35a6b51eceb30fc`. The prior blocking findings are fixed: runtime health no longer reports attached solely from configured endpoint presence, production thread routes no longer ship sample fixture data, and existing threads without timeline events now return empty timelines. I did not find a new blocking regression in the fix feature, so this scrutiny re-run passes."
+}

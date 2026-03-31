@@ -1,0 +1,54 @@
+{
+  "milestone": "desktop-shell",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then (cd \"$ROOT/apps/mobile\" && flutter test --concurrency=5); fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo test --manifest-path \"$ROOT/Cargo.toml\" --workspace --jobs 5; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild test -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS'; fi",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then flutter analyze \"$ROOT/apps/mobile\"; fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo check --manifest-path \"$ROOT/Cargo.toml\" --workspace --all-targets; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then flutter analyze \"$ROOT/apps/mobile\"; fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo fmt --manifest-path \"$ROOT/Cargo.toml\" --all --check && cargo clippy --manifest-path \"$ROOT/Cargo.toml\" --workspace --all-targets -- -D warnings; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 2,
+    "passed": 1,
+    "failed": 1,
+    "failedFeatures": [
+      "desktop-shell-runtime-states-and-recovery"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "desktop-shell-runtime-states-and-recovery",
+      "severity": "blocking",
+      "description": "`startRuntimeSupervision()` is only started from `PairingEntryView`'s `.task`, so the menu-bar shell does not guarantee bridge polling and recovery until the user opens the menu UI after launch. That falls short of the required background-companion supervision behavior for VAL-DESKTOP-001 and VAL-DESKTOP-007."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Updated `.factory/library/api.md` to document the bridge `POST /threads/:id/open-on-mac` endpoint and its best-effort `OpenOnMacResponse` semantics.",
+      "sourceFeature": "desktop-codex-app-compatibility-and-desktop-unpair"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skill:desktop-worker",
+      "suggestion": "Clarify the manual-validation requirement for shell states so the skill either requires explicit unpaired/paired/degraded state-transition evidence in the handoff or explicitly states when automated state-override tests are sufficient.",
+      "evidence": "The review for `desktop-shell-runtime-states-and-recovery` found `.factory/skills/desktop-worker/SKILL.md` still instructs workers to verify unpaired, paired-idle, paired-active, and bridge-offline states manually, but session `92f4ba47-382f-45a3-b689-69d73303b535` only recorded a process-detach interactive check and no manual state-transition evidence.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": null
+}

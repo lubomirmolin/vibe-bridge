@@ -1,0 +1,62 @@
+{
+  "groupId": "thread-list-core",
+  "surface": "flutter-mobile-widget-tests",
+  "toolsUsed": [
+    "flutter",
+    "python3"
+  ],
+  "commandsRun": [
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_list_page_test.dart --plain-name \"shows loading then populated thread rows with status and context\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; the widget flow moved from initial loading to a populated thread list showing recent threads plus visible Running/Completed status chips and workspace/repository context."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_list_page_test.dart --plain-name \"shows an explicit empty state when no threads exist\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; when no threads were returned the user-visible empty state rendered with the guidance text instead of a blank list."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_list_page_test.dart --plain-name \"shows retryable error state and recovers on retry\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; the widget first showed the retryable error state with the bridge-route message and then recovered to the populated thread list after tapping Retry."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_list_page_test.dart --plain-name \"search narrows and clearing search restores full list\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; entering runtime-tools narrowed the visible list to the matching thread and clearing the query restored both thread rows without stale items."
+    }
+  ],
+  "assertions": [
+    {
+      "id": "VAL-THREAD-001",
+      "status": "pass",
+      "reason": "The targeted widget tests for populated, empty, and retryable error states all passed, confirming the thread list shows recent threads when available and otherwise surfaces explicit loading/empty/error user states with retry recovery.",
+      "evidence": [
+        "mobile-app/thread-list-core/VAL-THREAD-001-populated.log",
+        "mobile-app/thread-list-core/VAL-THREAD-001-empty.log",
+        "mobile-app/thread-list-core/VAL-THREAD-001-error-retry.log"
+      ]
+    },
+    {
+      "id": "VAL-THREAD-002",
+      "status": "pass",
+      "reason": "The populated-row widget test passed while asserting visible Running and Completed labels plus repository/branch and workspace text, demonstrating that each row exposes status and repo/workspace context.",
+      "evidence": [
+        "mobile-app/thread-list-core/VAL-THREAD-001-populated.log"
+      ]
+    },
+    {
+      "id": "VAL-THREAD-003",
+      "status": "pass",
+      "reason": "The targeted search widget test passed, showing that filtering by runtime-tools reduced the list to the matching thread and clearing the search restored the full unfiltered list.",
+      "evidence": [
+        "mobile-app/thread-list-core/VAL-THREAD-003-search.log"
+      ]
+    }
+  ],
+  "frictions": [
+    "The flutter-mobile-widget-tests harness provides assertion-backed command logs rather than standalone screenshots or console captures, so this report relies on the passing user-surface widget expectations recorded in the saved Flutter test logs."
+  ],
+  "blockers": []
+}

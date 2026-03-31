@@ -5608,6 +5608,7 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   Future<TurnMutationResult> interruptTurn({
     required String bridgeApiBaseUrl,
     required String threadId,
+    String? turnId,
   }) async {
     interruptTurnCallsByThreadId.update(
       threadId,

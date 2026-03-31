@@ -39,7 +39,7 @@ cargo fmt --manifest-path Cargo.toml --all --check
 cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings
 
 # macOS Shell
-xcodebuild -project apps/mac-shell/CodexMobileCompanion.xcodeproj -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null
+xcodebuild -project apps/mac-shell/VibeBridgeCompanion.xcodeproj -scheme VibeBridgeCompanion -destination 'platform=macOS' build >/dev/null
 ```
 
 ### Typechecking & Tests
@@ -52,7 +52,7 @@ cargo check --manifest-path Cargo.toml --workspace --all-targets
 cargo test --manifest-path Cargo.toml --workspace --jobs 5
 
 # macOS Shell
-xcodebuild test -project apps/mac-shell/CodexMobileCompanion.xcodeproj -scheme CodexMobileCompanion -destination 'platform=macOS'
+xcodebuild test -project apps/mac-shell/VibeBridgeCompanion.xcodeproj -scheme VibeBridgeCompanion -destination 'platform=macOS'
 ```
 
 ### Build Commands
@@ -64,7 +64,7 @@ xcodebuild test -project apps/mac-shell/CodexMobileCompanion.xcodeproj -scheme C
 cargo build --manifest-path Cargo.toml --workspace
 
 # macOS Shell
-xcodebuild -project apps/mac-shell/CodexMobileCompanion.xcodeproj -scheme CodexMobileCompanion -destination 'platform=macOS' build
+xcodebuild -project apps/mac-shell/VibeBridgeCompanion.xcodeproj -scheme VibeBridgeCompanion -destination 'platform=macOS' build
 ```
 
 ## 5. Working Guidelines for Agents

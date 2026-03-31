@@ -1,0 +1,209 @@
+{
+  "groupId": "hardening-cross-area-mobile",
+  "testedAt": "2026-03-18T21:54:40.321425+00:00",
+  "isolation": {
+    "surface": "hardening-mobile-integration",
+    "repoRoot": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion",
+    "missionDir": "/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525",
+    "workspace": "apps/mobile",
+    "bridgeUrl": "http://127.0.0.1:3110",
+    "deviceId": "emulator-5554",
+    "deviceLabel": "sdk gphone64 arm64 (Android 14 emulator)",
+    "note": "Reused the existing Flutter workspace and shared bridge without editing repo source files."
+  },
+  "surface": "hardening-mobile-integration",
+  "toolsUsed": [
+    "flutter",
+    "python3"
+  ],
+  "commandsRun": [
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test integration_test/reconnect_offline_cache_test.dart -d emulator-5554 --plain-name \"first-run pairing lands directly in a live usable thread list\" -r expanded",
+      "exitCode": 0,
+      "log": "hardening/hardening-cross-area-mobile/VAL-CROSS-001-first-run-pairing.log",
+      "observation": "Passed on the Android emulator; the first-run pairing harness reached Threads, rendered thread-123, and updated its live status to Completed."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test integration_test/notification_deep_links_and_dedup_test.dart -d emulator-5554 --plain-name \"approval notification opens approval detail context from settings\" -r expanded",
+      "exitCode": 0,
+      "log": "hardening/hardening-cross-area-mobile/VAL-CROSS-002-approval-notification-context.log",
+      "observation": "Passed on the Android emulator; a foreground approval event surfaced approval context and the Open action routed to the matching approval detail."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test integration_test/notification_deep_links_and_dedup_test.dart -d emulator-5554 --plain-name \"live activity notification opens the matching thread detail context\" -r expanded",
+      "exitCode": 0,
+      "log": "hardening/hardening-cross-area-mobile/VAL-CROSS-008-live-activity-routing.log",
+      "observation": "Passed on the Android emulator; a foreground live-activity update surfaced and the Open action routed to thread-123 detail."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test integration_test/notification_deep_links_and_dedup_test.dart -d emulator-5554 --plain-name \"stale approval notification does not open invalid approval context\" -r expanded",
+      "exitCode": 0,
+      "log": "hardening/hardening-cross-area-mobile/VAL-CROSS-010-stale-notification-suppression.log",
+      "observation": "Passed on the Android emulator; a stale approval notification stayed on Device settings and showed a no-longer-actionable message instead of opening invalid approval detail."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test integration_test/notification_deep_links_and_dedup_test.dart -d emulator-5554 --plain-name \"duplicate notification event IDs are suppressed across reconnect cycles\" -r expanded",
+      "exitCode": 0,
+      "log": "hardening/hardening-cross-area-mobile/VAL-CROSS-010-dedup-reconnect.log",
+      "observation": "Passed on the Android emulator; duplicate evt-dedup-1 deliveries were reduced to a single recorded runtime notification."
+    }
+  ],
+  "assertions": [
+    {
+      "id": "VAL-CROSS-001",
+      "title": "First-time setup reaches live thread browsing end to end",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Launch the first-run pairing flow, submit a valid manual QR payload, and confirm trust.",
+          "expected": "The app pairs without hidden setup steps and opens the live Threads surface.",
+          "observed": "The harness navigated from Pair your phone to this Mac into Threads after Scan pairing QR, Submit scanned payload, and Confirm trust."
+        },
+        {
+          "action": "Wait for the paired thread list to render thread-123.",
+          "expected": "A usable live thread list appears immediately after pairing.",
+          "observed": "The test found the thread summary card for thread-123 on the Threads screen."
+        },
+        {
+          "action": "Emit a live thread status change for thread-123.",
+          "expected": "The live thread list remains usable and reflects the update.",
+          "observed": "The list updated to show Completed and the session token remained stored."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "hardening/hardening-cross-area-mobile/VAL-CROSS-001-first-run-pairing.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "none observed in the expanded Flutter test log",
+        "network": "No real network capture; the integration harness used fake pairing and thread APIs plus in-memory bridge events."
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-002",
+      "title": "Foreground approval notifications surface the correct thread and approval context",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Open Device settings from the paired Threads surface.",
+          "expected": "The app remains active on a visible user surface before the approval event arrives.",
+          "observed": "The harness navigated successfully to Device settings."
+        },
+        {
+          "action": "Emit an approvalRequested event for approval-123 on thread-123 while the app is active.",
+          "expected": "A foreground notification surfaces approval and thread context.",
+          "observed": "The UI showed foreground notification text beginning with Approval requested:."
+        },
+        {
+          "action": "Tap Open on the surfaced approval notification.",
+          "expected": "The matching approval detail context opens.",
+          "observed": "Approval detail opened and rendered approval-123 for the expected thread context."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "hardening/hardening-cross-area-mobile/VAL-CROSS-002-approval-notification-context.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "none observed in the expanded Flutter test log",
+        "network": "No real websocket or HTTP capture; the harness injected a fake approvalRequested BridgeEventEnvelope into the live stream."
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-008",
+      "title": "Foreground live-activity notifications surface the correct thread context",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Open Device settings from the paired Threads surface.",
+          "expected": "The app remains in an active foreground state before the live activity event arrives.",
+          "observed": "The harness reached Device settings and stayed in-app."
+        },
+        {
+          "action": "Emit a messageDelta live activity event for thread-123.",
+          "expected": "A foreground live-activity notification surfaces the matching thread context.",
+          "observed": "The UI showed foreground notification text beginning with Live activity update:."
+        },
+        {
+          "action": "Tap Open on the surfaced live-activity notification.",
+          "expected": "The matching thread detail opens.",
+          "observed": "Thread detail opened and displayed thread-123."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "hardening/hardening-cross-area-mobile/VAL-CROSS-008-live-activity-routing.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "none observed in the expanded Flutter test log",
+        "network": "No real notification transport capture; the harness injected a fake messageDelta BridgeEventEnvelope and validated in-app routing."
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-010",
+      "title": "Reconnect and foreground resume do not create duplicate or stale notifications or items",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Emit a stale approval notification and invoke its Open action.",
+          "expected": "Stale notification handling must not reopen an invalid approval context as if it were still current.",
+          "observed": "The app stayed on Device settings, did not open Approval detail, and showed a no longer actionable message."
+        },
+        {
+          "action": "Emit duplicate evt-dedup-1 live activity deliveries across the reconnect-style dedup path.",
+          "expected": "Duplicate actionable notifications/items are suppressed to a single current entry.",
+          "observed": "The runtime notification state kept exactly one recent notification for eventId evt-dedup-1."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "hardening/hardening-cross-area-mobile/VAL-CROSS-010-stale-notification-suppression.log",
+          "hardening/hardening-cross-area-mobile/VAL-CROSS-010-dedup-reconnect.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "none observed in the expanded Flutter test logs",
+        "network": "No real websocket capture; the harness injected stale approval and duplicate messageDelta events directly into fake runtime notification state."
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "Flutter detected multiple attached devices, so each run needed an explicit -d emulator-5554 target to stay inside the emulator-based isolation boundary instead of using a physical phone.",
+      "resolved": true,
+      "resolution": "Re-ran all targeted commands with -d emulator-5554 and kept the runs serialized.",
+      "affectedAssertions": [
+        "VAL-CROSS-001",
+        "VAL-CROSS-002",
+        "VAL-CROSS-008",
+        "VAL-CROSS-010"
+      ]
+    },
+    {
+      "description": "The assigned integration harnesses produce expanded command logs but do not emit standalone screenshots, videos, or real websocket/network traces, so evidence is limited to assertion-backed Flutter logs.",
+      "resolved": true,
+      "resolution": "Saved one expanded log per targeted command under the mission evidence directory and recorded the harness limitation directly in each assertion evidence block.",
+      "affectedAssertions": [
+        "VAL-CROSS-001",
+        "VAL-CROSS-002",
+        "VAL-CROSS-008",
+        "VAL-CROSS-010"
+      ]
+    },
+    {
+      "description": "Notification validation for this milestone is explicitly foreground-only, so background or terminated-app delivery was out of scope for the assigned assertions even though the contract titles mention notification surfacing broadly.",
+      "resolved": true,
+      "resolution": "Evaluated only active-app notification routing, stale suppression, and dedup behavior per the hardening-mobile-integration guidance.",
+      "affectedAssertions": [
+        "VAL-CROSS-002",
+        "VAL-CROSS-008",
+        "VAL-CROSS-010"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 4 assertions: 4 passed, 0 failed, 0 blocked."
+}

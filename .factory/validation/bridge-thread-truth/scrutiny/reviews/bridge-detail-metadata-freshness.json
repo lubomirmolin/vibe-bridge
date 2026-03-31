@@ -1,0 +1,15 @@
+{
+  "featureId": "bridge-detail-metadata-freshness",
+  "reviewedAt": "2026-03-20T23:35:41Z",
+  "commitId": "8c7b3300d1336013c9ec22309e99286fedf03750",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Implementation matches the feature goals: it adds a failing-first regression for the real mismatch pattern and updates thread-detail merge logic so identity/lifecycle/summary/updated_at are cohered from fresher archive and merged timeline signals while preserving contract shape.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed handoff, transcript skeleton, skill procedure, and commit diff for bridge-detail-metadata-freshness. The change set is coherent with required behavior and includes targeted regression coverage demonstrating fail-before/pass-after for the real thread mismatch class. No blocking or non-blocking code issues identified."
+}

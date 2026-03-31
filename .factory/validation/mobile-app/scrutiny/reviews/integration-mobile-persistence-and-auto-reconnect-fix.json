@@ -1,0 +1,34 @@
+{
+  "featureId": "integration-mobile-persistence-and-auto-reconnect-fix",
+  "reviewedAt": "2026-03-18T12:24:19.281807Z",
+  "commitId": "1a4c5fd23d2761d0c169360d58df2a32994cbce7",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Current HEAD still has the same blocking reconnect defect from the prior review. The persisted secure-store work is in place (`PersistedSecureStore()` remains wired through the mobile provider and cache repository), and the only follow-up repo change since `1a4c5fd` touching this feature area was the environment-library note update, but pairing, thread-detail, and thread-list reconnect flows still suppress follow-up timers while a reconnect attempt is marked in progress. That leaves longer bridge outages stuck after a single automatic retry, so trusted-session recovery and selected-thread/cached-thread catch-up still fall back to manual recovery.",
+    "issues": [
+      {
+        "file": "apps/mobile/lib/features/pairing/application/pairing_controller.dart",
+        "line": 344,
+        "severity": "blocking",
+        "description": "`_scheduleReconnect()` still returns early whenever `_isReconnectInProgress` is true, but `_restoreTrustedBridgeSession()` invokes `_scheduleReconnect()` on `connectivityUnavailable` at line 327 while `_runReconnect()` still holds `_isReconnectInProgress = true` until its `finally` block at lines 386-392. The result is still only one automatic reconnect attempt after startup/disconnect; if that retry also hits connectivity loss, no subsequent timer is armed and the trusted session requires manual recovery."
+      },
+      {
+        "file": "apps/mobile/lib/features/threads/application/thread_detail_controller.dart",
+        "line": 408,
+        "severity": "blocking",
+        "description": "`_runReconnectCatchUp()` still tries to reschedule from its failure paths at lines 477-479 before `_isReconnectInProgress` is cleared in the `finally` block at lines 480-481, so `_scheduleReconnectCatchUp()` drops those follow-up attempts. After a live-stream disconnect, thread detail therefore gets at most one timed reconnect/catch-up attempt; longer outages still leave the selected thread stale until the user taps the retry affordance manually."
+      },
+      {
+        "file": "apps/mobile/lib/features/threads/application/thread_list_controller.dart",
+        "line": 390,
+        "severity": "blocking",
+        "description": "The thread-list reconnect path is still unchanged: `_runReconnect()` calls `_scheduleReconnect()` again on catch-up failure at lines 413-416 while `_isReconnectInProgress` remains true until lines 417-418. Because that reschedule is discarded, cached thread-list restoration and selected-thread relaunch recovery still stop after the first timed retry and can require a manual refresh during longer disconnects."
+      }
+    ]
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Fail: the secure-store persistence portion remains fixed, but current HEAD still only auto-retries reconnect/catch-up once because follow-up timers are suppressed while reconnect work is in progress. I overwrote `.factory/validation/mobile-app/scrutiny/reviews/integration-mobile-persistence-and-auto-reconnect-fix.json` with this re-review report."
+}

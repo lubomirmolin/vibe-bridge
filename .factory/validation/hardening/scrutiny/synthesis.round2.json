@@ -1,0 +1,46 @@
+{
+  "milestone": "hardening",
+  "round": 2,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then (cd \"$ROOT/apps/mobile\" && flutter test --concurrency=5); fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo test --manifest-path \"$ROOT/Cargo.toml\" --workspace --jobs 5; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild test -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS'; fi",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then flutter analyze \"$ROOT/apps/mobile\"; fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo check --manifest-path \"$ROOT/Cargo.toml\" --workspace --all-targets; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then flutter analyze \"$ROOT/apps/mobile\"; fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo fmt --manifest-path \"$ROOT/Cargo.toml\" --all --check && cargo clippy --manifest-path \"$ROOT/Cargo.toml\" --workspace --all-targets -- -D warnings; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 2,
+    "passed": 1,
+    "failed": 1,
+    "failedFeatures": [
+      "hardening-fix-real-platform-notification-delivery-and-reset"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "hardening-fix-real-platform-notification-delivery-and-reset",
+      "severity": "blocking",
+      "description": "The fix adds platform-local notification callbacks and clears persisted dedup/launch state on trust reset, but notification creation still depends on the running app's live websocket subscription, so approval/live-activity notifications still cannot be delivered when the app is backgrounded or terminated."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [],
+  "rejectedObservations": [
+    {
+      "observation": "`.factory/library/user-testing.md` still does not document the live approvals UI integration harness that hardening parity now relies on, so future workers and validators still have to rediscover which integration test exercises the queue/detail/approve/reject flow on device targets.",
+      "reason": "documentation-update-out-of-scope-for-this-validation-run"
+    }
+  ],
+  "previousRound": ".factory/validation/hardening/scrutiny/synthesis.round1.json"
+}

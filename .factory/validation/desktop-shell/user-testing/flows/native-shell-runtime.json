@@ -1,0 +1,80 @@
+{
+  "groupId": "native-shell-runtime",
+  "surface": "native-shell-and-bridge",
+  "toolsUsed": [
+    "xcodebuild",
+    "cargo",
+    "curl",
+    "open",
+    "plutil",
+    "pgrep"
+  ],
+  "commandsRun": [
+    "xcodebuild -project /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mac-shell/CodexMobileCompanion.xcodeproj -scheme CodexMobileCompanion -destination 'platform=macOS' -derivedDataPath /tmp/cmc-desktop-shell-deriveddata build",
+    "open /tmp/cmc-desktop-shell-deriveddata/Build/Products/Debug/CodexMobileCompanion.app",
+    "pgrep -fl /tmp/cmc-desktop-shell-deriveddata/Build/Products/Debug/CodexMobileCompanion.app/Contents/MacOS/CodexMobileCompanion",
+    "xcodebuild test -project /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mac-shell/CodexMobileCompanion.xcodeproj -scheme CodexMobileCompanion -destination 'platform=macOS' -derivedDataPath /tmp/cmc-desktop-shell-deriveddata -only-testing:CodexMobileCompanionTests/CodexMobileCompanionTests/testShellStateResolverMapsUnpairedPairedIdleAndPairedActive -only-testing:CodexMobileCompanionTests/CodexMobileCompanionTests/testShellStateResolverTreatsOfflineRuntimeAsDegraded -only-testing:CodexMobileCompanionTests/CodexMobileCompanionTests/testPairingViewModelLoadsSessionAndCreatesQRCodeWhenUnpaired -only-testing:CodexMobileCompanionTests/CodexMobileCompanionTests/testPairingViewModelTransitionsFromDegradedToPairedIdleAfterRecovery -only-testing:CodexMobileCompanionTests/CodexMobileCompanionTests/testPairingViewModelAutoStartsSupervisionAndRecoversWithoutManualRefresh -only-testing:CodexMobileCompanionTests/CodexMobileCompanionTests/testPairingViewModelShowsPairedActiveWhenRunningThreadsExist -only-testing:CodexMobileCompanionTests/CodexMobileCompanionTests/testPairingViewModelRevokesTrustFromDesktopAndReturnsToUnpaired",
+    "cargo test --manifest-path /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/Cargo.toml -p bridge-core revoked_trust_fails_closed_on_handshake",
+    "cargo test --manifest-path /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/Cargo.toml -p bridge-core trust_revocation_records_mobile_and_desktop_security_audit_events",
+    "cargo test --manifest-path /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/Cargo.toml -p bridge-core auto_mode_reports_degraded_when_attach_and_spawn_are_unavailable",
+    "cargo test --manifest-path /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/Cargo.toml -p bridge-core open_on_mac_route_returns_best_effort_response_for_known_thread",
+    "curl -sS -D health.headers.txt http://127.0.0.1:3110/health",
+    "curl -sS -D thread-detail.headers.txt http://127.0.0.1:3110/threads/019d0194-3579-75f3-b1c4-4c723054b9fb",
+    "curl -sS -X POST -D open-on-mac.headers.txt http://127.0.0.1:3110/threads/019d0194-3579-75f3-b1c4-4c723054b9fb/open-on-mac"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-DESKTOP-001",
+      "status": "pass",
+      "reason": "The built macOS shell is configured as an LSUIElement background/menu bar app, and after launching it with open the process remained alive in a later shell, showing it survives beyond the launch terminal command.",
+      "evidence": [
+        "desktop-shell/native-shell-runtime/val-desktop-001-build.log",
+        "desktop-shell/native-shell-runtime/val-desktop-001-info-plist.txt",
+        "desktop-shell/native-shell-runtime/val-desktop-001-process-list.txt"
+      ]
+    },
+    {
+      "id": "VAL-DESKTOP-002",
+      "status": "pass",
+      "reason": "Targeted CodexMobileCompanionTests passed for unpaired QR generation, paired-idle, paired-active, degraded runtime resolution, and degraded-to-healthy recovery, covering the shell's visible status states.",
+      "evidence": [
+        "desktop-shell/native-shell-runtime/desktop-shell-xcode-tests.log",
+        "desktop-shell/native-shell-runtime/health.json",
+        "desktop-shell/native-shell-runtime/health.headers.txt"
+      ]
+    },
+    {
+      "id": "VAL-DESKTOP-005",
+      "status": "pass",
+      "reason": "The live bridge returned thread detail for 019d0194-3579-75f3-b1c4-4c723054b9fb and the read-only open-on-Mac route responded 200 with the same thread_id and matching codex://thread URL, confirming both surfaces target the same shared thread identity.",
+      "evidence": [
+        "desktop-shell/native-shell-runtime/thread-detail.json",
+        "desktop-shell/native-shell-runtime/thread-detail.headers.txt",
+        "desktop-shell/native-shell-runtime/open-on-mac.json",
+        "desktop-shell/native-shell-runtime/open-on-mac.headers.txt",
+        "desktop-shell/native-shell-runtime/desktop-shell-cargo-tests.log"
+      ]
+    },
+    {
+      "id": "VAL-DESKTOP-006",
+      "status": "pass",
+      "reason": "Desktop revoke coverage passed in both the shell view-model tests and bridge-core trust tests, showing desktop unpair returns the shell to unpaired state, records desktop revoke audit events, and causes future handshake attempts to fail closed.",
+      "evidence": [
+        "desktop-shell/native-shell-runtime/desktop-shell-xcode-tests.log",
+        "desktop-shell/native-shell-runtime/desktop-shell-cargo-tests.log"
+      ]
+    },
+    {
+      "id": "VAL-DESKTOP-007",
+      "status": "pass",
+      "reason": "Runtime supervision evidence passed in the shell auto-supervision recovery test and the bridge-core degraded-runtime test, and the live bridge health endpoint currently reports an attached runtime and reachable pairing route.",
+      "evidence": [
+        "desktop-shell/native-shell-runtime/desktop-shell-xcode-tests.log",
+        "desktop-shell/native-shell-runtime/desktop-shell-cargo-tests.log",
+        "desktop-shell/native-shell-runtime/health.json"
+      ]
+    }
+  ],
+  "frictions": [],
+  "blockers": []
+}

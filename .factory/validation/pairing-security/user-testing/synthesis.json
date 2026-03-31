@@ -1,0 +1,41 @@
+{
+  "milestone": "pairing-security",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 8,
+    "passed": 8,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-PAIR-001",
+    "VAL-PAIR-002",
+    "VAL-PAIR-003",
+    "VAL-PAIR-004",
+    "VAL-PAIR-005",
+    "VAL-PAIR-006",
+    "VAL-PAIR-011",
+    "VAL-PAIR-012"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Recorded the verified pairing-security setup commands, concurrency limits, and flow-validator isolation guidance for Flutter widget tests and the live bridge/Tailscale surface.",
+      "source": "setup"
+    },
+    {
+      "target": "user-testing.md",
+      "description": "Documented that pairing expired-QR coverage currently lives in pairing_qr_validator_test.dart while the other pairing user-surface flows are covered in pairing_flow_test.dart.",
+      "source": "flow-report"
+    }
+  ],
+  "notes": [
+    "Spawned three user-testing flow validators covering desktop QR/private-route checks, mobile pairing widget flows, and trust persistence/single-phone enforcement.",
+    "Live bridge setup on 2026-03-18 reported pairing_route.reachable=true with advertised_base_url=https://macbook-pro.taild54ede.ts.net, and tailscale serve status mapped that MagicDNS host to http://127.0.0.1:3110.",
+    "Pairing user-surface validation used targeted xcodebuild, flutter test, cargo test, curl, and tailscale commands with evidence captured under the mission evidence directory."
+  ],
+  "previousRound": null
+}

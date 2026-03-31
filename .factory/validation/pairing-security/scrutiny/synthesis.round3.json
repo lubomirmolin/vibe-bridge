@@ -1,0 +1,63 @@
+{
+  "milestone": "pairing-security",
+  "round": 3,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then (cd \"$ROOT/apps/mobile\" && flutter test --concurrency=5); fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo test --manifest-path \"$ROOT/Cargo.toml\" --workspace --jobs 5; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild test -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS'; fi",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then flutter analyze \"$ROOT/apps/mobile\"; fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo check --manifest-path \"$ROOT/Cargo.toml\" --workspace --all-targets; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then flutter analyze \"$ROOT/apps/mobile\"; fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo fmt --manifest-path \"$ROOT/Cargo.toml\" --all --check && cargo clippy --manifest-path \"$ROOT/Cargo.toml\" --workspace --all-targets -- -D warnings; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 2,
+    "passed": 1,
+    "failed": 1,
+    "failedFeatures": [
+      "pairing-security-launch-and-verify-tailscale-serve"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "pairing-security-launch-and-verify-tailscale-serve",
+      "severity": "blocking",
+      "description": "The startup path now launches `tailscale serve --bg 3110` and fail-closes pairing when runtime checks detect the mapping disappeared, but route verification still accepts any `tailscale serve status --json` entry that merely mentions `3110`. A stale or unrelated Serve config can therefore be misclassified as a valid HTTPS proxy to `localhost:3110`, so the canonical pairing route guarantee is not fully closed yet."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Expanded `.factory/library/security.md` with the startup invariant that the canonical pairing path must verify or provision `tailscale serve` for the localhost bridge port and fail closed when that mapping cannot be confirmed or later disappears.",
+      "sourceFeature": "pairing-security-launch-and-verify-tailscale-serve"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": ".factory/skills/security-worker/SKILL.md",
+      "suggestion": "Add an explicit Exec-mode branch describing when automated evidence can substitute for the required manual pairing-route success/fail walkthroughs and what evidence the worker must record when Tailscale Serve cannot be enabled locally.",
+      "evidence": "Both rerun fix reviews for pairing-route startup work (`pairing-security-fix-verified-private-route-startup` and `pairing-security-launch-and-verify-tailscale-serve`) recorded worker deviations because the current `security-worker` skill still requires manual route verification without explaining the acceptable Exec-mode substitute when Tailscale Serve is unavailable in the environment.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "The shared service manifest still presents `tailscale-serve` as a separate helper even though bridge startup now attempts provisioning itself.",
+      "reason": "ambiguous: the separate helper service is still useful for manual operations, and changing it would require a non-additive edit to an existing service definition rather than a low-risk factual addition."
+    },
+    {
+      "observation": "The shared `tailscale-serve` healthcheck should be tightened beyond `tailscale serve status | grep 3110` so it matches the product's stricter verified-route invariant.",
+      "reason": "rejected because validators should not overwrite existing service entries; aligning that healthcheck requires a dedicated follow-up change to an existing manifest entry, not an additive validator-owned update."
+    }
+  ],
+  "previousRound": ".factory/validation/pairing-security/scrutiny/synthesis.round2.json"
+}

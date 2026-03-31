@@ -5,9 +5,13 @@ use crate::thread_api::ThreadGitDiffQuery;
 
 #[test]
 fn list_and_detail_responses_normalize_upstream_thread_shapes() {
+    let thread_id = codex_thread_id("thread-abc");
     let service = ThreadApiService::with_seed_data(
         vec![UpstreamThreadRecord {
-            id: "thread-abc".to_string(),
+            id: thread_id.clone(),
+            native_id: "thread-abc".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Normalize thread payloads".to_string(),
             lifecycle_state: "active".to_string(),
             workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -28,11 +32,11 @@ fn list_and_detail_responses_normalize_upstream_thread_shapes() {
 
     let list = service.list_response();
     assert_eq!(list.contract_version, CONTRACT_VERSION);
-    assert_eq!(list.threads[0].thread_id, "thread-abc");
+    assert_eq!(list.threads[0].thread_id, thread_id);
     assert_eq!(list.threads[0].status, ThreadStatus::Running);
 
     let detail = service
-        .detail_response("thread-abc")
+        .detail_response(&codex_thread_id("thread-abc"))
         .expect("detail response should exist");
     assert_eq!(detail.thread.access_mode, AccessMode::ReadOnly);
     assert_eq!(detail.thread.last_turn_summary, "started normalization");
@@ -40,9 +44,13 @@ fn list_and_detail_responses_normalize_upstream_thread_shapes() {
 
 #[test]
 fn timeline_page_response_normalizes_event_kinds() {
+    let thread_id = codex_thread_id("thread-abc");
     let service = ThreadApiService::with_seed_data(
         vec![UpstreamThreadRecord {
-            id: "thread-abc".to_string(),
+            id: thread_id.clone(),
+            native_id: "thread-abc".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Normalize stream payloads".to_string(),
             lifecycle_state: "active".to_string(),
             workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -59,7 +67,7 @@ fn timeline_page_response_normalizes_event_kinds() {
             last_turn_summary: "streaming".to_string(),
         }],
         HashMap::from([(
-            "thread-abc".to_string(),
+            thread_id.clone(),
             vec![UpstreamTimelineEvent {
                 id: "evt-abc".to_string(),
                 event_type: "command_output_delta".to_string(),
@@ -71,20 +79,24 @@ fn timeline_page_response_normalizes_event_kinds() {
     );
 
     let timeline = service
-        .timeline_page_response("thread-abc", None, 50)
+        .timeline_page_response(&thread_id, None, 50)
         .expect("timeline response should exist");
 
     assert_eq!(timeline.contract_version, CONTRACT_VERSION);
     assert_eq!(timeline.entries.len(), 1);
     assert_eq!(timeline.entries[0].kind, BridgeEventKind::CommandDelta);
-    assert_eq!(timeline.thread.thread_id, "thread-abc");
+    assert_eq!(timeline.thread.thread_id, thread_id);
 }
 
 #[test]
 fn timeline_page_response_adds_exploration_annotations_without_mutating_payload() {
+    let thread_id = codex_thread_id("thread-abc");
     let service = ThreadApiService::with_seed_data(
         vec![UpstreamThreadRecord {
-            id: "thread-abc".to_string(),
+            id: thread_id.clone(),
+            native_id: "thread-abc".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Normalize stream payloads".to_string(),
             lifecycle_state: "active".to_string(),
             workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -101,7 +113,7 @@ fn timeline_page_response_adds_exploration_annotations_without_mutating_payload(
             last_turn_summary: "streaming".to_string(),
         }],
         HashMap::from([(
-            "thread-abc".to_string(),
+            thread_id.clone(),
             vec![
                 UpstreamTimelineEvent {
                     id: "turn-123-tool-1".to_string(),
@@ -130,7 +142,7 @@ fn timeline_page_response_adds_exploration_annotations_without_mutating_payload(
     );
 
     let timeline = service
-        .timeline_page_response("thread-abc", None, 50)
+        .timeline_page_response(&thread_id, None, 50)
         .expect("timeline response should exist");
 
     let search_annotations = timeline.entries[0]
@@ -172,6 +184,9 @@ fn timeline_page_response_for_existing_thread_without_events_returns_empty_paylo
     let service = ThreadApiService::with_seed_data(
         vec![UpstreamThreadRecord {
             id: "thread-empty".to_string(),
+            native_id: "thread-empty".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Thread without timeline events".to_string(),
             lifecycle_state: "done".to_string(),
             workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -205,6 +220,9 @@ fn timeline_page_response_applies_before_cursor_and_limit() {
     let service = ThreadApiService::with_seed_data(
         vec![UpstreamThreadRecord {
             id: "thread-page".to_string(),
+            native_id: "thread-page".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Paged timeline".to_string(),
             lifecycle_state: "active".to_string(),
             workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -281,6 +299,9 @@ fn timeline_page_response_applies_before_cursor_and_limit() {
 fn reconcile_snapshot_preserves_mixed_event_order_for_equal_timestamps() {
     let thread = UpstreamThreadRecord {
         id: "thread-mixed".to_string(),
+        native_id: "thread-mixed".to_string(),
+        provider: shared_contracts::ProviderKind::Codex,
+        client: shared_contracts::ThreadClientKind::Cli,
         headline: "Mixed events".to_string(),
         lifecycle_state: "active".to_string(),
         workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -355,6 +376,9 @@ fn reconcile_snapshot_preserves_mixed_event_order_for_equal_timestamps() {
 fn equal_timestamp_pagination_cursors_advance_past_internal_only_window() {
     let thread = UpstreamThreadRecord {
         id: "thread-page-stability".to_string(),
+        native_id: "thread-page-stability".to_string(),
+        provider: shared_contracts::ProviderKind::Codex,
+        client: shared_contracts::ThreadClientKind::Cli,
         headline: "Cursor stability".to_string(),
         lifecycle_state: "active".to_string(),
         workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -504,6 +528,9 @@ fn reconcile_snapshot_publishes_status_and_new_timeline_events() {
     let mut service = ThreadApiService::with_seed_data(
         vec![UpstreamThreadRecord {
             id: "thread-123".to_string(),
+            native_id: "thread-123".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Investigate bridge sync".to_string(),
             lifecycle_state: "active".to_string(),
             workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -534,6 +561,9 @@ fn reconcile_snapshot_publishes_status_and_new_timeline_events() {
     let events = service.reconcile_snapshot(
         vec![UpstreamThreadRecord {
             id: "thread-123".to_string(),
+            native_id: "thread-123".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Investigate bridge sync".to_string(),
             lifecycle_state: "done".to_string(),
             workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -581,6 +611,9 @@ fn reconcile_snapshot_publishes_status_and_new_timeline_events() {
 fn reconcile_snapshot_preserves_live_only_events_missing_from_snapshot() {
     let thread = UpstreamThreadRecord {
         id: "thread-123".to_string(),
+        native_id: "thread-123".to_string(),
+        provider: shared_contracts::ProviderKind::Codex,
+        client: shared_contracts::ThreadClientKind::Cli,
         headline: "Inspect reconcile merge".to_string(),
         lifecycle_state: "active".to_string(),
         workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -655,6 +688,9 @@ fn reconcile_snapshot_preserves_live_only_events_missing_from_snapshot() {
 fn reconcile_snapshot_does_not_republish_existing_events() {
     let thread = UpstreamThreadRecord {
         id: "thread-123".to_string(),
+        native_id: "thread-123".to_string(),
+        provider: shared_contracts::ProviderKind::Codex,
+        client: shared_contracts::ThreadClientKind::Cli,
         headline: "Investigate bridge sync".to_string(),
         lifecycle_state: "active".to_string(),
         workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -691,6 +727,9 @@ fn reconcile_snapshot_does_not_republish_existing_events() {
 fn reconcile_snapshot_republishes_changed_events_with_stable_upstream_ids() {
     let thread = UpstreamThreadRecord {
         id: "thread-123".to_string(),
+        native_id: "thread-123".to_string(),
+        provider: shared_contracts::ProviderKind::Codex,
+        client: shared_contracts::ThreadClientKind::Cli,
         headline: "Investigate bridge sync".to_string(),
         lifecycle_state: "active".to_string(),
         workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -754,6 +793,9 @@ fn timeline_page_response_adds_exploration_annotations_for_background_commands()
     let service = ThreadApiService::with_seed_data(
         vec![UpstreamThreadRecord {
             id: "thread-123".to_string(),
+            native_id: "thread-123".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Investigate bridge sync".to_string(),
             lifecycle_state: "active".to_string(),
             workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -808,9 +850,13 @@ fn timeline_page_response_adds_exploration_annotations_for_background_commands()
 
 #[test]
 fn apply_live_event_replaces_existing_timeline_entry_with_same_event_id() {
+    let thread_id = codex_thread_id("thread-123");
     let mut service = ThreadApiService::with_seed_data(
         vec![UpstreamThreadRecord {
-            id: "thread-123".to_string(),
+            id: thread_id.clone(),
+            native_id: "thread-123".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Investigate bridge sync".to_string(),
             lifecycle_state: "active".to_string(),
             workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -831,7 +877,7 @@ fn apply_live_event_replaces_existing_timeline_entry_with_same_event_id() {
 
     service.apply_live_event(BridgeEventEnvelope::new(
         "turn-123-msg-1",
-        "thread-123",
+        &thread_id,
         BridgeEventKind::MessageDelta,
         "101",
         json!({
@@ -842,7 +888,7 @@ fn apply_live_event_replaces_existing_timeline_entry_with_same_event_id() {
     ));
     service.apply_live_event(BridgeEventEnvelope::new(
         "turn-123-msg-1",
-        "thread-123",
+        &thread_id,
         BridgeEventKind::MessageDelta,
         "102",
         json!({
@@ -853,14 +899,14 @@ fn apply_live_event_replaces_existing_timeline_entry_with_same_event_id() {
     ));
 
     let timeline = service
-        .timeline_page_response("thread-123", None, 50)
+        .timeline_page_response(&thread_id, None, 50)
         .expect("timeline response should exist");
     assert_eq!(timeline.entries.len(), 1);
     assert_eq!(timeline.entries[0].event_id, "turn-123-msg-1");
     assert_eq!(timeline.entries[0].payload["text"], "Hello");
 
     let detail = service
-        .detail_response("thread-123")
+        .detail_response(&thread_id)
         .expect("detail response should exist");
     assert_eq!(detail.thread.updated_at, "102");
     assert_eq!(detail.thread.last_turn_summary, "Hello");
@@ -871,6 +917,9 @@ fn git_diff_response_uses_latest_thread_change_diff_payload() {
     let service = ThreadApiService::with_seed_data(
         vec![UpstreamThreadRecord {
             id: "thread-diff".to_string(),
+            native_id: "thread-diff".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Inspect diff".to_string(),
             lifecycle_state: "active".to_string(),
             workspace_path: "/workspace/codex-mobile-companion".to_string(),
@@ -960,6 +1009,9 @@ fn git_diff_response_reads_workspace_diff_from_real_git_repo() {
     let service = ThreadApiService::with_seed_data(
         vec![UpstreamThreadRecord {
             id: "thread-workspace".to_string(),
+            native_id: "thread-workspace".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Workspace diff".to_string(),
             lifecycle_state: "active".to_string(),
             workspace_path: temp_dir.to_string_lossy().to_string(),
@@ -1014,6 +1066,9 @@ fn git_diff_response_returns_none_for_non_repo_workspace() {
     let service = ThreadApiService::with_seed_data(
         vec![UpstreamThreadRecord {
             id: "thread-non-repo".to_string(),
+            native_id: "thread-non-repo".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
             headline: "Non repo".to_string(),
             lifecycle_state: "active".to_string(),
             workspace_path: temp_dir.to_string_lossy().to_string(),
@@ -1101,14 +1156,15 @@ done
     let mut service =
         ThreadApiService::from_codex_app_server(script_path.to_string_lossy().as_ref(), &[], None)
             .expect("service should load from thread/list");
-    assert!(service.detail_response("thread-123").is_some());
+    let thread_id = codex_thread_id("thread-123");
+    assert!(service.detail_response(&thread_id).is_some());
 
     service
-        .sync_thread_from_upstream("thread-123")
+        .sync_thread_from_upstream(&thread_id)
         .expect("single-thread sync should fall back to full sync");
 
     let detail = service
-        .detail_response("thread-123")
+        .detail_response(&thread_id)
         .expect("thread should remain available after fallback");
     assert_eq!(detail.thread.title, "Thread from list");
     assert_eq!(detail.thread.workspace, "/workspace/repo");

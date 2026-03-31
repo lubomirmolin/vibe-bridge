@@ -1,0 +1,39 @@
+{
+  "featureId": "security-trust-registry-and-private-handshake",
+  "reviewedAt": "2026-03-17T22:55:12.961001Z",
+  "commitId": "877f3cb",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature adds the intended bridge finalize/handshake APIs and mobile trust flow, but two blocking gaps remain: the default bridge startup path still emits localhost QR URLs that the mobile validator rejects, and pairing session identifiers reset after restart so previously consumed IDs can block legitimate re-pair flows.",
+    "issues": [
+      {
+        "file": "crates/bridge-core/src/lib.rs",
+        "line": 223,
+        "severity": "blocking",
+        "description": "`pairing_base_url` still falls back to `http://{host}:{port}`. Because the shared bridge launch path does not pass `--pairing-base-url`, `/pairing/session` keeps returning localhost QR payloads that the mobile validator rejects as `privateRouteRequired`, so the standard startup path cannot complete pairing through the required private Tailscale route."
+      },
+      {
+        "file": "crates/bridge-core/src/pairing.rs",
+        "line": 36,
+        "severity": "blocking",
+        "description": "`next_sequence` is reset to `1` on every bridge start, but `consumed_pairing_sessions` are persisted and checked by `session_id` during finalize. After a successful pairing and restart, newly issued sessions can reuse an already-consumed ID such as `pairing-session-1` and be rejected as `session_already_consumed`, breaking future reset/replace/re-pair flows after restart."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "services",
+      "observation": "The shared bridge launch path was not updated to provide a private pairing base URL, so the repo's canonical startup flow still produces QR payloads that the new mobile validator will reject.",
+      "evidence": ".factory/services.yaml:45-49 starts `bridge-server` without `--pairing-base-url`; crates/bridge-core/src/lib.rs:223 defaults the pairing base URL to `http://{host}:{port}`; apps/mobile/lib/features/pairing/domain/pairing_qr_validator.dart:46-49 rejects non-private bridge URLs."
+    },
+    {
+      "area": "skills",
+      "observation": "The `security-worker` procedure says fail-closed behavior must be manually verified and user-visible denial states recorded, but this feature handoff explicitly says the manual pairing walkthroughs were not executed while `skillFeedback.followedProcedure` is still marked true.",
+      "evidence": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/skills/security-worker/SKILL.md:24 requires manual fail-closed verification; handoff lines 12 and 79-80 say manual walkthroughs were not executed yet `followedProcedure` remained true."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed commit 877f3cb and the worker handoff/transcript skeleton. The feature is not ready to pass scrutiny because default startup still yields invalid localhost pairing URLs and session ID reuse after restart can falsely reject legitimate new pairing attempts."
+}

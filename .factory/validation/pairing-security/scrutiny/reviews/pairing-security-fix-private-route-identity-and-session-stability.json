@@ -1,0 +1,28 @@
+{
+  "featureId": "pairing-security-fix-private-route-identity-and-session-stability",
+  "reviewedAt": "2026-03-17T23:42:54Z",
+  "commitId": "2bc832307f242b14277e7f12f8dff72dd81003dd",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The fix does resolve most of the prior blocking gaps in scope: bridge identity is now persisted in bridge state instead of being derived from host/port, pairing session IDs advance monotonically across restarts, and the mobile reconnect path now clears stored trust whenever bridge handshake does not re-establish a trusted session. I did, however, find one remaining blocking startup-path issue: the default QR/base-URL logic now advertises a Tailscale HTTPS hostname, but the mission’s shared bridge startup path still only binds the bridge to localhost and does not ensure Tailscale Serve is configured, so the advertised private URL is not reliably reachable from the phone.",
+    "issues": [
+      {
+        "file": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/services.yaml",
+        "line": 50,
+        "severity": "blocking",
+        "description": "The shared startup path still launches `bridge-server` on `127.0.0.1:3110` only, while Tailscale exposure remains a separate optional service (`.factory/services.yaml:46-62`). This fix changed `default_pairing_base_url()` to advertise the machine’s MagicDNS HTTPS hostname from `tailscale status --json` (`crates/bridge-core/src/lib.rs:239-261`), but it never verifies or provisions a matching `tailscale serve` mapping. In the current environment `tailscale status --json` reports `Self.DNSName = macbook-pro.taild54ede.ts.net`, yet `tailscale serve status --json` is `{}`. That means the default QR can still point to a private hostname with no reachable route back to the localhost-bound bridge, so VAL-PAIR-004’s reachable private-route startup path is still not fully satisfied."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `security-worker` skill still lacks the explicit Exec-mode branch this worker needed for fail-closed verification, so workers must infer how to substitute automated evidence for the required manual pairing walkthroughs.",
+      "evidence": "`/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/skills/security-worker/SKILL.md:24-25` require manual fail-closed verification and only say to record a deviation when non-interactive runs block it; the fix handoff at `/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525/handoffs/2026-03-17T23-19-31-630Z__pairing-security-fix-private-route-identity-and-session-stability__1358284c-652b-4893-afc9-8db4ed808fbc.json:59-68` records `followedProcedure: false` and explicitly suggests adding an Exec-mode branch for acceptable automated substitutes."
+    }
+  ],
+  "addressesFailureFrom": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/validation/pairing-security/scrutiny/reviews/desktop-pairing-qr-entrypoint.json; /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/validation/pairing-security/scrutiny/reviews/mobile-qr-pairing-and-trust-confirmation.json; /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/validation/pairing-security/scrutiny/reviews/security-trust-registry-and-private-handshake.json",
+  "summary": "Reviewed the three prior failed pairing-security reviews, the fix handoff/transcript skeleton, mission docs, shared services/library state, and commit `2bc832307f242b14277e7f12f8dff72dd81003dd`. Result: fail. The fix closes the bridge-identity, restart-safe session, bridge-finalize/handshake, and mobile fail-closed restore gaps, but the default startup path still does not guarantee a reachable private route because the bridge remains localhost-bound unless Tailscale Serve is configured separately."
+}

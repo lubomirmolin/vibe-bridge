@@ -1,0 +1,15 @@
+{
+  "featureId": "integration-live-access-mode-and-list-detail-parity",
+  "reviewedAt": "2026-03-21T02:47:00Z",
+  "commitId": "ace54832c6536325ead85e73bfdd842dd3afb4c7",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed the feature handoff/progress context, worker transcript skeleton, and commit diff for `ace54832c6536325ead85e73bfdd842dd3afb4c7`. This is an evidence-only change scoped to `apps/mobile/integration_test/reconnect_offline_cache_test.dart`, and the added live Android-emulator case is coherent with the feature goals: it fetches `GET /threads/:id`, `GET /threads/:id/timeline?limit=80`, and `GET /policy/access-mode`, verifies those sources agree on the target thread’s identity/title/status/last-turn summary/access mode, then exercises the rendered Flutter flow to confirm the thread list row, detail header, and selected composer access-mode option stay aligned before and after pull-to-refresh. That matches the intended VAL-CROSS-001 and VAL-CROSS-003 evidence path for the canonical real thread, and I did not identify blocking or non-blocking issues in the reviewed diff.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Pass. I reviewed the feature handoff/progress context, transcript skeleton, existing scrutiny-review schema/style, and commit `ace54832c6536325ead85e73bfdd842dd3afb4c7`. The change set is coherent with the feature’s live-parity evidence goals: it adds emulator-backed proof that bridge detail/timeline/policy access-mode state stays coherent with the rendered Flutter controls and that the selected thread’s rendered list/detail metadata remains aligned through a refresh cycle. No blocking or non-blocking issues were identified."
+}

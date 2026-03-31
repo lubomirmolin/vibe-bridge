@@ -168,14 +168,19 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   final ImagePicker _imagePicker = ImagePicker();
   SpeechCapture? _speechCapture;
 
-  List<ModelOptionDto> _availableModelOptions = fallbackModelCatalog.models;
+  ProviderKind _selectedProvider = ProviderKind.codex;
+  List<ModelOptionDto> _availableModelOptions = fallbackModelCatalogForProvider(
+    ProviderKind.codex,
+  ).models;
   List<String> _availableReasoningOptions = const <String>[];
   List<XFile> _attachedImages = const <XFile>[];
   TurnMode _composerMode = TurnMode.act;
   String? _lastPendingUserInputRequestId;
   final Map<String, String> _selectedPlanOptionByQuestionId =
       <String, String>{};
-  String _selectedModel = fallbackModelCatalog.models.first.id;
+  String _selectedModel = fallbackModelCatalogForProvider(
+    ProviderKind.codex,
+  ).models.first.id;
   String _selectedReasoning = 'Medium';
   SpeechModelStatusDto _speechModelStatus = const SpeechModelStatusDto(
     contractVersion: contractVersion,
@@ -211,6 +216,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   List<String> _timelineBlockOrder = const <String>[];
   bool? _lastObservedWideLayout;
   bool _isWideLayoutExitScheduled = false;
+  int _modelCatalogLoadEpoch = 0;
 
   double _lastScrollOffset = 0;
   double _scrollOffsetOnDirectionChange = 0;
@@ -220,8 +226,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   bool get _isDraftMode =>
       widget.threadId == null && _localDraftTransition == null;
 
+  bool get _canChangeComposerProvider => _effectiveThreadId == null;
+
   String? get _effectiveThreadId =>
-      widget.threadId ?? _localDraftTransition?.threadId;
+      _localDraftTransition?.threadId ?? widget.threadId;
 
   String? get _composerDraftStorageId {
     final effectiveThreadId = _effectiveThreadId?.trim();
@@ -248,6 +256,8 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   TurnMode get _effectiveInitialTurnMode =>
       _localDraftTransition?.initialTurnMode ?? _composerMode;
 
+  bool get _supportsPlanMode => _selectedProvider == ProviderKind.codex;
+
   bool get _hasPendingInitialComposerSubmission {
     final initialComposerInput = _effectiveInitialComposerInput?.trim();
     return (initialComposerInput != null && initialComposerInput.isNotEmpty) ||
@@ -271,6 +281,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    final initialThreadId = widget.threadId?.trim();
+    _selectedProvider = initialThreadId == null || initialThreadId.isEmpty
+        ? ProviderKind.codex
+        : providerKindFromThreadId(initialThreadId);
     if (widget.initialSelectedModel != null &&
         widget.initialSelectedModel!.trim().isNotEmpty) {
       _selectedModel = widget.initialSelectedModel!.trim();
@@ -291,6 +305,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     _composerController.addListener(_handleComposerChanged);
     _composerFocusNode.addListener(_handleComposerFocusChange);
     _timelineScrollController.addListener(_onScroll);
+    _availableModelOptions = List<ModelOptionDto>.unmodifiable(
+      fallbackModelCatalogForProvider(_selectedProvider).models,
+    );
     _setComposerSelectionsFromCatalog(_availableModelOptions);
     _attachedImages = List<XFile>.unmodifiable(_effectiveInitialAttachedImages);
     unawaited(_restorePersistedComposerDraft());
@@ -329,17 +346,39 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   }
 
   Future<void> _loadComposerModelCatalog() async {
+    final provider = _selectedProvider;
+    final requestEpoch = ++_modelCatalogLoadEpoch;
     final bridgeApi = ref.read(threadDetailBridgeApiProvider);
     final catalog = await bridgeApi.fetchModelCatalog(
       bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
+      provider: provider,
     );
-    if (!mounted || catalog.models.isEmpty) {
+    if (!mounted ||
+        requestEpoch != _modelCatalogLoadEpoch ||
+        catalog.models.isEmpty) {
       return;
     }
 
     setState(() {
       _setComposerSelectionsFromCatalog(catalog.models);
     });
+  }
+
+  Future<void> _onComposerProviderChanged(ProviderKind provider) async {
+    if (!_canChangeComposerProvider || _selectedProvider == provider) {
+      return;
+    }
+
+    setState(() {
+      _selectedProvider = provider;
+      _setComposerSelectionsFromCatalog(
+        fallbackModelCatalogForProvider(provider).models,
+      );
+      if (provider != ProviderKind.codex) {
+        _composerMode = TurnMode.act;
+      }
+    });
+    await _loadComposerModelCatalog();
   }
 
   Future<void> _loadSpeechStatus() async {
@@ -724,6 +763,13 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.threadId != widget.threadId) {
       _localDraftTransition = null;
+      final nextThreadId = widget.threadId?.trim();
+      _selectedProvider = nextThreadId == null || nextThreadId.isEmpty
+          ? ProviderKind.codex
+          : providerKindFromThreadId(nextThreadId);
+      _setComposerSelectionsFromCatalog(
+        fallbackModelCatalogForProvider(_selectedProvider).models,
+      );
       _didInitialScrollToBottom = false;
       _didSubmitInitialComposerInput = false;
       _didRestoreComposerDraft = false;
@@ -732,6 +778,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       _timelineBottomFollowRunId += 1;
       _timelineExpansionState.clear();
       unawaited(_restorePersistedComposerDraft());
+      unawaited(_loadComposerModelCatalog());
     }
     if (oldWidget.bridgeApiBaseUrl != widget.bridgeApiBaseUrl) {
       unawaited(_loadComposerModelCatalog());
@@ -1441,6 +1488,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       final snapshot = await bridgeApi.createThread(
         bridgeApiBaseUrl: widget.bridgeApiBaseUrl,
         workspace: workspacePath,
+        provider: _selectedProvider,
         model: _selectedModel,
       );
       final thread = snapshot.thread;
@@ -1457,7 +1505,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
         threadId: thread.threadId,
         initialComposerInput: input,
         initialAttachedImages: _attachedImages,
-        initialTurnMode: _composerMode,
+        initialTurnMode: _supportsPlanMode ? _composerMode : TurnMode.act,
         initialSelectedModel: _selectedModel,
         initialSelectedReasoningEffort: _selectedReasoningEffortWireValue(),
       );
@@ -1750,6 +1798,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                               _selectedPlanOptionByQuestionId,
                           modelOptions: _availableModelOptions,
                           reasoningOptions: _availableReasoningOptions,
+                          selectedProvider: _selectedProvider,
+                          canChangeProvider: _canChangeComposerProvider,
+                          supportsPlanMode: _supportsPlanMode,
                           selectedModel: _selectedModel,
                           selectedReasoning: _selectedReasoning,
                           accessMode: effectiveAccessMode,
@@ -1772,6 +1823,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                                   optionId;
                             });
                           },
+                          onProviderChanged: _onComposerProviderChanged,
                           onModelChanged: _onComposerModelChanged,
                           onReasoningChanged: (value) {
                             setState(() {
@@ -2126,6 +2178,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                                   _selectedPlanOptionByQuestionId,
                               modelOptions: _availableModelOptions,
                               reasoningOptions: _availableReasoningOptions,
+                              selectedProvider: _selectedProvider,
+                              canChangeProvider: _canChangeComposerProvider,
+                              supportsPlanMode: _supportsPlanMode,
                               selectedModel: _selectedModel,
                               selectedReasoning: _selectedReasoning,
                               accessMode: effectiveAccessMode,
@@ -2148,6 +2203,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                                       optionId;
                                 });
                               },
+                              onProviderChanged: _onComposerProviderChanged,
                               onModelChanged: _onComposerModelChanged,
                               onReasoningChanged: (value) {
                                 setState(() {

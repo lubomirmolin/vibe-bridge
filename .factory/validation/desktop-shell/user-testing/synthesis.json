@@ -1,0 +1,38 @@
+{
+  "milestone": "desktop-shell",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 10,
+    "passed": 10,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-DESKTOP-001",
+    "VAL-DESKTOP-002",
+    "VAL-DESKTOP-003",
+    "VAL-DESKTOP-004",
+    "VAL-DESKTOP-005",
+    "VAL-DESKTOP-006",
+    "VAL-DESKTOP-007",
+    "VAL-DESKTOP-008",
+    "VAL-SETTINGS-002",
+    "VAL-SETTINGS-005"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Recorded desktop-shell concurrency limits plus native-shell and Flutter widget flow-validator guidance for the current bridge/open-on-Mac/settings validation surfaces.",
+      "source": "setup"
+    }
+  ],
+  "notes": [
+    "Spawned two serialized flow validators for native shell/runtime checks and Flutter mobile desktop-affordance checks because desktop-shell validation shares bridge trust state and the current host load favored a combined concurrency ceiling of 1.",
+    "Live setup on 2026-03-18 used codex app-server on ws://127.0.0.1:4222, bridge health on http://127.0.0.1:3110/health, and an existing Tailscale Serve mapping from https://macbook-pro.taild54ede.ts.net to http://127.0.0.1:3110.",
+    "Desktop-shell user-surface validation used targeted xcodebuild, flutter test, cargo test, curl, open, plutil, and pgrep commands with evidence captured under the mission evidence directory."
+  ],
+  "previousRound": null
+}

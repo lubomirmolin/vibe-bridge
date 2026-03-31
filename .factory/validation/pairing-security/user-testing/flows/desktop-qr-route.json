@@ -1,0 +1,65 @@
+{
+  "groupId": "desktop-qr-route",
+  "surface": "native-shell-and-bridge",
+  "toolsUsed": [
+    "xcodebuild",
+    "curl",
+    "tailscale",
+    "python3"
+  ],
+  "commandsRun": [
+    {
+      "command": "xcodebuild -list -project /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mac-shell/CodexMobileCompanion.xcodeproj",
+      "exitCode": 0,
+      "observation": "Project exposes CodexMobileCompanion and CodexMobileCompanionTests targets with scheme CodexMobileCompanion."
+    },
+    {
+      "command": "xcodebuild test -project /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mac-shell/CodexMobileCompanion.xcodeproj -scheme CodexMobileCompanion -destination 'platform=macOS' -derivedDataPath /Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525/evidence/pairing-security/desktop-qr-route/DerivedData -only-testing:CodexMobileCompanionTests/CodexMobileCompanionTests/testPairingSessionResponseDecodesBridgeIdentityAndSession -only-testing:CodexMobileCompanionTests/CodexMobileCompanionTests/testPairingViewModelLoadsSessionAndCreatesQRCode",
+      "exitCode": 0,
+      "observation": "Targeted shell QR tests passed: the pairing response decoded bridge identity/session fields and the view model rendered a QR image from bridge data."
+    },
+    {
+      "command": "curl -sfS http://127.0.0.1:3110/health",
+      "exitCode": 0,
+      "observation": "/health reported pairing_route.reachable=True with advertised_base_url=https://macbook-pro.taild54ede.ts.net."
+    },
+    {
+      "command": "curl -sfS -X POST http://127.0.0.1:3110/pairing/session -H Accept: application/json",
+      "exitCode": 0,
+      "observation": "/pairing/session returned bridge_id=bridge-2c480ccfc03d2f93, session_id=pairing-session-1, and a QR payload containing bridge URL/token/expiry fields."
+    },
+    {
+      "command": "tailscale serve status --json",
+      "exitCode": 0,
+      "observation": "Serve status maps / on macbook-pro.taild54ede.ts.net:443 to http://127.0.0.1:3110."
+    }
+  ],
+  "assertions": [
+    {
+      "id": "VAL-PAIR-001",
+      "status": "pass",
+      "reason": "Scoped macOS shell tests passed for decoding the live bridge pairing response and rendering a QR image, and the live pairing session payload included bridge identity, private API base URL, session ID, token, and expiry fields suitable for QR encoding.",
+      "evidence": [
+        "pairing-security/desktop-qr-route/xcodebuild-targeted-tests.txt",
+        "pairing-security/desktop-qr-route/pairing-session.json",
+        "pairing-security/desktop-qr-route/decoded-qr-payload.json"
+      ]
+    },
+    {
+      "id": "VAL-PAIR-004",
+      "status": "pass",
+      "reason": "The live bridge advertised only the private HTTPS Tailscale Serve URL, the pairing session used the same private base URL in bridge identity and QR payload, and tailscale serve status confirmed the MagicDNS host proxies / to localhost:3110.",
+      "evidence": [
+        "pairing-security/desktop-qr-route/bridge-health.json",
+        "pairing-security/desktop-qr-route/pairing-session.json",
+        "pairing-security/desktop-qr-route/tailscale-serve-status.json",
+        "pairing-security/desktop-qr-route/route-verification-summary.json"
+      ]
+    }
+  ],
+  "frictions": [
+    "Read-only validation did not disable Tailscale Serve, so VAL-PAIR-004 relied on the live /health contract plus tailscale serve status evidence instead of simulating route loss.",
+    "The bridge /health response reported runtime.state=degraded because the managed Codex runtime had exited unexpectedly with status 0, but pairing_route remained reachable and did not block the assigned assertions."
+  ],
+  "blockers": []
+}

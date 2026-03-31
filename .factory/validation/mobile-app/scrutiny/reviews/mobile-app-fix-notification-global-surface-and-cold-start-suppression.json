@@ -1,0 +1,21 @@
+{
+  "featureId": "mobile-app-fix-notification-global-surface-and-cold-start-suppression",
+  "reviewedAt": "2026-03-18T14:27:04.827482Z",
+  "commitId": "4c15a489e42b7f8d652e58712328fd4b8e7c275f",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed the prior failed notification-preferences feature (commit `04025a2`) and this rerun fix (commit `4c15a48`) against the original blocking findings. The rerun resolves both blockers: runtime notification delivery is now attached once at the app shell via `MaterialApp.builder` and `RuntimeNotificationDeliverySurface` (`apps/mobile/lib/main.dart:20-23`, `apps/mobile/lib/features/settings/presentation/runtime_notification_delivery_surface.dart:20-67`), and the route-local listeners/`route.isCurrent` guards that previously stranded notifications off-thread routes were removed from thread list/detail. The cold-start leak is also closed by the new `preferencesRestored` gate in `RuntimeNotificationDeliveryState`/`RuntimeNotificationDeliveryController`, which suppresses event delivery until persisted notification preferences finish restoring (`apps/mobile/lib/features/settings/application/runtime_notification_delivery_controller.dart:59,102,129,176-196`) while `NotificationPreferencesController` flips `isLoading` only after restore completes (`apps/mobile/lib/features/settings/application/notification_preferences_controller.dart:22,75-98`). Regression coverage now explicitly exercises off-route delivery from Device settings and disabled-on-relaunch fail-closed behavior (`apps/mobile/test/features/settings/runtime_notification_delivery_surface_test.dart:18-79`, `apps/mobile/test/features/settings/runtime_notification_delivery_controller_test.dart:177-269`). No new blocking or non-blocking implementation issues were found in scope for this fix.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "`.factory/library/api.md` is still stale about approval targets and can mislead future workers reviewing approval-context behavior.",
+      "evidence": "`.factory/library/api.md:23` still says `ApprovalRecordDto.target` only carries generic identifiers like `git.branch_switch`, but bridge-core now returns the concrete destination from `PendingApprovalAction::target_name()` (`crates/bridge-core/src/lib.rs:580-663`) and the bridge tests assert `approval.target == \"release/2026\"` / security records target `release/2026` (`crates/bridge-core/src/lib.rs:2675-2686`)."
+    }
+  ],
+  "addressesFailureFrom": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/validation/mobile-app/scrutiny/reviews/mobile-app-fix-notification-delivery-preferences.json",
+  "summary": "Pass. This rerun adequately fixes the two blocking issues from the prior review by moving runtime notification surfacing to an app-wide listener and fail-closing cold-start delivery until persisted notification preferences restore, with focused regression tests covering both behaviors."
+}

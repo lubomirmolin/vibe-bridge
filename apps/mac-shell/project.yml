@@ -1,4 +1,4 @@
-name: CodexMobileCompanion
+name: VibeBridgeCompanion
 options:
   createIntermediateGroups: true
 packages:
@@ -9,12 +9,14 @@ settings:
   base:
     SWIFT_VERSION: 5.9
 targets:
-  CodexMobileCompanion:
+  VibeBridgeCompanion:
     type: application
     platform: macOS
     deploymentTarget: "14.0"
     sources:
       - path: Sources
+      - path: Resources
+        buildPhase: resources
     dependencies:
       - target: CodexSpeechHelper
     postBuildScripts:
@@ -31,15 +33,16 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.codex.mobile.companion.shell
-        PRODUCT_NAME: CodexMobileCompanion
-        MARKETING_VERSION: 1.0.0
+        PRODUCT_NAME: VibeBridgeCompanion
+        MARKETING_VERSION: 0.0.1
         CURRENT_PROJECT_VERSION: 1
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: CodexMobileCompanion
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_CFBundleDisplayName: Vibe Bridge Companion
         INFOPLIST_KEY_CFBundleShortVersionString: $(MARKETING_VERSION)
         INFOPLIST_KEY_CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         INFOPLIST_KEY_LSUIElement: YES
-        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Codex Mobile Companion"
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Vibe Bridge Companion"
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
 
   CodexSpeechHelper:
@@ -57,26 +60,26 @@ targets:
         PRODUCT_NAME: CodexSpeechHelper
         CODE_SIGNING_ALLOWED: NO
 
-  CodexMobileCompanionTests:
+  VibeBridgeCompanionTests:
     type: bundle.unit-test
     platform: macOS
     deploymentTarget: "14.0"
     sources:
       - path: Tests
     dependencies:
-      - target: CodexMobileCompanion
+      - target: VibeBridgeCompanion
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.codex.mobile.companion.shell.tests
         GENERATE_INFOPLIST_FILE: YES
 
 schemes:
-  CodexMobileCompanion:
+  VibeBridgeCompanion:
     build:
       targets:
-        CodexMobileCompanion: all
-        CodexMobileCompanionTests: [test]
+        VibeBridgeCompanion: all
+        VibeBridgeCompanionTests: [test]
     test:
       gatherCoverageData: false
       targets:
-        - name: CodexMobileCompanionTests
+        - name: VibeBridgeCompanionTests

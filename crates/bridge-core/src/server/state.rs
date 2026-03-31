@@ -13,9 +13,9 @@ use shared_contracts::{
     AccessMode, BootstrapDto, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION,
     GitDiffChangeTypeDto, GitDiffFileSummaryDto, GitStatusDto as SharedGitStatusDto,
     ModelCatalogDto, ModelOptionDto, NetworkSettingsDto, PairingRouteInventoryDto,
-    PendingUserInputDto, SecurityAuditEventDto, ServiceHealthDto, ServiceHealthStatus,
-    ThreadGitDiffDto, ThreadGitDiffMode, ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto,
-    ThreadTimelineEntryDto, ThreadTimelinePageDto, TrustStateDto, TurnMode,
+    PendingUserInputDto, ProviderKind, SecurityAuditEventDto, ServiceHealthDto,
+    ServiceHealthStatus, ThreadGitDiffDto, ThreadGitDiffMode, ThreadSnapshotDto, ThreadStatus,
+    ThreadSummaryDto, ThreadTimelineEntryDto, ThreadTimelinePageDto, TrustStateDto, TurnMode,
     TurnMutationAcceptedDto, UserInputAnswerDto, UserInputOptionDto, UserInputQuestionDto,
 };
 use tokio::sync::RwLock;
@@ -43,7 +43,10 @@ use crate::server::gateway::{CodexGateway, TurnStartRequest};
 use crate::server::pairing_route::PairingRouteState;
 use crate::server::projection::ProjectionStore;
 use crate::server::speech::{SpeechError, SpeechService};
-use crate::thread_api::{GitStatusResponse, MutationResultResponse, RepositoryContextDto};
+use crate::thread_api::{
+    GitStatusResponse, MutationResultResponse, RepositoryContextDto, is_provider_thread_id,
+    provider_from_thread_id,
+};
 
 #[derive(Debug, Clone)]
 pub struct BridgeAppState {
@@ -407,10 +410,15 @@ impl BridgeAppState {
 
     pub async fn create_thread(
         &self,
+        provider: ProviderKind,
         workspace: &str,
         model: Option<&str>,
     ) -> Result<ThreadSnapshotDto, String> {
-        let mut snapshot = self.inner.gateway.create_thread(workspace, model).await?;
+        let mut snapshot = self
+            .inner
+            .gateway
+            .create_thread(provider, workspace, model)
+            .await?;
         snapshot.thread.access_mode = self.access_mode().await;
         let mut summaries = self.projections().list_summaries().await;
         let next_summary = thread_summary_from_snapshot(&snapshot);
@@ -806,6 +814,9 @@ impl BridgeAppState {
     }
 
     async fn should_generate_thread_title(&self, thread_id: &str) -> bool {
+        if !is_provider_thread_id(thread_id, shared_contracts::ProviderKind::Codex) {
+            return false;
+        }
         if self
             .inner
             .inflight_thread_title_generations
@@ -866,7 +877,9 @@ impl BridgeAppState {
 
     async fn request_notification_thread_resume(&self, thread_id: &str) {
         let normalized_thread_id = thread_id.trim();
-        if normalized_thread_id.is_empty() {
+        if normalized_thread_id.is_empty()
+            || !is_provider_thread_id(normalized_thread_id, shared_contracts::ProviderKind::Codex)
+        {
             return;
         }
 
@@ -1444,6 +1457,10 @@ impl BridgeAppState {
         effort: Option<&str>,
         mode: TurnMode,
     ) -> Result<TurnMutationAcceptedDto, String> {
+        let provider = provider_from_thread_id(thread_id).unwrap_or(ProviderKind::Codex);
+        if provider == ProviderKind::ClaudeCode && mode == TurnMode::Plan {
+            return Err("plan mode is not implemented for Claude Code threads yet".to_string());
+        }
         match mode {
             TurnMode::Act => {
                 self.clear_pending_user_input(thread_id).await;
@@ -1465,6 +1482,11 @@ impl BridgeAppState {
         model: Option<&str>,
         effort: Option<&str>,
     ) -> Result<TurnMutationAcceptedDto, String> {
+        if !is_provider_thread_id(thread_id, shared_contracts::ProviderKind::Codex) {
+            return Err(format!(
+                "thread {thread_id} belongs to a read-only provider; commit actions are only implemented for codex threads"
+            ));
+        }
         self.start_turn_with_visible_prompt(
             thread_id,
             "Commit",
@@ -1530,6 +1552,9 @@ impl BridgeAppState {
                 images: images.to_vec(),
                 model: model.map(str::to_string),
                 effort: effort.map(str::to_string),
+                permission_mode: Some(claude_permission_mode_for_access_mode(
+                    self.access_mode().await,
+                )),
             },
             move |event| {
                 let state = state.clone();
@@ -1632,7 +1657,7 @@ impl BridgeAppState {
         }
         let occurred_at = Utc::now().to_rfc3339();
         self.projections()
-            .mark_thread_running(thread_id, &occurred_at)
+            .mark_thread_running(thread_id, &occurred_at, result.response.turn_id.as_deref())
             .await;
         if !visible_prompt.is_empty() {
             let workspace = self
@@ -1930,13 +1955,24 @@ impl BridgeAppState {
         let resolved_turn_id = if let Some(turn_id) = turn_id {
             turn_id.to_string()
         } else {
-            self.inner
+            if let Some(turn_id) = self
+                .inner
                 .active_turn_ids
                 .read()
                 .await
                 .get(thread_id)
                 .cloned()
-                .ok_or_else(|| format!("no active turn tracked for thread {thread_id}"))?
+            {
+                turn_id
+            } else {
+                let turn_id = self.inner.gateway.resolve_active_turn_id(thread_id).await?;
+                self.inner
+                    .active_turn_ids
+                    .write()
+                    .await
+                    .insert(thread_id.to_string(), turn_id.clone());
+                turn_id
+            }
         };
         let result = self
             .inner
@@ -1985,10 +2021,14 @@ impl BridgeAppState {
         }
     }
 
-    pub async fn model_catalog_payload(&self) -> ModelCatalogDto {
+    pub async fn model_catalog_payload(&self, provider: ProviderKind) -> ModelCatalogDto {
+        let models = match provider {
+            ProviderKind::Codex => self.inner.available_models.read().await.clone(),
+            ProviderKind::ClaudeCode => self.inner.gateway.model_catalog(provider),
+        };
         ModelCatalogDto {
             contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
-            models: self.inner.available_models.read().await.clone(),
+            models,
         }
     }
 
@@ -2482,10 +2522,21 @@ fn compact_incremental_text(
     compact_incremental_full_text(cache, event_id, current_value)
 }
 
+fn claude_permission_mode_for_access_mode(access_mode: AccessMode) -> String {
+    match access_mode {
+        AccessMode::ReadOnly => "plan".to_string(),
+        AccessMode::ControlWithApprovals => "default".to_string(),
+        AccessMode::FullControl => "acceptEdits".to_string(),
+    }
+}
+
 fn thread_summary_from_snapshot(snapshot: &ThreadSnapshotDto) -> ThreadSummaryDto {
     ThreadSummaryDto {
         contract_version: snapshot.contract_version.clone(),
         thread_id: snapshot.thread.thread_id.clone(),
+        native_thread_id: snapshot.thread.native_thread_id.clone(),
+        provider: snapshot.thread.provider,
+        client: snapshot.thread.client,
         title: snapshot.thread.title.clone(),
         status: snapshot.thread.status,
         workspace: snapshot.thread.workspace.clone(),
@@ -3253,6 +3304,9 @@ mod tests {
             thread: ThreadDetailDto {
                 contract_version: CONTRACT_VERSION.to_string(),
                 thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
                 title: "Untitled thread".to_string(),
                 status: ThreadStatus::Idle,
                 workspace: "/repo".to_string(),
@@ -3263,6 +3317,7 @@ mod tests {
                 source: "bridge".to_string(),
                 access_mode: shared_contracts::AccessMode::ControlWithApprovals,
                 last_turn_summary: String::new(),
+                active_turn_id: None,
             },
             entries: Vec::new(),
             approvals: Vec::new(),
@@ -3275,6 +3330,9 @@ mod tests {
             .replace_summaries(vec![ThreadSummaryDto {
                 contract_version: CONTRACT_VERSION.to_string(),
                 thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
                 title: "Untitled thread".to_string(),
                 status: ThreadStatus::Idle,
                 workspace: "/repo".to_string(),
@@ -3302,6 +3360,9 @@ mod tests {
             thread: ThreadDetailDto {
                 contract_version: CONTRACT_VERSION.to_string(),
                 thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
                 title: "Thread".to_string(),
                 status: ThreadStatus::Idle,
                 workspace: "/repo".to_string(),
@@ -3312,6 +3373,7 @@ mod tests {
                 source: "codex_app_ipc".to_string(),
                 access_mode: shared_contracts::AccessMode::ControlWithApprovals,
                 last_turn_summary: String::new(),
+                active_turn_id: None,
             },
             entries: Vec::new(),
             approvals: Vec::new(),
@@ -3355,6 +3417,9 @@ mod tests {
             thread: ThreadDetailDto {
                 contract_version: CONTRACT_VERSION.to_string(),
                 thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
                 title: "Thread".to_string(),
                 status: ThreadStatus::Running,
                 workspace: "/repo".to_string(),
@@ -3365,6 +3430,7 @@ mod tests {
                 source: "codex_app_ipc".to_string(),
                 access_mode: shared_contracts::AccessMode::ControlWithApprovals,
                 last_turn_summary: String::new(),
+                active_turn_id: None,
             },
             entries: Vec::new(),
             approvals: Vec::new(),
@@ -3408,6 +3474,9 @@ mod tests {
             thread: ThreadDetailDto {
                 contract_version: CONTRACT_VERSION.to_string(),
                 thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
                 title: "Thread".to_string(),
                 status: ThreadStatus::Idle,
                 workspace: "/repo".to_string(),
@@ -3418,6 +3487,7 @@ mod tests {
                 source: "codex_app_ipc".to_string(),
                 access_mode: shared_contracts::AccessMode::ControlWithApprovals,
                 last_turn_summary: "thinking".to_string(),
+                active_turn_id: None,
             },
             entries: vec![ThreadTimelineEntryDto {
                 event_id: "evt-1".to_string(),
@@ -3468,6 +3538,9 @@ mod tests {
             thread: ThreadDetailDto {
                 contract_version: CONTRACT_VERSION.to_string(),
                 thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
                 title: "Thread".to_string(),
                 status: ThreadStatus::Idle,
                 workspace: "/repo".to_string(),
@@ -3478,6 +3551,7 @@ mod tests {
                 source: "codex_app_ipc".to_string(),
                 access_mode: shared_contracts::AccessMode::ControlWithApprovals,
                 last_turn_summary: "thinking".to_string(),
+                active_turn_id: None,
             },
             entries: vec![ThreadTimelineEntryDto {
                 event_id: "evt-1".to_string(),
@@ -3549,7 +3623,8 @@ mod tests {
         )
         .expect("cached desktop snapshot should materialize");
 
-        assert_eq!(snapshot.thread.thread_id, "thread-1");
+        assert_eq!(snapshot.thread.thread_id, "codex:thread-1");
+        assert_eq!(snapshot.thread.native_thread_id, "thread-1");
         assert_eq!(snapshot.thread.status, ThreadStatus::Running);
         assert_eq!(snapshot.entries.len(), 2);
         assert!(events.iter().any(|event| {
@@ -3570,6 +3645,9 @@ mod tests {
             thread: ThreadDetailDto {
                 contract_version: CONTRACT_VERSION.to_string(),
                 thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
                 title: "Thread".to_string(),
                 status: ThreadStatus::Running,
                 workspace: "/repo".to_string(),
@@ -3580,6 +3658,7 @@ mod tests {
                 source: "codex_app_ipc".to_string(),
                 access_mode: shared_contracts::AccessMode::ControlWithApprovals,
                 last_turn_summary: "working".to_string(),
+                active_turn_id: None,
             },
             entries: vec![ThreadTimelineEntryDto {
                 event_id: "evt-1".to_string(),

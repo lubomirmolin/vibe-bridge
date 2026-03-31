@@ -1608,6 +1608,14 @@ class _ThreadSummaryCard extends StatelessWidget {
     final displayTitle = thread.title.trim().isEmpty
         ? 'Untitled thread'
         : thread.title.trim();
+    final providerLabel = switch (thread.provider) {
+      ProviderKind.codex => 'CODEX',
+      ProviderKind.claudeCode => 'CLAUDE',
+    };
+    final providerColor = switch (thread.provider) {
+      ProviderKind.codex => AppTheme.emerald,
+      ProviderKind.claudeCode => AppTheme.amber,
+    };
     BadgeVariant variant;
     String statusText;
 
@@ -1662,13 +1670,41 @@ class _ThreadSummaryCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: Text(
-                    displayTitle,
-                    style: const TextStyle(
-                      color: AppTheme.textMain,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w400,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: providerColor.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: providerColor.withValues(alpha: 0.32),
+                          ),
+                        ),
+                        child: Text(
+                          providerLabel,
+                          style: GoogleFonts.jetBrainsMono(
+                            color: providerColor,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.6,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        displayTitle,
+                        style: const TextStyle(
+                          color: AppTheme.textMain,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(width: 12),

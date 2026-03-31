@@ -1,0 +1,21 @@
+{
+  "featureId": "mobile-app-fix-reconnect-retry-scheduling",
+  "reviewedAt": "2026-03-18T15:05:00Z",
+  "commitId": "b425fa25fcc34fabd6ec3cc9c8cf410862ad5b6e",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Re-reviewed the original failed feature commit `1a4c5fd23d2761d0c169360d58df2a32994cbce7`, the prior fail report, and the fix commit `b425fa25fcc34fabd6ec3cc9c8cf410862ad5b6e`. The original failure was that pairing, thread-detail, and thread-list failure paths tried to schedule the next retry while `_isReconnectInProgress` was still true, so the follow-up timer was discarded. The fix removes that guard from the three scheduling helpers (`apps/mobile/lib/features/pairing/application/pairing_controller.dart:344-351`, `apps/mobile/lib/features/threads/application/thread_detail_controller.dart:408-415`, `apps/mobile/lib/features/threads/application/thread_list_controller.dart:390-397`) while leaving the active-timer guard in place. Because the failure paths still call those helpers on connectivity loss (`pairing_controller.dart:318-327`, `thread_detail_controller.dart:390-405,465-479`, `thread_list_controller.dart:377-417,420-458`), repeated outages now keep queueing follow-up retries until a reconnect succeeds or fail-closed state clears trust. Regression coverage was added for repeated pairing failures and repeated thread list/detail reconnect failures (`apps/mobile/test/features/pairing/pairing_flow_test.dart:486-555`, `apps/mobile/test/features/threads/reconnect_retry_scheduling_test.dart:15-146`). No remaining blocking or non-blocking issues were found for the reconnect retry scheduling scope.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `integration-worker` procedure still treats manual lifecycle walkthroughs as mandatory even in non-interactive Exec sessions, so workers doing reconnect/offline fixes have to mark a justified deviation even when automated integration/regression coverage is the only realistic validation path.",
+      "evidence": "`.factory/skills/integration-worker/SKILL.md:22-24` requires manual lifecycle verification and deviation reporting. The fix handoff records `whatWasLeftUndone` for the manual outage walkthrough and `skillFeedback.followedProcedure: false`, even though it ran explicit-target integration tests plus the new retry regression suite (`/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525/handoffs/2026-03-18T13-50-13-003Z__mobile-app-fix-reconnect-retry-scheduling__ced3c8ce-d2aa-4e73-8d46-96bfc9cb9495.json:12,41-43,79-83`)."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/mobile-app/scrutiny/reviews/integration-mobile-persistence-and-auto-reconnect-fix.json",
+  "summary": "Pass: the fix removes the `_isReconnectInProgress` scheduling suppression in pairing, thread detail, and thread list, and the new regression tests demonstrate repeated automatic retries continue across multi-failure outages until recovery succeeds."
+}

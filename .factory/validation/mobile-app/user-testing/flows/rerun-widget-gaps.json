@@ -1,0 +1,247 @@
+{
+  "groupId": "rerun-widget-gaps",
+  "testedAt": "2026-03-18T16:32:55.685004Z",
+  "isolation": {
+    "repoRoot": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion",
+    "missionDir": "/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525",
+    "appDir": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile",
+    "surface": "flutter-mobile-widget-tests",
+    "evidenceDir": "/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525/evidence/mobile-app/rerun-widget",
+    "reportPath": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/validation/mobile-app/user-testing/flows/rerun-widget-gaps.json"
+  },
+  "surface": "flutter-mobile-widget-tests",
+  "toolsUsed": [
+    "flutter test",
+    "python3"
+  ],
+  "commandsRun": [
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/approvals/approvals_queue_page_test.dart --plain-name \"full-control mode can reject pending approvals and sync queue/thread status\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; rejecting a pending approval left the blocked action unresolved, showed an already-resolved-as-rejected state, updated the queue to Rejected, and showed Rejected on the originating thread detail surface."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/approvals/approvals_queue_page_test.dart --plain-name \"read-only mode allows viewing while blocking steer, interrupt, approve, reject, switch, pull, and push\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; the read-only harness still rendered the thread content and approvals detail while leaving steer, interrupt, approve, reject, branch switch, pull, and push controls disabled."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/approvals/approvals_queue_page_test.dart --plain-name \"approval detail mode changes update approve/reject actionability in place\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; an already open approval detail switched approve/reject from enabled in full-control to disabled in read-only and then back to enabled when the runtime mode returned to full-control."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"changing access mode from settings immediately gates turn and git controls\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; after a runtime mode change to read-only on an already open thread detail view, the turn submit control and git pull control became disabled immediately."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"git status and mutations show context and refresh state\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; in control-with-approvals mode, branch switch, pull, and push surfaced pending-approval messages and thread approval status entries tied to the repo/branch context instead of executing immediately."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"idle composer starts turn and transitions to active controls\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; in the control-with-approvals harness, an idle thread started a turn and transitioned into Running with steer/interruption controls visible."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"active composer steers and interrupt stops the active turn\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; in the control-with-approvals harness, steering stayed on the same active thread and interrupt returned the thread to Interrupted/idle state."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"start failure surfaces clear error and keeps thread usable\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; a failed start surfaced a clear error, kept Start turn available, and allowed an immediate retry that returned the thread to Running."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"steer failure surfaces clear error and keeps active thread usable\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; a failed steer surfaced a clear error while preserving Running state and allowing a successful follow-up steer attempt."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/settings/runtime_notification_delivery_surface_test.dart --plain-name \"approval notification toggle suppresses then re-enables runtime delivery from settings\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; approval-request notifications were suppressed after toggling notifications off in settings and surfaced again after re-enabling the toggle."
+    }
+  ],
+  "assertions": [
+    {
+      "id": "VAL-APPROVAL-004",
+      "title": "Full-control mode can reject a pending request and keep the blocked action from proceeding",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run approvals queue widget test `full-control mode can reject pending approvals and sync queue/thread status`.",
+          "expected": "Rejecting in full-control resolves the request as rejected, keeps the blocked action from resuming, and syncs the rejected state across queue and thread surfaces.",
+          "observed": "The test passed with an already-resolved-as-rejected detail state, no resumed-after-approval text, a Rejected queue item, and Rejected shown on the originating thread detail surface."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "mobile-app/rerun-widget/VAL-APPROVAL-004-reject.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "not applicable on the Flutter widget-test surface",
+        "network": "not applicable; the widget harness uses fake bridge APIs"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-004",
+      "title": "Access mode changes take effect across turn controls, approvals, and git actions without reinstall or re-pair",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run approvals widget test `approval detail mode changes update approve/reject actionability in place`.",
+          "expected": "An already open approval detail updates actionability immediately when runtime access mode changes.",
+          "observed": "The test passed while approve/reject changed from enabled to disabled in place after switching to read-only, then re-enabled after returning to full-control."
+        },
+        {
+          "action": "Run thread detail widget test `changing access mode from settings immediately gates turn and git controls`.",
+          "expected": "An already open thread detail updates turn and git controls immediately after a runtime access-mode change.",
+          "observed": "The test passed with the turn submit and git pull controls disabling immediately after the mode changed to read-only."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "mobile-app/rerun-widget/VAL-CROSS-004-approvals-mode-refresh.log",
+          "mobile-app/rerun-widget/VAL-CROSS-004-thread-mode-refresh.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "not applicable on the Flutter widget-test surface",
+        "network": "not applicable; the widget harness uses fake bridge APIs"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GIT-006",
+      "title": "Dangerous git mutations are approval-gated before execution",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run thread detail widget test `git status and mutations show context and refresh state` in the control-with-approvals harness.",
+          "expected": "Branch switch, pull, and push do not execute immediately; each creates a pending approval tied to the correct repo and branch context.",
+          "observed": "The test passed with pending-approval messages for branch switch, pull, and push plus matching thread approval status entries, while immediate success messages were absent."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "mobile-app/rerun-widget/VAL-GIT-006-git-approval-gating.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "not applicable on the Flutter widget-test surface",
+        "network": "not applicable; the widget harness uses fake bridge APIs"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-PAIR-007",
+      "title": "Read-only mode allows viewing but blocks all mutating controls",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run approvals/thread widget test `read-only mode allows viewing while blocking steer, interrupt, approve, reject, switch, pull, and push`.",
+          "expected": "Read-only mode preserves visible thread and approvals content while mutating turn, approval, and git controls remain blocked.",
+          "observed": "The test passed while keeping thread content and approval detail visible and leaving steer, interrupt, approve, reject, branch switch, pull, and push disabled."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "mobile-app/rerun-widget/VAL-PAIR-007-read-only-matrix.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "not applicable on the Flutter widget-test surface",
+        "network": "not applicable; the widget harness uses fake bridge APIs"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-PAIR-008",
+      "title": "Control-with-approvals mode permits normal control but gates dangerous actions",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run thread detail widget test `idle composer starts turn and transitions to active controls`.",
+          "expected": "Control-with-approvals mode can still start a turn from an idle thread.",
+          "observed": "The test passed with the idle thread entering Running and showing active turn controls."
+        },
+        {
+          "action": "Run thread detail widget test `active composer steers and interrupt stops the active turn`.",
+          "expected": "Control-with-approvals mode can still steer and interrupt the current turn.",
+          "observed": "The test passed with steering applied to the same active thread and interrupt returning the thread to Interrupted/idle state."
+        },
+        {
+          "action": "Run thread detail widget test `git status and mutations show context and refresh state`.",
+          "expected": "Dangerous git actions stay gated behind approvals instead of executing immediately in control-with-approvals mode.",
+          "observed": "The test passed with branch switch, pull, and push surfacing pending approval messages and approval status entries rather than immediate mutation success."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "mobile-app/rerun-widget/VAL-PAIR-008-start-turn.log",
+          "mobile-app/rerun-widget/VAL-PAIR-008-steer-interrupt.log",
+          "mobile-app/rerun-widget/VAL-GIT-006-git-approval-gating.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "not applicable on the Flutter widget-test surface",
+        "network": "not applicable; the widget harness uses fake bridge APIs"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-SETTINGS-004",
+      "title": "Notification preference changes affect runtime delivery behavior",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run runtime notification surface widget test `approval notification toggle suppresses then re-enables runtime delivery from settings`.",
+          "expected": "Disabling the approval notification toggle suppresses runtime delivery and re-enabling restores delivery.",
+          "observed": "The test passed: an approval-request event produced no banner while disabled and produced the expected banner again after re-enabling the toggle."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "mobile-app/rerun-widget/VAL-SETTINGS-004-notification-toggle.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "not applicable on the Flutter widget-test surface",
+        "network": "not applicable; the widget harness uses fake bridge APIs and a fake live-stream source"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-TURN-005",
+      "title": "Start or steer failures surface clear errors and leave the thread usable",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run thread detail widget test `start failure surfaces clear error and keeps thread usable`.",
+          "expected": "A failed turn start shows a clear error and leaves the thread recoverable.",
+          "observed": "The test passed with a clear start-failure message, Start turn still available, and a successful immediate retry back to Running."
+        },
+        {
+          "action": "Run thread detail widget test `steer failure surfaces clear error and keeps active thread usable`.",
+          "expected": "A failed steer shows a clear error while leaving the active thread usable for a follow-up steer attempt.",
+          "observed": "The test passed with a steer-failure message, Running state preserved, and a successful follow-up steer that cleared the error."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "mobile-app/rerun-widget/VAL-TURN-005-start-failure.log",
+          "mobile-app/rerun-widget/VAL-TURN-005-steer-failure.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "not applicable on the Flutter widget-test surface",
+        "network": "not applicable; the widget harness uses fake bridge APIs"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    "The flutter-mobile-widget-tests surface provides command logs rather than standalone screenshots or network traces, so this rerun relies on passing targeted widget-test logs plus source-reviewed expectations inside the named tests."
+  ],
+  "blockers": [],
+  "summary": "Retested 7 previously non-pass mobile-app widget assertions: 7 passed, 0 failed, 0 blocked."
+}

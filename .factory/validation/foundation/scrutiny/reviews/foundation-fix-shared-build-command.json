@@ -1,0 +1,21 @@
+{
+  "featureId": "foundation-fix-shared-build-command",
+  "reviewedAt": "2026-03-17T20:13:39Z",
+  "commitId": "2f0b4ad",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix cleanly addresses the original blocking review issue by updating the shared build command to invoke Flutter from `apps/mobile` with a supported Android build target while leaving the SwiftUI macOS shell on its native `xcodebuild` path. I found no new code-review issues in the fix diff.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `foundation-worker` skill example still shows a Flutter test command pattern that differs from mission guidance and the shared service manifest. Later workers could copy the example instead of the documented repo convention.",
+      "evidence": ".factory/skills/foundation-worker/SKILL.md:40 shows `cd /repo/apps/mobile && flutter test --concurrency=5 test`; mission AGENTS.md requires running Flutter tests from `apps/mobile` (or via `.factory/services.yaml`), and the shared command now uses `(cd \"$ROOT/apps/mobile\" && flutter test --concurrency=5)`."
+    }
+  ],
+  "addressesFailureFrom": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/validation/foundation/scrutiny/reviews/foundation-bootstrap-workspace.json",
+  "summary": "Reviewed the original failing scaffold commit `4ee87dc` together with fix commit `2f0b4ad`, the fix handoff, and the fix transcript skeleton. The prior blocking issue is resolved: `.factory/services.yaml` no longer points Flutter at a nonexistent macOS runner under `apps/mobile`, and the shared build path now matches the split workspace architecture without introducing new review issues. One shared-state skill-documentation mismatch remains noted for triage."
+}

@@ -1,0 +1,71 @@
+{
+  "milestone": "mobile-app",
+  "round": 2,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then (cd \"$ROOT/apps/mobile\" && flutter test --concurrency=5); fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo test --manifest-path \"$ROOT/Cargo.toml\" --workspace --jobs 5; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild test -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS'; fi",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then flutter analyze \"$ROOT/apps/mobile\"; fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo check --manifest-path \"$ROOT/Cargo.toml\" --workspace --all-targets; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then flutter analyze \"$ROOT/apps/mobile\"; fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo fmt --manifest-path \"$ROOT/Cargo.toml\" --all --check && cargo clippy --manifest-path \"$ROOT/Cargo.toml\" --workspace --all-targets -- -D warnings; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 2,
+    "passed": 0,
+    "failed": 2,
+    "failedFeatures": [
+      "integration-mobile-runtime-sync-and-safe-affordances-fix",
+      "integration-mobile-persistence-and-auto-reconnect-fix"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "integration-mobile-runtime-sync-and-safe-affordances-fix",
+      "severity": "blocking",
+      "description": "Approval detail still cannot show the exact branch-switch target under the real bridge contract because the bridge continues to emit the generic `git.branch_switch` target identifier while the mobile fix/tests assume the DTO already carries the concrete branch name, so VAL-APPROVAL-002 remains unmet."
+    },
+    {
+      "featureId": "integration-mobile-runtime-sync-and-safe-affordances-fix",
+      "severity": "blocking",
+      "description": "Notification preference toggles are still only local UI/persistence state and are not wired to actual approval/live-activity delivery or suppression behavior, so the earlier VAL-SETTINGS-004 failure remains unresolved."
+    },
+    {
+      "featureId": "integration-mobile-persistence-and-auto-reconnect-fix",
+      "severity": "blocking",
+      "description": "The new reconnect/catch-up path still auto-retries only once because pairing, thread-detail, and thread-list controllers try to reschedule follow-up timers while their in-progress guards are still set, so longer outages still require a manual Retry tap despite the secure-store persistence fix."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Updated `.factory/library/environment.md` to reflect that the mobile secure-store provider now uses `PersistedSecureStore()` rather than the old in-memory placeholder.",
+      "sourceFeature": "integration-mobile-persistence-and-auto-reconnect-fix"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skill:integration-worker",
+      "suggestion": "Require integration workers to read the relevant `.factory/library/` contract/reference notes for the surfaces they touch, not only `user-testing.md`, before implementing cross-surface fixes.",
+      "evidence": "The review for `integration-mobile-runtime-sync-and-safe-affordances-fix` found that the worker read `user-testing.md` but missed `.factory/library/api.md`, then implemented/tests-assumed an approval DTO shape that disagreed with the still-current bridge contract for branch-switch approval targets.",
+      "isSystemic": true
+    },
+    {
+      "target": "skill:integration-worker",
+      "suggestion": "Tighten the integration-worker handoff rules so required lifecycle/manual verification must either include recorded interactive observations or be explicitly called out as a procedure deviation.",
+      "evidence": "The review for `integration-mobile-runtime-sync-and-safe-affordances-fix` found the worker marked `followedProcedure: true` even though the skill requires manual lifecycle verification and the handoff/transcript contained only automated command output with no `interactiveChecks` or equivalent recorded observations.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": ".factory/validation/mobile-app/scrutiny/synthesis.round1.json"
+}

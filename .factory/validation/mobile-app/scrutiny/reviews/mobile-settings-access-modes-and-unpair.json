@@ -1,0 +1,34 @@
+{
+  "featureId": "mobile-settings-access-modes-and-unpair",
+  "reviewedAt": "2026-03-18T11:01:25Z",
+  "commitId": "de42be3",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature adds a substantial settings/device-management surface and wires access-mode gating into the mobile UI, but it does not actually hook notification preferences into any notification-delivery path and its \"Recent security events\" list shows the oldest entries first rather than the most recent activity.",
+    "issues": [
+      {
+        "file": "apps/mobile/lib/features/settings/application/notification_preferences_controller.dart",
+        "line": 55,
+        "severity": "blocking",
+        "description": "The new notification preferences are only persisted locally; they are never connected to a notification delivery pipeline. The only runtime consumers are `apps/mobile/lib/features/threads/presentation/thread_list_page.dart:77`, which hides the approvals badge, and `apps/mobile/lib/features/threads/presentation/thread_detail_page.dart:101`, which shows an informational banner. That means enabling/disabling the toggles does not actually deliver or suppress approval/live-activity notifications as required by VAL-SETTINGS-004."
+      },
+      {
+        "file": "apps/mobile/lib/features/settings/presentation/settings_page.dart",
+        "line": 366,
+        "severity": "non_blocking",
+        "description": "The \"Recent security events\" section takes the first 8 events from the bridge response without reordering them. Bridge security events are appended in insertion order (`crates/bridge-core/src/logging.rs:30-34`) and exposed as-is (`crates/bridge-core/src/lib.rs:766-776`), so once more than eight events exist this UI drops the newest sensitive actions and shows the oldest ones instead of the most recent history the feature promises."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `mobile-worker` skill still requires a manual verification pass and recording visible behavior, but this feature handoff only captured automated `commandsRun` and still marked `skillFeedback.followedProcedure` as true. Either the skill should explicitly permit automation-only completion for this kind of UI work, or the handoff guidance should require workers to record the missing manual check as a deviation.",
+      "evidence": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/skills/mobile-worker/SKILL.md:23-24 says to manually verify the flow and record exact visible behavior, including `interactiveChecks`; the handoff at /Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525/handoffs/2026-03-18T10-54-02-893Z__mobile-settings-access-modes-and-unpair__89b3ee66-b155-4c81-976a-33acd8785c5c.json:14-59 lists only `commandsRun`, and :62 still marks `followedProcedure` true."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the worker transcript skeleton, handoff, skill, mission docs, and commit `de42be3`. Result: fail, because notification-preference toggles do not yet control notification delivery; also noted that the security-events list surfaces oldest-first entries and a mobile-worker skill/handoff mismatch around manual verification evidence."
+}

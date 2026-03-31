@@ -1,0 +1,41 @@
+{
+  "groupId": "trust-persistence-flows",
+  "surface": "native-shell-and-bridge",
+  "toolsUsed": [
+    "Read",
+    "Grep",
+    "cargo test"
+  ],
+  "commandsRun": [
+    {
+      "command": "cargo test --manifest-path \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/Cargo.toml\" -p bridge-core --lib trust_persists_across_restart_and_reconnect_handshake_succeeds -- --nocapture",
+      "exitCode": 0,
+      "observation": "Ran 1 filtered unit test; pairing::tests::trust_persists_across_restart_and_reconnect_handshake_succeeds passed and showed a reconnect handshake succeeding after service restart."
+    },
+    {
+      "command": "cargo test --manifest-path \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/Cargo.toml\" -p bridge-core --lib finalize_blocks_second_phone_without_explicit_reset -- --nocapture",
+      "exitCode": 0,
+      "observation": "Ran 1 filtered unit test; pairing::tests::finalize_blocks_second_phone_without_explicit_reset passed and confirmed second-phone pairing is rejected without reset."
+    }
+  ],
+  "assertions": [
+    {
+      "id": "VAL-PAIR-005",
+      "status": "pass",
+      "reason": "Targeted Rust test recreated PairingSessionService from isolated temp state after initial trust finalize, then the same phone completed handshake with status `trusted` without rescanning.",
+      "evidence": [
+        "pairing-security/trust-persistence-flows/VAL-PAIR-005-cargo-test.txt"
+      ]
+    },
+    {
+      "id": "VAL-PAIR-006",
+      "status": "pass",
+      "reason": "Targeted Rust test paired phone-1 first, then attempted a second pairing for phone-2 and observed the expected TrustedPhoneConflict enforcement without explicit reset.",
+      "evidence": [
+        "pairing-security/trust-persistence-flows/VAL-PAIR-006-cargo-test.txt"
+      ]
+    }
+  ],
+  "frictions": [],
+  "blockers": []
+}

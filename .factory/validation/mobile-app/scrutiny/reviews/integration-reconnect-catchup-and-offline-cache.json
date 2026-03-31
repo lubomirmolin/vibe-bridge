@@ -1,0 +1,34 @@
+{
+  "featureId": "integration-reconnect-catchup-and-offline-cache",
+  "reviewedAt": "2026-03-18T11:00:50.136947Z",
+  "commitId": "6ef8383b4c958a240d630f55066f49cd33cd8ac2",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature adds cache-backed thread restoration and disconnected-state UI, but it does not satisfy the relaunch and reconnect requirements in production: storage is still process-local only, and live-stream disconnects never trigger automatic catch-up.",
+    "issues": [
+      {
+        "file": "apps/mobile/lib/foundation/storage/secure_store_provider.dart",
+        "line": 4,
+        "severity": "blocking",
+        "description": "`appSecureStoreProvider` still returns `InMemorySecureStore`, so trusted-session state, selected-thread state, and cached threads disappear as soon as the app process dies. That means the claimed offline relaunch/selected-thread restoration path cannot work on a real app relaunch, even though VAL-THREAD-010 / VAL-CROSS-007 require cached content and selected-thread restoration after relaunch. The added integration test only reuses the same in-memory repository instance (`apps/mobile/integration_test/reconnect_offline_cache_test.dart:18-40`) instead of exercising persisted storage across process restart."
+      },
+      {
+        "file": "apps/mobile/lib/features/threads/application/thread_detail_controller.dart",
+        "line": 310,
+        "severity": "blocking",
+        "description": "When the websocket drops, `_handleLiveStreamDisconnected()` only marks the UI stale/offline; it never calls `_scheduleReconnectCatchUp()`. After a mid-session disconnect/background resume, the thread stays disconnected until the user manually taps Retry, so automatic reconnect/catch-up is missing for VAL-THREAD-010 / VAL-CROSS-003. The new test coverage also models this as a manual recovery path (`apps/mobile/test/features/threads/thread_detail_page_test.dart:506-511`)."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "Mission docs say mobile secrets should live in platform secure storage and discovery recommends `flutter_secure_storage` plus a real local cache, but the library does not call out that the mobile secure-store provider is still wired to an in-memory placeholder. That mismatch makes persistence-dependent features easy to over-claim.",
+      "evidence": "codex-mobile-companion-discovery.md:446-452 recommends `flutter_secure_storage` and a real cache; .factory/library/environment.md:17 says sensitive material belongs in platform secure storage; apps/mobile/lib/foundation/storage/secure_store_provider.dart:4-5 still returns `InMemorySecureStore()`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail: reconnect/offline UX is partially implemented, but real relaunch persistence is absent and live disconnects do not automatically resubscribe/catch up. I wrote the review report to `.factory/validation/mobile-app/scrutiny/reviews/integration-reconnect-catchup-and-offline-cache.json`."
+}

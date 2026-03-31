@@ -1,0 +1,28 @@
+{
+  "featureId": "desktop-shell-runtime-states-and-recovery",
+  "reviewedAt": "2026-03-18T17:38:55Z",
+  "commitId": "fa424a652beabb4d30da7a27d3e56321d38e87b8",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Reviewed the feature metadata, worker handoff, transcript skeleton, desktop-worker skill, shared mission/library context, and commit fa424a652beabb4d30da7a27d3e56321d38e87b8. The change does add explicit shell states, richer /health trust payloads, and recovery polling, but the shell never guarantees that supervision starts when the app launches into the menu bar/background. Because the only start hook sits inside the menu content view, bridge failures or restarts can be missed until the user opens the menu for the first time, which falls short of the background-companion/supervision behavior required by VAL-DESKTOP-001 and VAL-DESKTOP-007.",
+    "issues": [
+      {
+        "file": "apps/mac-shell/Sources/CodexMobileCompanionApp.swift",
+        "line": 104,
+        "severity": "blocking",
+        "description": "`startRuntimeSupervision()` is invoked only from `PairingEntryView`'s `.task` modifier (lines 104-106), and there is no corresponding startup call from `CodexMobileCompanionApp` or `PairingEntryViewModel.init` (lines 8-15 and 203-228). In a menu-bar app, that means supervision is tied to the popover content becoming active instead of the shell process itself, so the bridge is not guaranteed to be polled/recovered while the shell is merely sitting in the background after launch. The current tests only exercise explicit `refreshRuntimeState()` calls, so this launch-without-opening-menu path is unverified. That misses the feature's required 'real menu bar/background companion' supervision behavior for bridge failures/restarts."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The desktop-worker skill still says to manually verify unpaired, paired-idle, paired-active, and bridge-offline shell states, but this worker session only recorded an interactive process-detach check. Either the skill should be updated to clarify when automated state-override tests are sufficient, or the handoff requirements should explicitly demand manual state-transition evidence.",
+      "evidence": "`.factory/skills/desktop-worker/SKILL.md` step 5 says 'Verify shell states manually: unpaired, paired-idle, paired-active, bridge-offline, and Codex.app failure cases where relevant.' The reviewed handoff for session `92f4ba47-382f-45a3-b689-69d73303b535` lists only one interactive check: launching the built app and confirming the shell process detached from the terminal; no manual shell-state transition check is recorded in the transcript skeleton or handoff."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail. The feature improves the shell UI/state model, but the supervision loop is only started from the menu content view instead of from app launch, so background bridge supervision is not guaranteed until the user opens the shell UI. I also recorded one desktop-worker skill/process observation about the mismatch between the skill's manual state-verification step and the evidence actually captured in the worker session."
+}

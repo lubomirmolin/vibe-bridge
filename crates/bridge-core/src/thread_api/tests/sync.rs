@@ -2,6 +2,8 @@ use super::*;
 
 #[test]
 fn sync_thread_from_upstream_refreshes_only_requested_thread() {
+    let target_thread_id = codex_thread_id("thread-target");
+    let other_thread_id = codex_thread_id("thread-other");
     let codex_home = unique_test_codex_home();
     let sessions_directory = codex_home.join("sessions/2026/03/19");
     fs::create_dir_all(&sessions_directory).expect("test sessions directory should exist");
@@ -24,7 +26,10 @@ fn sync_thread_from_upstream_refreshes_only_requested_thread() {
     let mut service = ThreadApiService {
         thread_records: vec![
             UpstreamThreadRecord {
-                id: "thread-target".to_string(),
+                id: target_thread_id.clone(),
+                native_id: "thread-target".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
                 headline: "Stale target title".to_string(),
                 lifecycle_state: "done".to_string(),
                 workspace_path: "/workspace/stale-target".to_string(),
@@ -41,7 +46,10 @@ fn sync_thread_from_upstream_refreshes_only_requested_thread() {
                 last_turn_summary: "stale target summary".to_string(),
             },
             UpstreamThreadRecord {
-                id: "thread-other".to_string(),
+                id: other_thread_id.clone(),
+                native_id: "thread-other".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
                 headline: "Unrelated thread".to_string(),
                 lifecycle_state: "done".to_string(),
                 workspace_path: "/workspace/other".to_string(),
@@ -60,7 +68,7 @@ fn sync_thread_from_upstream_refreshes_only_requested_thread() {
         ],
         timeline_by_thread_id: HashMap::from([
             (
-                "thread-target".to_string(),
+                target_thread_id.clone(),
                 vec![UpstreamTimelineEvent {
                     id: "stale-target-event".to_string(),
                     event_type: "agent_message_delta".to_string(),
@@ -70,7 +78,7 @@ fn sync_thread_from_upstream_refreshes_only_requested_thread() {
                 }],
             ),
             (
-                "thread-other".to_string(),
+                other_thread_id.clone(),
                 vec![UpstreamTimelineEvent {
                     id: "other-event".to_string(),
                     event_type: "agent_message_delta".to_string(),
@@ -91,13 +99,13 @@ fn sync_thread_from_upstream_refreshes_only_requested_thread() {
     };
 
     service
-        .sync_thread_from_upstream("thread-target")
+        .sync_thread_from_upstream(&target_thread_id)
         .expect("thread sync should fall back to archive");
 
     let refreshed_target = service
         .thread_records
         .iter()
-        .find(|thread| thread.id == "thread-target")
+        .find(|thread| thread.id == target_thread_id)
         .expect("target thread should remain present");
     assert_eq!(refreshed_target.headline, "Fresh target title");
     assert_eq!(refreshed_target.last_turn_summary, "Fresh target body.");
@@ -105,21 +113,21 @@ fn sync_thread_from_upstream_refreshes_only_requested_thread() {
     let untouched_other = service
         .thread_records
         .iter()
-        .find(|thread| thread.id == "thread-other")
+        .find(|thread| thread.id == other_thread_id)
         .expect("other thread should remain present");
     assert_eq!(untouched_other.headline, "Unrelated thread");
     assert_eq!(untouched_other.last_turn_summary, "other summary");
 
     let target_timeline = service
         .timeline_by_thread_id
-        .get("thread-target")
+        .get(&target_thread_id)
         .expect("target timeline should exist");
     assert_eq!(target_timeline.len(), 1);
     assert_eq!(target_timeline[0].summary_text, "Fresh target body.");
 
     let other_timeline = service
         .timeline_by_thread_id
-        .get("thread-other")
+        .get(&other_thread_id)
         .expect("other timeline should still exist");
     assert_eq!(other_timeline.len(), 1);
     assert_eq!(other_timeline[0].id, "other-event");
@@ -129,12 +137,13 @@ fn sync_thread_from_upstream_refreshes_only_requested_thread() {
 
 #[test]
 fn sync_thread_from_upstream_reuses_fresh_snapshot_for_detail_then_timeline_pair() {
-    let thread_id = "019d0d0c-07df-7632-81fa-a1636651400a";
+    let native_thread_id = "019d0d0c-07df-7632-81fa-a1636651400a";
+    let thread_id = codex_thread_id(native_thread_id);
     let codex_home = unique_test_codex_home();
 
     write_archived_thread_fixture(
         &codex_home,
-        thread_id,
+        native_thread_id,
         "2026-03-19T10:00:00Z",
         "Cold snapshot title",
         "Cold snapshot summary.",
@@ -149,22 +158,22 @@ fn sync_thread_from_upstream_reuses_fresh_snapshot_for_detail_then_timeline_pair
     });
 
     service
-        .sync_thread_from_upstream(thread_id)
+        .sync_thread_from_upstream(&thread_id)
         .expect("initial cold sync should load archive snapshot");
 
     let receipt_before = service
         .thread_sync_receipts_by_id
-        .get(thread_id)
+        .get(&thread_id)
         .expect("thread receipt should exist after initial sync")
         .synced_at_millis;
 
     service
-        .sync_thread_from_upstream(thread_id)
+        .sync_thread_from_upstream(&thread_id)
         .expect("immediate companion sync should succeed");
 
     let receipt_after = service
         .thread_sync_receipts_by_id
-        .get(thread_id)
+        .get(&thread_id)
         .expect("thread receipt should remain after companion sync")
         .synced_at_millis;
     assert_eq!(
@@ -173,13 +182,13 @@ fn sync_thread_from_upstream_reuses_fresh_snapshot_for_detail_then_timeline_pair
     );
 
     let detail = service
-        .detail_response(thread_id)
+        .detail_response(&thread_id)
         .expect("thread detail should remain present");
     assert_eq!(detail.thread.title, "Cold snapshot title");
     assert_eq!(detail.thread.updated_at, "2026-03-19T10:00:00Z");
 
     let timeline = service
-        .timeline_page_response(thread_id, None, 80)
+        .timeline_page_response(&thread_id, None, 80)
         .expect("timeline should remain available");
     assert_eq!(timeline.thread.title, "Cold snapshot title");
     assert_eq!(timeline.thread.updated_at, "2026-03-19T10:00:00Z");
@@ -189,12 +198,13 @@ fn sync_thread_from_upstream_reuses_fresh_snapshot_for_detail_then_timeline_pair
 
 #[test]
 fn sync_thread_from_upstream_reuses_single_refresh_generation_for_reconnect_style_pair() {
-    let thread_id = "019d0d0c-07df-7632-81fa-a1636651400a";
+    let native_thread_id = "019d0d0c-07df-7632-81fa-a1636651400a";
+    let thread_id = codex_thread_id(native_thread_id);
     let codex_home = unique_test_codex_home();
 
     write_archived_thread_fixture(
         &codex_home,
-        thread_id,
+        native_thread_id,
         "2026-03-19T10:00:00Z",
         "Initial title",
         "Initial summary.",
@@ -209,21 +219,21 @@ fn sync_thread_from_upstream_reuses_single_refresh_generation_for_reconnect_styl
     });
 
     service
-        .sync_thread_from_upstream(thread_id)
+        .sync_thread_from_upstream(&thread_id)
         .expect("initial sync should load first snapshot");
 
     let first_receipt_before = service
         .thread_sync_receipts_by_id
-        .get(thread_id)
+        .get(&thread_id)
         .expect("receipt should exist after initial sync")
         .synced_at_millis;
 
     service
-        .sync_thread_from_upstream(thread_id)
+        .sync_thread_from_upstream(&thread_id)
         .expect("timeline companion request should succeed");
     let first_receipt_after = service
         .thread_sync_receipts_by_id
-        .get(thread_id)
+        .get(&thread_id)
         .expect("receipt should remain after companion sync")
         .synced_at_millis;
     assert_eq!(
@@ -232,32 +242,32 @@ fn sync_thread_from_upstream_reuses_single_refresh_generation_for_reconnect_styl
     );
     assert_eq!(
         service
-            .detail_response(thread_id)
+            .detail_response(&thread_id)
             .expect("detail should stay present")
             .thread
             .title,
         "Initial title"
     );
 
-    if let Some(receipt) = service.thread_sync_receipts_by_id.get_mut(thread_id) {
+    if let Some(receipt) = service.thread_sync_receipts_by_id.get_mut(&thread_id) {
         receipt.synced_at_millis = super::current_unix_epoch_millis()
             .saturating_sub(super::THREAD_SYNC_REUSE_WINDOW_MILLIS + 1);
     }
 
     write_archived_thread_fixture(
         &codex_home,
-        thread_id,
+        native_thread_id,
         "2026-03-19T10:30:00Z",
         "Reconnect title",
         "Reconnect refresh summary.",
     );
 
     service
-        .sync_thread_from_upstream(thread_id)
+        .sync_thread_from_upstream(&thread_id)
         .expect("reconnect detail request should refresh from archive");
     assert_eq!(
         service
-            .detail_response(thread_id)
+            .detail_response(&thread_id)
             .expect("detail should stay present")
             .thread
             .title,
@@ -266,16 +276,16 @@ fn sync_thread_from_upstream_reuses_single_refresh_generation_for_reconnect_styl
 
     let second_receipt_before = service
         .thread_sync_receipts_by_id
-        .get(thread_id)
+        .get(&thread_id)
         .expect("receipt should exist after reconnect refresh")
         .synced_at_millis;
 
     service
-        .sync_thread_from_upstream(thread_id)
+        .sync_thread_from_upstream(&thread_id)
         .expect("reconnect timeline companion request should succeed");
     let second_receipt_after = service
         .thread_sync_receipts_by_id
-        .get(thread_id)
+        .get(&thread_id)
         .expect("receipt should remain after reconnect companion")
         .synced_at_millis;
     assert_eq!(
@@ -284,7 +294,7 @@ fn sync_thread_from_upstream_reuses_single_refresh_generation_for_reconnect_styl
     );
     assert_eq!(
         service
-            .detail_response(thread_id)
+            .detail_response(&thread_id)
             .expect("detail should stay present")
             .thread
             .title,
@@ -296,21 +306,23 @@ fn sync_thread_from_upstream_reuses_single_refresh_generation_for_reconnect_styl
 
 #[test]
 fn sync_thread_from_upstream_keeps_fast_path_for_same_thread_after_interleaved_read() {
-    let canonical_thread_id = "019d0d0c-07df-7632-81fa-a1636651400a";
-    let interleaved_thread_id = "thread-other";
+    let canonical_native_thread_id = "019d0d0c-07df-7632-81fa-a1636651400a";
+    let canonical_thread_id = codex_thread_id(canonical_native_thread_id);
+    let interleaved_native_thread_id = "thread-other";
+    let interleaved_thread_id = codex_thread_id(interleaved_native_thread_id);
     let codex_home = unique_test_codex_home();
 
     write_archived_thread_fixtures(
         &codex_home,
         &[
             (
-                canonical_thread_id,
+                canonical_native_thread_id,
                 "2026-03-19T10:00:00Z",
                 "Canonical title",
                 "Canonical summary.",
             ),
             (
-                interleaved_thread_id,
+                interleaved_native_thread_id,
                 "2026-03-19T09:00:00Z",
                 "Interleaved title",
                 "Interleaved summary.",
@@ -327,12 +339,12 @@ fn sync_thread_from_upstream_keeps_fast_path_for_same_thread_after_interleaved_r
     });
 
     service
-        .sync_thread_from_upstream(canonical_thread_id)
+        .sync_thread_from_upstream(&canonical_thread_id)
         .expect("initial sync should load canonical thread snapshot");
 
     let canonical_receipt_before = service
         .thread_sync_receipts_by_id
-        .get(canonical_thread_id)
+        .get(&canonical_thread_id)
         .expect("canonical sync receipt should exist")
         .synced_at_millis;
 
@@ -341,15 +353,15 @@ fn sync_thread_from_upstream_keeps_fast_path_for_same_thread_after_interleaved_r
     std::thread::sleep(std::time::Duration::from_millis(350));
 
     service
-        .sync_thread_from_upstream(interleaved_thread_id)
+        .sync_thread_from_upstream(&interleaved_thread_id)
         .expect("interleaved thread sync should succeed");
     service
-        .sync_thread_from_upstream(canonical_thread_id)
+        .sync_thread_from_upstream(&canonical_thread_id)
         .expect("revisited canonical thread sync should succeed");
 
     let canonical_receipt_after = service
         .thread_sync_receipts_by_id
-        .get(canonical_thread_id)
+        .get(&canonical_thread_id)
         .expect("canonical sync receipt should still exist")
         .synced_at_millis;
 
@@ -359,7 +371,7 @@ fn sync_thread_from_upstream_keeps_fast_path_for_same_thread_after_interleaved_r
     );
     assert_eq!(
         service
-            .detail_response(canonical_thread_id)
+            .detail_response(&canonical_thread_id)
             .expect("canonical detail should remain available")
             .thread
             .title,
@@ -371,12 +383,13 @@ fn sync_thread_from_upstream_keeps_fast_path_for_same_thread_after_interleaved_r
 
 #[test]
 fn sync_thread_from_upstream_invalidates_fast_path_when_archive_index_changes() {
-    let thread_id = "019d0d0c-07df-7632-81fa-a1636651400a";
+    let native_thread_id = "019d0d0c-07df-7632-81fa-a1636651400a";
+    let thread_id = codex_thread_id(native_thread_id);
     let codex_home = unique_test_codex_home();
 
     write_archived_thread_fixture(
         &codex_home,
-        thread_id,
+        native_thread_id,
         "2026-03-19T10:00:00Z",
         "Initial title",
         "Initial summary.",
@@ -397,14 +410,14 @@ fn sync_thread_from_upstream_invalidates_fast_path_when_archive_index_changes() 
     });
 
     service
-        .sync_thread_from_upstream(thread_id)
+        .sync_thread_from_upstream(&thread_id)
         .expect("initial sync should load first snapshot");
 
     std::thread::sleep(std::time::Duration::from_millis(5));
 
     write_archived_thread_fixture(
         &codex_home,
-        thread_id,
+        native_thread_id,
         "2026-03-19T10:30:00Z",
         "Updated title",
         "Updated summary.",
@@ -419,17 +432,17 @@ fn sync_thread_from_upstream_invalidates_fast_path_when_archive_index_changes() 
         "fixture update should advance session index modified time"
     );
 
-    if let Some(receipt) = service.thread_sync_receipts_by_id.get_mut(thread_id) {
+    if let Some(receipt) = service.thread_sync_receipts_by_id.get_mut(&thread_id) {
         receipt.synced_at_millis = super::current_unix_epoch_millis();
     }
 
     service
-        .sync_thread_from_upstream(thread_id)
+        .sync_thread_from_upstream(&thread_id)
         .expect("sync after archive update should succeed");
 
     assert_eq!(
         service
-            .detail_response(thread_id)
+            .detail_response(&thread_id)
             .expect("detail should remain present")
             .thread
             .title,

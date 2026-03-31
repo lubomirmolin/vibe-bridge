@@ -1,0 +1,28 @@
+{
+  "featureId": "pairing-security-fix-exact-serve-route-verification",
+  "reviewedAt": "2026-03-18T07:30:30Z",
+  "commitId": "5f8663c6b9ad7add299163320b58c1ae8d378548",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The fix does address the original blocker: route verification now inspects structured Serve state instead of accepting any stray `3110` mention, and the new tests cover stale port-only data, wrong-host mappings, and non-root handlers. However, one blocking false-positive path remains because the loopback target matcher still accepts `https://` backends on port 3110 even though the bridge itself is an HTTP service on that port.",
+    "issues": [
+      {
+        "file": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/lib.rs",
+        "line": 490,
+        "severity": "blocking",
+        "description": "`proxy_targets_bridge_loopback()` still treats `https://127.0.0.1:3110`, `https://localhost:3110`, and `https://[::1]:3110` as valid bridge proxies (`crates/bridge-core/src/lib.rs:490-498`), and `pairing_base_url_from_tailscale_status()` relies on that helper when deciding whether to advertise pairing (`crates/bridge-core/src/lib.rs:435-485`). Repo evidence shows the bridge on port 3110 is a plain HTTP service (`.factory/services.yaml:56` healthchecks `http://127.0.0.1:3110/health`), so an HTTPS upstream target on that port does not prove the Serve route actually fronts the bridge. Startup can therefore still mark pairing reachable for a misconfigured/stale Serve entry that points HTTPS at localhost:3110 even though the advertised private URL would not work."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "services",
+      "observation": "The shared `tailscale-serve` service manifest still uses a loose `grep 3110` healthcheck even though the product invariant now requires validating the exact HTTPS host/root proxy mapping to the bridge port.",
+      "evidence": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/services.yaml:60-67 defines the healthcheck as `tailscale serve status | grep 3110`, which is weaker than the exact structured verification now implemented in `crates/bridge-core/src/lib.rs:449-498`."
+    }
+  ],
+  "addressesFailureFrom": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/validation/pairing-security/scrutiny/reviews/pairing-security-launch-and-verify-tailscale-serve.json",
+  "summary": "Reviewed the prior failed review, both feature diffs, the fix handoff and transcript skeleton, the security skill, and shared-state files. Result: fail. The new structured Serve parsing closes the original stale/unrelated `3110` string-match bug, but verification still accepts HTTPS loopback proxy targets for port 3110, so pairing can still be advertised for a Serve mapping that does not actually front the HTTP bridge service."
+}

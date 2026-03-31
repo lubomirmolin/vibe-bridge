@@ -427,6 +427,7 @@ class _PlanModeThreadDetailBridgeApi extends ThreadDetailBridgeApi {
   Future<TurnMutationResult> interruptTurn({
     required String bridgeApiBaseUrl,
     required String threadId,
+    String? turnId,
   }) async {
     throw UnimplementedError('Interrupt is unused in this integration test.');
   }

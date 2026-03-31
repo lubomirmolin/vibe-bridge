@@ -1,0 +1,106 @@
+{
+  "groupId": "hardening-build-artifacts",
+  "testedAt": "2026-03-18T22:09:31Z",
+  "isolation": {
+    "surface": "hardening-build-artifacts",
+    "repoRoot": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion",
+    "missionDir": "/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525",
+    "reportPath": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/validation/hardening/user-testing/flows/hardening-build-artifacts.json",
+    "evidenceDir": "/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525/evidence/hardening/hardening-build-artifacts",
+    "workspaceReuse": true,
+    "notes": [
+      "Build commands were run serially in the existing checked-out workspace.",
+      "No repo source files were edited during validation."
+    ]
+  },
+  "surface": "hardening-build-artifacts",
+  "toolsUsed": [
+    "Execute",
+    "flutter",
+    "cargo",
+    "xcodebuild"
+  ],
+  "commandsRun": [
+    {
+      "command": "cd apps/mobile && flutter build apk --debug",
+      "exitCode": 0,
+      "observation": "Flutter produced a debug APK successfully.",
+      "artifactLocation": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile/build/app/outputs/flutter-apk/app-debug.apk",
+      "evidenceLog": "hardening/hardening-build-artifacts/flutter-build.log"
+    },
+    {
+      "command": "cargo build --manifest-path Cargo.toml --workspace",
+      "exitCode": 0,
+      "observation": "Cargo finished the workspace dev build successfully.",
+      "artifactLocation": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/target/debug/bridge-server",
+      "evidenceLog": "hardening/hardening-build-artifacts/cargo-build.log"
+    },
+    {
+      "command": "xcodebuild -project apps/mac-shell/CodexMobileCompanion.xcodeproj -scheme CodexMobileCompanion -destination 'platform=macOS' build",
+      "exitCode": 0,
+      "observation": "xcodebuild completed with BUILD SUCCEEDED and produced the debug app bundle in DerivedData.",
+      "artifactLocation": "/Users/lubomirmolin/Library/Developer/Xcode/DerivedData/CodexMobileCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/CodexMobileCompanion.app",
+      "evidenceLog": "hardening/hardening-build-artifacts/xcodebuild.log"
+    }
+  ],
+  "assertions": [
+    {
+      "id": "VAL-PLATFORM-002",
+      "title": "The project can produce installable/testable outputs for mobile, bridge, and macOS shell",
+      "status": "pass",
+      "commands": [
+        {
+          "command": "cd apps/mobile && flutter build apk --debug",
+          "exitCode": 0,
+          "observed": "Built build/app/outputs/flutter-apk/app-debug.apk",
+          "artifactLocation": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile/build/app/outputs/flutter-apk/app-debug.apk"
+        },
+        {
+          "command": "cargo build --manifest-path Cargo.toml --workspace",
+          "exitCode": 0,
+          "observed": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s",
+          "artifactLocation": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/target/debug/bridge-server"
+        },
+        {
+          "command": "xcodebuild -project apps/mac-shell/CodexMobileCompanion.xcodeproj -scheme CodexMobileCompanion -destination 'platform=macOS' build",
+          "exitCode": 0,
+          "observed": "** BUILD SUCCEEDED **",
+          "artifactLocation": "/Users/lubomirmolin/Library/Developer/Xcode/DerivedData/CodexMobileCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/CodexMobileCompanion.app"
+        }
+      ],
+      "evidence": {
+        "buildOutputs": [
+          {
+            "component": "Flutter mobile",
+            "artifact": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile/build/app/outputs/flutter-apk/app-debug.apk",
+            "log": "hardening/hardening-build-artifacts/flutter-build.log"
+          },
+          {
+            "component": "Rust bridge",
+            "artifact": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/target/debug/bridge-server",
+            "log": "hardening/hardening-build-artifacts/cargo-build.log"
+          },
+          {
+            "component": "macOS shell",
+            "artifact": "/Users/lubomirmolin/Library/Developer/Xcode/DerivedData/CodexMobileCompanion-ekndmlpbuttxivelnjaqmpmtjbjl/Build/Products/Debug/CodexMobileCompanion.app",
+            "log": "hardening/hardening-build-artifacts/xcodebuild.log"
+          }
+        ],
+        "consoleErrors": "None blocking. All three commands exited 0. xcodebuild emitted a non-fatal multiple matching destinations warning before selecting My Mac automatically."
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "xcodebuild reported multiple matching macOS destinations and automatically chose the first My Mac target before building.",
+      "resolved": true,
+      "resolution": "No intervention was needed because xcodebuild selected a valid local destination and completed with BUILD SUCCEEDED.",
+      "affectedAssertions": [
+        "VAL-PLATFORM-002"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 1 assertion (VAL-PLATFORM-002): pass. Flutter, Rust workspace, and macOS shell builds all completed successfully and produced traceable artifacts/logs."
+}

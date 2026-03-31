@@ -1,0 +1,105 @@
+{
+  "groupId": "thread-detail-live",
+  "surface": "flutter-mobile-widget-tests",
+  "toolsUsed": [
+    "flutter",
+    "python3"
+  ],
+  "commandsRun": [
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"opening a thread shows matching detail and mixed item types distinctly\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; tapping the thread row opened matching detail for thread-123 and the detail view showed distinct user prompt, assistant output, plan update, terminal output, and file change sections."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"live stream updates detail and syncs lifecycle status back to list\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; a streamed assistant delta rendered into the open thread without refresh and a lifecycle status change propagated back to both detail and list views."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"timeline browsing loads earlier history in coherent order\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; loading earlier history revealed older timeline items ahead of the already visible recent items in coherent order."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"switching threads keeps live updates scoped to selected thread\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; live deltas for a non-selected thread stayed hidden while the selected thread continued to show only its own updates."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"unavailable thread detail shows retryable fallback state\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; an unavailable thread first showed a retryable fallback state with the remote-archive message, then recovered to the thread detail after Retry."
+    }
+  ],
+  "assertions": [
+    {
+      "id": "VAL-THREAD-004",
+      "status": "pass",
+      "reason": "The targeted open-thread widget flow passed while opening thread-123 from the list and asserting that the detail header, title, and thread ID matched the selected row.",
+      "evidence": [
+        "mobile-app/thread-detail-live/VAL-THREAD-004-005-007-open-detail-mixed-items.log"
+      ]
+    },
+    {
+      "id": "VAL-THREAD-005",
+      "status": "pass",
+      "reason": "The same widget flow passed after asserting distinct User prompt, Assistant output, Plan update, Terminal output, and File change sections with representative command and file-change content, showing visually differentiated item types.",
+      "evidence": [
+        "mobile-app/thread-detail-live/VAL-THREAD-004-005-007-open-detail-mixed-items.log"
+      ]
+    },
+    {
+      "id": "VAL-THREAD-006",
+      "status": "pass",
+      "reason": "The live-stream widget flow passed after injecting a message delta into the open thread and asserting the streamed assistant output became visible without reopening or manually refreshing the detail view.",
+      "evidence": [
+        "mobile-app/thread-detail-live/VAL-THREAD-006-008-live-stream-lifecycle.log"
+      ]
+    },
+    {
+      "id": "VAL-THREAD-007",
+      "status": "pass",
+      "reason": "The mixed-item widget flow passed while plan, command, and file-change events rendered in their own labeled visual sections instead of collapsing into generic text.",
+      "evidence": [
+        "mobile-app/thread-detail-live/VAL-THREAD-004-005-007-open-detail-mixed-items.log"
+      ]
+    },
+    {
+      "id": "VAL-THREAD-008",
+      "status": "pass",
+      "reason": "The lifecycle widget flow passed after a threadStatusChanged event updated the open detail view to Completed and the list row also showed Completed after navigating back, confirming synchronized lifecycle state updates.",
+      "evidence": [
+        "mobile-app/thread-detail-live/VAL-THREAD-006-008-live-stream-lifecycle.log"
+      ]
+    },
+    {
+      "id": "VAL-THREAD-009",
+      "status": "pass",
+      "reason": "The timeline-history widget flow passed after loading earlier history and asserting the newly revealed older entries appeared ahead of later entries in coherent chronological order.",
+      "evidence": [
+        "mobile-app/thread-detail-live/VAL-THREAD-009-history-order.log"
+      ]
+    },
+    {
+      "id": "VAL-THREAD-011",
+      "status": "pass",
+      "reason": "The thread-switch widget flow passed while updates from the off-screen thread remained hidden in the currently selected detail view and the newly selected thread showed only its own live deltas.",
+      "evidence": [
+        "mobile-app/thread-detail-live/VAL-THREAD-011-thread-switch-scoping.log"
+      ]
+    },
+    {
+      "id": "VAL-THREAD-012",
+      "status": "pass",
+      "reason": "The unavailable-detail widget flow passed by first showing a clear Thread unavailable fallback with a Retry affordance, then successfully recovering to the expected detail content after retry.",
+      "evidence": [
+        "mobile-app/thread-detail-live/VAL-THREAD-012-unavailable-detail.log"
+      ]
+    }
+  ],
+  "frictions": [
+    "The flutter-mobile-widget-tests surface provides assertion-backed Flutter logs rather than standalone screenshots, videos, or websocket captures, so this report relies on saved command logs that encode the visible widget expectations exercised in each passing flow."
+  ],
+  "blockers": []
+}

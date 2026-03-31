@@ -23,4 +23,5 @@ apps/mobile/android/key.properties
 apps/mobile/android/upload-keystore.jks
 
 *.log
+/tmp
 tmp/

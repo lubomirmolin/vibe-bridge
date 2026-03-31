@@ -1,0 +1,39 @@
+{
+  "featureId": "integration-mobile-runtime-sync-and-safe-affordances-fix",
+  "reviewedAt": "2026-03-18T12:24:33.873316Z",
+  "commitId": "33425a4b8a03e18223e7a514c26214936dee1c55",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Re-reviewed the prior failure at current HEAD (`bd3a24d`) using the prior review/synthesis, feature entry, handoff, transcript skeleton, git history, commit `33425a4`, and the live code/contracts. The current HEAD is only bookkeeping commits beyond `33425a4`, and `git log -- <relevant paths>` still shows `33425a4` as the newest code change touching the affected approval/settings/runtime files. The implemented fixes for off-screen thread-list sync, approval queue refresh on live events and late non-actionable conflicts, git-status gating, and newest-first security-event ordering are still present, but the two original blocking gaps still remain: the mobile UI still cannot derive the exact branch-switch target from the real bridge payload, and notification preference toggles still do not control any actual notification delivery/suppression path.",
+    "issues": [
+      {
+        "file": "apps/mobile/lib/features/approvals/presentation/approval_presenter.dart",
+        "line": 27,
+        "severity": "blocking",
+        "description": "`approvalTargetLabel()` still assumes `ApprovalRecordDto.target` carries the concrete destination branch for `git_branch_switch` and renders `Target branch: $targetBranch` when the string is non-empty (`approval_presenter.dart:27-34`). But the real bridge contract at HEAD still serializes branch-switch approvals with the generic identifier `git.branch_switch` via `PendingApprovalAction::target_name()` and `ApprovalRecordDto.target` (`crates/bridge-core/src/lib.rs:580-663`), which matches the API note in `.factory/library/api.md:23`. The new widget coverage only passes because it injects a synthetic approval with `target: 'release/hotfix-42'` (`apps/mobile/test/features/approvals/approvals_queue_page_test.dart:61-70,411-416`), a payload the bridge still does not emit. Real approval detail/queue screens therefore still show `Target branch: git.branch_switch` rather than the exact branch under review, so the branch-context failure remains unresolved."
+      },
+      {
+        "file": "apps/mobile/lib/features/settings/application/notification_preferences_controller.dart",
+        "line": 55,
+        "severity": "blocking",
+        "description": "The notification toggles still only mutate local state and persist it to secure storage (`notification_preferences_controller.dart:55-69,103-111`). At HEAD, the only runtime consumers of those booleans are still the approvals badge visibility in `apps/mobile/lib/features/threads/presentation/thread_list_page.dart:76-80` and the informational suppression banner in `apps/mobile/lib/features/threads/presentation/thread_detail_page.dart:98-101,205-208`; the settings page itself only wires the switches back to the controller (`apps/mobile/lib/features/settings/presentation/settings_page.dart:74-81,281-299`). There is still no delivery/suppression pipeline that changes real approval or live-activity notifications when these toggles change, so the earlier notification-runtime failure remains unresolved."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `integration-worker` skill still only requires reading mission artifacts plus `.factory/library/user-testing.md`, which is insufficient for cross-surface fixes that depend on current API/library contract notes.",
+      "evidence": "`.factory/skills/integration-worker/SKILL.md:16` requires mission artifacts and `.factory/library/user-testing.md`; the transcript skeleton for session `c5c8e081-023e-425c-be56-004b3b54827b` shows `user-testing.md` was read, but `.factory/library/api.md` was not (`api.md False`, `user-testing.md True` in a transcript-skeleton extraction), even though `.factory/library/api.md:23` already documented that `ApprovalRecordDto.target` is only a generic git-action identifier."
+    },
+    {
+      "area": "skills",
+      "observation": "The integration-worker procedure still does not reliably force missing manual lifecycle verification to be reported as a deviation in the handoff.",
+      "evidence": "`.factory/skills/integration-worker/SKILL.md:21-22` require manual verification across lifecycle edges and recording observations, but the transcript skeleton for session `c5c8e081-023e-425c-be56-004b3b54827b` contains no `Manual:` or `interactiveChecks` entries, while the handoff still records only `verification.commandsRun` and marks `skillFeedback.followedProcedure` as `true`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail at current HEAD. The runtime-sync rerun fixes the off-screen thread sync, approval refresh/conflict handling, git-status gating, and security-event ordering work, but branch-switch approvals still lack exact target-branch context under the real bridge payload and notification-preference toggles still do not affect actual notification delivery."
+}

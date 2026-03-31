@@ -1,8 +1,10 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
-use shared_contracts::{ModelOptionDto, ReasoningEffortOptionDto};
+use shared_contracts::{ModelOptionDto, ProviderKind, ReasoningEffortOptionDto};
 
 use crate::codex_transport::CodexJsonTransport;
+
+use super::native_thread_id_for_provider;
 
 pub(super) fn should_resume_thread(error: &str) -> bool {
     error.contains("thread not found")
@@ -330,10 +332,12 @@ impl CodexRpcClient {
         thread_id: &str,
         include_turns: bool,
     ) -> Result<CodexThread, String> {
+        let native_thread_id = native_thread_id_for_provider(thread_id, ProviderKind::Codex)
+            .ok_or_else(|| format!("thread {thread_id} is not a codex thread"))?;
         let result = self.request(
             "thread/read",
             json!({
-                "threadId": thread_id,
+                "threadId": native_thread_id,
                 "includeTurns": include_turns,
             }),
         )?;
@@ -344,10 +348,12 @@ impl CodexRpcClient {
     }
 
     pub(super) fn resume_thread(&mut self, thread_id: &str) -> Result<CodexThread, String> {
+        let native_thread_id = native_thread_id_for_provider(thread_id, ProviderKind::Codex)
+            .ok_or_else(|| format!("thread {thread_id} is not a codex thread"))?;
         let result = self.request(
             "thread/resume",
             json!({
-                "threadId": thread_id,
+                "threadId": native_thread_id,
             }),
         )?;
         let response: CodexThreadResumeResult =
@@ -374,10 +380,12 @@ impl CodexRpcClient {
         thread_id: &str,
         prompt: &str,
     ) -> Result<CodexTurn, String> {
+        let native_thread_id = native_thread_id_for_provider(thread_id, ProviderKind::Codex)
+            .ok_or_else(|| format!("thread {thread_id} is not a codex thread"))?;
         let result = self.request(
             "turn/start",
             json!({
-                "threadId": thread_id,
+                "threadId": native_thread_id,
                 "input": [text_user_input(prompt)],
             }),
         )?;
@@ -393,10 +401,12 @@ impl CodexRpcClient {
         expected_turn_id: &str,
         instruction: &str,
     ) -> Result<String, String> {
+        let native_thread_id = native_thread_id_for_provider(thread_id, ProviderKind::Codex)
+            .ok_or_else(|| format!("thread {thread_id} is not a codex thread"))?;
         let result = self.request(
             "turn/steer",
             json!({
-                "threadId": thread_id,
+                "threadId": native_thread_id,
                 "expectedTurnId": expected_turn_id,
                 "input": [text_user_input(instruction)],
             }),
@@ -408,10 +418,12 @@ impl CodexRpcClient {
     }
 
     pub(super) fn interrupt_turn(&mut self, thread_id: &str, turn_id: &str) -> Result<(), String> {
+        let native_thread_id = native_thread_id_for_provider(thread_id, ProviderKind::Codex)
+            .ok_or_else(|| format!("thread {thread_id} is not a codex thread"))?;
         self.request(
             "turn/interrupt",
             json!({
-                "threadId": thread_id,
+                "threadId": native_thread_id,
                 "turnId": turn_id,
             }),
         )?;

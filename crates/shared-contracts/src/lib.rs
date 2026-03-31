@@ -27,6 +27,25 @@ pub enum BridgeApiRouteKind {
     LocalNetwork,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderKind {
+    Codex,
+    ClaudeCode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadClientKind {
+    Cli,
+    Vscode,
+    RemoteControl,
+    DesktopIpc,
+    Archive,
+    Bridge,
+    Unknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BridgeApiRouteDto {
     pub id: String,
@@ -106,6 +125,9 @@ pub struct ThreadTimelineAnnotationsDto {
 pub struct ThreadSummaryDto {
     pub contract_version: String,
     pub thread_id: String,
+    pub native_thread_id: String,
+    pub provider: ProviderKind,
+    pub client: ThreadClientKind,
     pub title: String,
     pub status: ThreadStatus,
     pub workspace: String,
@@ -118,6 +140,9 @@ pub struct ThreadSummaryDto {
 pub struct ThreadDetailDto {
     pub contract_version: String,
     pub thread_id: String,
+    pub native_thread_id: String,
+    pub provider: ProviderKind,
+    pub client: ThreadClientKind,
     pub title: String,
     pub status: ThreadStatus,
     pub workspace: String,
@@ -128,6 +153,8 @@ pub struct ThreadDetailDto {
     pub source: String,
     pub access_mode: AccessMode,
     pub last_turn_summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_turn_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -389,6 +416,8 @@ pub struct TurnMutationAcceptedDto {
     pub thread_id: String,
     pub thread_status: ThreadStatus,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -477,7 +506,8 @@ mod tests {
             serde_json::from_str(fixture).expect("thread detail fixture should decode");
 
         assert_eq!(detail.contract_version, CONTRACT_VERSION);
-        assert_eq!(detail.thread_id, "thread-123");
+        assert_eq!(detail.thread_id, "codex:thread-123");
+        assert_eq!(detail.native_thread_id, "thread-123");
         assert_eq!(detail.last_turn_summary, "Summarized lifecycle behavior");
     }
 
@@ -487,7 +517,8 @@ mod tests {
         let timeline: ThreadTimelinePageDto =
             serde_json::from_str(fixture).expect("thread timeline page fixture should decode");
 
-        assert_eq!(timeline.thread.thread_id, "thread-123");
+        assert_eq!(timeline.thread.thread_id, "codex:thread-123");
+        assert_eq!(timeline.thread.native_thread_id, "thread-123");
         assert_eq!(timeline.entries.len(), 2);
         assert_eq!(timeline.entries[0].kind, BridgeEventKind::MessageDelta);
         assert_eq!(
@@ -555,6 +586,7 @@ mod tests {
             thread_id: "thread-123".to_string(),
             thread_status: ThreadStatus::Running,
             message: "turn accepted".to_string(),
+            turn_id: Some("turn-123".to_string()),
         };
 
         let value = serde_json::to_value(accepted).expect("turn mutation should serialize");

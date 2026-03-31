@@ -1,0 +1,61 @@
+{
+  "groupId": "rerun-reconnect-restore",
+  "testedAt": "2026-03-18T16:39:50.999220Z",
+  "isolation": {
+    "repoRoot": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion",
+    "missionDir": "/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525",
+    "appDir": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile",
+    "surface": "flutter-mobile-integration-tests",
+    "assignedAssertions": [
+      "VAL-CROSS-003"
+    ],
+    "evidenceDir": "/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525/evidence/mobile-app/rerun-reconnect",
+    "reportPath": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/validation/mobile-app/user-testing/flows/rerun-reconnect-restore.json"
+  },
+  "surface": "flutter-mobile-integration-tests",
+  "toolsUsed": [
+    "flutter test",
+    "python3"
+  ],
+  "commandsRun": [
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test integration_test/reconnect_offline_cache_test.dart --plain-name \"reconnect restores trusted session, selected thread, approvals, and repo context without duplication\" -r expanded",
+      "exitCode": 0,
+      "observation": "Passed; the integration harness restored the trusted session after a reconnect retry, reopened selected thread-123, kept live and catch-up items deduplicated, restored approval-restore exactly once, and preserved repo context for codex-mobile-companion on master/origin at /workspace/codex-mobile-companion while resubscribing the live stream without re-pairing."
+    }
+  ],
+  "assertions": [
+    {
+      "id": "VAL-CROSS-003",
+      "title": "Reconnect restores auth, subscriptions, active thread, approvals, and repo context without re-pairing",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Inspect the reconnect/offline integration harness to identify the narrowest user-surface test that exercises the full restore bundle.",
+          "expected": "A targeted integration test should cover trusted-session restore, selected thread restore, approval restoration, repo-context restoration, resubscription, and deduplication without a new pairing flow.",
+          "observed": "The minimal matching test is integration_test/reconnect_offline_cache_test.dart :: reconnect restores trusted session, selected thread, approvals, and repo context without duplication."
+        },
+        {
+          "action": "Run the targeted Flutter integration test with --plain-name for the reconnect restore case.",
+          "expected": "The trusted session should recover after reconnect, the selected thread should reopen, approvals and repo context should restore, live subscriptions should resume, and restored state should remain deduplicated without re-pairing.",
+          "observed": "The test passed: the UI recovered from Bridge disconnected to Paired with Codex Mobile Companion, reopened thread-123, restored one live item and one catch-up item without duplication, restored approval-restore with pendingCount 1, preserved repository=codex-mobile-companion branch=master remote=origin workspace=/workspace/codex-mobile-companion, and resubscribed/fetched approvals at least twice."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "mobile-app/rerun-reconnect/VAL-CROSS-003-reconnect-restore.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "not applicable on the Flutter integration-test surface; evidence is captured via the serialized Flutter test log",
+        "network": "not applicable; the integration harness uses fake bridge APIs and a fake live stream to drive the real Flutter user surface"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    "The flutter-mobile-integration-tests surface provides serialized Flutter test logs instead of standalone screenshots/video/websocket captures, so this rerun relies on the passing targeted integration log plus source-reviewed harness assertions.",
+    "Even the single targeted integration test rebuilt and reinstalled the debug app before execution, adding about 24 seconds of setup time to the rerun."
+  ],
+  "blockers": [],
+  "summary": "Retested 1 assertion: VAL-CROSS-003 passed via the targeted reconnect_offline_cache integration harness."
+}

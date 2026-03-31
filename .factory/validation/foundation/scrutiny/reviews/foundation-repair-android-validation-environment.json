@@ -1,0 +1,21 @@
+{
+  "featureId": "foundation-repair-android-validation-environment",
+  "reviewedAt": "2026-03-17T19:46:39.409624Z",
+  "commitId": "7c2d8a2a43e71d4266b55cde668e1d6f276bdcd8",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The feature adds a focused Android AVD repair/validation harness and wires it into `.factory/services.yaml`. The script resolves the Android SDK, recreates missing AVD payload directories from known definitions, verifies required system images, and checks Flutter can enumerate Android emulator targets; I did not find blocking or non-blocking implementation defects against this feature's stated requirements.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The shared library still says Android emulator setup is broken and must be repaired early, but it does not mention that this feature already added the reusable `android-repair` / `android-validate` commands. Later workers could waste time rediscovering the harness or assume Android validation is still unavailable.",
+      "evidence": ".factory/library/environment.md:14 and .factory/library/user-testing.md:14 still describe the emulator environment as broken; compare with .factory/services.yaml:4-7, which now exposes `android-repair` and `android-validate`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Pass. Commit `7c2d8a2` implements the requested Android AVD repair harness and service commands, and the mission artifacts show the repaired definitions were recognized by Flutter tooling. The only gap I found is stale shared-state guidance in `.factory/library`, which still describes Android setup as broken instead of pointing workers to the new harness."
+}

@@ -1,0 +1,15 @@
+{
+  "featureId": "hardening-fix-notification-permission-fallback",
+  "reviewedAt": "2026-03-18T21:39:01.937596Z",
+  "commitId": "e917f18",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed the current hardening scope docs (`validation-contract.md`, `validation-state.json`, `mission.md`, `AGENTS.md`, `progress_log.jsonl`), the prior failed review for `hardening-fix-real-platform-notification-delivery-and-reset`, both hardening feature entries/handoffs, transcript skeletons for worker sessions `03f345b0-d715-4a8a-bd4a-9e15c6bd726d` and `3f02a50a-ea34-4e48-a157-88a88c5b44f8`, commits `b17471a` and `e917f18`, the `integration-worker` skill, and the shared-state notes. Under the narrowed foreground-only notification scope recorded in `AGENTS.md`, `.factory/library/user-testing.md`, and the 2026-03-18 rerun messages in `progress_log.jsonl`, the old blocking concern about true background/terminated delivery is explicitly out of scope. Within the remaining rerun scope, commit `b17471a` already covers the foreground behaviors the feature description now requires: active-app notifications are surfaced from the live stream and route through platform callback / launch-payload handling (`apps/mobile/lib/features/settings/application/runtime_notification_delivery_controller.dart:217-236,353-379,407-479`; `apps/mobile/integration_test/notification_deep_links_and_dedup_test.dart:22-149,335-371`), and trust reset clears persisted notification dedup/pending-launch state (`apps/mobile/lib/features/pairing/application/pairing_controller.dart:434-447`). Commit `e917f18` resolves the remaining scrutiny concern by making system-notification availability follow real permission-request results and runtime availability checks (`apps/mobile/lib/features/settings/data/runtime_platform_notifications.dart:68-106,116-180,187-200`). Focused tests now prove that denied permissions leave `systemNotificationsAvailable` false, skip platform posting, and keep the in-app foreground fallback active (`apps/mobile/test/features/settings/runtime_platform_notifications_test.dart:19-106`; `apps/mobile/test/features/settings/runtime_notification_delivery_controller_test.dart:442-491`). I did not find any remaining blocking or non-blocking defects within the current foreground-only rerun scope.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/validation/hardening/scrutiny/reviews/hardening-fix-real-platform-notification-delivery-and-reset.json",
+  "summary": "Pass. With hardening notifications narrowed to foreground-only behavior, `b17471a` now adequately covers active-app notification routing/open handling and trust-reset cleanup, and `e917f18` fixes the remaining denied-permission fallback bug. No blocking or non-blocking issues remain in the current rerun scope."
+}

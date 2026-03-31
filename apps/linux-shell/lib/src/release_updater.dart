@@ -633,6 +633,10 @@ LinuxUpdateAsset? pickPreferredLinuxAsset(
 }
 
 String parseSha256Sums(String manifest, String assetName) {
+  final expectedNames = <String>{
+    _normalizeChecksumFileName(assetName),
+  };
+
   for (final rawLine in const LineSplitter().convert(manifest)) {
     final line = rawLine.trim();
     if (line.isEmpty) {
@@ -642,7 +646,8 @@ String parseSha256Sums(String manifest, String assetName) {
     if (match == null) {
       continue;
     }
-    if (match.group(2) == assetName) {
+    final fileName = _normalizeChecksumFileName(match.group(2)!);
+    if (expectedNames.contains(fileName)) {
       return match.group(1)!.toLowerCase();
     }
   }
@@ -650,6 +655,12 @@ String parseSha256Sums(String manifest, String assetName) {
   throw ReleaseUpdaterException(
     'Update verification failed: $assetName is missing from SHA256SUMS.',
   );
+}
+
+String _normalizeChecksumFileName(String rawValue) {
+  final normalized = rawValue.trim().replaceAll('\\', '/');
+  final segments = normalized.split('/');
+  return (segments.isEmpty ? normalized : segments.last).toLowerCase();
 }
 
 String _basename(String path) {

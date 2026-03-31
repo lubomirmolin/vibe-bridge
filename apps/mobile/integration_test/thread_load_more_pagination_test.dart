@@ -275,6 +275,7 @@ class _PaginatedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   Future<TurnMutationResult> interruptTurn({
     required String bridgeApiBaseUrl,
     required String threadId,
+    String? turnId,
   }) {
     throw UnimplementedError('Turn interruption is unused in this test.');
   }

@@ -1,0 +1,21 @@
+{
+  "featureId": "mobile-app-fix-approval-target-contract-and-ui",
+  "reviewedAt": "2026-03-18T13:55:44.446858Z",
+  "commitId": "8c32448bd0a1eb462f0c8f1ce126318b67bf3e81",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Re-reviewed the original failure report alongside the original feature commit `33425a4` and the fix commit `8c32448`, plus both handoffs, the fix transcript skeleton, and current HEAD code. The prior blocking branch-target gap is resolved under the real bridge/mobile contract: branch-switch approvals now serialize the requested destination branch into `ApprovalRecordDto.target`, route coverage proves both the immediate approval response and `/approvals` snapshot carry that exact branch, and the mobile queue/detail surfaces render `approval.target` via `approvalTargetLabel()` while widget coverage now constructs the approval from bridge-wire JSON rather than constructor-only fixtures.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The shared API library note for approval targets is now stale and still describes `ApprovalRecordDto.target` as a generic git-action identifier, which no longer matches the bridge contract after this fix.",
+      "evidence": "`.factory/library/api.md:23` still says approval records expose generic targets like `git.branch_switch`, but `crates/bridge-core/src/lib.rs:580-583` now returns the concrete branch for `git_branch_switch`, `crates/bridge-core/src/lib.rs:663` persists that value into `ApprovalRecordDto.target`, and `crates/bridge-core/src/lib.rs:2677-2686` asserts the live gated response plus `/approvals` snapshot both return `release/2026`."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/mobile-app/scrutiny/reviews/integration-mobile-runtime-sync-and-safe-affordances-fix.json",
+  "summary": "Pass. The fix resolves the prior exact-branch approval-target failure under the real bridge/mobile contract, and the only follow-up I found is stale shared API documentation that still describes the old generic target behavior."
+}

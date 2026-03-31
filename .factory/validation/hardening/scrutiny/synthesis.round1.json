@@ -1,0 +1,67 @@
+{
+  "milestone": "hardening",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then (cd \"$ROOT/apps/mobile\" && flutter test --concurrency=5); fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo test --manifest-path \"$ROOT/Cargo.toml\" --workspace --jobs 5; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild test -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS'; fi",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then flutter analyze \"$ROOT/apps/mobile\"; fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo check --manifest-path \"$ROOT/Cargo.toml\" --workspace --all-targets; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; if [ ! -f \"$ROOT/apps/mobile/pubspec.yaml\" ] && [ ! -f \"$ROOT/Cargo.toml\" ] && [ ! -d \"$ROOT/apps/mac-shell\" ]; then echo \"workspace not scaffolded yet\"; exit 0; fi; if [ -f \"$ROOT/apps/mobile/pubspec.yaml\" ]; then flutter analyze \"$ROOT/apps/mobile\"; fi; if [ -f \"$ROOT/Cargo.toml\" ]; then cargo fmt --manifest-path \"$ROOT/Cargo.toml\" --all --check && cargo clippy --manifest-path \"$ROOT/Cargo.toml\" --workspace --all-targets -- -D warnings; fi; if [ -f \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj\" ]; then xcodebuild -project \"$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj\" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 1,
+    "failed": 2,
+    "failedFeatures": [
+      "integration-notifications-deep-links-and-dedup",
+      "integration-platform-parity-and-build-closure"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "integration-notifications-deep-links-and-dedup",
+      "severity": "blocking",
+      "description": "The hardening notification implementation only routes events through in-app SnackBar UI plus a persisted launch-target secret; it does not add real background or terminated-app notification delivery/open handling, so VAL-CROSS-002/008/009/010 are not fully satisfied end to end."
+    },
+    {
+      "featureId": "integration-platform-parity-and-build-closure",
+      "severity": "blocking",
+      "description": "The new live-bridge approval integration test validates direct bridge API calls but never boots the Flutter app or exercises the real approvals queue/detail/approve/reject UI on iOS and Android, so the feature still lacks live-target evidence for the user-visible approval flow it claims to validate."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": ".factory/skills/integration-worker/SKILL.md",
+      "suggestion": "Document an Exec-mode fallback for lifecycle-heavy cross-device validation so workers can satisfy the procedure with explicit automated simulator/emulator evidence when OS-level interactive flows cannot be driven.",
+      "evidence": "All three hardening reviews flagged the same procedure gap. The integration-first-run-end-to-end-journey and integration-platform-parity-and-build-closure handoffs both recorded skill deviations only because step 6 still requires manual lifecycle walkthroughs, and the notifications hardening review found the same gap for background/cold-start notification validation in Exec mode.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "The notifications review's skill-gap note about manual lifecycle verification in Exec mode.",
+      "reason": "duplicate-consolidated-into-single-skill-update"
+    },
+    {
+      "observation": "The first-run review's skill-gap note about documenting automated integration-harness fallback for Exec mode.",
+      "reason": "duplicate-consolidated-into-single-skill-update"
+    },
+    {
+      "observation": "Update .factory/library/user-testing.md to document the new live-bridge approval integration harness used by the parity/build-closure feature.",
+      "reason": "documentation-update-out-of-scope-for-this-validation-run"
+    }
+  ],
+  "previousRound": null
+}

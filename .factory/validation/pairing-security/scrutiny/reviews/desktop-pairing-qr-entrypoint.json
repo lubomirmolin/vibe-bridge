@@ -1,0 +1,39 @@
+{
+  "featureId": "desktop-pairing-qr-entrypoint",
+  "reviewedAt": "2026-03-17T22:54:11Z",
+  "commitId": "c89a8f5f81414bc5ab46f0988ec8f8cd52b11513",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature does add a menu-bar QR surface and a bridge-backed `/pairing/session` route, but the emitted QR payload is not safe or usable for real phone pairing: the bridge identity is derived only from host/port and the advertised API base URL points at localhost.",
+    "issues": [
+      {
+        "file": "crates/bridge-core/src/lib.rs",
+        "line": 667,
+        "severity": "blocking",
+        "description": "`PairingSessionService::new()` sets `bridge_id` from `derive_bridge_id(host, port)`, and `derive_bridge_id()` hashes only the configured bind address (`127.0.0.1:3110` by default). That means different Macs using the default config emit the same `bridge_id`, so the QR does not carry a real bridge identity and cannot safely support one-phone-to-one-Mac trust or bridge-identity mismatch checks."
+      },
+      {
+        "file": "crates/bridge-core/src/lib.rs",
+        "line": 669,
+        "severity": "blocking",
+        "description": "The pairing response hard-codes `api_base_url` as `http://{host}:{port}` and copies that localhost URL into the QR payload. With the default bind of `127.0.0.1:3110`, a phone that scans the desktop QR is told to connect to its own localhost instead of the Mac bridge, so the entrypoint is not actually usable for real pairing without extra manual networking steps."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The shared security/library docs do not currently record the concrete invariant that bridge identity must be device-unique and long-lived, even though the planning/discovery doc does. That gap likely made it easier to ship a host/port-derived bridge ID as if it were a real device identity.",
+      "evidence": "`codex-mobile-companion-discovery.md:356-360` says pairing should use an 'Ed25519 long-term identity per bridge', while `.factory/library/security.md:9-17` only says the product owns pairing/identity and must fail closed on bridge identity mismatch."
+    },
+    {
+      "area": "skills",
+      "observation": "The desktop-worker skill's manual verification checklist is broader than this early QR-entrypoint slice, so it was marked followed even though the worker only verified process liveness. The skill should clarify the minimum manual checks expected for pairing-only shell work.",
+      "evidence": "`.factory/skills/desktop-worker/SKILL.md:22-23` requires checking unpaired/paired-idle/paired-active/bridge-offline states, but the handoff only records a liveness check in `.../handoffs/2026-03-17T22-00-15-538Z__desktop-pairing-qr-entrypoint__62cd0ce4-d4b0-4232-a262-cf089b35216c.json:46-50`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the feature entry, handoff, worker transcript skeleton, desktop-worker skill, shared mission state, and commit `c89a8f5f81414bc5ab46f0988ec8f8cd52b11513`. The feature fails scrutiny because the QR payload is backed by a non-unique pseudo-identity and an unreachable localhost base URL, so it does not provide a correct or usable pairing entrypoint for a phone."
+}

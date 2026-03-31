@@ -5,7 +5,7 @@ import SwiftUI
 private enum PairingEntryLayout {
     static let panelMinWidth: CGFloat = 460
     static let panelMaxWidth: CGFloat = 540
-    static let panelMinHeight: CGFloat = 640
+    static let panelMinHeight: CGFloat = 480
     static let panelMaxHeight: CGFloat = 800
     static let qrDimension: CGFloat = 260
     static let qrWindowDimension: CGFloat = 520
@@ -19,45 +19,23 @@ struct PairingEntryView: View {
     @ObservedObject var viewModel: PairingEntryViewModel
     @ObservedObject var updateViewModel: UpdateCheckViewModel
     @Environment(\.openWindow) private var openWindow
+    @State private var showUpdateCard = false
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 16) {
-                Image(systemName: "iphone.gen3.radiowaves.left.and.right")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 40, height: 40)
-                    .foregroundStyle(.tint)
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.accentColor.opacity(0.1))
-                    )
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Codex Companion")
-                        .font(.title2)
-                        .fontWeight(.bold)
-
-                    Text("Desktop shell runtime supervision")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-            .padding(24)
-            .background(Color(NSColor.controlBackgroundColor))
+            headerBar
 
             Divider()
 
             ScrollView {
                 VStack(spacing: 24) {
-                    statusCard
-                    deviceManagementCard
-                    networkCard
-                    speechCard
-                    updateCard
+                    bridgeAndDevicesCard
                     qrSection
+                    speechCard
+
+                    if showUpdateCard {
+                        updateCard
+                    }
 
                     if let errorMessage = viewModel.errorMessage {
                         errorMessageView(errorMessage)
@@ -68,73 +46,7 @@ struct PairingEntryView: View {
 
             Divider()
 
-            HStack(spacing: 12) {
-                if viewModel.isLoadingPairing
-                    || viewModel.isRefreshingRuntime
-                    || viewModel.isRevokingTrust
-                    || viewModel.isRestartingRuntime
-                    || viewModel.isUpdatingNetworkSettings
-                {
-                    ProgressView()
-                        .controlSize(.small)
-                        .padding(.trailing, 8)
-                }
-
-                Spacer()
-
-                if viewModel.canRevokeTrust {
-                    Button(role: .destructive) {
-                        Task { await viewModel.revokeTrustedDeviceFromDesktop() }
-                    } label: {
-                        Text(viewModel.isRevokingTrust ? "Removing…" : "Remove All Devices")
-                    }
-                    .disabled(viewModel.isRevokingTrust || viewModel.isRefreshingRuntime)
-                }
-
-                Button {
-                    Task { await viewModel.restartLocalRuntime() }
-                } label: {
-                    Text(viewModel.isRestartingRuntime ? "Restarting…" : "Restart Runtime")
-                }
-                .disabled(viewModel.isRefreshingRuntime || viewModel.isRestartingRuntime)
-
-                Button {
-                    Task { await viewModel.refreshPairingSession() }
-                } label: {
-                    Text(
-                        viewModel.isLoadingPairing
-                            ? "Generating…"
-                            : (viewModel.hasTrustedDevices ? "Add Device QR" : "Refresh QR")
-                    )
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(viewModel.isLoadingPairing || !viewModel.shouldShowPairingQR)
-                .buttonStyle(.borderedProminent)
-            }
-            .padding(16)
-            .background(Color(NSColor.windowBackgroundColor))
-
-            Divider()
-
-            HStack(spacing: 12) {
-                Spacer()
-
-                Button {
-                    NSApplication.shared.terminate(nil)
-                } label: {
-                    Text("Quit")
-                }
-
-                Button(role: .destructive) {
-                    viewModel.stopBridgeExplicitly()
-                    NSApplication.shared.terminate(nil)
-                } label: {
-                    Text("Quit + Stop Bridge")
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 12)
-            .background(Color(NSColor.windowBackgroundColor))
+            bottomBar
         }
         .frame(
             minWidth: PairingEntryLayout.panelMinWidth,
@@ -144,51 +56,156 @@ struct PairingEntryView: View {
         )
     }
 
-    private var statusCard: some View {
-        VStack(spacing: 0) {
-            statusRow(
-                icon: shellStateIcon,
-                iconColor: shellStateColor,
-                label: "Shell State",
-                value: viewModel.shellState.displayName
-            )
-            Divider().padding(.leading, 44)
-            statusRow(
-                icon: "cpu",
-                iconColor: .secondary,
-                label: "Supervisor",
-                value: viewModel.supervisorStatusLabel
-            )
-            Divider().padding(.leading, 44)
-            statusRow(
-                icon: "server.rack",
-                iconColor: .secondary,
-                label: "Bridge",
-                value: viewModel.bridgeRuntimeLabel
-            )
-            Divider().padding(.leading, 44)
-                statusRow(
-                    icon: "candybarphone",
-                    iconColor: .secondary,
-                    label: "Paired Devices",
-                    value: viewModel.pairedDeviceLabel
-                )
-            if viewModel.shellState == .pairedActive || viewModel.shellState == .pairedIdle {
-                Divider().padding(.leading, 44)
-                statusRow(
-                    icon: "key",
-                    iconColor: .secondary,
-                    label: "Active Session",
-                    value: viewModel.activeSessionLabel
-                )
+    private var headerBar: some View {
+        HStack(spacing: 10) {
+            Image("StatusBarIcon")
+                .renderingMode(.template)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 18, height: 18)
+                .foregroundStyle(.tint)
+
+            Text("Vibe Bridge Companion")
+                .font(.headline)
+                .fontWeight(.semibold)
+
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color(NSColor.controlBackgroundColor))
+    }
+
+    private var bottomBar: some View {
+        HStack(spacing: 12) {
+            if viewModel.isLoadingPairing
+                || viewModel.isRefreshingRuntime
+                || viewModel.isRevokingTrust
+                || viewModel.isRestartingRuntime
+                || viewModel.isUpdatingNetworkSettings
+            {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(.trailing, 8)
             }
+
+            Spacer()
+
+            Button {
+                withAnimation { showUpdateCard.toggle() }
+            } label: {
+                if showUpdateCard {
+                    Label("Hide Updates", systemImage: "chevron.up")
+                } else {
+                    Label("Updates", systemImage: "arrow.down.circle")
+                }
+            }
+
+            Button {
+                Task { await viewModel.restartLocalRuntime() }
+            } label: {
+                Text(viewModel.isRestartingRuntime ? "Restarting…" : "Restart Runtime")
+            }
+            .disabled(viewModel.isRefreshingRuntime || viewModel.isRestartingRuntime)
+
+            Button {
+                viewModel.stopBridgeExplicitly()
+                NSApplication.shared.terminate(nil)
+            } label: {
+                Text("Quit")
+            }
+        }
+        .padding(16)
+        .background(Color(NSColor.windowBackgroundColor))
+    }
+
+    private var bridgeAndDevicesCard: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: shellStateIcon)
+                    .font(.system(size: 16))
+                    .foregroundStyle(shellStateColor)
+                    .frame(width: 20)
+
+                Text(viewModel.shellState.displayName)
+                    .font(.body.weight(.medium))
+
+                Spacer()
+
+                if viewModel.runningThreadCount > 0 {
+                    Text("\(viewModel.runningThreadCount) thread\(viewModel.runningThreadCount == 1 ? "" : "s")")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+
+            if viewModel.shellState == .degraded {
+                Divider().padding(.leading, 44)
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                    Text(viewModel.runtimeDetail)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .lineLimit(2)
+                }
+                .padding(.vertical, 10)
+                .padding(.horizontal, 16)
+            }
+
             Divider().padding(.leading, 44)
-            statusRow(
-                icon: "point.3.connected.trianglepath.dotted",
-                iconColor: .secondary,
-                label: "Active Threads",
-                value: "\(viewModel.runningThreadCount)"
-            )
+
+            if viewModel.trustedDevices.isEmpty {
+                HStack(spacing: 12) {
+                    Image(systemName: "plus.viewfinder")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("No paired devices")
+                            .font(.body)
+                        Text("Generate a QR code below to pair the first device.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+                }
+                .padding(.vertical, 12)
+                .padding(.horizontal, 16)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(viewModel.trustedDevices.enumerated()), id: \.element.id) { index, device in
+                        trustedDeviceRow(
+                            device: device,
+                            session: viewModel.trustedSessions.first(where: { $0.deviceID == device.deviceID })
+                        )
+
+                        if index < viewModel.trustedDevices.count - 1 {
+                            Divider().padding(.leading, 44)
+                        }
+                    }
+                }
+
+                Divider().padding(.leading, 44)
+
+                HStack {
+                    Button(role: .destructive) {
+                        Task { await viewModel.revokeTrustedDeviceFromDesktop() }
+                    } label: {
+                        Text(viewModel.isRevokingTrust ? "Removing…" : "Remove All Devices")
+                    }
+                    .disabled(viewModel.isRevokingTrust || viewModel.isRefreshingRuntime)
+
+                    Spacer()
+                }
+                .padding(.vertical, 12)
+                .padding(.horizontal, 16)
+            }
         }
         .background(Color(NSColor.controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -196,78 +213,179 @@ struct PairingEntryView: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
         )
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            HStack {
-                Text(viewModel.runtimeDetail)
-                    .font(.footnote)
-                    .foregroundStyle(viewModel.shellState == .degraded ? .red : .secondary)
-                    .padding(.top, 8)
-                    .padding(.horizontal, 4)
-                Spacer()
-            }
-        }
     }
 
-    private func statusRow(icon: String, iconColor: Color, label: String, value: String) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
+    private func trustedDeviceRow(
+        device: BridgeTrustedDeviceDTO,
+        session: BridgeTrustedSessionDTO?
+    ) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "iphone.gen3")
                 .font(.system(size: 16))
-                .foregroundStyle(iconColor)
+                .foregroundStyle(.secondary)
                 .frame(width: 20)
 
-            Text(label)
-                .font(.body)
-                .foregroundStyle(.primary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(device.deviceName)
+                    .font(.body)
+
+                Text(device.deviceID)
+                    .font(.footnote.monospaced())
+                    .foregroundStyle(.secondary)
+
+                Text(
+                    "Paired \(DateFormatter.pairingExpiry.string(from: Date(timeIntervalSince1970: TimeInterval(device.pairedAtEpochSeconds))))"
+                )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+                if let session {
+                    Text("Session \(session.sessionID)")
+                        .font(.footnote.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
 
             Spacer()
 
-            Text(value)
-                .font(.body.monospaced())
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            Button(role: .destructive) {
+                Task { await viewModel.revokeTrustedDeviceFromDesktop(phoneID: device.deviceID) }
+            } label: {
+                Text(viewModel.isRevokingTrust ? "Removing…" : "Remove")
+            }
+            .disabled(viewModel.isRevokingTrust || viewModel.isRefreshingRuntime)
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 16)
     }
 
-    private var shellStateIcon: String {
+    @ViewBuilder
+    private var qrSection: some View {
         switch viewModel.shellState {
-        case .starting: return "arrow.triangle.2.circlepath"
-        case .unpaired: return "lock.open"
-        case .pairedIdle: return "lock"
-        case .pairedActive: return "lock.fill"
-        case .degraded: return "exclamationmark.triangle"
-        }
-    }
+        case .starting:
+            infoBox(
+                icon: "hourglass",
+                title: "Starting Up",
+                message: "Desktop app is starting the local bridge and Codex runtime. Pairing will unlock automatically once the stack reports healthy."
+            )
 
-    private var shellStateColor: Color {
-        switch viewModel.shellState {
-        case .starting: return .orange
-        case .unpaired: return .blue
-        case .pairedIdle: return .green
-        case .pairedActive: return .green
-        case .degraded: return .red
-        }
-    }
+        case .unpaired, .pairedIdle, .pairedActive:
+            if let qrImage = viewModel.qrImage,
+               let response = viewModel.pairingSession
+            {
+                VStack(spacing: 20) {
+                    Button {
+                        openWindow(id: PairingWindowID.qrCode)
+                    } label: {
+                        Image(nsImage: qrImage)
+                            .resizable()
+                            .interpolation(.none)
+                            .scaledToFit()
+                            .frame(
+                                width: PairingEntryLayout.qrDimension,
+                                height: PairingEntryLayout.qrDimension
+                            )
+                            .padding(16)
+                            .background(Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                            .shadow(color: Color.black.opacity(0.1), radius: 10, x: 0, y: 4)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .stroke(Color.black.opacity(0.05), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Click to open large pairing window")
 
-    private func errorMessageView(_ message: String) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: "xmark.octagon.fill")
-                .foregroundStyle(.red)
-                .font(.title3)
-            Text(message)
-                .font(.footnote)
-                .foregroundStyle(.red)
-            Spacer(minLength: 0)
+                    VStack(spacing: 8) {
+                        Text(viewModel.hasTrustedDevices ? "Add Another Device" : "Ready to Pair")
+                            .font(.headline)
+                        Text(
+                            viewModel.hasTrustedDevices
+                                ? "Scan this QR code using the Codex mobile app to add another trusted device."
+                                : "Scan this QR code using the Codex mobile app."
+                        )
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    }
+
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock")
+                        Text("Expires: \(DateFormatter.pairingExpiry.string(from: Date(timeIntervalSince1970: TimeInterval(response.pairingSession.expiresAtEpochSeconds))))")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.secondary.opacity(0.1))
+                    .clipShape(Capsule())
+
+                    Button {
+                        Task { await viewModel.refreshPairingSession() }
+                    } label: {
+                        Text(
+                            viewModel.isLoadingPairing
+                                ? "Generating…"
+                                : (viewModel.hasTrustedDevices ? "Add Device QR" : "Refresh QR")
+                        )
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(viewModel.isLoadingPairing || !viewModel.shouldShowPairingQR)
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding(.vertical, 8)
+            } else {
+                VStack(spacing: 16) {
+                    Image(systemName: "qrcode.viewfinder")
+                        .font(.system(size: 32))
+                        .foregroundStyle(.secondary)
+
+                    Text(viewModel.hasTrustedDevices ? "Add Another Device" : "Ready to Generate QR")
+                        .font(.headline)
+
+                    Text(
+                        viewModel.hasTrustedDevices
+                            ? "Existing devices stay connected. Click below to generate a fresh pairing code."
+                            : "Bridge is reachable but no pairing QR is cached yet. Click below to begin."
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+
+                    Button {
+                        Task { await viewModel.refreshPairingSession() }
+                    } label: {
+                        Text(
+                            viewModel.isLoadingPairing
+                                ? "Generating…"
+                                : (viewModel.hasTrustedDevices ? "Add Device QR" : "Generate QR")
+                        )
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(viewModel.isLoadingPairing || !viewModel.shouldShowPairingQR)
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity)
+                .background(Color(NSColor.controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                )
+            }
+
+        case .degraded:
+            infoBox(
+                icon: "exclamationmark.triangle.fill",
+                iconColor: .red,
+                title: "Bridge Degraded",
+                message: "Supervision is retrying automatically and will recover when bridge health returns."
+            )
         }
-        .padding(12)
-        .background(Color.red.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.red.opacity(0.3), lineWidth: 1)
-        )
     }
 
     private var speechCard: some View {
@@ -300,7 +418,8 @@ struct PairingEntryView: View {
             .padding(.horizontal, 16)
 
             if let progress = viewModel.speechDownloadProgress,
-               viewModel.speechModelStateLabel == "Installing" {
+               viewModel.speechModelStateLabel == "Installing"
+            {
                 Divider().padding(.leading, 44)
                 HStack(spacing: 12) {
                     ProgressView(value: Double(progress), total: 100)
@@ -408,285 +527,69 @@ struct PairingEntryView: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
         )
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
     }
 
-    private var networkCard: some View {
-        VStack(spacing: 0) {
-            statusRow(
-                icon: "point.3.connected.trianglepath.dotted",
-                iconColor: .secondary,
-                label: "Pairing Routes",
-                value: viewModel.routeSummaryLabel
-            )
-            Divider().padding(.leading, 44)
-            HStack(spacing: 12) {
-                Image(systemName: "network")
-                    .font(.system(size: 16))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 20)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Enable Local Network Pairing")
-                        .font(.body)
-                    Text(
-                        "Advertise an HTTP LAN route alongside Tailscale on trusted private networks."
-                    )
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { viewModel.localNetworkPairingEnabled },
-                        set: { enabled in
-                            Task { await viewModel.setLocalNetworkPairingEnabled(enabled) }
-                        }
-                    )
-                )
-                .labelsHidden()
-                .disabled(viewModel.isUpdatingNetworkSettings || viewModel.isRefreshingRuntime)
-            }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 16)
-
-            if !viewModel.pairingRoutes.isEmpty {
-                Divider().padding(.leading, 44)
-                VStack(spacing: 0) {
-                    ForEach(Array(viewModel.pairingRoutes.enumerated()), id: \.offset) { _, route in
-                        HStack(spacing: 12) {
-                            Image(systemName: route.kind == .tailscale ? "lock.shield" : "wifi")
-                                .font(.system(size: 16))
-                                .foregroundStyle(route.reachable ? .green : .secondary)
-                                .frame(width: 20)
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(route.kind == .tailscale ? "Tailscale" : "Local Network")
-                                    .font(.body)
-                                Text(route.baseURL)
-                                    .font(.footnote.monospaced())
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-
-                            Spacer()
-
-                            Text(routeBadge(route))
-                                .font(.caption.monospaced())
-                                .foregroundStyle(route.reachable ? .green : .secondary)
-                        }
-                        .padding(.vertical, 12)
-                        .padding(.horizontal, 16)
-
-                        if route.id != viewModel.pairingRoutes.last?.id {
-                            Divider().padding(.leading, 44)
-                        }
-                    }
-                }
-            }
-        }
-        .background(Color(NSColor.controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-        )
-    }
-
-    private func routeBadge(_ route: BridgeAPIRouteDTO) -> String {
-        if route.isPreferred && route.reachable {
-            return "primary"
-        }
-        if route.reachable {
-            return "reachable"
-        }
-        return "offline"
-    }
-
-    @ViewBuilder
-    private var deviceManagementCard: some View {
-        VStack(spacing: 0) {
-            statusRow(
-                icon: "iphone.gen3",
-                iconColor: .secondary,
-                label: "Trusted Devices",
-                value: "\(viewModel.trustedDevices.count)"
-            )
-
-            if viewModel.trustedDevices.isEmpty {
-                Divider().padding(.leading, 44)
-                HStack(spacing: 12) {
-                    Image(systemName: "plus.viewfinder")
-                        .font(.system(size: 16))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 20)
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("No paired devices")
-                            .font(.body)
-                        Text("Generate a QR code below to pair the first device.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer()
-                }
-                .padding(.vertical, 12)
-                .padding(.horizontal, 16)
-            } else {
-                Divider().padding(.leading, 44)
-                VStack(spacing: 0) {
-                    ForEach(Array(viewModel.trustedDevices.enumerated()), id: \.element.id) { index, device in
-                        trustedDeviceRow(
-                            device: device,
-                            session: viewModel.trustedSessions.first(where: { $0.deviceID == device.deviceID })
-                        )
-
-                        if index < viewModel.trustedDevices.count - 1 {
-                            Divider().padding(.leading, 44)
-                        }
-                    }
-                }
-            }
-        }
-        .background(Color(NSColor.controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-        )
-    }
-
-    private func trustedDeviceRow(
-        device: BridgeTrustedDeviceDTO,
-        session: BridgeTrustedSessionDTO?
-    ) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "iphone.gen3")
+    private func statusRow(icon: String, iconColor: Color, label: String, value: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
                 .font(.system(size: 16))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(iconColor)
                 .frame(width: 20)
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text(device.deviceName)
-                    .font(.body)
-
-                Text(device.deviceID)
-                    .font(.footnote.monospaced())
-                    .foregroundStyle(.secondary)
-
-                Text(
-                    "Paired \(DateFormatter.pairingExpiry.string(from: Date(timeIntervalSince1970: TimeInterval(device.pairedAtEpochSeconds))))"
-                )
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
-                if let session {
-                    Text("Session \(session.sessionID)")
-                        .font(.footnote.monospaced())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
+            Text(label)
+                .font(.body)
+                .foregroundStyle(.primary)
 
             Spacer()
 
-            Button(role: .destructive) {
-                Task { await viewModel.revokeTrustedDeviceFromDesktop(phoneID: device.deviceID) }
-            } label: {
-                Text(viewModel.isRevokingTrust ? "Removing…" : "Remove")
-            }
-            .disabled(viewModel.isRevokingTrust || viewModel.isRefreshingRuntime)
+            Text(value)
+                .font(.body.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 16)
     }
 
-    @ViewBuilder
-    private var qrSection: some View {
+    private var shellStateIcon: String {
         switch viewModel.shellState {
-        case .starting:
-            infoBox(
-                icon: "hourglass",
-                title: "Starting Up",
-                message: "Desktop app is starting the local bridge and Codex runtime. Pairing will unlock automatically once the stack reports healthy."
-            )
-
-        case .unpaired, .pairedIdle, .pairedActive:
-            if let qrImage = viewModel.qrImage,
-               let response = viewModel.pairingSession
-            {
-                VStack(spacing: 20) {
-                    Button {
-                        openWindow(id: PairingWindowID.qrCode)
-                    } label: {
-                        Image(nsImage: qrImage)
-                            .resizable()
-                            .interpolation(.none)
-                            .scaledToFit()
-                            .frame(
-                                width: PairingEntryLayout.qrDimension,
-                                height: PairingEntryLayout.qrDimension
-                            )
-                            .padding(16)
-                            .background(Color.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
-                            .shadow(color: Color.black.opacity(0.1), radius: 10, x: 0, y: 4)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .stroke(Color.black.opacity(0.05), lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help("Click to open large pairing window")
-
-                    VStack(spacing: 8) {
-                        Text(viewModel.hasTrustedDevices ? "Add Another Device" : "Ready to Pair")
-                            .font(.headline)
-                        Text(
-                            viewModel.hasTrustedDevices
-                                ? "Scan this QR code using the Codex mobile app to add another trusted device."
-                                : "Scan this QR code using the Codex mobile app."
-                        )
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-
-                    HStack(spacing: 6) {
-                        Image(systemName: "clock")
-                        Text("Expires: \(DateFormatter.pairingExpiry.string(from: Date(timeIntervalSince1970: TimeInterval(response.pairingSession.expiresAtEpochSeconds))))")
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.secondary.opacity(0.1))
-                    .clipShape(Capsule())
-                }
-                .padding(.vertical, 8)
-            } else {
-                infoBox(
-                    icon: "qrcode.viewfinder",
-                    title: viewModel.hasTrustedDevices ? "Add Another Device" : "Ready to Generate QR",
-                    message: viewModel.hasTrustedDevices
-                        ? "Existing devices stay connected. Click \"Add Device QR\" below to generate a fresh pairing code for another device."
-                        : "Bridge is reachable but no pairing QR is cached yet. Click \"Refresh QR\" below to begin."
-                )
-            }
-
-        case .degraded:
-            infoBox(
-                icon: "exclamationmark.triangle.fill",
-                iconColor: .red,
-                title: "Bridge Degraded",
-                message: "Supervision is retrying automatically and will recover when bridge health returns."
-            )
+        case .starting: return "arrow.triangle.2.circlepath"
+        case .unpaired: return "lock.open"
+        case .pairedIdle: return "lock"
+        case .pairedActive: return "lock.fill"
+        case .degraded: return "exclamationmark.triangle"
         }
+    }
+
+    private var shellStateColor: Color {
+        switch viewModel.shellState {
+        case .starting: return .orange
+        case .unpaired: return .blue
+        case .pairedIdle: return .green
+        case .pairedActive: return .green
+        case .degraded: return .red
+        }
+    }
+
+    private func errorMessageView(_ message: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "xmark.octagon.fill")
+                .foregroundStyle(.red)
+                .font(.title3)
+            Text(message)
+                .font(.footnote)
+                .foregroundStyle(.red)
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(Color.red.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.red.opacity(0.3), lineWidth: 1)
+        )
     }
 
     private func infoBox(icon: String, iconColor: Color = .secondary, title: String, message: String) -> some View {

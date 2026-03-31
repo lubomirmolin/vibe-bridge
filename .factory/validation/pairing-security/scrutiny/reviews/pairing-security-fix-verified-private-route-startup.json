@@ -1,0 +1,26 @@
+{
+  "featureId": "pairing-security-fix-verified-private-route-startup",
+  "reviewedAt": "2026-03-18T07:03:29Z",
+  "commitId": "593d2b4541f207fe5b3f8984c66e30eb25167e6a",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "This rerun fixes the prior blocking startup-path defect. The bridge no longer treats MagicDNS discovery alone as sufficient: the default startup path now verifies an existing `tailscale serve` mapping, attempts to provision `tailscale serve --bg <port>` when the mapping is missing, reports truthful `pairing_route` health, and fails closed with `503 pairing_session_unavailable` instead of emitting QR payloads for an unreachable private host.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "services",
+      "observation": "The shared service manifest still presents Tailscale Serve as a separate helper service even though the canonical bridge startup path now tries to provision `tailscale serve --bg <port>` itself before degrading. Future workers could misread the startup contract or duplicate setup work.",
+      "evidence": "`/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/services.yaml:46-68` still models `bridge` and `tailscale-serve` as separate services, while `/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/crates/bridge-core/src/lib.rs:345-390` now calls `ensure_tailscale_serve_mapping(port)` from the default route resolver."
+    },
+    {
+      "area": "skills",
+      "observation": "The `security-worker` skill still lacks Exec-mode guidance for how to satisfy the success-path startup verification when Tailscale Serve cannot be enabled in the environment, so this fix worker again had to deviate and rely on automated evidence for the positive path.",
+      "evidence": "`/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/skills/security-worker/SKILL.md:24-25` only documents manual fail-closed verification plus deviation logging, and the fix handoff at `/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525/handoffs/2026-03-18T00-05-13-058Z__pairing-security-fix-verified-private-route-startup__97e13274-c669-47d4-ad32-4454977106b3.json:67-76` records `followedProcedure: false` with a request for explicit Exec-mode guidance."
+    }
+  ],
+  "addressesFailureFrom": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/validation/pairing-security/scrutiny/reviews/pairing-security-fix-private-route-identity-and-session-stability.json",
+  "summary": "Reviewed the prior failed review, the fix handoff/transcript skeleton, mission shared state, and commit `593d2b4541f207fe5b3f8984c66e30eb25167e6a`. Result: pass. The canonical startup path now guarantees that a default private pairing URL is advertised only when a verified Tailscale Serve route exists (or is successfully provisioned), and otherwise degrades truthfully by withholding QR/session issuance and surfacing route state through `/health`."
+}

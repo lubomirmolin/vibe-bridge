@@ -1,0 +1,37 @@
+{
+  "milestone": "bridge-thread-truth",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; ... flutter test --concurrency=5; cargo test --workspace --jobs 5; xcodebuild test ...",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; ... flutter analyze; cargo check; xcodebuild build ...",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "set -e; ROOT=\"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion\"; ... flutter analyze; cargo fmt --check; cargo clippy -D warnings; xcodebuild build ...",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 2,
+    "passed": 2,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [],
+  "rejectedObservations": [
+    {
+      "observation": "Initial scrutiny run failed because `bridge-timeline-merge-order-pagination` review JSON was missing and subsequent retry workers exited unexpectedly.",
+      "reason": "The missing review artifact was manually regenerated from the committed diff, successful validator outputs, and targeted regression reruns so synthesis could proceed without re-running unchanged milestone validators."
+    }
+  ]
+}

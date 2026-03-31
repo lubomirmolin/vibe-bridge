@@ -1,0 +1,21 @@
+{
+  "featureId": "hardening-fix-live-approval-ui-parity-validation",
+  "reviewedAt": "2026-03-18T21:03:29.056616Z",
+  "commitId": "1f6115cf23cf62ee5b125bd7ef1fdd68337981db",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed the prior failure report, both feature metadata entries and handoffs, the original failing diff in `097196f25d4735333e8baebde79596ffea21ecd8`, the fix diff in `1f6115cf23cf62ee5b125bd7ef1fdd68337981db`, the fix feature transcript skeleton, the `integration-worker` skill, and the relevant shared-state docs. The original blocking issue was that `live_bridge_approval_flow_test.dart` only called bridge APIs directly and never rendered the Flutter app or exercised the approvals UI. The fix now seeds trusted-session state into an in-memory secure store, boots `CodexMobileApp`, opens the approvals queue, drills into real approval cards and detail screens, taps the approve/reject buttons, refreshes the queue, and then confirms the bridge-backed final statuses (`apps/mobile/integration_test/live_bridge_approval_flow_test.dart:21-198,250-275,321-379`). Those interactions are wired to the actual queue/detail widgets and action controls the product ships (`apps/mobile/lib/features/approvals/presentation/approvals_queue_page.dart:21-31,194-244` and `apps/mobile/lib/features/approvals/presentation/approval_detail_page.dart:109-257`). The fix handoff also records explicit iOS simulator and Android emulator runs for this UI-driven test. Within the reviewed scope, that adequately resolves the prior scrutiny failure and supplies the live approval queue/detail/approve/reject UI coverage the feature description required.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "`.factory/library/user-testing.md` still does not document the live approvals UI integration harness that hardening parity now relies on, so future workers and validators still have to rediscover which integration test exercises the queue/detail/approve/reject flow on device targets.",
+      "evidence": "`.factory/library/user-testing.md:81-86` only names `integration_test/reconnect_offline_cache_test.dart` for the `flutter-mobile-integration-tests` surface. This fix instead centers on `apps/mobile/integration_test/live_bridge_approval_flow_test.dart` and records explicit simulator/emulator runs in `/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525/handoffs/2026-03-18T20-57-57-838Z__hardening-fix-live-approval-ui-parity-validation__de28dc84-9e51-4a01-9ae6-95e26278deb5.json` under `handoff.verification.commandsRun`."
+    }
+  ],
+  "addressesFailureFrom": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/validation/hardening/scrutiny/reviews/integration-platform-parity-and-build-closure.json",
+  "summary": "Pass. The fix addresses the original scrutiny failure by changing live approval parity coverage from bridge-only API calls to a real Flutter UI flow that opens the approvals queue/detail surfaces and executes approve/reject actions against the live bridge on both supported mobile platforms. No new code issues were found in the reviewed scope."
+}

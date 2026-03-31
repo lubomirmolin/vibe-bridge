@@ -1,0 +1,273 @@
+{
+  "groupId": "settings-access-flows",
+  "testedAt": "2026-03-18T15:18:02Z",
+  "isolation": {
+    "repoRoot": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion",
+    "missionDir": "/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525",
+    "appDir": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile",
+    "surface": "flutter-mobile-widget-tests",
+    "evidenceDir": "/Users/lubomirmolin/.factory/missions/5e6e6a03-5030-4a14-862e-f91b0b989525/evidence/mobile-app/settings-access-flows",
+    "reportPath": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/validation/mobile-app/user-testing/flows/settings-access-flows.json"
+  },
+  "toolsUsed": [
+    "flutter test"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-PAIR-007",
+      "title": "Read-only mode allows viewing but blocks all mutating controls",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "Run `thread_list_page_test.dart` case `shows loading then populated thread rows with status and context` with the harness approval API fixed to `AccessMode.readOnly`",
+          "expected": "Read-only users can still browse thread rows and context",
+          "observed": "The widget test passed and rendered populated thread rows with status/context in the read-only harness."
+        },
+        {
+          "action": "Run `thread_detail_page_test.dart` case `changing access mode from settings immediately gates turn and git controls`",
+          "expected": "Switching to read-only disables mutating controls on an already open thread surface",
+          "observed": "The widget test passed and disabled turn submit plus git pull after the runtime mode changed to read-only."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "mobile-app/settings-access-flows/thread_list_page_read_only_surface.log",
+          "mobile-app/settings-access-flows/thread_detail_access_mode_gates.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "not applicable on the Flutter widget-test surface",
+        "network": "not applicable; the widget harness uses fake bridge APIs"
+      },
+      "issues": "Blocked on evidence sufficiency: the assigned widget surface proves read-only thread browsing and some control gating, but it does not directly exercise approvals-state visibility or the full read-only mutation matrix (approve/reject/push/branch switch/live-output visibility) required by the assertion."
+    },
+    {
+      "id": "VAL-PAIR-008",
+      "title": "Control-with-approvals mode permits normal control but gates dangerous actions",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run `thread_detail_page_test.dart` case `idle composer starts turn and transitions to active controls` against a thread fixture whose access mode is `controlWithApprovals`",
+          "expected": "Starting a turn remains available in control-with-approvals mode",
+          "observed": "The widget test passed; submitting the composer transitioned the UI to `Steer turn`, exposed interrupt, and showed `Running`."
+        },
+        {
+          "action": "Run `thread_detail_page_test.dart` case `active composer steers and interrupt stops the active turn` against a thread fixture whose access mode is `controlWithApprovals`",
+          "expected": "Steer and interrupt controls remain available in control-with-approvals mode",
+          "observed": "The widget test passed; steer submitted successfully and interrupt returned the thread to `Interrupted`."
+        },
+        {
+          "action": "Run `approvals_queue_page_test.dart` case `lower-permission mode keeps approve/reject disabled` with `AccessMode.controlWithApprovals`",
+          "expected": "Dangerous approval actions stay gated instead of executing directly",
+          "observed": "The widget test passed; approve/reject were rendered disabled and the UI explained they are available only in full-control mode."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "mobile-app/settings-access-flows/thread_detail_start_turn.log",
+          "mobile-app/settings-access-flows/thread_detail_steer_interrupt.log",
+          "mobile-app/settings-access-flows/approvals_lower_permission.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "not applicable on the Flutter widget-test surface",
+        "network": "not applicable; the widget harness uses fake bridge APIs"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-PAIR-009",
+      "title": "Full-control mode exposes actionable approval controls on mobile",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run `approvals_queue_page_test.dart` case `full-control mode can approve pending approvals`",
+          "expected": "Full-control mode exposes actionable approval controls and can resolve a pending approval",
+          "observed": "The widget test passed; tapping approve resolved the approval and surfaced approved/already-resolved feedback."
+        },
+        {
+          "action": "Run `approvals_queue_page_test.dart` case `lower-permission mode keeps approve/reject disabled`",
+          "expected": "Lower-permission modes can show approval state without actionable approval buttons",
+          "observed": "The widget test passed; approve/reject controls were present but disabled with an explanatory message."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "mobile-app/settings-access-flows/approvals_full_control.log",
+          "mobile-app/settings-access-flows/approvals_lower_permission.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "not applicable on the Flutter widget-test surface",
+        "network": "not applicable; the widget harness uses fake bridge APIs"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-PAIR-010",
+      "title": "Mobile unpair/reset clears trust locally and requires fresh pairing",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run `pairing_flow_test.dart` case `unpairing from settings clears local trust and returns to unpaired UI`",
+          "expected": "Unpairing from settings clears local trust/session state and returns to the unpaired flow",
+          "observed": "The widget test passed; the app returned to `Pair your phone to this Mac`, secure-store trust/session secrets became null, and revokeTrust was called once."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "mobile-app/settings-access-flows/pairing_unpair_from_settings.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "not applicable on the Flutter widget-test surface",
+        "network": "not applicable; the widget harness uses fake bridge APIs"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-SETTINGS-001",
+      "title": "Settings exposes paired bridge info, access mode, and connection state",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run `settings_page_test.dart`",
+          "expected": "Settings shows paired bridge identity, connection state, access mode, and runtime preferences",
+          "observed": "The widget test passed and rendered `Paired bridge`, `Bridge id: bridge-a1`, `Connection: Connected`, `Control-with-approvals mode`, and both notification toggles."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "mobile-app/settings-access-flows/settings_page_test.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "not applicable on the Flutter widget-test surface",
+        "network": "not applicable; the widget harness uses fake bridge APIs"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-SETTINGS-003",
+      "title": "Access mode can be changed from settings or device management with immediate visible effect",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run `settings_page_test.dart` case `settings access mode switch updates bridge policy`",
+          "expected": "Changing access mode from settings updates the bridge policy for the paired phone",
+          "observed": "The widget test passed; selecting `Read-only` produced a `setAccessMode` call for `phone-a1`."
+        },
+        {
+          "action": "Run `thread_detail_page_test.dart` case `changing access mode from settings immediately gates turn and git controls`",
+          "expected": "An already open thread surface immediately reflects the new access mode",
+          "observed": "The widget test passed; the turn submit and git pull buttons became disabled immediately after the runtime mode changed to read-only."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "mobile-app/settings-access-flows/settings_page_test.log",
+          "mobile-app/settings-access-flows/thread_detail_access_mode_gates.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "not applicable on the Flutter widget-test surface",
+        "network": "not applicable; the widget harness uses fake bridge APIs, but the fake settings API recorded the mode-change request"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-SETTINGS-004",
+      "title": "Notification preference changes affect runtime delivery behavior",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "Run `runtime_notification_delivery_surface_test.dart`",
+          "expected": "Eligible notifications surface while the user is off thread routes when delivery is enabled",
+          "observed": "The widget test passed and surfaced an approval notification banner while the user was on Device settings rather than a thread route."
+        },
+        {
+          "action": "Run `settings_page_test.dart` case `settings access mode switch updates bridge policy` and toggle the approval notifications switch within that harness",
+          "expected": "The runtime preference can be changed from settings",
+          "observed": "The widget test passed and the approval notifications switch flipped off in the settings UI."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "mobile-app/settings-access-flows/runtime_notification_delivery_surface_test.log",
+          "mobile-app/settings-access-flows/settings_page_test.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "not applicable on the Flutter widget-test surface",
+        "network": "not applicable; the widget harness uses fake bridge APIs"
+      },
+      "issues": "Blocked on evidence sufficiency: the assigned widget surface proves enabled delivery and a settings toggle, but it does not directly prove user-visible suppression after disabling notifications or that approvals/thread access remain unaffected while disabled. The repo has controller-level tests for those cases, but they are not user-surface evidence."
+    },
+    {
+      "id": "VAL-SETTINGS-006",
+      "title": "Recent security events show actor, target, and outcome for sensitive actions",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run `settings_page_test.dart`",
+          "expected": "Settings surfaces recent security events with actor, target, and outcome",
+          "observed": "The widget test passed and rendered `Actor: mobile-settings`, `Target: policy.access_mode`, and `set_access_mode \u2022 allowed`."
+        },
+        {
+          "action": "Run `settings_page_test.dart` case `security events render newest-first before truncation`",
+          "expected": "Recent security events are ordered newest-first before truncation",
+          "observed": "The widget test passed and showed `evt-security-10`/`evt-security-9` while older events were truncated."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "mobile-app/settings-access-flows/settings_page_test.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "not applicable on the Flutter widget-test surface",
+        "network": "not applicable; the widget harness uses fake bridge APIs"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-004",
+      "title": "Access mode changes take effect across turn controls, approvals, and git actions without reinstall or re-pair",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "Run `thread_detail_page_test.dart` case `changing access mode from settings immediately gates turn and git controls`",
+          "expected": "An already open thread surface immediately reflects access-mode changes for turn and git actions",
+          "observed": "The widget test passed and immediately disabled turn submit plus git pull after switching to read-only."
+        },
+        {
+          "action": "Run approval-mode coverage with `approvals_queue_page_test.dart` cases for full-control and lower-permission approval actions",
+          "expected": "Approval affordances should reflect policy by mode",
+          "observed": "Separate widget tests passed showing full-control approval actions enabled and lower-permission approval actions disabled."
+        }
+      ],
+      "evidence": {
+        "logs": [
+          "mobile-app/settings-access-flows/thread_detail_access_mode_gates.log",
+          "mobile-app/settings-access-flows/approvals_full_control.log",
+          "mobile-app/settings-access-flows/approvals_lower_permission.log"
+        ],
+        "screenshots": [],
+        "consoleErrors": "not applicable on the Flutter widget-test surface",
+        "network": "not applicable; the widget harness uses fake bridge APIs"
+      },
+      "issues": "Blocked on evidence sufficiency: the assigned widget surface proves immediate turn/git gating and separate mode-dependent approval states, but it does not directly exercise an already open approvals surface changing policy in-place or any in-flight approval attempt during a runtime mode switch."
+    }
+  ],
+  "frictions": [],
+  "blockers": [
+    {
+      "description": "The assigned `flutter-mobile-widget-tests` surface does not include a widget case that fully exercises the entire read-only mutation matrix and approvals-state visibility required by VAL-PAIR-007.",
+      "affectedAssertions": [
+        "VAL-PAIR-007"
+      ],
+      "quickFixAttempted": "Searched the existing Flutter widget harnesses for read-only, approval, and settings coverage and used the closest matching thread-list and thread-detail cases; no fuller user-surface case exists in the assigned harnesses."
+    },
+    {
+      "description": "Notification suppression-after-disable and cross-surface approval-mode refresh are only covered outside the user-surface widget harness (for example in controller tests), so the assigned surface cannot fully satisfy VAL-SETTINGS-004 and VAL-CROSS-004 from user-visible evidence alone.",
+      "affectedAssertions": [
+        "VAL-SETTINGS-004",
+        "VAL-CROSS-004"
+      ],
+      "quickFixAttempted": "Searched the existing Flutter widget harnesses for disabled-notification and runtime approval-mode-switch cases; only enabled-delivery and separate per-mode approval cases are present."
+    }
+  ],
+  "summary": "Tested 9 assertions: 6 passed, 0 failed, 3 blocked (VAL-PAIR-007, VAL-SETTINGS-004, VAL-CROSS-004) due to insufficient user-surface widget evidence for the full contract breadth."
+}

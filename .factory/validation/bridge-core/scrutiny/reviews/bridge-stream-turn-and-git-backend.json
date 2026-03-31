@@ -1,0 +1,28 @@
+{
+  "featureId": "bridge-stream-turn-and-git-backend",
+  "reviewedAt": "2026-03-17T21:04:00Z",
+  "commitId": "5f9498052500360fe97e82c1b40550a163e2f40d",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed commit `5f9498052500360fe97e82c1b40550a163e2f40d`, the worker handoff, and the transcript skeleton. The feature adds the requested thread-scoped websocket routing and turn/git mutation surfaces with normalized result payloads and thread-aware repo context, but it leaves one non-blocking request-validation bug on the branch-switch path.",
+    "issues": [
+      {
+        "file": "crates/bridge-core/src/lib.rs",
+        "line": 503,
+        "severity": "non_blocking",
+        "description": "`POST /threads/:id/git/branch-switch` only checks that the `branch` query parameter exists. If the client sends `branch=` (or whitespace after decoding), `ThreadApiService::switch_branch` rejects it by returning `None` in `crates/bridge-core/src/thread_api.rs:377-380`, and the `?` here turns that validation failure into the generic `404 not_found` response instead of a `400 bad_request`. That makes invalid branch input indistinguishable from an unknown thread and leaves this error path untested."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The shared API library still documents the bridge surface only at a high level, so later workers would have to rediscover the concrete websocket subscription filter/ack contract and the new mutation result shape introduced by this feature.",
+      "evidence": ".factory/library/api.md:11-18 only lists generic endpoint categories, while the concrete contract now lives in `crates/bridge-core/src/lib.rs:286-303,410` (`WS /stream?thread_id=<id>` plus `thread_ids` ack semantics) and `crates/bridge-core/src/thread_api.rs:80-97` (`MutationResultResponse`/`GitStatusResponse`)."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Pass. The bridge feature lands thread-filtered websocket routing and normalized turn/git mutation responses that match the feature description, and the transcript plus handoff show the worker reviewed the right mission context and performed targeted manual stream-scoping checks. I found one non-blocking bug where blank `branch` values fall through to `404 not_found` instead of a client-validation error, plus a shared-state knowledge gap because the implemented websocket/mutation contract is not yet recorded in `.factory/library/api.md`."
+}

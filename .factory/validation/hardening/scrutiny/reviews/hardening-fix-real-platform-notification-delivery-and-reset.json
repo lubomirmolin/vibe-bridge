@@ -1,0 +1,28 @@
+{
+  "featureId": "hardening-fix-real-platform-notification-delivery-and-reset",
+  "reviewedAt": "2026-03-18T21:06:10.219476Z",
+  "commitId": "b17471a",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Reviewed the prior failed review, both hardening feature entries and handoffs, the original failing diff in `e41220b`, the fix diff in `b17471a`, the fix feature transcript skeleton, the `integration-worker` skill, and the relevant shared-state docs. The fix does resolve the original review's trust-reset persistence gap by clearing `runtimeNotificationSeenEventIds` and `runtimeNotificationPendingLaunchTarget` during local trust reset (`apps/mobile/lib/features/pairing/application/pairing_controller.dart:434-442`). It also replaces the prior snackbar-only routing with a `flutter_local_notifications` adapter plus callback/cold-start payload handling (`apps/mobile/lib/features/settings/data/runtime_platform_notifications.dart:57-159`, `apps/mobile/lib/features/settings/application/runtime_notification_delivery_controller.dart:217-236,407-482`). However, the feature still does not make VAL-CROSS-002/008/009 defensible end to end. Notification creation is still driven only by the in-process live websocket subscription started from the controller (`runtime_notification_delivery_controller.dart:217-236,318-320`) and then converted into a local notification (`runtime_notification_delivery_controller.dart:407-457`). There is still no background execution, remote-push, or bridge-to-OS delivery path anywhere under `apps/mobile`, so a suspended or terminated app has no code path that can receive a new bridge event and create the notification in the first place. The new integration coverage proves payload routing only through test doubles and bootstrapped launch payloads (`apps/mobile/integration_test/notification_deep_links_and_dedup_test.dart:101-158,338-356,805-847`), not actual delivery to an app that was backgrounded or dead when the event occurred. So the fix only partially addresses the original failure.",
+    "issues": [
+      {
+        "file": "apps/mobile/lib/features/settings/application/runtime_notification_delivery_controller.dart",
+        "line": 217,
+        "severity": "blocking",
+        "description": "The fix still does not implement real background/terminated-app notification delivery. The controller only initializes platform notifications and then subscribes to the live bridge stream inside the running app (`runtime_notification_delivery_controller.dart:217-236,318-320`); `_deliverNotification()` posts a local notification only after that in-process stream receives an event (`runtime_notification_delivery_controller.dart:407-457`). There is no background service, remote push token flow, or other bridge-to-OS delivery path anywhere under `apps/mobile`, so when the app is suspended or terminated at event time there is no code path that can receive the approval/live-activity event and create the notification required by VAL-CROSS-002/008/009. The new tests only inject fake opened payloads / initial launch payloads (`apps/mobile/integration_test/notification_deep_links_and_dedup_test.dart:101-158,338-356,805-847`), which verifies routing after a payload already exists but does not solve or exercise real delivery to a backgrounded or dead app."
+      },
+      {
+        "file": "apps/mobile/lib/features/settings/data/runtime_platform_notifications.dart",
+        "line": 90,
+        "severity": "non_blocking",
+        "description": "Permission denial is treated as if system delivery were available. `_requestNotificationPermissions()` ignores the boolean results from Android/iOS/macOS permission requests (`runtime_platform_notifications.dart:111-127`), and `_initializeInternal()` still marks `_systemNotificationsAvailable` true unconditionally afterward (`runtime_platform_notifications.dart:90-100`). `showNotification()` then returns success whenever `_plugin.show(...)` does not throw (`runtime_platform_notifications.dart:137-159`). If the user has denied notification permission, the controller will suppress its in-app fallback path while the OS still drops the notification, so approval/live-activity updates can disappear silently."
+      }
+    ]
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/validation/hardening/scrutiny/reviews/integration-notifications-deep-links-and-dedup.json",
+  "summary": "Fail. The fix usefully adds platform-local notification callbacks and clears persisted dedup/launch keys on trust reset, but it still relies on an in-app websocket to create notifications, so it does not actually deliver approval/live-activity notifications when the app is backgrounded or terminated. I also found a new non-blocking regression where denied OS notification permissions are treated as successful delivery availability, which can silently suppress the in-app fallback."
+}

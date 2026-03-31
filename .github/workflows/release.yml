@@ -162,7 +162,9 @@ jobs:
           sudo apt-get install -y gh
 
       - name: Generate checksums
-        run: sha256sum dist/* > dist/SHA256SUMS
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
 
       - name: Publish GitHub release assets
         env:

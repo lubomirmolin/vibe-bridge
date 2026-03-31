@@ -1,0 +1,45 @@
+{
+  "featureId": "mobile-approvals-queue-and-resolution",
+  "reviewedAt": "2026-03-18T12:10:00Z",
+  "commitId": "e8d8d2406d64519cbd195273d3c879779ee05b01",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Reviewed the feature handoff, commit e8d8d2406d64519cbd195273d3c879779ee05b01, the transcript skeleton, and the mobile approvals implementation. The feature adds a queue, detail page, thread linkage, and approval resolution flows, but it does not fully satisfy the approval requirements: new approval requests do not propagate into the queue/thread approval surfaces without a manual refresh, branch-switch approvals do not show the exact branch being approved, and late resolution conflicts leave queue/thread state stale as pending.",
+    "issues": [
+      {
+        "file": "apps/mobile/lib/features/approvals/application/approvals_queue_controller.dart",
+        "line": 137,
+        "severity": "blocking",
+        "description": "The approvals state is loaded only when the controller is created and after a successful local resolution (`approvals_queue_controller.dart:137,271`). There is no refresh path when a live `approval_requested` event arrives; `thread_detail_controller.dart:575-586` only appends the live event to the timeline, while `thread_list_page.dart:75-78` and `thread_detail_page.dart:113` render the badge/thread approval surfaces from this cached controller state. As a result, a newly gated dangerous action can appear in the timeline but stay missing from the approvals queue and thread approvals panel until the user manually refreshes, which misses VAL-APPROVAL-001."
+      },
+      {
+        "file": "apps/mobile/lib/features/approvals/presentation/approval_presenter.dart",
+        "line": 30,
+        "severity": "blocking",
+        "description": "For `git_branch_switch`, `approvalTargetLabel` renders `approval.repository.branch`, which is the current branch, not the requested target branch. The bridge approval payload currently exposes only a generic `target` like `git.branch_switch` (`crates/bridge-core/src/lib.rs:580-663`), so the detail UI never shows the exact branch under review. That leaves branch-switch approvals without the exact target context required by VAL-APPROVAL-002 and can mislead the user about what will be switched."
+      },
+      {
+        "file": "apps/mobile/lib/features/approvals/application/approvals_queue_controller.dart",
+        "line": 273,
+        "severity": "blocking",
+        "description": "When a late approve/reject attempt returns a non-actionable conflict such as `approval_not_pending`, the controller only stores `nonActionableReason` and a global error (`approvals_queue_controller.dart:273-283`) but does not reload the approvals list. The item therefore keeps `approval.status == pending`, `pendingCount` still includes it (`approvals_queue_controller.dart:89-90`), and the queue/thread surfaces continue to show stale pending state until manual refresh. If the approval was already resolved elsewhere, this violates VAL-APPROVAL-005 and VAL-APPROVAL-007 because the queue and originating thread do not sync to the resolved status."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `mobile-worker` skill still treats manual local-target verification as required, but this worker handoff explicitly skipped manual approval-flow validation in the headless session and still reported `followedProcedure: true`. The skill guidance or handoff rubric should clarify whether headless sessions may omit step 6 without counting as a deviation.",
+      "evidence": "`.factory/skills/mobile-worker/SKILL.md:23-24` requires manual verification on a local target and recording visible behavior; `2026-03-18T10-02-35-535Z__mobile-approvals-queue-and-resolution__44b4047e-e57b-41ce-b98d-16e972004536.json:12` says manual approval-flow validation was not performed in the headless session, while `...json:88-89` still marks `followedProcedure: true`."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The shared API notes do not document that approval records currently carry only generic git target identifiers instead of concrete target branch/remote values. That gap makes it easy for client workers to over-assume the approval payload contains exact decision context.",
+      "evidence": "`.factory/library/api.md:12-16` lists approvals as a planned/stable surface but does not describe approval-record field semantics; `crates/bridge-core/src/lib.rs:580-663` shows `PendingApprovalAction::target_name()` serializing `git.branch_switch` / `git.pull` / `git.push` into `ApprovalRecordDto.target`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail. The approvals feature has three blocking correctness gaps: live approval requests do not populate the queue/thread approval surfaces automatically, branch-switch approvals lack exact target-branch context, and late-resolution conflicts leave queue/thread status stale until manual refresh. Two shared-state observations were also recorded for skill/procedure clarity and API knowledge."
+}

@@ -371,12 +371,13 @@ pub fn snapshot_from_conversation_state(
     previous_snapshot: Option<&ThreadSnapshotDto>,
     access_mode: AccessMode,
 ) -> Result<ThreadSnapshotDto, String> {
-    let thread_id = conversation_state
+    let native_thread_id = conversation_state
         .get("id")
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| "desktop IPC conversation state did not include id".to_string())?
         .to_string();
+    let thread_id = format!("codex:{native_thread_id}");
     let turns = conversation_state
         .get("turns")
         .and_then(Value::as_array)
@@ -441,6 +442,9 @@ pub fn snapshot_from_conversation_state(
         thread: shared_contracts::ThreadDetailDto {
             contract_version: CONTRACT_VERSION.to_string(),
             thread_id,
+            native_thread_id: native_thread_id.clone(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: crate::thread_api::map_thread_client_kind_from_source(&source),
             title,
             status,
             workspace,
@@ -451,6 +455,7 @@ pub fn snapshot_from_conversation_state(
             source,
             access_mode,
             last_turn_summary,
+            active_turn_id: None,
         },
         entries,
         approvals: previous_snapshot
@@ -676,7 +681,7 @@ fn thread_id_for_turn(turn: &Value) -> Option<String> {
     turn.get("params")
         .and_then(|params| params.get("threadId"))
         .and_then(Value::as_str)
-        .map(ToString::to_string)
+        .map(|thread_id| format!("codex:{thread_id}"))
 }
 
 fn first_turn_workspace(turns: &[Value]) -> Option<String> {
@@ -875,7 +880,8 @@ mod tests {
         )
         .expect("snapshot mapping should succeed");
 
-        assert_eq!(snapshot.thread.thread_id, "thread-1");
+        assert_eq!(snapshot.thread.thread_id, "codex:thread-1");
+        assert_eq!(snapshot.thread.native_thread_id, "thread-1");
         assert_eq!(snapshot.thread.workspace, "/tmp/repo");
         assert_eq!(snapshot.thread.repository, "repo");
         assert_eq!(snapshot.thread.status, ThreadStatus::Running);

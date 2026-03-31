@@ -1,0 +1,81 @@
+{
+  "groupId": "mobile-pairing-widget",
+  "surface": "flutter-widget-tests",
+  "toolsUsed": [
+    "flutter",
+    "python3"
+  ],
+  "commandsRun": [
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/pairing/pairing_flow_test.dart --plain-name \"valid scan is reviewed and requires explicit trust confirmation\"",
+      "exitCode": 0,
+      "observation": "Passed; the widget flow advanced from scan submission to the explicit trust confirmation screen and only paired after tapping Confirm trust."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/pairing/pairing_flow_test.dart --plain-name \"invalid scan shows clear rescan feedback\"",
+      "exitCode": 0,
+      "observation": "Passed; malformed payloads showed the user-facing rescan message \"This QR code is invalid. Please rescan from your Mac.\"."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/pairing/pairing_qr_validator_test.dart --plain-name \"rejects expired payload\"",
+      "exitCode": 0,
+      "observation": "Passed; expired QR payloads were rejected in the pairing validation path that feeds widget error messaging."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/pairing/pairing_flow_test.dart --plain-name \"reused payload is rejected after successful confirmation\"",
+      "exitCode": 0,
+      "observation": "Passed; reusing a consumed payload showed the user-facing rescan message \"This pairing QR code was already used. Please rescan from your Mac.\"."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/pairing/pairing_flow_test.dart --plain-name \"cancel from confirmation leaves app in clean unpaired state\"",
+      "exitCode": 0,
+      "observation": "Passed; cancelling from the confirmation screen returned the widget to the unpaired landing state without persisting trust."
+    },
+    {
+      "command": "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/pairing/pairing_flow_test.dart --plain-name \"same phone cannot silently trust a second Mac without reset\"",
+      "exitCode": 0,
+      "observation": "Passed; a second-Mac attempt surfaced the conflict message \"This phone is already paired with a different Mac. Reset trust before replacing it.\"."
+    }
+  ],
+  "assertions": [
+    {
+      "id": "VAL-PAIR-002",
+      "status": "pass",
+      "reason": "`pairing_flow_test.dart` passed for valid scan review, malformed rescan feedback, and reused-payload rescan feedback; the related `pairing_qr_validator_test.dart` expired-payload case also passed, covering the remaining rejection branch used by the widget error state.",
+      "evidence": [
+        "pairing-security/mobile-pairing-widget/VAL-PAIR-003-valid-scan-confirmation.log",
+        "pairing-security/mobile-pairing-widget/VAL-PAIR-002-invalid-scan.log",
+        "pairing-security/mobile-pairing-widget/VAL-PAIR-002-expired-payload.log",
+        "pairing-security/mobile-pairing-widget/VAL-PAIR-002-reused-payload.log"
+      ]
+    },
+    {
+      "id": "VAL-PAIR-003",
+      "status": "pass",
+      "reason": "`valid scan is reviewed and requires explicit trust confirmation` passed, confirming the scan reaches a review screen, shows `Confirm bridge trust`, keeps secure storage empty before confirmation, and only persists trust/session after `Confirm trust`.",
+      "evidence": [
+        "pairing-security/mobile-pairing-widget/VAL-PAIR-003-valid-scan-confirmation.log"
+      ]
+    },
+    {
+      "id": "VAL-PAIR-011",
+      "status": "pass",
+      "reason": "`cancel from confirmation leaves app in clean unpaired state` passed, confirming cancel returns to `Pair your phone to this Mac` and leaves the trusted bridge identity unset.",
+      "evidence": [
+        "pairing-security/mobile-pairing-widget/VAL-PAIR-011-cancel-before-confirm.log"
+      ]
+    },
+    {
+      "id": "VAL-PAIR-012",
+      "status": "pass",
+      "reason": "`same phone cannot silently trust a second Mac without reset` passed, confirming the second-Mac flow blocks silent replacement and shows the reset-before-replacing message.",
+      "evidence": [
+        "pairing-security/mobile-pairing-widget/VAL-PAIR-012-second-mac-conflict.log"
+      ]
+    }
+  ],
+  "frictions": [
+    "`pairing_flow_test.dart` does not include a dedicated expired-payload widget case, so the expired branch of VAL-PAIR-002 was validated with the existing related `pairing_qr_validator_test.dart` while malformed and reused user-facing states were confirmed in widget tests."
+  ],
+  "blockers": []
+}

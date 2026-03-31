@@ -7,17 +7,20 @@ use std::time::UNIX_EPOCH;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use shared_contracts::ThreadTimelineEntryDto;
+use shared_contracts::{ProviderKind, ThreadClientKind, ThreadTimelineEntryDto};
 
 use super::patch_diff::resolve_apply_patch_to_unified_diff;
 use super::rpc::{CodexRpcClient, read_thread_with_resume, should_resume_thread};
 use super::timeline::{
     derive_repository_name_from_cwd, map_codex_thread_to_timeline_events,
-    map_codex_thread_to_upstream_record, map_timeline_entry,
+    map_codex_thread_to_upstream_record, map_thread_client_kind_from_source, map_timeline_entry,
     map_wire_thread_status_to_lifecycle_state, normalize_custom_tool_output,
     parse_repository_name_from_origin, truncate_summary, unix_timestamp_to_iso8601, value_to_text,
 };
-use super::{ThreadSnapshot, UpstreamThreadRecord, UpstreamTimelineEvent};
+use super::{
+    ThreadSnapshot, UpstreamThreadRecord, UpstreamTimelineEvent, native_thread_id_for_provider,
+    provider_thread_id,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 struct SessionIndexEntry {
@@ -41,6 +44,20 @@ pub(super) fn resolve_codex_home_dir() -> Result<PathBuf, String> {
     Ok(home.join(".codex"))
 }
 
+pub(super) fn resolve_claude_home_dir() -> Result<PathBuf, String> {
+    if let Some(claude_home) = env::var_os("CLAUDE_HOME") {
+        let path = PathBuf::from(claude_home);
+        if !path.as_os_str().is_empty() {
+            return Ok(path);
+        }
+    }
+
+    let home = env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| "HOME is not set; could not resolve Claude state directory".to_string())?;
+    Ok(home.join(".claude"))
+}
+
 pub(super) fn load_thread_snapshot(
     command: &str,
     args: &[String],
@@ -48,7 +65,7 @@ pub(super) fn load_thread_snapshot(
     codex_home: &Path,
 ) -> Result<ThreadSnapshot, String> {
     let rpc_result = load_thread_snapshot_from_codex_rpc(command, args, endpoint);
-    let archive_result = match &rpc_result {
+    let codex_archive_result = match &rpc_result {
         Ok((thread_records, _)) if !thread_records.is_empty() => {
             let requested_ids = thread_records
                 .iter()
@@ -58,6 +75,11 @@ pub(super) fn load_thread_snapshot(
         }
         _ => load_thread_snapshot_from_codex_archive(codex_home),
     };
+    let claude_archive_result = resolve_claude_home_dir()
+        .map(|claude_home| load_thread_snapshot_from_claude_archive_for_ids(&claude_home, None))
+        .unwrap_or_else(|_| Ok((Vec::new(), HashMap::new())));
+    let archive_result =
+        merge_archive_provider_results(codex_archive_result, claude_archive_result);
     match (rpc_result, archive_result) {
         (Ok(rpc_snapshot), Ok(archive_snapshot)) if !rpc_snapshot.0.is_empty() => {
             Ok(merge_thread_snapshots(rpc_snapshot, archive_snapshot))
@@ -82,6 +104,16 @@ pub(super) fn load_thread_snapshot_for_id(
     codex_home: &Path,
     thread_id: &str,
 ) -> Result<ThreadSnapshot, String> {
+    if native_thread_id_for_provider(thread_id, ProviderKind::ClaudeCode).is_some() {
+        let claude_home = resolve_claude_home_dir()
+            .map_err(|error| format!("failed to resolve Claude archive directory: {error}"))?;
+        let requested_ids = HashSet::from([thread_id.to_string()]);
+        return load_thread_snapshot_from_claude_archive_for_ids(
+            &claude_home,
+            Some(&requested_ids),
+        );
+    }
+
     let rpc_result = load_thread_snapshot_from_codex_rpc_for_id(command, args, endpoint, thread_id);
     let requested_ids = HashSet::from([thread_id.to_string()]);
     let archive_result =
@@ -101,6 +133,21 @@ pub(super) fn load_thread_snapshot_for_id(
         )),
         (Err(rpc_error), Ok(_)) => Err(format!(
             "failed to load Codex thread {thread_id} from app-server ({rpc_error}) and local archive was empty"
+        )),
+    }
+}
+
+fn merge_archive_provider_results(
+    codex_archive_result: Result<ThreadSnapshot, String>,
+    claude_archive_result: Result<ThreadSnapshot, String>,
+) -> Result<ThreadSnapshot, String> {
+    match (codex_archive_result, claude_archive_result) {
+        (Ok(codex_snapshot), Ok(claude_snapshot)) => {
+            Ok(merge_thread_snapshots(codex_snapshot, claude_snapshot))
+        }
+        (Ok(snapshot), Err(_)) | (Err(_), Ok(snapshot)) => Ok(snapshot),
+        (Err(codex_error), Err(claude_error)) => Err(format!(
+            "failed to load provider archives (codex: {codex_error}; claude: {claude_error})"
         )),
     }
 }
@@ -543,20 +590,16 @@ fn load_thread_snapshot_from_codex_rpc(
     let mut client = CodexRpcClient::start(command, args, endpoint)?;
     let threads = client.fetch_all_threads()?;
 
-    let thread_records = threads
-        .iter()
-        .map(map_codex_thread_to_upstream_record)
-        .collect::<Vec<_>>();
-
-    let timeline_by_thread_id = threads
-        .iter()
-        .map(|thread| {
-            (
-                thread.id.clone(),
-                map_codex_thread_to_timeline_events(thread),
-            )
-        })
-        .collect::<HashMap<_, _>>();
+    let mut thread_records = Vec::with_capacity(threads.len());
+    let mut timeline_by_thread_id = HashMap::new();
+    for thread in &threads {
+        let record = map_codex_thread_to_upstream_record(thread);
+        timeline_by_thread_id.insert(
+            record.id.clone(),
+            map_codex_thread_to_timeline_events(thread),
+        );
+        thread_records.push(record);
+    }
 
     Ok((thread_records, timeline_by_thread_id))
 }
@@ -567,8 +610,12 @@ fn load_thread_snapshot_from_codex_rpc_for_id(
     endpoint: Option<&str>,
     thread_id: &str,
 ) -> Result<Option<ThreadSnapshot>, String> {
+    let Some(native_thread_id) = native_thread_id_for_provider(thread_id, ProviderKind::Codex)
+    else {
+        return Ok(None);
+    };
     let mut client = CodexRpcClient::start(command, args, endpoint)?;
-    let thread = match read_thread_with_resume(&mut client, thread_id, true) {
+    let thread = match read_thread_with_resume(&mut client, native_thread_id, true) {
         Ok(thread) => thread,
         Err(error) if should_resume_thread(&error) || error.contains("not found") => {
             return Ok(None);
@@ -578,7 +625,7 @@ fn load_thread_snapshot_from_codex_rpc_for_id(
 
     let thread_record = map_codex_thread_to_upstream_record(&thread);
     let timeline = map_codex_thread_to_timeline_events(&thread);
-    let timeline_by_thread_id = HashMap::from([(thread.id.clone(), timeline)]);
+    let timeline_by_thread_id = HashMap::from([(thread_record.id.clone(), timeline)]);
 
     Ok(Some((vec![thread_record], timeline_by_thread_id)))
 }
@@ -593,6 +640,13 @@ pub(super) fn load_thread_snapshot_from_codex_archive_for_ids(
     codex_home: &Path,
     requested_ids: Option<&HashSet<String>>,
 ) -> Result<ThreadSnapshot, String> {
+    let requested_native_ids = requested_ids.map(|requested_ids| {
+        requested_ids
+            .iter()
+            .filter_map(|thread_id| native_thread_id_for_provider(thread_id, ProviderKind::Codex))
+            .map(ToString::to_string)
+            .collect::<HashSet<_>>()
+    });
     let session_index_path = codex_home.join("session_index.jsonl");
     let sessions_root = codex_home.join("sessions");
     let raw_index = match fs::read_to_string(&session_index_path) {
@@ -623,14 +677,14 @@ pub(super) fn load_thread_snapshot_from_codex_archive_for_ids(
         .unwrap_or_default();
 
     entries.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
-    if let Some(requested_ids) = requested_ids {
-        entries.retain(|entry| requested_ids.contains(&entry.id));
+    if let Some(requested_native_ids) = requested_native_ids.as_ref() {
+        entries.retain(|entry| requested_native_ids.contains(&entry.id));
 
         let indexed_ids = entries
             .iter()
             .map(|entry| entry.id.clone())
             .collect::<HashSet<_>>();
-        let missing_ids = requested_ids
+        let missing_ids = requested_native_ids
             .iter()
             .filter(|id| !indexed_ids.contains(*id))
             .cloned()
@@ -667,11 +721,545 @@ pub(super) fn load_thread_snapshot_from_codex_archive_for_ids(
             .and_then(|path| parse_archived_session(path, &entry).ok())
             .unwrap_or_else(|| archived_thread_record_from_index(&entry));
 
+        let thread_id = parsed.0.id.clone();
         thread_records.push(parsed.0);
-        timeline_by_thread_id.insert(entry.id, parsed.1);
+        timeline_by_thread_id.insert(thread_id, parsed.1);
     }
 
     Ok((thread_records, timeline_by_thread_id))
+}
+
+fn load_thread_snapshot_from_claude_archive_for_ids(
+    claude_home: &Path,
+    requested_ids: Option<&HashSet<String>>,
+) -> Result<ThreadSnapshot, String> {
+    let projects_root = claude_home.join("projects");
+    if !projects_root.exists() {
+        return Ok((Vec::new(), HashMap::new()));
+    }
+
+    let requested_native_ids = requested_ids.map(|requested_ids| {
+        requested_ids
+            .iter()
+            .filter_map(|thread_id| {
+                native_thread_id_for_provider(thread_id, ProviderKind::ClaudeCode)
+            })
+            .map(ToString::to_string)
+            .collect::<HashSet<_>>()
+    });
+
+    let mut discovered_paths = Vec::new();
+    visit_claude_session_paths(&projects_root, &mut discovered_paths)?;
+
+    let mut parsed_sessions = Vec::new();
+    for path in discovered_paths {
+        let Some((thread_record, timeline)) = parse_claude_archived_session(&path)? else {
+            continue;
+        };
+        if let Some(requested_native_ids) = requested_native_ids.as_ref()
+            && !requested_native_ids.contains(&thread_record.native_id)
+        {
+            continue;
+        }
+        parsed_sessions.push((thread_record, timeline));
+    }
+
+    parsed_sessions.sort_by(|left, right| right.0.updated_at.cmp(&left.0.updated_at));
+    if requested_native_ids.is_none() {
+        parsed_sessions.truncate(CodexRpcClient::MAX_THREADS_TO_FETCH);
+    }
+
+    let mut thread_records = Vec::with_capacity(parsed_sessions.len());
+    let mut timeline_by_thread_id = HashMap::new();
+    for (thread_record, timeline) in parsed_sessions {
+        let thread_id = thread_record.id.clone();
+        thread_records.push(thread_record);
+        timeline_by_thread_id.insert(thread_id, timeline);
+    }
+
+    Ok((thread_records, timeline_by_thread_id))
+}
+
+fn visit_claude_session_paths(
+    directory: &Path,
+    discovered: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            return Err(format!(
+                "failed to enumerate Claude session archive at {}: {error}",
+                directory.display()
+            ));
+        }
+    };
+
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "failed to inspect Claude session archive entry under {}: {error}",
+                directory.display()
+            )
+        })?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            if path.file_name().and_then(|value| value.to_str()) == Some("subagents") {
+                continue;
+            }
+            visit_claude_session_paths(&path, discovered)?;
+            continue;
+        }
+
+        let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if file_name.ends_with(".jsonl") {
+            discovered.push(path);
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_claude_archived_session(
+    path: &Path,
+) -> Result<Option<(UpstreamThreadRecord, Vec<UpstreamTimelineEvent>)>, String> {
+    let raw = fs::read_to_string(path).map_err(|error| {
+        format!(
+            "failed to read Claude archived session {}: {error}",
+            path.display()
+        )
+    })?;
+
+    let fallback_native_id = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(ToString::to_string);
+    let mut session_id = None;
+    let mut cwd = None;
+    let mut branch_name = None;
+    let mut source = None;
+    let mut slug = None;
+    let mut created_at = None;
+    let mut updated_at = None;
+    let mut first_user_message = None;
+    let mut last_turn_summary = None;
+    let mut timeline = Vec::new();
+    let mut visible_message_fingerprints = HashSet::new();
+    let mut tool_name_by_id = HashMap::new();
+    let mut file_change_tool_ids = HashSet::new();
+
+    for line in raw.lines().filter(|line| !line.trim().is_empty()) {
+        let value: Value = match serde_json::from_str(line) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        let timestamp = value
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .filter(|timestamp| !timestamp.trim().is_empty())
+            .map(ToString::to_string)
+            .or_else(|| archive_path_modified_at(path))
+            .unwrap_or_else(|| "1970-01-01T00:00:00.000Z".to_string());
+        if created_at.is_none() {
+            created_at = Some(timestamp.clone());
+        }
+        if updated_at
+            .as_ref()
+            .map(|current: &String| timestamp > *current)
+            .unwrap_or(true)
+        {
+            updated_at = Some(timestamp.clone());
+        }
+
+        session_id = value
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .or(session_id);
+        cwd = value
+            .get("cwd")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .or(cwd);
+        branch_name = value
+            .get("gitBranch")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .or(branch_name);
+        source = value
+            .get("entrypoint")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .or(source);
+        slug = value
+            .get("slug")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .or(slug);
+
+        let native_id = session_id
+            .clone()
+            .or_else(|| fallback_native_id.clone())
+            .unwrap_or_default();
+        if native_id.trim().is_empty() {
+            continue;
+        }
+        let thread_id = provider_thread_id(ProviderKind::ClaudeCode, &native_id);
+
+        for event in map_claude_message_events(
+            &thread_id,
+            &timestamp,
+            &value,
+            cwd.as_deref(),
+            &mut tool_name_by_id,
+            &mut file_change_tool_ids,
+            timeline.len() as u64 + 1,
+        ) {
+            if first_user_message.is_none()
+                && event.event_type == "agent_message_delta"
+                && event.data.get("role").and_then(Value::as_str) == Some("user")
+            {
+                let message = event
+                    .data
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .trim();
+                if !message.is_empty() {
+                    first_user_message = Some(message.to_string());
+                }
+            }
+
+            if let Some(fingerprint) = archived_message_fingerprint(&event)
+                && !visible_message_fingerprints.insert(fingerprint)
+            {
+                continue;
+            }
+            last_turn_summary = Some(event.summary_text.clone());
+            timeline.push(event);
+        }
+    }
+
+    let native_id = session_id.or(fallback_native_id);
+    let Some(native_id) = native_id.filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+
+    let workspace_path = cwd.unwrap_or_default();
+    let branch_name = branch_name.unwrap_or_else(|| "unknown".to_string());
+    let headline = claude_thread_headline(slug.as_deref(), first_user_message.as_deref());
+    let created_at = created_at
+        .or_else(|| archive_path_modified_at(path))
+        .unwrap_or_else(|| "1970-01-01T00:00:00.000Z".to_string());
+    let updated_at = updated_at
+        .or_else(|| archive_path_modified_at(path))
+        .unwrap_or_else(|| created_at.clone());
+
+    Ok(Some((
+        UpstreamThreadRecord {
+            id: provider_thread_id(ProviderKind::ClaudeCode, &native_id),
+            native_id,
+            provider: ProviderKind::ClaudeCode,
+            client: map_thread_client_kind_from_source(source.as_deref().unwrap_or("archive")),
+            headline: headline.clone(),
+            lifecycle_state: "done".to_string(),
+            workspace_path: workspace_path.clone(),
+            repository_name: derive_repository_name_from_cwd(&workspace_path)
+                .unwrap_or_else(|| "unknown-repository".to_string()),
+            branch_name,
+            remote_name: "local".to_string(),
+            git_dirty: false,
+            git_ahead_by: 0,
+            git_behind_by: 0,
+            created_at,
+            updated_at,
+            source: source.unwrap_or_else(|| "archive".to_string()),
+            approval_mode: "read_only".to_string(),
+            last_turn_summary: last_turn_summary.unwrap_or(headline),
+        },
+        timeline,
+    )))
+}
+
+fn map_claude_message_events(
+    thread_id: &str,
+    timestamp: &str,
+    value: &Value,
+    workspace_path: Option<&str>,
+    tool_name_by_id: &mut HashMap<String, String>,
+    file_change_tool_ids: &mut HashSet<String>,
+    sequence_start: u64,
+) -> Vec<UpstreamTimelineEvent> {
+    let Some(message) = value.get("message") else {
+        return Vec::new();
+    };
+    let role = message
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| {
+            value
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("assistant")
+        });
+    if matches!(role, "developer" | "system") {
+        return Vec::new();
+    }
+
+    let items = message
+        .get("content")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut events = Vec::new();
+    let normalized_content = claude_message_content(&items);
+    let text = normalized_content
+        .iter()
+        .filter_map(|item| item.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let has_images = normalized_content
+        .iter()
+        .any(|item| item.get("type").and_then(Value::as_str) == Some("image"));
+    if (!text.trim().is_empty() || has_images) && !is_hidden_archive_message(&text) {
+        let source = if role == "user" { "user" } else { "assistant" };
+        let item_type = if role == "user" {
+            "userMessage"
+        } else {
+            "agentMessage"
+        };
+        events.push(UpstreamTimelineEvent {
+            id: format!("{thread_id}-claude-{sequence_start}"),
+            event_type: "agent_message_delta".to_string(),
+            happened_at: timestamp.to_string(),
+            summary_text: if text.trim().is_empty() {
+                "Attached image".to_string()
+            } else {
+                truncate_summary(&text)
+            },
+            data: json!({
+                "delta": text,
+                "role": role,
+                "source": source,
+                "type": item_type,
+                "content": normalized_content,
+            }),
+        });
+    }
+
+    let mut offset = 1;
+    for item in items {
+        let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
+        match item_type {
+            "tool_use" => {
+                let tool_name = item
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("tool")
+                    .to_string();
+                let tool_use_id = item
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| format!("{thread_id}-tool-{sequence_start}-{offset}"));
+                let input = item.get("input").cloned().unwrap_or(Value::Null);
+                let input_text = value_to_text(&input).unwrap_or_default();
+                let is_file_change = is_claude_file_change_tool(&tool_name)
+                    || is_file_change_custom_tool(&tool_name)
+                    || is_file_change_text(&input_text);
+                tool_name_by_id.insert(tool_use_id.clone(), tool_name.clone());
+                if is_file_change {
+                    file_change_tool_ids.insert(tool_use_id.clone());
+                }
+
+                let mut data = json!({
+                    "id": tool_use_id,
+                    "command": tool_name,
+                });
+                if let Some(object) = data.as_object_mut() {
+                    if is_file_change {
+                        object.insert("change".to_string(), Value::String(input_text.clone()));
+                        object.insert("input".to_string(), input.clone());
+                        if let Some(resolved_diff) =
+                            resolve_apply_patch_to_unified_diff(&input_text, workspace_path)
+                        {
+                            object.insert(
+                                "resolved_unified_diff".to_string(),
+                                Value::String(resolved_diff),
+                            );
+                        }
+                    } else {
+                        object.insert("arguments".to_string(), input.clone());
+                    }
+                }
+
+                events.push(UpstreamTimelineEvent {
+                    id: format!("{thread_id}-claude-{}", sequence_start + offset),
+                    event_type: if is_file_change {
+                        "file_change_delta".to_string()
+                    } else {
+                        "command_output_delta".to_string()
+                    },
+                    happened_at: timestamp.to_string(),
+                    summary_text: if is_file_change {
+                        format!("Edited files via {tool_name}")
+                    } else {
+                        format!("Called {tool_name}")
+                    },
+                    data,
+                });
+                offset += 1;
+            }
+            "tool_result" => {
+                let tool_use_id = item
+                    .get("tool_use_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let tool_name = tool_name_by_id
+                    .get(&tool_use_id)
+                    .cloned()
+                    .unwrap_or_else(|| "tool".to_string());
+                let is_file_change = file_change_tool_ids.contains(&tool_use_id);
+                let output = normalize_claude_tool_result_output(value, &item);
+                let summary = if output.trim().is_empty() {
+                    if is_file_change {
+                        "File change completed".to_string()
+                    } else {
+                        "Command completed".to_string()
+                    }
+                } else {
+                    truncate_summary(&output)
+                };
+
+                let mut data = json!({
+                    "tool_use_id": tool_use_id,
+                    "command": tool_name,
+                    "output": output,
+                });
+                if let Some(tool_use_result) = value.get("toolUseResult")
+                    && let Some(object) = data.as_object_mut()
+                {
+                    object.insert("tool_use_result".to_string(), tool_use_result.clone());
+                }
+
+                events.push(UpstreamTimelineEvent {
+                    id: format!("{thread_id}-claude-{}", sequence_start + offset),
+                    event_type: if is_file_change {
+                        "file_change_delta".to_string()
+                    } else {
+                        "command_output_delta".to_string()
+                    },
+                    happened_at: timestamp.to_string(),
+                    summary_text: summary,
+                    data,
+                });
+                offset += 1;
+            }
+            _ => {}
+        }
+    }
+
+    events
+}
+
+fn claude_message_content(items: &[Value]) -> Vec<Value> {
+    let mut content = Vec::new();
+    for item in items {
+        match item.get("type").and_then(Value::as_str).unwrap_or_default() {
+            "text" => {
+                let Some(text) = item.get("text").and_then(Value::as_str).map(str::trim) else {
+                    continue;
+                };
+                if text.is_empty() {
+                    continue;
+                }
+                content.push(json!({
+                    "type": "text",
+                    "text_type": "text",
+                    "text": text,
+                }));
+            }
+            "image" | "input_image" => {
+                if let Some(image_url) = archived_response_image_url(item) {
+                    content.push(json!({
+                        "type": "image",
+                        "image_url": image_url,
+                    }));
+                }
+            }
+            _ => {}
+        }
+    }
+    content
+}
+
+fn normalize_claude_tool_result_output(record: &Value, item: &Value) -> String {
+    if let Some(tool_use_result) = record.get("toolUseResult") {
+        if let Some(stdout) = tool_use_result.get("stdout").and_then(Value::as_str) {
+            let stderr = tool_use_result
+                .get("stderr")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let combined = [stdout.trim_end(), stderr.trim_end()]
+                .into_iter()
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !combined.is_empty() {
+                return combined;
+            }
+        }
+        if let Some(content) = tool_use_result.get("content") {
+            let text = value_to_text(content).unwrap_or_default();
+            if !text.trim().is_empty() {
+                return text;
+            }
+        }
+    }
+
+    match item.get("content") {
+        Some(Value::String(text)) => text.to_string(),
+        Some(Value::Array(values)) => values
+            .iter()
+            .filter_map(|value| {
+                value.as_str().map(ToString::to_string).or_else(|| {
+                    value
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                })
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Some(value) => value_to_text(value).unwrap_or_default(),
+        None => String::new(),
+    }
+}
+
+fn is_claude_file_change_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name.trim().to_ascii_lowercase().as_str(),
+        "edit" | "write" | "multiedit" | "notebookedit"
+    )
+}
+
+fn claude_thread_headline(slug: Option<&str>, first_user_message: Option<&str>) -> String {
+    if let Some(slug) = slug.map(str::trim).filter(|value| !value.is_empty()) {
+        return truncate_summary(&slug.replace(['-', '_'], " "));
+    }
+
+    if let Some(first_user_message) = first_user_message
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return truncate_summary(first_user_message);
+    }
+
+    "Untitled thread".to_string()
 }
 
 fn discover_all_session_entries(sessions_root: &Path) -> Result<Vec<SessionIndexEntry>, String> {
@@ -878,6 +1466,7 @@ fn parse_archived_session(
     let mut timeline = Vec::new();
     let mut last_turn_summary: Option<String> = None;
     let mut visible_message_fingerprints = HashSet::new();
+    let thread_id = provider_thread_id(ProviderKind::Codex, &index_entry.id);
 
     for line in raw.lines().filter(|line| !line.trim().is_empty()) {
         let value: Value = match serde_json::from_str(line) {
@@ -931,7 +1520,7 @@ fn parse_archived_session(
         }
 
         if let Some(event) = map_archived_session_event(
-            &index_entry.id,
+            &thread_id,
             &timestamp,
             record_type,
             &payload,
@@ -963,7 +1552,10 @@ fn parse_archived_session(
 
     Ok((
         UpstreamThreadRecord {
-            id: index_entry.id.clone(),
+            id: provider_thread_id(ProviderKind::Codex, &index_entry.id),
+            native_id: index_entry.id.clone(),
+            provider: ProviderKind::Codex,
+            client: map_thread_client_kind_from_source(source.as_deref().unwrap_or("archive")),
             headline: index_entry.thread_name.clone(),
             lifecycle_state: "done".to_string(),
             workspace_path,
@@ -988,7 +1580,10 @@ fn archived_thread_record_from_index(
 ) -> (UpstreamThreadRecord, Vec<UpstreamTimelineEvent>) {
     (
         UpstreamThreadRecord {
-            id: index_entry.id.clone(),
+            id: provider_thread_id(ProviderKind::Codex, &index_entry.id),
+            native_id: index_entry.id.clone(),
+            provider: ProviderKind::Codex,
+            client: ThreadClientKind::Archive,
             headline: index_entry.thread_name.clone(),
             lifecycle_state: "done".to_string(),
             workspace_path: String::new(),
@@ -1479,7 +2074,7 @@ fn archived_response_message_content(payload: &Value) -> Vec<Value> {
                 }
             }
             "input_image" | "image" => {
-                if let Some(image_url) = item.get("image_url").and_then(Value::as_str)
+                if let Some(image_url) = archived_response_image_url(item)
                     && !image_url.trim().is_empty()
                 {
                     content.push(json!({
@@ -1493,6 +2088,33 @@ fn archived_response_message_content(payload: &Value) -> Vec<Value> {
     }
 
     content
+}
+
+fn archived_response_image_url(item: &Value) -> Option<String> {
+    if let Some(image_url) = item.get("image_url").and_then(Value::as_str) {
+        let trimmed = image_url.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    let source = item.get("source")?;
+    if source.get("type").and_then(Value::as_str) != Some("base64") {
+        return None;
+    }
+    let media_type = source
+        .get("media_type")
+        .or_else(|| source.get("mediaType"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let data = source
+        .get("data")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+
+    Some(format!("data:{media_type};base64,{data}"))
 }
 
 pub(super) fn is_file_change_text(text: &str) -> bool {
@@ -1544,19 +2166,23 @@ fn archived_message_fingerprint(event: &UpstreamTimelineEvent) -> Option<String>
 pub(crate) fn load_archive_timeline_entries_for_thread(
     thread_id: &str,
 ) -> Vec<ThreadTimelineEntryDto> {
-    let Ok(codex_home) = resolve_codex_home_dir() else {
-        return Vec::new();
-    };
+    let codex_home = resolve_codex_home_dir().unwrap_or_else(|_| PathBuf::from(".codex"));
 
-    let requested_ids = HashSet::from([thread_id.to_string()]);
-    let Ok((_, mut timeline_by_thread_id)) =
-        load_thread_snapshot_from_codex_archive_for_ids(&codex_home, Some(&requested_ids))
-    else {
+    let normalized_thread_id = native_thread_id_for_provider(thread_id, ProviderKind::Codex)
+        .map(|native_id| provider_thread_id(ProviderKind::Codex, native_id))
+        .unwrap_or_else(|| thread_id.to_string());
+    let Ok((_, mut timeline_by_thread_id)) = load_thread_snapshot_for_id(
+        "definitely-missing-codex",
+        &["app-server".to_string()],
+        None,
+        &codex_home,
+        &normalized_thread_id,
+    ) else {
         return Vec::new();
     };
 
     timeline_by_thread_id
-        .remove(thread_id)
+        .remove(&normalized_thread_id)
         .unwrap_or_default()
         .into_iter()
         .map(|event| map_timeline_entry(&event))

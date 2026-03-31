@@ -1,0 +1,69 @@
+{
+  "groupId": "mobile-desktop-affordances",
+  "surface": "flutter-mobile-widget-tests",
+  "toolsUsed": [
+    "flutter",
+    "curl",
+    "python3"
+  ],
+  "commandsRun": [
+    "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"open-on-Mac success and failure are surfaced clearly\"",
+    "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/threads/thread_detail_page_test.dart --plain-name \"desktop integration toggle updates open-on-Mac affordances\"",
+    "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/settings/settings_page_test.dart --plain-name \"desktop integration toggle persists across relaunch\"",
+    "cd \"/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile\" && flutter test test/features/settings/runtime_notification_delivery_controller_test.dart --plain-name \"cold-start notification delivery stays fail-closed until preferences restore\"",
+    "curl -sS http://127.0.0.1:3110/health",
+    "curl -sS http://127.0.0.1:3110/threads",
+    "curl -sS -X POST http://127.0.0.1:3110/threads/019d0194-3579-75f3-b1c4-4c723054b9fb/open-on-mac"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-DESKTOP-003",
+      "status": "pass",
+      "reason": "The Flutter thread-detail harness passed the open-on-Mac success/failure flow, and the live read-only bridge POST returned 200 with the same thread_id plus a matching codex://thread URL, confirming the mobile action targets the matching underlying thread.",
+      "evidence": [
+        "desktop-shell/mobile-desktop-affordances/val-desktop-open-on-mac-widget.log",
+        "desktop-shell/mobile-desktop-affordances/threads.json",
+        "desktop-shell/mobile-desktop-affordances/threads.headers.txt",
+        "desktop-shell/mobile-desktop-affordances/open-on-mac.json",
+        "desktop-shell/mobile-desktop-affordances/open-on-mac.headers.txt"
+      ]
+    },
+    {
+      "id": "VAL-DESKTOP-004",
+      "status": "pass",
+      "reason": "The widget harness kept the thread detail flow usable while surfacing best-effort open results, and the live bridge response explicitly reported best_effort=true with the message that desktop refresh/open is best effort and mobile remains usable.",
+      "evidence": [
+        "desktop-shell/mobile-desktop-affordances/val-desktop-open-on-mac-widget.log",
+        "desktop-shell/mobile-desktop-affordances/open-on-mac.json",
+        "desktop-shell/mobile-desktop-affordances/open-on-mac.headers.txt"
+      ]
+    },
+    {
+      "id": "VAL-DESKTOP-008",
+      "status": "pass",
+      "reason": "The targeted Flutter widget test passed the failure branch where the second open-on-Mac attempt surfaces a clear user-facing error banner without collapsing the thread detail surface.",
+      "evidence": [
+        "desktop-shell/mobile-desktop-affordances/val-desktop-open-on-mac-widget.log"
+      ]
+    },
+    {
+      "id": "VAL-SETTINGS-002",
+      "status": "pass",
+      "reason": "Desktop integration toggle persistence passed across a simulated relaunch in the settings widget harness, and the cold-start notification controller test restored persisted disabled notification preferences before permitting delivery, confirming settings remain in effect after reopen.",
+      "evidence": [
+        "desktop-shell/mobile-desktop-affordances/val-settings-desktop-persist-widget.log",
+        "desktop-shell/mobile-desktop-affordances/val-settings-notification-cold-start.log"
+      ]
+    },
+    {
+      "id": "VAL-SETTINGS-005",
+      "status": "pass",
+      "reason": "The targeted thread-detail widget test showed the open-on-Mac button enabled initially, disabled with a visible desktop-integration-disabled message when the toggle was turned off, and re-enabled immediately when the toggle was turned back on.",
+      "evidence": [
+        "desktop-shell/mobile-desktop-affordances/val-settings-desktop-affordance-toggle-widget.log"
+      ]
+    }
+  ],
+  "frictions": [],
+  "blockers": []
+}

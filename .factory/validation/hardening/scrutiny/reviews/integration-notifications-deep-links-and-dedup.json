@@ -1,0 +1,34 @@
+{
+  "featureId": "integration-notifications-deep-links-and-dedup",
+  "reviewedAt": "2026-03-18T19:58:16.773436Z",
+  "commitId": "e41220b",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Reviewed the hardening notifications feature handoff/transcript for worker session `6655cb7c-5247-45b5-a8c6-c4020d65b79c` and commit `e41220b` against the feature description and VAL-CROSS-002/008/009/010. The change does improve in-app routing and reconnect dedup for the existing runtime notification surface, but it still does not implement real background or terminated-app notification delivery/open handling. The new flow is driven by `SnackBar` UI plus a persisted launch-target secret, so it only works after the app is already alive and cannot satisfy the required background/cold-start notification behavior end to end. I also found one state-isolation gap: notification dedup/launch secrets survive local trust reset, so a future pairing can inherit stale launch or suppression state from the prior bridge session.",
+    "issues": [
+      {
+        "file": "apps/mobile/lib/features/settings/presentation/runtime_notification_delivery_surface.dart",
+        "line": 80,
+        "severity": "blocking",
+        "description": "This feature still does not implement actual background/cold-start notification plumbing. Delivery is surfaced only through in-app `SnackBar`s and `SnackBarAction` callbacks (`runtime_notification_delivery_surface.dart:74-92`), while `main.dart:17-24` merely installs a global navigator/surface and there is no lifecycle observer or native notification integration anywhere under `apps/mobile` (no Android/iOS notification handling code or notification package in `apps/mobile/pubspec.yaml`). The new cold-start test also proves the gap: it passes by pre-seeding `SecureValueKey.runtimeNotificationPendingLaunchTarget` directly (`apps/mobile/integration_test/notification_deep_links_and_dedup_test.dart:202-208`) instead of exercising a real notification tap from the background or a terminated app. Because no code path can receive or persist an OS notification open while the app is not running, the implementation does not fulfill the feature's required background/cold-start notification routing behavior." 
+      },
+      {
+        "file": "apps/mobile/lib/features/pairing/application/pairing_controller.dart",
+        "line": 434,
+        "severity": "non_blocking",
+        "description": "Local trust reset clears pairing/session/thread cache secrets but leaves the new notification secrets behind (`pairing_controller.dart:434-441`). Meanwhile the hardening feature persists seen-event dedup state and pending launch targets in secure storage (`runtime_notification_delivery_controller.dart:449-532`). Since bridge event IDs are generated from small restartable sequences like `evt-live-<n>` and `evt-approval-<sequence>` (`crates/bridge-core/src/thread_api.rs:120,570` and `crates/bridge-core/src/lib.rs:662,2007`), a future re-pair or bridge restart can inherit stale suppression state or resurrect an old pending launch target from the previous trust relationship. That undermines the stale-notification isolation this feature is supposed to harden, although it does not block the current in-app routing tests." 
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The `integration-worker` skill still assumes manual lifecycle verification is the only valid way to close notification/reconnect work, but Exec-mode workers cannot perform real OS notification tray interactions. The skill should explicitly allow automated lifecycle evidence as an accepted alternative when background/cold-start notification taps are not interactively reachable.",
+      "evidence": "`.factory/skills/integration-worker/SKILL.md` step 6 requires manual verification across backgrounding/reconnect/cold start, while this worker's handoff records `skillFeedback.followedProcedure=false` and a deviation explaining that only automated Flutter integration coverage was possible in Exec mode."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail. Commit `e41220b` improves in-app snackbar routing, persisted launch-target replay, and reconnect dedup, but it still lacks real platform notification plumbing, so the feature does not yet satisfy the required background/cold-start notification behavior. I also noted that notification dedup/launch secrets are not cleared on trust reset, which leaves stale notification state available to future pairings." 
+}

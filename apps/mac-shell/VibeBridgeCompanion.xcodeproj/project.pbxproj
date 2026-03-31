@@ -1,0 +1,718 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 54;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		24C2C3E5B947C04538D4C72A /* CodexSpeechHelper in Resources */ = {isa = PBXBuildFile; fileRef = F854354306DDFC13D0443B50 /* CodexSpeechHelper */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		2651B690AD40B18288303B58 /* UpdateCheckViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07C52F81A97CD10655BE6412 /* UpdateCheckViewModel.swift */; };
+		2E3DA87C7B01CB87F88864D2 /* BridgeShellAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53421991C49DDE8B0B3E47BA /* BridgeShellAPIClient.swift */; };
+		4AF00EBFD4BA875EAC049E74 /* BridgeContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F8294A5508DE251054FF51C /* BridgeContracts.swift */; };
+		4AF709BE8583902BBCEB70E1 /* PersistenceBoundary.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6CDA3233A5F696863C5E852 /* PersistenceBoundary.swift */; };
+		4B00252B1DE841CC93505BD5 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F4845E7F1FC474F11961FAFA /* Assets.xcassets */; };
+		5A008FBD70A773269574B1BB /* VibeBridgeCompanionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA1D965E680F155FE12C5845 /* VibeBridgeCompanionTests.swift */; };
+		5EAE002CF0AA84D0888F1B06 /* DesktopRuntimeSupervisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CC741BE1878F7D16350DB12 /* DesktopRuntimeSupervisor.swift */; };
+		872DD316BD78A96B99E58FC5 /* PairingEntryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03172A1B194894A99A21DA6A /* PairingEntryViewModel.swift */; };
+		93949CFFBD74F70CE8DE71F7 /* StructuredLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3866AF4BE6166BCC1B3F3E36 /* StructuredLogger.swift */; };
+		9E01FAF18CB21EE97F4B2A1A /* SecureStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A893CD1108700B71040F7D4F /* SecureStore.swift */; };
+		CB46484FA2035421148EB60F /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 839D1D57892787AE2B7951A6 /* FluidAudio */; };
+		D446AEB1B5AC36DE151C9155 /* PairingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FFCA151D895405BB30DF339 /* PairingViews.swift */; };
+		E011746A949813A8E582D5C1 /* SpeechHelperMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CEAF1F524063E325CFF3771 /* SpeechHelperMain.swift */; };
+		E459548F19B5F91F935EC97F /* ReleaseUpdater.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4825761B7C4ACD87EDD4F122 /* ReleaseUpdater.swift */; };
+		FBBF6EF92D1AE825E42388A0 /* VibeBridgeCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2511CE319081687AA63E0E61 /* VibeBridgeCompanionApp.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		823CFDF1A54E21740DCC52DA /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AD75B55CDD4763B03EDDF025 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5B450A6F803AC5E2167A6B5B;
+			remoteInfo = CodexSpeechHelper;
+		};
+		B688BB069CD187004A7D34F0 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AD75B55CDD4763B03EDDF025 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2DDB109183156F7DAD83239F;
+			remoteInfo = VibeBridgeCompanion;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		03172A1B194894A99A21DA6A /* PairingEntryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingEntryViewModel.swift; sourceTree = "<group>"; };
+		07C52F81A97CD10655BE6412 /* UpdateCheckViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateCheckViewModel.swift; sourceTree = "<group>"; };
+		0CC741BE1878F7D16350DB12 /* DesktopRuntimeSupervisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopRuntimeSupervisor.swift; sourceTree = "<group>"; };
+		0F8294A5508DE251054FF51C /* BridgeContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeContracts.swift; sourceTree = "<group>"; };
+		2511CE319081687AA63E0E61 /* VibeBridgeCompanionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VibeBridgeCompanionApp.swift; sourceTree = "<group>"; };
+		2CEAF1F524063E325CFF3771 /* SpeechHelperMain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechHelperMain.swift; sourceTree = "<group>"; };
+		3866AF4BE6166BCC1B3F3E36 /* StructuredLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StructuredLogger.swift; sourceTree = "<group>"; };
+		4825761B7C4ACD87EDD4F122 /* ReleaseUpdater.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseUpdater.swift; sourceTree = "<group>"; };
+		53421991C49DDE8B0B3E47BA /* BridgeShellAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeShellAPIClient.swift; sourceTree = "<group>"; };
+		562592EF8110158DBF99379B /* VibeBridgeCompanion.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VibeBridgeCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		6FFCA151D895405BB30DF339 /* PairingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViews.swift; sourceTree = "<group>"; };
+		A893CD1108700B71040F7D4F /* SecureStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureStore.swift; sourceTree = "<group>"; };
+		CC3B07D52F923D98A8BE1E71 /* VibeBridgeCompanionTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VibeBridgeCompanionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		DA1D965E680F155FE12C5845 /* VibeBridgeCompanionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VibeBridgeCompanionTests.swift; sourceTree = "<group>"; };
+		F4845E7F1FC474F11961FAFA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F6CDA3233A5F696863C5E852 /* PersistenceBoundary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceBoundary.swift; sourceTree = "<group>"; };
+		F854354306DDFC13D0443B50 /* CodexSpeechHelper */ = {isa = PBXFileReference; includeInIndex = 0; path = CodexSpeechHelper; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		626917372B60DAF99261EA58 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CB46484FA2035421148EB60F /* FluidAudio in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		065109B6BAF4DFC27239F441 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				2511CE319081687AA63E0E61 /* VibeBridgeCompanionApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		2CFDE4ACC8C6A37F2498C1E9 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				F4845E7F1FC474F11961FAFA /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		2F02870D429101DB1A168689 /* Runtime */ = {
+			isa = PBXGroup;
+			children = (
+				0CC741BE1878F7D16350DB12 /* DesktopRuntimeSupervisor.swift */,
+			);
+			path = Runtime;
+			sourceTree = "<group>";
+		};
+		37E61FF34FFA7B1C809954C3 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F854354306DDFC13D0443B50 /* CodexSpeechHelper */,
+				562592EF8110158DBF99379B /* VibeBridgeCompanion.app */,
+				CC3B07D52F923D98A8BE1E71 /* VibeBridgeCompanionTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		4A4F59E7D0A7A665DC040458 /* Storage */ = {
+			isa = PBXGroup;
+			children = (
+				F6CDA3233A5F696863C5E852 /* PersistenceBoundary.swift */,
+				A893CD1108700B71040F7D4F /* SecureStore.swift */,
+			);
+			path = Storage;
+			sourceTree = "<group>";
+		};
+		667C83D14B8C32E2BCADCB79 /* Logging */ = {
+			isa = PBXGroup;
+			children = (
+				3866AF4BE6166BCC1B3F3E36 /* StructuredLogger.swift */,
+			);
+			path = Logging;
+			sourceTree = "<group>";
+		};
+		685307ED60E2A6B9AA54310C = {
+			isa = PBXGroup;
+			children = (
+				2CFDE4ACC8C6A37F2498C1E9 /* Resources */,
+				B5031B79377564263BECC637 /* Sources */,
+				A1E0E2CAE425A5B52DDFEBC7 /* SpeechHelper */,
+				D5AD88D72ACF8512124701CF /* Tests */,
+				37E61FF34FFA7B1C809954C3 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		7E139D20F6B4BBB083A6CAD9 /* Foundation */ = {
+			isa = PBXGroup;
+			children = (
+				4825761B7C4ACD87EDD4F122 /* ReleaseUpdater.swift */,
+				CE5D67FED8620A636ADB2EBC /* Contracts */,
+				667C83D14B8C32E2BCADCB79 /* Logging */,
+				4A4F59E7D0A7A665DC040458 /* Storage */,
+			);
+			path = Foundation;
+			sourceTree = "<group>";
+		};
+		A1E0E2CAE425A5B52DDFEBC7 /* SpeechHelper */ = {
+			isa = PBXGroup;
+			children = (
+				CA0EBE86A4CCC51E9420AA06 /* Sources */,
+			);
+			path = SpeechHelper;
+			sourceTree = "<group>";
+		};
+		B5031B79377564263BECC637 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				065109B6BAF4DFC27239F441 /* App */,
+				D9D6F534D091BE6AB4173006 /* Bridge */,
+				7E139D20F6B4BBB083A6CAD9 /* Foundation */,
+				2F02870D429101DB1A168689 /* Runtime */,
+				D86B614654E8BC150750D9B6 /* UI */,
+				C1E738718123C3FCF8E06E2F /* ViewModel */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		C1E738718123C3FCF8E06E2F /* ViewModel */ = {
+			isa = PBXGroup;
+			children = (
+				03172A1B194894A99A21DA6A /* PairingEntryViewModel.swift */,
+				07C52F81A97CD10655BE6412 /* UpdateCheckViewModel.swift */,
+			);
+			path = ViewModel;
+			sourceTree = "<group>";
+		};
+		CA0EBE86A4CCC51E9420AA06 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				2CEAF1F524063E325CFF3771 /* SpeechHelperMain.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		CE5D67FED8620A636ADB2EBC /* Contracts */ = {
+			isa = PBXGroup;
+			children = (
+				0F8294A5508DE251054FF51C /* BridgeContracts.swift */,
+			);
+			path = Contracts;
+			sourceTree = "<group>";
+		};
+		D5AD88D72ACF8512124701CF /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				DA1D965E680F155FE12C5845 /* VibeBridgeCompanionTests.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		D86B614654E8BC150750D9B6 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				6FFCA151D895405BB30DF339 /* PairingViews.swift */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+		D9D6F534D091BE6AB4173006 /* Bridge */ = {
+			isa = PBXGroup;
+			children = (
+				53421991C49DDE8B0B3E47BA /* BridgeShellAPIClient.swift */,
+			);
+			path = Bridge;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		2DDB109183156F7DAD83239F /* VibeBridgeCompanion */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 45B58602E49BB7A8E4B2BEB7 /* Build configuration list for PBXNativeTarget "VibeBridgeCompanion" */;
+			buildPhases = (
+				1B4C5F8CBCB466B4509CB1ED /* Sources */,
+				555377CFEC9B40EFA5BDCDC0 /* Resources */,
+				04F587ACDFAB4FCDA9BFBEF1 /* Embed bridge-server */,
+				A4752466BC6B3907E46F4100 /* Embed speech helper */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F821F239D64D83947D9C6527 /* PBXTargetDependency */,
+			);
+			name = VibeBridgeCompanion;
+			packageProductDependencies = (
+			);
+			productName = VibeBridgeCompanion;
+			productReference = 562592EF8110158DBF99379B /* VibeBridgeCompanion.app */;
+			productType = "com.apple.product-type.application";
+		};
+		5B450A6F803AC5E2167A6B5B /* CodexSpeechHelper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2C97B345F047B1767137EB60 /* Build configuration list for PBXNativeTarget "CodexSpeechHelper" */;
+			buildPhases = (
+				B9900AE322919DC7934311DE /* Sources */,
+				626917372B60DAF99261EA58 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CodexSpeechHelper;
+			packageProductDependencies = (
+				839D1D57892787AE2B7951A6 /* FluidAudio */,
+			);
+			productName = CodexSpeechHelper;
+			productReference = F854354306DDFC13D0443B50 /* CodexSpeechHelper */;
+			productType = "com.apple.product-type.tool";
+		};
+		8217148FD4CFC5843B5CD0EB /* VibeBridgeCompanionTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 89C13992936FF5AC0C1E68AC /* Build configuration list for PBXNativeTarget "VibeBridgeCompanionTests" */;
+			buildPhases = (
+				298E341B2994931A999A7F93 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E4434DE7C35B5C5F649A2F37 /* PBXTargetDependency */,
+			);
+			name = VibeBridgeCompanionTests;
+			packageProductDependencies = (
+			);
+			productName = VibeBridgeCompanionTests;
+			productReference = CC3B07D52F923D98A8BE1E71 /* VibeBridgeCompanionTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AD75B55CDD4763B03EDDF025 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = D1573E261685258CF2E0C811 /* Build configuration list for PBXProject "VibeBridgeCompanion" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 685307ED60E2A6B9AA54310C;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				13FB99BA8B3B6F051BF7C7F7 /* XCRemoteSwiftPackageReference "FluidAudio" */,
+			);
+			preferredProjectObjectVersion = 54;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				5B450A6F803AC5E2167A6B5B /* CodexSpeechHelper */,
+				2DDB109183156F7DAD83239F /* VibeBridgeCompanion */,
+				8217148FD4CFC5843B5CD0EB /* VibeBridgeCompanionTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		555377CFEC9B40EFA5BDCDC0 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4B00252B1DE841CC93505BD5 /* Assets.xcassets in Resources */,
+				24C2C3E5B947C04538D4C72A /* CodexSpeechHelper in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		04F587ACDFAB4FCDA9BFBEF1 /* Embed bridge-server */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed bridge-server";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/bin/bridge-server",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "#!/bin/sh\n\nset -eu\n\nREPO_ROOT=\"$(cd \"${SRCROOT}/../..\" && pwd)\"\nMANIFEST_PATH=\"${REPO_ROOT}/Cargo.toml\"\nPRODUCT_BINARY_DIR=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/bin\"\nPRODUCT_BINARY_PATH=\"${PRODUCT_BINARY_DIR}/bridge-server\"\n\nresolve_cargo() {\n  if [ -n \"${CODEX_MOBILE_COMPANION_CARGO_BIN:-}\" ] && [ -x \"${CODEX_MOBILE_COMPANION_CARGO_BIN}\" ]; then\n    printf '%s\\n' \"${CODEX_MOBILE_COMPANION_CARGO_BIN}\"\n    return 0\n  fi\n\n  if command -v cargo >/dev/null 2>&1; then\n    command -v cargo\n    return 0\n  fi\n\n  for candidate in \\\n    \"${HOME}/.cargo/bin/cargo\" \\\n    \"/opt/homebrew/bin/cargo\" \\\n    \"/usr/local/bin/cargo\"\n  do\n    if [ -x \"${candidate}\" ]; then\n      printf '%s\\n' \"${candidate}\"\n      return 0\n    fi\n  done\n\n  echo \"error: cargo not found. Set CODEX_MOBILE_COMPANION_CARGO_BIN or install Rust so Xcode can reach cargo.\" >&2\n  echo \"PATH=${PATH}\" >&2\n  exit 1\n}\n\nCARGO_BIN=\"$(resolve_cargo)\"\nRUST_BIN_DIR=\"$(dirname \"${CARGO_BIN}\")\"\n\nresolve_rustc() {\n  if [ -n \"${CODEX_MOBILE_COMPANION_RUSTC_BIN:-}\" ] && [ -x \"${CODEX_MOBILE_COMPANION_RUSTC_BIN}\" ]; then\n    printf '%s\\n' \"${CODEX_MOBILE_COMPANION_RUSTC_BIN}\"\n    return 0\n  fi\n\n  if [ -x \"${RUST_BIN_DIR}/rustc\" ]; then\n    printf '%s\\n' \"${RUST_BIN_DIR}/rustc\"\n    return 0\n  fi\n\n  if command -v rustc >/dev/null 2>&1; then\n    command -v rustc\n    return 0\n  fi\n\n  for candidate in \\\n    \"${HOME}/.cargo/bin/rustc\" \\\n    \"/opt/homebrew/bin/rustc\" \\\n    \"/usr/local/bin/rustc\"\n  do\n    if [ -x \"${candidate}\" ]; then\n      printf '%s\\n' \"${candidate}\"\n      return 0\n    fi\n  done\n\n  echo \"error: rustc not found. Set CODEX_MOBILE_COMPANION_RUSTC_BIN or install Rust so Xcode can reach rustc.\" >&2\n  echo \"PATH=${PATH}\" >&2\n  exit 1\n}\n\nRUSTC_BIN=\"$(resolve_rustc)\"\n\nexport PATH=\"${RUST_BIN_DIR}:${PATH}\"\nexport RUSTC=\"${RUSTC_BIN}\"\n\ncase \"${CONFIGURATION}\" in\n  Release)\n    CARGO_PROFILE_FLAG=\"--release\"\n    CARGO_TARGET_SUBDIR=\"release\"\n    ;;\n  *)\n    CARGO_PROFILE_FLAG=\"\"\n    CARGO_TARGET_SUBDIR=\"debug\"\n    ;;\nesac\n\necho \"Embedding bridge-server into app bundle\"\nmkdir -p \"${PRODUCT_BINARY_DIR}\"\n\ncd \"${REPO_ROOT}\"\n\n\"${CARGO_BIN}\" build \\\n  --manifest-path \"${MANIFEST_PATH}\" \\\n  -p bridge-core \\\n  --bin bridge-server \\\n  ${CARGO_PROFILE_FLAG}\n\ncp \"${REPO_ROOT}/target/${CARGO_TARGET_SUBDIR}/bridge-server\" \"${PRODUCT_BINARY_PATH}\"\nchmod 755 \"${PRODUCT_BINARY_PATH}\"\n\necho \"Embedded bridge helper at ${PRODUCT_BINARY_PATH}\"\n";
+		};
+		A4752466BC6B3907E46F4100 /* Embed speech helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed speech helper";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/bin/CodexSpeechHelper",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "#!/bin/sh\n\nset -eu\n\nPRODUCT_BINARY_DIR=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/bin\"\nPRODUCT_BINARY_PATH=\"${PRODUCT_BINARY_DIR}/CodexSpeechHelper\"\nHELPER_BINARY_PATH=\"${BUILT_PRODUCTS_DIR}/CodexSpeechHelper\"\n\nif [ ! -x \"${HELPER_BINARY_PATH}\" ]; then\n  echo \"error: bundled speech helper was not built at ${HELPER_BINARY_PATH}\" >&2\n  exit 1\nfi\n\necho \"Embedding CodexSpeechHelper into app bundle\"\nmkdir -p \"${PRODUCT_BINARY_DIR}\"\ncp \"${HELPER_BINARY_PATH}\" \"${PRODUCT_BINARY_PATH}\"\nchmod 755 \"${PRODUCT_BINARY_PATH}\"\n\necho \"Embedded speech helper at ${PRODUCT_BINARY_PATH}\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1B4C5F8CBCB466B4509CB1ED /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4AF00EBFD4BA875EAC049E74 /* BridgeContracts.swift in Sources */,
+				2E3DA87C7B01CB87F88864D2 /* BridgeShellAPIClient.swift in Sources */,
+				5EAE002CF0AA84D0888F1B06 /* DesktopRuntimeSupervisor.swift in Sources */,
+				872DD316BD78A96B99E58FC5 /* PairingEntryViewModel.swift in Sources */,
+				D446AEB1B5AC36DE151C9155 /* PairingViews.swift in Sources */,
+				4AF709BE8583902BBCEB70E1 /* PersistenceBoundary.swift in Sources */,
+				E459548F19B5F91F935EC97F /* ReleaseUpdater.swift in Sources */,
+				9E01FAF18CB21EE97F4B2A1A /* SecureStore.swift in Sources */,
+				93949CFFBD74F70CE8DE71F7 /* StructuredLogger.swift in Sources */,
+				2651B690AD40B18288303B58 /* UpdateCheckViewModel.swift in Sources */,
+				FBBF6EF92D1AE825E42388A0 /* VibeBridgeCompanionApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		298E341B2994931A999A7F93 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5A008FBD70A773269574B1BB /* VibeBridgeCompanionTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B9900AE322919DC7934311DE /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E011746A949813A8E582D5C1 /* SpeechHelperMain.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		E4434DE7C35B5C5F649A2F37 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2DDB109183156F7DAD83239F /* VibeBridgeCompanion */;
+			targetProxy = B688BB069CD187004A7D34F0 /* PBXContainerItemProxy */;
+		};
+		F821F239D64D83947D9C6527 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5B450A6F803AC5E2167A6B5B /* CodexSpeechHelper */;
+			targetProxy = 823CFDF1A54E21740DCC52DA /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		02956B9165517C36E19EA244 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.codex.mobile.companion.shell.speechhelper;
+				PRODUCT_NAME = CodexSpeechHelper;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		0998B189D8BDB3294F504620 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		4CAE5FDB7D3FF186708C8480 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.codex.mobile.companion.shell.tests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion";
+			};
+			name = Release;
+		};
+		56EABBA4CE5D0E1CC4920C29 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.codex.mobile.companion.shell.tests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/VibeBridgeCompanion.app/Contents/MacOS/VibeBridgeCompanion";
+			};
+			name = Debug;
+		};
+		67A7A0E6F4A29CB6806ADA01 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Vibe Bridge Companion";
+				INFOPLIST_KEY_CFBundleShortVersionString = "$(MARKETING_VERSION)";
+				INFOPLIST_KEY_CFBundleVersion = "$(CURRENT_PROJECT_VERSION)";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Vibe Bridge Companion";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.codex.mobile.companion.shell;
+				PRODUCT_NAME = VibeBridgeCompanion;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		7B7D2EE493DBCAEBBC4C34D5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		AD33D4B0C10446131CB9F615 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Vibe Bridge Companion";
+				INFOPLIST_KEY_CFBundleShortVersionString = "$(MARKETING_VERSION)";
+				INFOPLIST_KEY_CFBundleVersion = "$(CURRENT_PROJECT_VERSION)";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Vibe Bridge Companion";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.codex.mobile.companion.shell;
+				PRODUCT_NAME = VibeBridgeCompanion;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		CDFDAF75010BCE523BF4EE7D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.codex.mobile.companion.shell.speechhelper;
+				PRODUCT_NAME = CodexSpeechHelper;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		2C97B345F047B1767137EB60 /* Build configuration list for PBXNativeTarget "CodexSpeechHelper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				02956B9165517C36E19EA244 /* Debug */,
+				CDFDAF75010BCE523BF4EE7D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		45B58602E49BB7A8E4B2BEB7 /* Build configuration list for PBXNativeTarget "VibeBridgeCompanion" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AD33D4B0C10446131CB9F615 /* Debug */,
+				67A7A0E6F4A29CB6806ADA01 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		89C13992936FF5AC0C1E68AC /* Build configuration list for PBXNativeTarget "VibeBridgeCompanionTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				56EABBA4CE5D0E1CC4920C29 /* Debug */,
+				4CAE5FDB7D3FF186708C8480 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D1573E261685258CF2E0C811 /* Build configuration list for PBXProject "VibeBridgeCompanion" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7B7D2EE493DBCAEBBC4C34D5 /* Debug */,
+				0998B189D8BDB3294F504620 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		13FB99BA8B3B6F051BF7C7F7 /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/FluidInference/FluidAudio";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		839D1D57892787AE2B7951A6 /* FluidAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 13FB99BA8B3B6F051BF7C7F7 /* XCRemoteSwiftPackageReference "FluidAudio" */;
+			productName = FluidAudio;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = AD75B55CDD4763B03EDDF025 /* Project object */;
+}

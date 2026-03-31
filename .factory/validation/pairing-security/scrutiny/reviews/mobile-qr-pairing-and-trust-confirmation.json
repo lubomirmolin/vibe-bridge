@@ -1,0 +1,51 @@
+{
+  "featureId": "mobile-qr-pairing-and-trust-confirmation",
+  "reviewedAt": "2026-03-17T22:59:30Z",
+  "commitId": "f65bbb1b315c858eaa5b422ba82db150a2b5f56d",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature adds a polished Flutter scan/review flow, but the original implementation is not secure or complete enough for the pairing-security milestone: trust is finalized entirely on the phone, reused QR enforcement is only in-memory, and the scanner accepts non-private bridge URLs.",
+    "issues": [
+      {
+        "file": "apps/mobile/lib/features/pairing/application/pairing_controller.dart",
+        "line": 162,
+        "severity": "blocking",
+        "description": "`confirmTrust()` never contacts the bridge to finalize pairing or consume the QR session. Instead it immediately writes `trustedBridgeIdentity` locally and stores the one-time `pairingToken` as `sessionToken`. That means the Mac never records the trusted phone, the QR can still be reused by another device, and the app cannot prove that trust was actually confirmed on both sides. This falls short of VAL-PAIR-003 and undermines the reused-QR guarantees expected by VAL-PAIR-002."
+      },
+      {
+        "file": "apps/mobile/lib/features/pairing/application/pairing_controller.dart",
+        "line": 93,
+        "severity": "blocking",
+        "description": "`_restoreTrustedBridge()` restores the paired state purely from locally stored JSON and never performs a bridge handshake or any other fail-closed verification. After a relaunch, revoked or mismatched trust would still appear paired until some later operation failed, which breaks the one-phone/one-Mac security model and pairing-security reconnect expectations."
+      },
+      {
+        "file": "apps/mobile/lib/features/pairing/domain/pairing_qr_validator.dart",
+        "line": 30,
+        "severity": "blocking",
+        "description": "Scan-time validation only checks malformed JSON, expiry, and whether the session id is present in the controller's in-memory `consumedSessionIds` set. Combined with `PairingQrPayload.fromJson()` only requiring a parseable URL (`apps/mobile/lib/features/pairing/domain/pairing_qr_payload.dart:53`), the scanner will accept reused QR payloads after app relaunch and will also accept non-private bridge URLs instead of rejecting them immediately. That misses the scanner-side guarantees required by VAL-PAIR-002 and pairing-security's private-route requirement."
+      },
+      {
+        "file": "apps/mobile/lib/features/pairing/presentation/pairing_flow_page.dart",
+        "line": 99,
+        "severity": "non_blocking",
+        "description": "The scanner UI wires `MobileScanner` only through `onDetect` and never surfaces camera-permission denial or scanner-error states. Real device users who deny camera access are left to discover the debug/testing paste box on their own, so the flow does not provide a clear permission-gated pairing state."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The mobile-worker skill still requires manual simulator/device verification even for non-interactive Exec runs, and this worker explicitly had to deviate from that step. The skill should document when comprehensive widget/integration coverage is an acceptable substitute and what extra evidence should be recorded in that case.",
+      "evidence": "`.factory/skills/mobile-worker/SKILL.md:23-24` require manual verification and recording permission/error states, while the handoff marks `followedProcedure: false` and explains the deviation at `.../handoffs/2026-03-17T22-15-16-178Z__mobile-qr-pairing-and-trust-confirmation__200ea69b-ddb4-450e-8a0d-a343265e1050.json:104-115`."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The shared API library note is still too high-level for pairing work: it names generic pairing/session endpoints but does not record the concrete QR payload fields or the finalize/handshake contract that mobile pairing depends on. That likely contributed to this feature inventing local-only trust semantics instead of matching a documented bridge-owned contract.",
+      "evidence": "`.factory/library/api.md:9-18` only lists broad endpoint families, while the worker transcript skeleton shows extra source searches for pairing fields such as `bridge_identity`, `bridge_id`, `api_base_url`, and `expires_at` before implementation."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the feature entry, handoff, worker transcript skeleton, mobile-worker skill, mission shared-state docs, and commit `f65bbb1b315c858eaa5b422ba82db150a2b5f56d`. The feature fails scrutiny because the original mobile flow trusted QR payloads locally without bridge finalization or fail-closed restore checks, and it did not reject non-private or persistently reused pairing payloads at scan time."
+}
