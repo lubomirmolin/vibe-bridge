@@ -1148,6 +1148,7 @@ done
     fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))
         .expect("fake codex script should be executable");
 
+    let _env_lock = crate::test_support::lock_test_env();
     let previous_codex_home = std::env::var_os("CODEX_HOME");
     unsafe {
         std::env::set_var("CODEX_HOME", &temp_dir);

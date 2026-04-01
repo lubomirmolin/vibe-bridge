@@ -48,6 +48,8 @@ pub mod runtime_sync;
 pub mod secure_storage;
 pub mod server;
 pub mod stream_router;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod thread_api;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

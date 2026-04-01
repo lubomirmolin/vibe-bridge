@@ -11,10 +11,12 @@ use shared_contracts::{
 };
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
+use tungstenite::{Message, WebSocket, accept};
 use uuid::Uuid;
 
 use crate::codex_runtime::CodexRuntimeMode;
@@ -302,7 +304,7 @@ impl CodexGateway {
     ) -> Result<GatewayTurnMutation, String>
     where
         F: Fn(BridgeEventEnvelope<Value>) + Send + 'static,
-        H: Fn(GatewayTurnControlRequest) -> Result<Option<Value>, String> + Send + 'static,
+        H: Fn(GatewayTurnControlRequest) -> Result<Option<Value>, String> + Send + Sync + 'static,
         G: Fn(String) + Send + 'static,
     {
         if is_provider_thread_id(thread_id, ProviderKind::ClaudeCode) {
@@ -325,6 +327,7 @@ impl CodexGateway {
             permission_mode: _,
         } = request;
         let reserved_transports = Arc::clone(&self.reserved_transports);
+        let on_control_request = Arc::new(on_control_request);
         let (result_tx, result_rx) = mpsc::sync_channel(1);
 
         std::thread::spawn(move || {
@@ -436,7 +439,7 @@ impl CodexGateway {
     ) -> Result<GatewayTurnMutation, String>
     where
         F: Fn(BridgeEventEnvelope<Value>) + Send + 'static,
-        H: Fn(GatewayTurnControlRequest) -> Result<Option<Value>, String> + Send + 'static,
+        H: Fn(GatewayTurnControlRequest) -> Result<Option<Value>, String> + Send + Sync + 'static,
         G: Fn(String) + Send + 'static,
     {
         if !is_provider_thread_id(thread_id, ProviderKind::ClaudeCode) {
@@ -461,36 +464,36 @@ impl CodexGateway {
             .ok_or_else(|| format!("workspace for Claude thread {thread_id} is unavailable"))?;
         let active_claude_processes = Arc::clone(&self.active_claude_processes);
         let interrupted_claude_threads = Arc::clone(&self.interrupted_claude_threads);
+        let on_control_request = Arc::new(on_control_request);
         let (result_tx, result_rx) = mpsc::sync_channel(1);
 
         std::thread::spawn(move || {
-            let prompt_char_count = request.prompt.chars().count();
-            let image_count = request.images.len();
             let session_exists = claude_session_archive_path(&workspace, &native_thread_id)
                 .is_some_and(|path| path.is_file());
-            eprintln!(
-                "starting claude turn thread_id={thread_id} session_id={native_thread_id} workspace={} model={} effort={} permission_mode={} prompt_chars={} images={} launch_mode={}",
-                workspace,
-                request.model.as_deref().unwrap_or("default"),
-                request.effort.as_deref().unwrap_or("default"),
-                request.permission_mode.as_deref().unwrap_or("default"),
-                prompt_char_count,
-                image_count,
-                if session_exists { "resume" } else { "new" },
-            );
+            let (sdk_listener, sdk_url) = match bind_claude_sdk_listener() {
+                Ok(listener) => listener,
+                Err(error) => {
+                    let _ = result_tx.send(Err(error));
+                    return;
+                }
+            };
             let mut command = Command::new("claude");
             command
                 .current_dir(&workspace)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
-                .arg("-p")
+                .env("CLAUDE_CODE_ENVIRONMENT_KIND", "bridge")
+                .arg("--print")
                 .arg("--verbose")
                 .arg("--include-partial-messages")
                 .arg("--output-format")
                 .arg("stream-json")
                 .arg("--input-format")
                 .arg("stream-json")
+                .arg("--replay-user-messages")
+                .arg("--sdk-url")
+                .arg(&sdk_url)
                 .arg("--permission-mode")
                 .arg(request.permission_mode.as_deref().unwrap_or("default"));
             if session_exists {
@@ -531,7 +534,7 @@ impl CodexGateway {
                     return;
                 }
             };
-            let mut stdin = match child.stdin.take() {
+            let stdin = match child.stdin.take() {
                 Some(stdin) => stdin,
                 None => {
                     let _ = result_tx.send(Err("Claude process did not expose stdin".to_string()));
@@ -550,19 +553,28 @@ impl CodexGateway {
                     return;
                 }
             };
-            if let Err(error) = stdin.write_all(input_line.as_bytes()) {
-                let _ = result_tx.send(Err(format!("failed to write Claude turn input: {error}")));
-                let _ = child.kill();
-                let _ = child.wait();
-                return;
-            }
-            let _ = stdin.flush();
             let child_handle = Arc::new(Mutex::new(child));
             active_claude_processes
                 .lock()
                 .expect("active claude process lock should not be poisoned")
                 .insert(thread_id.clone(), Arc::clone(&child_handle));
 
+            let stdin_handle = Arc::new(Mutex::new(stdin));
+            let stdout_reader = std::thread::spawn(move || {
+                let mut stdout_output = String::new();
+                for line in BufReader::new(stdout).lines() {
+                    let Ok(line) = line else {
+                        break;
+                    };
+                    stdout_output.push_str(&line);
+                    stdout_output.push('\n');
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                }
+                stdout_output
+            });
             let stderr_reader = std::thread::spawn(move || {
                 let mut stderr_output = String::new();
                 if let Some(mut stderr) = stderr {
@@ -570,6 +582,56 @@ impl CodexGateway {
                 }
                 stderr_output
             });
+            let mut sdk_socket =
+                match accept_claude_sdk_connection(&sdk_listener, &child_handle, &thread_id) {
+                    Ok(socket) => socket,
+                    Err(error) => {
+                        remove_claude_process(&active_claude_processes, &thread_id);
+                        let stdout_output = stdout_reader.join().unwrap_or_default();
+                        let stderr_output = stderr_reader.join().unwrap_or_default();
+                        if !stdout_output.trim().is_empty() {
+                            eprintln!("claude stdout for {thread_id}: {}", stdout_output.trim());
+                        }
+                        if !stderr_output.trim().is_empty() {
+                            eprintln!("claude stderr for {thread_id}: {}", stderr_output.trim());
+                        }
+                        let _ = result_tx.send(Err(summarize_claude_process_failure(
+                            error,
+                            &stdout_output,
+                            &stderr_output,
+                        )));
+                        return;
+                    }
+                };
+            let initialize_request_id = Uuid::new_v4().to_string();
+            if let Err(error) = write_claude_sdk_control_request(
+                &mut sdk_socket,
+                &initialize_request_id,
+                &native_thread_id,
+                json!({
+                    "subtype": "initialize",
+                }),
+            ) {
+                let _ = child_handle
+                    .lock()
+                    .expect("claude child lock should not be poisoned")
+                    .kill();
+                remove_claude_process(&active_claude_processes, &thread_id);
+                let stdout_output = stdout_reader.join().unwrap_or_default();
+                let stderr_output = stderr_reader.join().unwrap_or_default();
+                if !stdout_output.trim().is_empty() {
+                    eprintln!("claude stdout for {thread_id}: {}", stdout_output.trim());
+                }
+                if !stderr_output.trim().is_empty() {
+                    eprintln!("claude stderr for {thread_id}: {}", stderr_output.trim());
+                }
+                let _ = result_tx.send(Err(summarize_claude_process_failure(
+                    error,
+                    &stdout_output,
+                    &stderr_output,
+                )));
+                return;
+            }
 
             let turn_id = format!("claude-turn-{native_thread_id}");
             let accepted = GatewayTurnMutation {
@@ -583,36 +645,22 @@ impl CodexGateway {
                 turn_id: Some(turn_id),
             };
             let mut did_ack = false;
+            let mut did_report_turn_start = false;
             let mut did_emit_completion = false;
             let mut did_emit_assistant_output = false;
+            let mut did_send_input = false;
             let mut current_assistant_message_id: Option<String> = None;
             let mut current_assistant_text = String::new();
 
-            for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else {
-                    break;
-                };
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-
-                let value = match serde_json::from_str::<Value>(trimmed) {
-                    Ok(value) => value,
-                    Err(_) => continue,
-                };
-
-                if !did_ack
-                    && value.get("type").and_then(Value::as_str) == Some("system")
-                    && value.get("subtype").and_then(Value::as_str) == Some("init")
-                {
-                    if result_tx.send(Ok(accepted.clone())).is_err() {
-                        remove_claude_process(&active_claude_processes, &thread_id);
-                        return;
+            loop {
+                let value = match read_claude_sdk_message(&mut sdk_socket) {
+                    Ok(Some(value)) => value,
+                    Ok(None) => break,
+                    Err(error) => {
+                        eprintln!("failed to read Claude SDK message for {thread_id}: {error}");
+                        break;
                     }
-                    did_ack = true;
-                }
-
+                };
                 if let Some(request_id) = parse_claude_control_request_id(&value) {
                     let request = value
                         .get("request")
@@ -625,33 +673,45 @@ impl CodexGateway {
                                 request,
                             }) {
                                 Ok(Some(response_payload)) => {
-                                    if let Err(error) = write_claude_control_response(
-                                        &mut stdin,
+                                    if let Err(error) = write_claude_stdin_control_response(
+                                        &stdin_handle,
                                         &request_id,
                                         response_payload,
                                     ) {
                                         eprintln!(
-                                            "failed to write Claude control response for {thread_id}: {error}"
+                                            "failed to write Claude stdin control response for {thread_id}: {error}"
                                         );
                                         break;
                                     }
                                 }
                                 Ok(None) => {}
                                 Err(error) => {
-                                    let _ = write_claude_control_error_response(
-                                        &mut stdin,
-                                        &request_id,
-                                        &error,
-                                    );
+                                    if let Err(write_error) =
+                                        write_claude_stdin_control_error_response(
+                                            &stdin_handle,
+                                            &request_id,
+                                            &error,
+                                        )
+                                    {
+                                        eprintln!(
+                                            "failed to write Claude stdin control error response for {thread_id}: {write_error}"
+                                        );
+                                        break;
+                                    }
                                 }
                             }
                         }
                         _ => {
-                            let _ = write_claude_control_error_response(
-                                &mut stdin,
+                            if let Err(error) = write_claude_stdin_control_error_response(
+                                &stdin_handle,
                                 &request_id,
                                 "unsupported control request subtype",
-                            );
+                            ) {
+                                eprintln!(
+                                    "failed to write Claude stdin control error response for {thread_id}: {error}"
+                                );
+                                break;
+                            }
                         }
                     }
                     continue;
@@ -661,6 +721,60 @@ impl CodexGateway {
                     let _ = on_control_request(GatewayTurnControlRequest::ClaudeControlCancel {
                         request_id: cancel_request_id,
                     });
+                    continue;
+                }
+
+                if !did_ack
+                    && value.get("type").and_then(Value::as_str) == Some("system")
+                    && value.get("subtype").and_then(Value::as_str) == Some("init")
+                {
+                    if result_tx.send(Ok(accepted.clone())).is_err() {
+                        remove_claude_process(&active_claude_processes, &thread_id);
+                        return;
+                    }
+                    did_report_turn_start = true;
+                    did_ack = true;
+                }
+
+                if value.get("type").and_then(Value::as_str) == Some("control_response") {
+                    let Some(response) = value.get("response") else {
+                        continue;
+                    };
+                    let Some(request_id) = response.get("request_id").and_then(Value::as_str)
+                    else {
+                        continue;
+                    };
+                    if request_id != initialize_request_id {
+                        continue;
+                    }
+                    if response.get("subtype").and_then(Value::as_str) != Some("success") {
+                        let error = response
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .unwrap_or("Claude SDK initialization failed")
+                            .to_string();
+                        let _ = result_tx.send(Err(error));
+                        did_report_turn_start = true;
+                        break;
+                    }
+                    if !did_send_input {
+                        if let Err(error) =
+                            write_claude_turn_input(&stdin_handle, input_line.as_bytes())
+                        {
+                            let _ = result_tx.send(Err(error));
+                            did_report_turn_start = true;
+                            break;
+                        }
+                        did_send_input = true;
+                    }
+                    if !did_ack {
+                        if result_tx.send(Ok(accepted.clone())).is_err() {
+                            remove_claude_process(&active_claude_processes, &thread_id);
+                            return;
+                        }
+                        did_report_turn_start = true;
+                        did_ack = true;
+                    }
                     continue;
                 }
 
@@ -689,7 +803,7 @@ impl CodexGateway {
                 if let Some(status_event) = build_claude_status_event(&thread_id, &value) {
                     if !did_ack {
                         let _ = result_tx.send(Ok(accepted.clone()));
-                        did_ack = true;
+                        did_report_turn_start = true;
                     }
                     on_event(status_event);
                     did_emit_completion = true;
@@ -703,7 +817,11 @@ impl CodexGateway {
                 .expect("claude child lock should not be poisoned")
                 .wait();
             remove_claude_process(&active_claude_processes, &thread_id);
+            let stdout_output = stdout_reader.join().unwrap_or_default();
             let stderr_output = stderr_reader.join().unwrap_or_default();
+            if !stdout_output.trim().is_empty() {
+                eprintln!("claude stdout for {thread_id}: {}", stdout_output.trim());
+            }
             if !stderr_output.trim().is_empty() {
                 eprintln!("claude stderr for {thread_id}: {}", stderr_output.trim());
             }
@@ -727,17 +845,22 @@ impl CodexGateway {
                 on_turn_completed(thread_id.clone());
             }
 
-            if !did_ack {
+            if !did_report_turn_start {
                 let exit_message = match exit_status {
                     Ok(status) if !status.success() => format!(
                         "Claude process exited with status {}",
                         status.code().unwrap_or_default()
                     ),
                     Ok(_) if did_emit_assistant_output => "Claude turn completed".to_string(),
+                    Ok(_) if !did_send_input => {
+                        "Claude exited before the SDK bridge accepted the turn".to_string()
+                    }
                     Ok(_) => "Claude exited before the turn was accepted".to_string(),
                     Err(error) => format!("failed waiting for Claude process: {error}"),
                 };
-                let message = if let Some(summary) = summarize_claude_stderr(&stderr_output) {
+                let message = if let Some(summary) = summarize_claude_stderr(&stderr_output)
+                    .or_else(|| summarize_claude_stdout(&stdout_output))
+                {
                     format!("{exit_message}: {summary}")
                 } else {
                     exit_message
@@ -1988,54 +2111,226 @@ fn parse_claude_control_cancel_request_id(value: &Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn write_claude_control_response(
-    stdin: &mut ChildStdin,
+fn bind_claude_sdk_listener() -> Result<(TcpListener, String), String> {
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|error| format!("failed to bind local Claude SDK bridge listener: {error}"))?;
+    let address = listener
+        .local_addr()
+        .map_err(|error| format!("failed to inspect local Claude SDK bridge listener: {error}"))?;
+    Ok((listener, format!("ws://127.0.0.1:{}", address.port())))
+}
+
+fn accept_claude_sdk_connection(
+    listener: &TcpListener,
+    child_handle: &Arc<Mutex<Child>>,
+    thread_id: &str,
+) -> Result<WebSocket<TcpStream>, String> {
+    listener.set_nonblocking(true).map_err(|error| {
+        format!("failed to configure local Claude SDK bridge listener for {thread_id}: {error}")
+    })?;
+
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                stream.set_nonblocking(false).map_err(|error| {
+                    format!(
+                        "failed to switch Claude SDK bridge stream to blocking mode for {thread_id}: {error}"
+                    )
+                })?;
+                let _ = stream.set_nodelay(true);
+                return accept(stream).map_err(|error| {
+                    format!("failed to accept Claude SDK bridge websocket for {thread_id}: {error}")
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                let exited = child_handle
+                    .lock()
+                    .expect("claude child lock should not be poisoned")
+                    .try_wait()
+                    .map_err(|wait_error| {
+                        format!(
+                            "failed to poll Claude child while waiting for SDK bridge for {thread_id}: {wait_error}"
+                        )
+                    })?
+                    .is_some();
+                if exited {
+                    return Err(format!(
+                        "Claude exited before it connected to the local SDK bridge for {thread_id}"
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "failed to accept Claude SDK bridge connection for {thread_id}: {error}"
+                ));
+            }
+        }
+    }
+}
+
+fn read_claude_sdk_message(socket: &mut WebSocket<TcpStream>) -> Result<Option<Value>, String> {
+    loop {
+        let message = socket
+            .read()
+            .map_err(|error| format!("failed reading Claude SDK websocket frame: {error}"))?;
+        match message {
+            Message::Text(text) => {
+                let trimmed = text.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                match serde_json::from_str::<Value>(trimmed) {
+                    Ok(value) => return Ok(Some(value)),
+                    Err(_) => continue,
+                }
+            }
+            Message::Binary(bytes) => {
+                let text = String::from_utf8(bytes.to_vec()).map_err(|error| {
+                    format!("failed decoding Claude SDK websocket frame: {error}")
+                })?;
+                let trimmed = text.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                match serde_json::from_str::<Value>(trimmed) {
+                    Ok(value) => return Ok(Some(value)),
+                    Err(_) => continue,
+                }
+            }
+            Message::Ping(payload) => {
+                socket
+                    .send(Message::Pong(payload))
+                    .map_err(|error| format!("failed responding to Claude SDK ping: {error}"))?;
+            }
+            Message::Pong(_) | Message::Frame(_) => {}
+            Message::Close(_) => return Ok(None),
+        }
+    }
+}
+
+fn write_claude_sdk_message(
+    socket: &mut WebSocket<TcpStream>,
+    payload: &Value,
+    context: &str,
+) -> Result<(), String> {
+    let frame = serde_json::to_string(payload)
+        .map_err(|error| format!("failed to serialize Claude SDK {context}: {error}"))?;
+    socket
+        .send(Message::Text(format!("{frame}\n").into()))
+        .map_err(|error| format!("failed to write Claude SDK {context}: {error}"))
+}
+
+fn write_claude_sdk_control_request(
+    socket: &mut WebSocket<TcpStream>,
+    request_id: &str,
+    session_id: &str,
+    request: Value,
+) -> Result<(), String> {
+    write_claude_sdk_message(
+        socket,
+        &json!({
+            "type": "control_request",
+            "session_id": session_id,
+            "request_id": request_id,
+            "request": request,
+        }),
+        "control request",
+    )
+}
+
+fn write_claude_stdin_message(
+    stdin: &Arc<Mutex<ChildStdin>>,
+    payload: &Value,
+    context: &str,
+) -> Result<(), String> {
+    let frame = serde_json::to_string(payload)
+        .map_err(|error| format!("failed to serialize Claude stdin {context}: {error}"))?;
+    let mut stdin = stdin
+        .lock()
+        .expect("claude stdin lock should not be poisoned");
+    stdin
+        .write_all(frame.as_bytes())
+        .map_err(|error| format!("failed to write Claude stdin {context}: {error}"))?;
+    stdin
+        .write_all(b"\n")
+        .map_err(|error| format!("failed to terminate Claude stdin {context}: {error}"))?;
+    stdin
+        .flush()
+        .map_err(|error| format!("failed to flush Claude stdin {context}: {error}"))
+}
+
+fn write_claude_stdin_control_response(
+    stdin: &Arc<Mutex<ChildStdin>>,
     request_id: &str,
     response_payload: Value,
 ) -> Result<(), String> {
-    let line = serde_json::to_string(&json!({
-        "type": "control_response",
-        "response": {
-            "subtype": "success",
-            "request_id": request_id,
-            "response": response_payload,
-        },
-    }))
-    .map_err(|error| format!("failed to serialize Claude control response: {error}"))?;
-    stdin
-        .write_all(line.as_bytes())
-        .map_err(|error| format!("failed to write Claude control response: {error}"))?;
-    stdin
-        .write_all(b"\n")
-        .map_err(|error| format!("failed to terminate Claude control response: {error}"))?;
-    stdin
-        .flush()
-        .map_err(|error| format!("failed to flush Claude control response: {error}"))
+    write_claude_stdin_message(
+        stdin,
+        &json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": request_id,
+                "response": response_payload,
+            },
+        }),
+        "control response",
+    )
 }
 
-fn write_claude_control_error_response(
-    stdin: &mut ChildStdin,
+fn write_claude_stdin_control_error_response(
+    stdin: &Arc<Mutex<ChildStdin>>,
     request_id: &str,
-    message: &str,
+    error_message: &str,
 ) -> Result<(), String> {
-    let line = serde_json::to_string(&json!({
-        "type": "control_response",
-        "response": {
-            "subtype": "error",
-            "request_id": request_id,
-            "error": message,
-        },
-    }))
-    .map_err(|error| format!("failed to serialize Claude control error response: {error}"))?;
+    write_claude_stdin_message(
+        stdin,
+        &json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "error",
+                "request_id": request_id,
+                "error": error_message,
+            },
+        }),
+        "control error response",
+    )
+}
+
+fn write_claude_turn_input(stdin: &Arc<Mutex<ChildStdin>>, bytes: &[u8]) -> Result<(), String> {
+    let mut stdin = stdin
+        .lock()
+        .expect("claude stdin lock should not be poisoned");
     stdin
-        .write_all(line.as_bytes())
-        .map_err(|error| format!("failed to write Claude control error response: {error}"))?;
-    stdin
-        .write_all(b"\n")
-        .map_err(|error| format!("failed to terminate Claude control error response: {error}"))?;
+        .write_all(bytes)
+        .map_err(|error| format!("failed to write Claude turn input: {error}"))?;
     stdin
         .flush()
-        .map_err(|error| format!("failed to flush Claude control error response: {error}"))
+        .map_err(|error| format!("failed to flush Claude turn input: {error}"))
+}
+
+fn summarize_claude_stdout(stdout_output: &str) -> Option<String> {
+    stdout_output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .find(|line| looks_like_claude_error_summary(line))
+        .map(|line| truncate_for_mobile_error(line, 240))
+}
+
+fn summarize_claude_process_failure(
+    base_message: String,
+    stdout_output: &str,
+    stderr_output: &str,
+) -> String {
+    if let Some(summary) =
+        summarize_claude_stderr(stderr_output).or_else(|| summarize_claude_stdout(stdout_output))
+    {
+        format!("{base_message}: {summary}")
+    } else {
+        base_message
+    }
 }
 
 fn claude_message_text(message: &Value) -> Option<String> {
@@ -3210,6 +3505,7 @@ mod tests {
 
     #[test]
     fn claude_session_archive_path_uses_claude_home_override() {
+        let _env_lock = crate::test_support::lock_test_env();
         let claude_home =
             std::env::temp_dir().join(format!("gateway-claude-session-{}", std::process::id()));
         let previous_claude_home = std::env::var_os("CLAUDE_HOME");
@@ -3493,6 +3789,7 @@ mod tests {
 
     #[test]
     fn archive_fallback_surfaces_threads_when_live_list_is_empty() {
+        let _env_lock = crate::test_support::lock_test_env();
         let codex_home =
             std::env::temp_dir().join(format!("gateway-archive-fallback-{}", std::process::id()));
         let claude_home = std::env::temp_dir().join(format!(

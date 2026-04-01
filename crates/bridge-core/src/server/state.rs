@@ -268,9 +268,11 @@ impl BridgeAppState {
 
         match state.inner.gateway.bootstrap().await {
             Ok(bootstrap) => {
+                let preserved_summaries =
+                    merge_reconciled_thread_summaries(Vec::new(), bootstrap.summaries);
                 state
                     .projections()
-                    .replace_summaries(bootstrap.summaries)
+                    .replace_summaries(preserved_summaries)
                     .await;
                 state.set_available_models(bootstrap.models).await;
                 state
@@ -739,9 +741,16 @@ impl BridgeAppState {
 
     async fn apply_external_snapshot_update(
         &self,
-        snapshot: ThreadSnapshotDto,
+        mut snapshot: ThreadSnapshotDto,
         events: Vec<BridgeEventEnvelope<Value>>,
     ) {
+        if let Some(previous_snapshot) = self
+            .projections()
+            .snapshot(&snapshot.thread.thread_id)
+            .await
+        {
+            preserve_generated_thread_title(&previous_snapshot, &mut snapshot);
+        }
         let next_summary = thread_summary_from_snapshot(&snapshot);
         let mut summaries = self.projections().list_summaries().await;
         if let Some(index) = summaries
@@ -786,6 +795,14 @@ impl BridgeAppState {
         if normalized_prompt.is_empty() {
             return;
         }
+        if let Some(fallback_title) =
+            provisional_thread_title_from_prompt(thread_id, normalized_prompt)
+        {
+            let _ = self
+                .persist_generated_thread_title(thread_id, &fallback_title)
+                .await;
+            return;
+        }
         if !self
             .reserve_thread_title_generation_if_needed(thread_id)
             .await
@@ -797,7 +814,7 @@ impl BridgeAppState {
         let thread_id = thread_id.to_string();
         let prompt = normalized_prompt.to_string();
         let workspace = workspace.to_string();
-        let model = model.map(str::to_string);
+        let model = title_generation_model_for_thread(&thread_id, model).map(str::to_string);
         tokio::spawn(async move {
             let generation_result = state
                 .inner
@@ -829,7 +846,7 @@ impl BridgeAppState {
 
         let state = self.clone();
         let thread_id = thread_id.to_string();
-        let model = model.map(str::to_string);
+        let model = title_generation_model_for_thread(&thread_id, model).map(str::to_string);
         tokio::spawn(async move {
             let snapshot = state.ensure_snapshot(&thread_id).await.ok();
             let generated_title = snapshot
@@ -843,8 +860,14 @@ impl BridgeAppState {
                     }
                 });
 
-            if let Some(source) = generated_title
-                && let Ok(Some(title)) = state
+            if let Some(source) = generated_title {
+                if let Some(title) =
+                    provisional_thread_title_from_prompt(&thread_id, &source.prompt)
+                {
+                    let _ = state
+                        .persist_generated_thread_title(&thread_id, &title)
+                        .await;
+                } else if let Ok(Some(title)) = state
                     .inner
                     .gateway
                     .generate_thread_title_candidate(
@@ -853,10 +876,11 @@ impl BridgeAppState {
                         model.as_deref(),
                     )
                     .await
-            {
-                let _ = state
-                    .persist_generated_thread_title(&thread_id, &title)
-                    .await;
+                {
+                    let _ = state
+                        .persist_generated_thread_title(&thread_id, &title)
+                        .await;
+                }
             }
 
             state.release_thread_title_generation(&thread_id).await;
@@ -884,7 +908,12 @@ impl BridgeAppState {
     }
 
     async fn should_generate_thread_title(&self, thread_id: &str) -> bool {
-        if !is_provider_thread_id(thread_id, shared_contracts::ProviderKind::Codex) {
+        if !matches!(
+            provider_from_thread_id(thread_id),
+            Some(
+                shared_contracts::ProviderKind::Codex | shared_contracts::ProviderKind::ClaudeCode
+            )
+        ) {
             return false;
         }
         if self
@@ -919,10 +948,12 @@ impl BridgeAppState {
             return Ok(());
         }
 
-        self.inner
-            .gateway
-            .set_thread_name(thread_id, normalized_title)
-            .await?;
+        if is_provider_thread_id(thread_id, ProviderKind::Codex) {
+            self.inner
+                .gateway
+                .set_thread_name(thread_id, normalized_title)
+                .await?;
+        }
         let occurred_at = Utc::now().to_rfc3339();
         let status = self
             .projections()
@@ -1493,9 +1524,14 @@ impl BridgeAppState {
                 sleep(Duration::from_secs(30)).await;
                 match state.inner.gateway.bootstrap().await {
                     Ok(bootstrap) => {
+                        let current_summaries = state.projections().list_summaries().await;
+                        let preserved_summaries = merge_reconciled_thread_summaries(
+                            current_summaries,
+                            bootstrap.summaries,
+                        );
                         state
                             .projections()
-                            .replace_summaries(bootstrap.summaries)
+                            .replace_summaries(preserved_summaries)
                             .await;
                         state.set_available_models(bootstrap.models).await;
                         state
@@ -2364,6 +2400,93 @@ impl BridgeAppState {
             .transcribe_bytes(file_name, audio_bytes)
             .await
     }
+}
+
+fn title_generation_model_for_thread<'a>(
+    thread_id: &str,
+    model: Option<&'a str>,
+) -> Option<&'a str> {
+    if is_provider_thread_id(thread_id, ProviderKind::Codex) {
+        return model;
+    }
+
+    None
+}
+
+fn provisional_thread_title_from_prompt(thread_id: &str, prompt: &str) -> Option<String> {
+    if !is_provider_thread_id(thread_id, ProviderKind::ClaudeCode) {
+        return None;
+    }
+
+    let first_sentence = prompt
+        .split(['.', '?', '!'])
+        .find(|segment| !segment.trim().is_empty())
+        .unwrap_or(prompt);
+    normalize_prompt_fallback_thread_title(first_sentence)
+}
+
+fn normalize_prompt_fallback_thread_title(prompt: &str) -> Option<String> {
+    let normalized_whitespace = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = normalized_whitespace
+        .trim()
+        .trim_matches(|ch| matches!(ch, '"' | '\'' | '`'));
+    if trimmed.is_empty() || is_placeholder_thread_title(trimmed) {
+        return None;
+    }
+
+    let mut title = trimmed.to_string();
+    const MAX_THREAD_TITLE_CHARS: usize = 80;
+    if title.chars().count() > MAX_THREAD_TITLE_CHARS {
+        title = title
+            .chars()
+            .take(MAX_THREAD_TITLE_CHARS)
+            .collect::<String>();
+    }
+
+    while title.ends_with('.') || title.ends_with(':') || title.ends_with(';') {
+        title.pop();
+    }
+
+    let normalized = title.trim();
+    if normalized.is_empty() || is_placeholder_thread_title(normalized) {
+        return None;
+    }
+
+    Some(normalized.to_string())
+}
+
+fn preserve_generated_thread_title(
+    previous_snapshot: &ThreadSnapshotDto,
+    next_snapshot: &mut ThreadSnapshotDto,
+) {
+    if is_placeholder_thread_title(&next_snapshot.thread.title)
+        && !is_placeholder_thread_title(&previous_snapshot.thread.title)
+    {
+        next_snapshot.thread.title = previous_snapshot.thread.title.clone();
+    }
+}
+
+fn merge_reconciled_thread_summaries(
+    current_summaries: Vec<ThreadSummaryDto>,
+    mut reconciled_summaries: Vec<ThreadSummaryDto>,
+) -> Vec<ThreadSummaryDto> {
+    let current_by_thread_id = current_summaries
+        .into_iter()
+        .map(|summary| (summary.thread_id.clone(), summary))
+        .collect::<HashMap<_, _>>();
+
+    for summary in &mut reconciled_summaries {
+        let Some(current_summary) = current_by_thread_id.get(&summary.thread_id) else {
+            continue;
+        };
+        if is_placeholder_thread_title(&summary.title)
+            && !is_placeholder_thread_title(&current_summary.title)
+        {
+            summary.title = current_summary.title.clone();
+        }
+    }
+
+    reconciled_summaries
 }
 
 fn resolve_latest_thread_change_diff(
@@ -4158,6 +4281,209 @@ mod tests {
 
         assert!(state.thread_title_still_needs_generation("thread-1").await);
         assert!(!state.should_generate_thread_title("thread-1").await);
+    }
+
+    #[tokio::test]
+    async fn claude_placeholder_titles_still_generate_and_persist_locally() {
+        let state = test_bridge_app_state().await;
+        let placeholder_snapshot = ThreadSnapshotDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: ThreadDetailDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "claude:thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::ClaudeCode,
+                client: shared_contracts::ThreadClientKind::Bridge,
+                title: "Untitled thread".to_string(),
+                status: ThreadStatus::Idle,
+                workspace: "/repo".to_string(),
+                repository: "repo".to_string(),
+                branch: "main".to_string(),
+                created_at: "2026-03-29T10:00:00Z".to_string(),
+                updated_at: "2026-03-29T10:00:00Z".to_string(),
+                source: "bridge".to_string(),
+                access_mode: shared_contracts::AccessMode::ControlWithApprovals,
+                last_turn_summary: String::new(),
+                active_turn_id: None,
+            },
+            entries: Vec::new(),
+            approvals: Vec::new(),
+            git_status: None,
+            pending_user_input: None,
+        };
+        state.projections().put_snapshot(placeholder_snapshot).await;
+        state
+            .projections()
+            .replace_summaries(vec![ThreadSummaryDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "claude:thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::ClaudeCode,
+                client: shared_contracts::ThreadClientKind::Bridge,
+                title: "Untitled thread".to_string(),
+                status: ThreadStatus::Idle,
+                workspace: "/repo".to_string(),
+                repository: "repo".to_string(),
+                branch: "main".to_string(),
+                updated_at: "2026-03-29T10:00:00Z".to_string(),
+            }])
+            .await;
+
+        assert!(state.should_generate_thread_title("claude:thread-1").await);
+
+        state
+            .persist_generated_thread_title(
+                "claude:thread-1",
+                "Investigate Claude thread title generation",
+            )
+            .await
+            .expect("Claude titles should persist without an upstream rename");
+
+        let snapshot = state
+            .projections()
+            .snapshot("claude:thread-1")
+            .await
+            .expect("Claude snapshot should exist");
+        assert_eq!(
+            snapshot.thread.title,
+            "Investigate Claude thread title generation"
+        );
+
+        let summary_title = state
+            .projections()
+            .thread_title("claude:thread-1")
+            .await
+            .expect("Claude summary title should exist");
+        assert_eq!(summary_title, "Investigate Claude thread title generation");
+    }
+
+    #[test]
+    fn title_generation_model_uses_requested_model_only_for_codex_threads() {
+        assert_eq!(
+            super::title_generation_model_for_thread("codex:thread-1", Some("gpt-5-mini")),
+            Some("gpt-5-mini")
+        );
+        assert_eq!(
+            super::title_generation_model_for_thread("claude:thread-1", Some("claude-sonnet-4-6"),),
+            None
+        );
+    }
+
+    #[test]
+    fn claude_prompt_title_fallback_uses_first_sentence() {
+        assert_eq!(
+            super::provisional_thread_title_from_prompt(
+                "claude:thread-1",
+                "Explain why thread titles help mobile triage. Do not use tools.",
+            ),
+            Some("Explain why thread titles help mobile triage".to_string())
+        );
+        assert_eq!(
+            super::provisional_thread_title_from_prompt(
+                "codex:thread-1",
+                "Explain why thread titles help mobile triage.",
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn external_snapshot_refresh_preserves_non_placeholder_generated_title() {
+        let previous_snapshot = ThreadSnapshotDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: ThreadDetailDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "claude:thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::ClaudeCode,
+                client: shared_contracts::ThreadClientKind::Bridge,
+                title: "Investigate Claude thread titles".to_string(),
+                status: ThreadStatus::Running,
+                workspace: "/repo".to_string(),
+                repository: "repo".to_string(),
+                branch: "main".to_string(),
+                created_at: "2026-03-29T10:00:00Z".to_string(),
+                updated_at: "2026-03-29T10:00:00Z".to_string(),
+                source: "bridge".to_string(),
+                access_mode: shared_contracts::AccessMode::ControlWithApprovals,
+                last_turn_summary: String::new(),
+                active_turn_id: None,
+            },
+            entries: Vec::new(),
+            approvals: Vec::new(),
+            git_status: None,
+            pending_user_input: None,
+        };
+        let mut refreshed_snapshot = ThreadSnapshotDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: ThreadDetailDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "claude:thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::ClaudeCode,
+                client: shared_contracts::ThreadClientKind::Bridge,
+                title: "Untitled thread".to_string(),
+                status: ThreadStatus::Completed,
+                workspace: "/repo".to_string(),
+                repository: "repo".to_string(),
+                branch: "main".to_string(),
+                created_at: "2026-03-29T10:00:00Z".to_string(),
+                updated_at: "2026-03-29T10:00:10Z".to_string(),
+                source: "bridge".to_string(),
+                access_mode: shared_contracts::AccessMode::ControlWithApprovals,
+                last_turn_summary: String::new(),
+                active_turn_id: None,
+            },
+            entries: Vec::new(),
+            approvals: Vec::new(),
+            git_status: None,
+            pending_user_input: None,
+        };
+
+        super::preserve_generated_thread_title(&previous_snapshot, &mut refreshed_snapshot);
+
+        assert_eq!(
+            refreshed_snapshot.thread.title,
+            "Investigate Claude thread titles"
+        );
+    }
+
+    #[test]
+    fn summary_reconcile_preserves_existing_non_placeholder_title() {
+        let reconciled = super::merge_reconciled_thread_summaries(
+            vec![ThreadSummaryDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "claude:thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::ClaudeCode,
+                client: shared_contracts::ThreadClientKind::Bridge,
+                title: "Explain why thread titles help mobile triage".to_string(),
+                status: ThreadStatus::Running,
+                workspace: "/repo".to_string(),
+                repository: "repo".to_string(),
+                branch: "main".to_string(),
+                updated_at: "2026-03-29T10:00:05Z".to_string(),
+            }],
+            vec![ThreadSummaryDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "claude:thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::ClaudeCode,
+                client: shared_contracts::ThreadClientKind::Bridge,
+                title: "Untitled thread".to_string(),
+                status: ThreadStatus::Completed,
+                workspace: "/repo".to_string(),
+                repository: "repo".to_string(),
+                branch: "main".to_string(),
+                updated_at: "2026-03-29T10:00:10Z".to_string(),
+            }],
+        );
+
+        assert_eq!(
+            reconciled[0].title,
+            "Explain why thread titles help mobile triage"
+        );
+        assert_eq!(reconciled[0].status, ThreadStatus::Completed);
     }
 
     #[test]
