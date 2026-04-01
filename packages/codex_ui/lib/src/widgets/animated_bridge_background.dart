@@ -183,20 +183,23 @@ class _BridgePainter extends CustomPainter {
 
   double _getCableY(double x) {
     if (x < 300) {
-      final t = (x + 200) / 500;
+      final t = (x + 500) / 800;
       return pow(1 - t, 2) * 600 + 2 * (1 - t) * t * 650 + pow(t, 2) * 200;
     } else if (x <= 700) {
       final t = (x - 300) / 400;
       return pow(1 - t, 2) * 200 + 2 * (1 - t) * t * 900 + pow(t, 2) * 200;
     } else {
-      final t = (x - 700) / 500;
+      final t = (x - 700) / 800;
       return pow(1 - t, 2) * 200 + 2 * (1 - t) * t * 650 + pow(t, 2) * 600;
     }
   }
 
   @override
   void paint(Canvas canvas, Size size) {
-    final scale = max(size.width / 1000, size.height / 1000) * sceneScale;
+    // Zoom out more
+    final zoomOutFactor = 0.6;
+    final scale =
+        max(size.width / 1000, size.height / 1000) * sceneScale * zoomOutFactor;
     final dx = (size.width - 1000 * scale) / 2;
     final dy = (size.height - 1000 * scale) / 2;
 
@@ -209,6 +212,8 @@ class _BridgePainter extends CustomPainter {
 
     canvas.translate(500 + slowDriftX, 500 + slowDriftY);
     canvas.rotate(-5 * pi / 180);
+    // Squash height locally
+    canvas.scale(1.0, 0.7);
     canvas.translate(-500, -450);
 
     final solidPaint = Paint()
@@ -284,16 +289,16 @@ class _BridgePainter extends CustomPainter {
     }
 
     canvas.drawLine(
-      const Offset(-200, 610),
-      const Offset(1200, 610),
+      const Offset(-500, 610),
+      const Offset(1500, 610),
       deckPaint,
     );
 
     final cablePath = Path()
-      ..moveTo(-200, 600)
-      ..quadraticBezierTo(50, 650, 300, 200)
+      ..moveTo(-500, 600)
+      ..quadraticBezierTo(-100, 650, 300, 200)
       ..quadraticBezierTo(500, 900, 700, 200)
-      ..quadraticBezierTo(950, 650, 1200, 600);
+      ..quadraticBezierTo(1100, 650, 1500, 600);
 
     canvas.drawPath(
       cablePath,
@@ -338,8 +343,8 @@ class _BridgePainter extends CustomPainter {
         ..color = Colors.white.withValues(alpha: 0.9),
     );
 
-    for (var i = 0; i < 45; i++) {
-      final x = i * 30.0 - 150.0;
+    for (var i = 0; i < 70; i++) {
+      final x = i * 30.0 - 500.0;
       if ((x - 300).abs() < 35 || (x - 700).abs() < 35) {
         continue;
       }
@@ -364,14 +369,14 @@ class _BridgePainter extends CustomPainter {
 
     for (var i = 0; i < 3; i++) {
       final speed = 1.0 + i * 0.5;
-      final xOffset = ((time * speed * 50) + (i * 100)) % 1400 - 200.0;
+      final xOffset = ((time * speed * 50) + (i * 100)) % 2000 - 500.0;
 
       final streamPaint = Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5
         ..color = Colors.white.withValues(alpha: 0.8);
 
-      for (var x = xOffset; x < 1200; x += 42) {
+      for (var x = xOffset; x < 1500; x += 42) {
         canvas.drawLine(
           Offset(x, 585.0 + i * 5),
           Offset(x + 2, 585.0 + i * 5),
