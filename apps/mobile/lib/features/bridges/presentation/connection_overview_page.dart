@@ -911,38 +911,44 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
     return SingleChildScrollView(
       key: const ValueKey('title-paired'),
       physics: const NeverScrollableScrollPhysics(),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text.rich(
-            TextSpan(
-              text: 'Connected to\n',
-              style: pairedTitleStyle,
+      child: Transform.translate(
+        offset: const Offset(0, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text.rich(
+              TextSpan(
+                text: 'Connected to\n',
+                style: pairedTitleStyle,
+                children: [
+                  TextSpan(
+                    text: pairingState.trustedBridge?.bridgeName ?? '',
+                    style: pairedBridgeNameStyle,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                TextSpan(
-                  text: pairingState.trustedBridge?.bridgeName ?? '',
-                  style: pairedBridgeNameStyle,
+                Text(
+                  bridgeSummary,
+                  style: const TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 14,
+                  ),
+                ),
+                _PairingConnectionIndicator(
+                  state: pairingState.bridgeConnectionState,
                 ),
               ],
             ),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              Text(
-                bridgeSummary,
-                style: const TextStyle(color: AppTheme.textMuted, fontSize: 14),
-              ),
-              _PairingConnectionIndicator(
-                state: pairingState.bridgeConnectionState,
-              ),
-            ],
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
