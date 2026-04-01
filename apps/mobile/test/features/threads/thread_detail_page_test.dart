@@ -4317,6 +4317,98 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
   );
 
   testWidgets(
+    'terminal live status refresh reloads timeline items that arrive after Claude turn completion',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            _thread123Detail(status: ThreadStatus.running),
+            _thread123Detail(status: ThreadStatus.completed),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            <ThreadTimelineEntryDto>[],
+            [
+              _timelineEvent(
+                id: 'evt-claude-file-change',
+                kind: BridgeEventKind.fileChange,
+                summary: 'Edited files via Edit',
+                payload: {
+                  'path': 'apps/mobile/lib/live_approval_probe.dart',
+                  'change': 'updated by Claude tool call',
+                },
+                occurredAt: '2026-03-18T10:30:03Z',
+              ),
+            ],
+          ],
+        },
+      );
+      final liveStream = FakeThreadLiveStream();
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+        liveStream: liveStream,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('updated by Claude tool call'), findsNothing);
+      expect(detailApi.timelineFetchCount, 1);
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-upstream-completed-with-tools',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.threadStatusChanged,
+          occurredAt: '2026-03-18T10:30:02Z',
+          payload: {'status': 'completed', 'reason': 'upstream_notification'},
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
+
+      final args = ThreadDetailControllerArgs(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: 'thread-123',
+        initialVisibleTimelineEntries: 20,
+      );
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ThreadDetailPage)),
+      );
+
+      expect(find.text('Completed'), findsOneWidget);
+      expect(detailApi.timelineFetchCount, greaterThanOrEqualTo(2));
+      final deadline = DateTime.now().add(const Duration(seconds: 2));
+      var foundFileChange = false;
+      while (DateTime.now().isBefore(deadline)) {
+        final controllerState = container.read(
+          threadDetailControllerProvider(args),
+        );
+        foundFileChange = controllerState.visibleItems.any(
+          (item) =>
+              item.type == ThreadActivityItemType.fileChange &&
+              item.body.contains('updated by Claude tool call'),
+        );
+        if (foundFileChange) {
+          break;
+        }
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      final latestControllerState = container.read(
+        threadDetailControllerProvider(args),
+      );
+      final visibleBodies = latestControllerState.items
+          .map((item) => '${item.type.name}:${item.body}')
+          .join(' || ');
+      expect(foundFileChange, isTrue, reason: visibleBodies);
+    },
+  );
+
+  testWidgets(
     'live message updates replace the existing activity card when the event id stays stable',
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(

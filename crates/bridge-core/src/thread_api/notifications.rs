@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use shared_contracts::{BridgeEventEnvelope, BridgeEventKind, ThreadStatus};
+use shared_contracts::{BridgeEventEnvelope, BridgeEventKind, ProviderKind, ThreadStatus};
 
 use crate::codex_transport::CodexJsonTransport;
 use crate::incremental_text::merge_incremental_text;
@@ -14,7 +14,10 @@ use super::timeline::{
     map_thread_status, normalize_custom_tool_output, payload_contains_hidden_message,
     value_to_text,
 };
-use super::{is_file_change_custom_tool, is_file_change_text};
+use super::{
+    is_file_change_custom_tool, is_file_change_text, native_thread_id_for_provider,
+    provider_thread_id,
+};
 
 #[derive(Debug)]
 pub struct CodexNotificationStream {
@@ -79,11 +82,13 @@ impl CodexNotificationStream {
     }
 
     pub fn resume_thread(&mut self, thread_id: &str) -> Result<(), String> {
+        let native_thread_id =
+            native_thread_id_for_provider(thread_id, ProviderKind::Codex).unwrap_or(thread_id);
         self.transport
             .request(
                 "thread/resume",
                 json!({
-                    "threadId": thread_id,
+                    "threadId": native_thread_id,
                 }),
             )
             .map(|_| ())
@@ -121,30 +126,32 @@ impl CodexNotificationNormalizer {
             "turn/started" => {
                 let notification: CodexTurnNotification =
                     serde_json::from_value(params.clone()).ok()?;
+                let thread_id = normalize_codex_notification_thread_id(&notification.thread_id);
                 self.active_turn_id_by_thread
-                    .insert(notification.thread_id, notification.turn.id);
+                    .insert(thread_id, notification.turn.id);
                 None
             }
             "turn/completed" => {
                 let notification: CodexTurnNotification =
                     serde_json::from_value(params.clone()).ok()?;
+                let thread_id = normalize_codex_notification_thread_id(&notification.thread_id);
                 if self
                     .active_turn_id_by_thread
-                    .get(&notification.thread_id)
+                    .get(&thread_id)
                     .is_some_and(|turn_id| turn_id == &notification.turn.id)
                 {
-                    self.active_turn_id_by_thread
-                        .remove(&notification.thread_id);
+                    self.active_turn_id_by_thread.remove(&thread_id);
                 }
                 None
             }
             "thread/status/changed" => {
                 let notification: CodexThreadStatusChangedNotification =
                     serde_json::from_value(params.clone()).ok()?;
+                let thread_id = normalize_codex_notification_thread_id(&notification.thread_id);
                 let occurred_at = current_timestamp_string();
                 Some(BridgeEventEnvelope::new(
-                    format!("{}-status-{occurred_at}", notification.thread_id),
-                    notification.thread_id,
+                    format!("{thread_id}-status-{occurred_at}"),
+                    thread_id,
                     BridgeEventKind::ThreadStatusChanged,
                     occurred_at,
                     json!({
@@ -184,7 +191,7 @@ impl CodexNotificationNormalizer {
         notification: CodexThreadRealtimeItemAddedNotification,
     ) -> Option<BridgeEventEnvelope<Value>> {
         self.normalize_item_payload(
-            notification.thread_id,
+            normalize_codex_notification_thread_id(&notification.thread_id),
             None,
             notification.item,
             ItemLifecyclePhase::Added,
@@ -197,7 +204,7 @@ impl CodexNotificationNormalizer {
         phase: ItemLifecyclePhase,
     ) -> Option<BridgeEventEnvelope<Value>> {
         self.normalize_item_payload(
-            notification.thread_id,
+            normalize_codex_notification_thread_id(&notification.thread_id),
             notification.turn_id,
             notification.item,
             phase,
@@ -246,6 +253,7 @@ impl CodexNotificationNormalizer {
         target: DeltaTarget,
     ) -> Option<BridgeEventEnvelope<Value>> {
         let notification: CodexDeltaNotification = serde_json::from_value(params.clone()).ok()?;
+        let thread_id = normalize_codex_notification_thread_id(&notification.thread_id);
         let event_id = format!("{}-{}", notification.turn_id, notification.item_id);
         let canonical_item_type = canonicalize_codex_item_type(item_type);
         let payload = self
@@ -266,7 +274,7 @@ impl CodexNotificationNormalizer {
         }
         Some(build_timeline_event_envelope(
             event_id,
-            notification.thread_id,
+            thread_id,
             kind,
             current_timestamp_string(),
             normalized_payload,
@@ -279,6 +287,12 @@ impl CodexNotificationNormalizer {
             .map(|turn_id| format!("{turn_id}-{item_id}"))
             .unwrap_or_else(|| item_id.to_string())
     }
+}
+
+fn normalize_codex_notification_thread_id(thread_id: &str) -> String {
+    let native_thread_id =
+        native_thread_id_for_provider(thread_id, ProviderKind::Codex).unwrap_or(thread_id);
+    provider_thread_id(ProviderKind::Codex, native_thread_id)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -737,11 +751,25 @@ fn is_message_item(item: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use shared_contracts::BridgeEventKind;
+    use shared_contracts::{BridgeEventKind, ProviderKind};
 
     use super::{
-        CodexNotificationNormalizer, normalize_codex_item_payload, should_publish_live_payload,
+        CodexNotificationNormalizer, normalize_codex_item_payload,
+        normalize_codex_notification_thread_id, should_publish_live_payload,
     };
+    use crate::thread_api::provider_thread_id;
+
+    #[test]
+    fn codex_notification_thread_ids_normalize_to_provider_thread_ids() {
+        assert_eq!(
+            normalize_codex_notification_thread_id("thread-123"),
+            provider_thread_id(ProviderKind::Codex, "thread-123")
+        );
+        assert_eq!(
+            normalize_codex_notification_thread_id("codex:thread-123"),
+            provider_thread_id(ProviderKind::Codex, "thread-123")
+        );
+    }
 
     #[test]
     fn custom_tool_apply_patch_is_classified_as_file_change() {
@@ -782,6 +810,7 @@ mod tests {
                 }),
             )
             .expect("first delta should publish");
+        assert_eq!(first.thread_id, "codex:thread-123");
         assert_eq!(
             first.payload.get("text").and_then(|v| v.as_str()),
             Some("Hello")
@@ -798,5 +827,24 @@ mod tests {
         )
         .expect("hidden payload still normalizes");
         assert!(!should_publish_live_payload(hidden.0, &hidden.1));
+    }
+
+    #[test]
+    fn thread_status_notifications_publish_provider_thread_ids() {
+        let mut normalizer = CodexNotificationNormalizer::default();
+
+        let event = normalizer
+            .normalize(
+                "thread/status/changed",
+                &json!({
+                    "threadId": "thread-456",
+                    "status": {"type": "active"}
+                }),
+            )
+            .expect("status notification should publish");
+
+        assert_eq!(event.thread_id, "codex:thread-456");
+        assert_eq!(event.kind, BridgeEventKind::ThreadStatusChanged);
+        assert_eq!(event.payload["status"], "running");
     }
 }

@@ -1017,6 +1017,23 @@ impl BridgeAppState {
         }
     }
 
+    async fn force_request_notification_thread_resume(&self, thread_id: &str) {
+        let normalized_thread_id = thread_id.trim();
+        if normalized_thread_id.is_empty()
+            || !is_provider_thread_id(normalized_thread_id, shared_contracts::ProviderKind::Codex)
+        {
+            return;
+        }
+
+        self.inner
+            .resumed_notification_threads
+            .write()
+            .await
+            .remove(normalized_thread_id);
+        self.request_notification_thread_resume(normalized_thread_id)
+            .await;
+    }
+
     async fn clear_transient_thread_state(&self, thread_id: &str) {
         self.inner.active_turn_ids.write().await.remove(thread_id);
         self.inner
@@ -1042,9 +1059,59 @@ impl BridgeAppState {
             .await;
     }
 
+    fn schedule_bridge_owned_turn_watchdog(&self, thread_id: &str) {
+        if !is_provider_thread_id(thread_id, ProviderKind::Codex) {
+            return;
+        }
+
+        let state = self.clone();
+        let watched_thread_id = thread_id.to_string();
+        tokio::spawn(async move {
+            for _ in 0..60 {
+                sleep(Duration::from_secs(2)).await;
+
+                if !state.has_bridge_owned_active_turn(&watched_thread_id).await {
+                    return;
+                }
+
+                let snapshot = match state
+                    .inner
+                    .gateway
+                    .fetch_thread_snapshot_with_archive(&watched_thread_id)
+                    .await
+                {
+                    Ok(snapshot) => snapshot,
+                    Err(_) => continue,
+                };
+                if snapshot.thread.status == ThreadStatus::Running {
+                    continue;
+                }
+
+                state
+                    .finalize_bridge_owned_turn_with_snapshot(&watched_thread_id, snapshot)
+                    .await;
+                return;
+            }
+        });
+    }
+
+    async fn finalize_bridge_owned_turn_with_snapshot(
+        &self,
+        thread_id: &str,
+        snapshot: ThreadSnapshotDto,
+    ) {
+        self.clear_transient_thread_state(thread_id).await;
+        self.apply_bridge_turn_completion_snapshot(thread_id, snapshot)
+            .await;
+    }
+
     async fn refresh_snapshot_after_bridge_turn_completion(&self, thread_id: &str) {
-        let previous_snapshot = self.projections().snapshot(thread_id).await;
-        let mut snapshot = match self.inner.gateway.fetch_thread_snapshot(thread_id).await {
+        let snapshot = match self
+            .inner
+            .gateway
+            .fetch_thread_snapshot_with_archive(thread_id)
+            .await
+        {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 eprintln!(
@@ -1053,6 +1120,16 @@ impl BridgeAppState {
                 return;
             }
         };
+        self.apply_bridge_turn_completion_snapshot(thread_id, snapshot)
+            .await;
+    }
+
+    async fn apply_bridge_turn_completion_snapshot(
+        &self,
+        thread_id: &str,
+        mut snapshot: ThreadSnapshotDto,
+    ) {
+        let previous_snapshot = self.projections().snapshot(thread_id).await;
         snapshot.thread.access_mode = self.access_mode().await;
 
         let mut compactor = LiveDeltaCompactor::default();
@@ -1222,7 +1299,7 @@ impl BridgeAppState {
                 });
                 if let Err(error) =
                     resume_notification_threads(resumed_threads.iter(), |thread_id| {
-                        notifications.resume_thread(thread_id)
+                        tolerate_notification_resume_error(notifications.resume_thread(thread_id))
                     })
                 {
                     eprintln!("bridge notification resume sync failed: {error}");
@@ -1233,7 +1310,9 @@ impl BridgeAppState {
                 loop {
                     if let Err(error) =
                         drain_notification_control_messages(&control_rx, |thread_id| {
-                            notifications.resume_thread(thread_id)
+                            tolerate_notification_resume_error(
+                                notifications.resume_thread(thread_id),
+                            )
                         })
                     {
                         eprintln!("bridge notification control failed: {error}");
@@ -1772,6 +1851,9 @@ impl BridgeAppState {
                 .write()
                 .await
                 .insert(thread_id.to_string(), turn_id);
+            self.force_request_notification_thread_resume(thread_id)
+                .await;
+            self.schedule_bridge_owned_turn_watchdog(thread_id);
         }
         let occurred_at = Utc::now().to_rfc3339();
         self.projections()
@@ -3862,6 +3944,13 @@ where
     }
 }
 
+fn tolerate_notification_resume_error(result: Result<(), String>) -> Result<(), String> {
+    match result {
+        Err(error) if error.contains("no rollout found") => Ok(()),
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -3892,6 +3981,7 @@ mod tests {
         should_suppress_desktop_ipc_live_update_for_bridge_active_turn,
         should_suppress_non_running_thread_status_for_bridge_active_turn,
         should_suppress_notification_event_for_bridge_active_turn,
+        tolerate_notification_resume_error,
     };
 
     async fn test_bridge_app_state() -> BridgeAppState {
@@ -4223,6 +4313,23 @@ mod tests {
         assert_eq!(
             resumed,
             vec!["thread-123".to_string(), "thread-456".to_string()]
+        );
+    }
+
+    #[test]
+    fn tolerate_notification_resume_error_ignores_missing_rollouts() {
+        assert!(tolerate_notification_resume_error(Ok(())).is_ok());
+        assert!(
+            tolerate_notification_resume_error(Err(
+                "codex rpc request 'thread/resume' failed: no rollout found".to_string()
+            ))
+            .is_ok()
+        );
+        assert_eq!(
+            tolerate_notification_resume_error(Err(
+                "codex rpc request 'thread/resume' failed: invalid thread id".to_string()
+            )),
+            Err("codex rpc request 'thread/resume' failed: invalid thread id".to_string())
         );
     }
 

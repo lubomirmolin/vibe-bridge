@@ -529,7 +529,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   _liveEventSubscription;
   Timer? _detailRefreshTimer;
   bool _isDetailRefreshInFlight = false;
+  bool _isSnapshotRefreshInFlight = false;
   bool _shouldRefreshDetailAfterCurrentRequest = false;
+  bool _shouldRefreshSnapshotAfterCurrentRequest = false;
   bool _isDisposed = false;
   DateTime? _pendingPromptSubmittedAt;
   DateTime? _lastActiveTurnSignalAt;
@@ -1364,11 +1366,11 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     }
 
     state = state.copyWith(items: nextItems, clearStreamErrorMessage: true);
-    _scheduleThreadDetailRefresh(
-      delay: event.kind == BridgeEventKind.threadStatusChanged
-          ? const Duration(milliseconds: 200)
-          : const Duration(milliseconds: 700),
-    );
+    if (_shouldReloadTimelineAfterLiveEvent(event)) {
+      _scheduleThreadSnapshotRefresh(delay: const Duration(milliseconds: 200));
+    } else {
+      _scheduleThreadDetailRefresh(delay: const Duration(milliseconds: 700));
+    }
   }
 
   bool _isDuplicateLiveFrame(BridgeEventEnvelope<Map<String, dynamic>> event) {
@@ -1400,6 +1402,36 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     _detailRefreshTimer = Timer(delay, () {
       unawaited(_refreshThreadDetailFromBridge());
     });
+  }
+
+  void _scheduleThreadSnapshotRefresh({required Duration delay}) {
+    if (_isDisposed || state.thread == null) {
+      return;
+    }
+
+    _detailRefreshTimer?.cancel();
+    _detailRefreshTimer = Timer(delay, () {
+      unawaited(_refreshThreadSnapshotFromBridge());
+    });
+  }
+
+  bool _shouldReloadTimelineAfterLiveEvent(
+    BridgeEventEnvelope<Map<String, dynamic>> event,
+  ) {
+    if (event.kind != BridgeEventKind.threadStatusChanged) {
+      return false;
+    }
+
+    final rawStatus = event.payload['status'];
+    if (rawStatus is! String || rawStatus.trim().isEmpty) {
+      return true;
+    }
+
+    try {
+      return threadStatusFromWire(rawStatus.trim()) != ThreadStatus.running;
+    } on FormatException {
+      return true;
+    }
   }
 
   Future<void> _refreshThreadDetailFromBridge() async {
@@ -1447,6 +1479,83 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       if (_shouldRefreshDetailAfterCurrentRequest && !_isDisposed) {
         _shouldRefreshDetailAfterCurrentRequest = false;
         unawaited(_refreshThreadDetailFromBridge());
+      }
+    }
+  }
+
+  Future<void> _refreshThreadSnapshotFromBridge() async {
+    if (_isDisposed) {
+      return;
+    }
+    if (_isSnapshotRefreshInFlight) {
+      _shouldRefreshSnapshotAfterCurrentRequest = true;
+      return;
+    }
+
+    final requestedThreadId = state.threadId;
+    _isSnapshotRefreshInFlight = true;
+
+    try {
+      final detail = await _bridgeApi.fetchThreadDetail(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: requestedThreadId,
+      );
+      if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
+        return;
+      }
+      final scopedDetail = _ensureScopedThreadDetail(
+        detail: detail,
+        expectedThreadId: requestedThreadId,
+        context: 'refreshing live thread snapshot detail',
+      );
+
+      final page = await _bridgeApi.fetchThreadTimelinePage(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: requestedThreadId,
+        limit: _initialVisibleTimelineEntries,
+      );
+      if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
+        return;
+      }
+      final scopedPage = _ensureScopedTimelinePage(
+        page: page,
+        expectedThreadId: requestedThreadId,
+        context: 'refreshing live thread snapshot timeline',
+      );
+      final nextThread =
+          _shouldApplyRefreshedThreadDetail(
+            current: state.thread,
+            refreshed: scopedDetail,
+          )
+          ? scopedDetail
+          : (state.thread ?? scopedDetail);
+
+      final items = _mergeTimelineEntries(
+        currentItems: state.items,
+        timeline: scopedPage.entries,
+      );
+      _trackKnownEventIds(items);
+
+      state = state.copyWith(
+        thread: nextThread,
+        items: items,
+        pendingUserInput: scopedPage.pendingUserInput,
+        hasMoreBefore: scopedPage.hasMoreBefore,
+        nextBefore: scopedPage.nextBefore,
+        clearErrorMessage: true,
+        clearStreamErrorMessage: true,
+        clearStaleMessage: true,
+      );
+      _threadListController.syncThreadDetail(nextThread);
+    } on ThreadDetailBridgeException {
+      // Keep the current live state when a background snapshot refresh fails.
+    } catch (_) {
+      // Ignore best-effort snapshot refresh failures.
+    } finally {
+      _isSnapshotRefreshInFlight = false;
+      if (_shouldRefreshSnapshotAfterCurrentRequest && !_isDisposed) {
+        _shouldRefreshSnapshotAfterCurrentRequest = false;
+        unawaited(_refreshThreadSnapshotFromBridge());
       }
     }
   }

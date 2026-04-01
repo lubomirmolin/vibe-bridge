@@ -215,6 +215,17 @@ impl CodexGateway {
         .map_err(|error| format!("codex thread snapshot task failed: {error}"))?
     }
 
+    pub async fn fetch_thread_snapshot_with_archive(
+        &self,
+        thread_id: &str,
+    ) -> Result<ThreadSnapshotDto, String> {
+        let config = self.config.clone();
+        let thread_id = thread_id.to_string();
+        tokio::task::spawn_blocking(move || fetch_thread_snapshot_from_archive(&config, &thread_id))
+            .await
+            .map_err(|error| format!("codex archive snapshot task failed: {error}"))?
+    }
+
     pub async fn create_thread(
         &self,
         provider: ProviderKind,

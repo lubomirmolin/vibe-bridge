@@ -10,21 +10,16 @@ import 'package:vibe_bridge/features/threads/application/thread_detail_controlle
 import 'package:vibe_bridge/features/threads/application/thread_list_controller.dart';
 import 'package:vibe_bridge/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:vibe_bridge/features/threads/data/thread_list_bridge_api.dart';
-import 'package:vibe_bridge/features/threads/domain/thread_activity_item.dart';
 import 'package:vibe_bridge/features/threads/presentation/thread_list_page.dart';
 import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
 import 'package:vibe_bridge/foundation/storage/secure_store.dart';
 import 'package:vibe_bridge/foundation/storage/secure_store_provider.dart';
 
-const String _probeFilePath = 'apps/mobile/lib/live_approval_probe.dart';
-const String _probeColorBlue = 'Color(0xFF2563EB)';
-const String _probeColorOrange = 'Color(0xFFF97316)';
-
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets(
-    'real bridge Claude Code edit shows provider approval and resumes after in-app selection',
+    'real bridge Codex thread creation settles and completes the first turn',
     (tester) async {
       await _requireAndroidEmulator();
 
@@ -64,30 +59,15 @@ void main() {
       await tester.pumpAndSettle();
 
       await _selectWorkspaceForDraft(tester, workspacePath: workspacePath);
-
       await _pumpUntilFound(
         tester,
         find.byKey(const Key('thread-draft-title')),
         timeout: const Duration(seconds: 12),
       );
 
-      await _openComposerModelSheet(tester);
-      await _pumpUntilFound(
-        tester,
-        find.byKey(const Key('turn-composer-provider-option-claude_code')),
-      );
-      await tester.tap(
-        find.byKey(const Key('turn-composer-provider-option-claude_code')),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const Key('turn-composer-model-sheet-close')),
-      );
-      await tester.pumpAndSettle();
-
       await tester.enterText(
         find.byKey(const Key('turn-composer-input')),
-        _buildProbePrompt(),
+        _buildCodexProbePrompt(),
       );
       await tester.pump();
       await tester.tap(find.byKey(const Key('turn-composer-submit')));
@@ -98,58 +78,45 @@ void main() {
       final createdThreadId = await _waitForSelectedThreadId(
         tester,
         bridgeApiBaseUrl,
-        expectedPrefix: 'claude:',
+        expectedPrefix: 'codex:',
         timeout: const Duration(seconds: 25),
       );
 
-      await _pumpUntilFound(
+      await _waitForThreadControllerToSettle(
         tester,
-        find.byKey(const Key('turn-composer-approval-card')),
-        timeout: const Duration(seconds: 90),
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: createdThreadId,
       );
-      expect(find.byKey(const Key('turn-composer-input')), findsNothing);
-      expect(find.byKey(const Key('turn-composer-submit')), findsNothing);
-      await _approvePendingProviderPrompt(
+      await _waitForCodexTurnCompletion(
         tester,
         bridgeApiBaseUrl: bridgeApiBaseUrl,
         threadId: createdThreadId,
       );
 
-      await _waitForProbeFileChange(
-        tester: tester,
-        bridgeApiBaseUrl: bridgeApiBaseUrl,
-        threadId: createdThreadId,
-        probeFilePath: _probeFilePath,
+      expect(
+        find.byKey(const Key('thread-detail-session-content')),
+        findsOneWidget,
       );
-      await _waitForTimelineFileChangeItem(
-        tester,
-        bridgeApiBaseUrl: bridgeApiBaseUrl,
-        threadId: createdThreadId,
-        probeFilePath: _probeFilePath,
-      );
+      expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
 
       debugPrint(
-        'LIVE_CLAUDE_APPROVAL_EDIT_RESULT '
+        'LIVE_CODEX_THREAD_CREATION_RESULT '
         'thread_id=$createdThreadId '
-        'workspace=$workspacePath '
-        'probe_file=$_probeFilePath',
+        'workspace=$workspacePath',
       );
     },
     timeout: const Timeout(Duration(minutes: 6)),
   );
 }
 
-String _buildProbePrompt() {
-  return 'Edit only $_probeFilePath. '
-      'Toggle liveApprovalProbeIconColor between $_probeColorBlue and $_probeColorOrange, '
-      'choosing whichever value is not currently set. '
-      'Do not modify any other files. '
-      'Reply with the final color value you set.';
+String _buildCodexProbePrompt() {
+  return 'Reply with the exact word READY. '
+      'Do not use tools, do not edit files, and do not ask for approval.';
 }
 
 String _resolveBridgeApiBaseUrl() {
   const configured = String.fromEnvironment(
-    'LIVE_CLAUDE_APPROVAL_BRIDGE_BASE_URL',
+    'LIVE_CODEX_THREAD_CREATION_BRIDGE_BASE_URL',
   );
   if (configured.isNotEmpty) {
     return configured;
@@ -159,7 +126,9 @@ String _resolveBridgeApiBaseUrl() {
 }
 
 String _resolveWorkspacePath() {
-  const configured = String.fromEnvironment('LIVE_CLAUDE_APPROVAL_WORKSPACE');
+  const configured = String.fromEnvironment(
+    'LIVE_CODEX_THREAD_CREATION_WORKSPACE',
+  );
   if (configured.isNotEmpty) {
     return configured;
   }
@@ -171,7 +140,7 @@ Future<void> _requireAndroidEmulator() async {
   if (!Platform.isAndroid) {
     fail(
       'This live bridge integration test only supports Android emulators. '
-      'Run it with `flutter test integration_test/live_claude_code_approval_edit_test.dart -d <android-emulator-id>`.',
+      'Run it with `flutter drive --driver=test_driver/integration_test.dart --target=integration_test/live_codex_thread_creation_test.dart -d <android-emulator-id>`.',
     );
   }
 
@@ -206,11 +175,6 @@ Future<void> _ensureWorkspaceAvailable({
     workspace: workspacePath,
     provider: ProviderKind.codex,
   );
-}
-
-Future<void> _openComposerModelSheet(WidgetTester tester) async {
-  await tester.tap(find.byKey(const Key('thread-detail-settings-toggle')));
-  await tester.pumpAndSettle();
 }
 
 Future<void> _selectWorkspaceForDraft(
@@ -282,70 +246,10 @@ Future<String> _waitForSelectedThreadId(
   );
 }
 
-Future<void> _waitForProbeFileChange({
-  required WidgetTester tester,
-  required String bridgeApiBaseUrl,
-  required String threadId,
-  required String probeFilePath,
-  Duration timeout = const Duration(minutes: 2),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-
-  while (DateTime.now().isBefore(deadline)) {
-    await _approveFollowupPromptIfVisible(
-      tester,
-      bridgeApiBaseUrl: bridgeApiBaseUrl,
-      threadId: threadId,
-    );
-
-    final snapshot = await _fetchThreadSnapshotJson(
-      bridgeApiBaseUrl: bridgeApiBaseUrl,
-      threadId: threadId,
-    );
-    final entries = snapshot['entries'];
-    if (entries is List<dynamic>) {
-      for (final rawEntry in entries) {
-        if (rawEntry is! Map<String, dynamic>) {
-          continue;
-        }
-        final kind = rawEntry['kind'];
-        if (kind != BridgeEventKind.fileChange.wireValue) {
-          continue;
-        }
-        final payload = rawEntry['payload'];
-        if (payload is! Map<String, dynamic>) {
-          continue;
-        }
-        final path = _extractFileChangePath(payload);
-        if (path is String && path.trim().endsWith(probeFilePath)) {
-          return;
-        }
-      }
-    }
-
-    final thread = snapshot['thread'];
-    if (thread is Map<String, dynamic>) {
-      final rawStatus = thread['status'];
-      if (rawStatus == ThreadStatus.failed.wireValue) {
-        fail(
-          'Claude Code thread $threadId failed before editing $probeFilePath.',
-        );
-      }
-    }
-
-    await tester.pump(const Duration(milliseconds: 400));
-  }
-
-  fail(
-    'Timed out waiting for Claude Code to report a file change for $probeFilePath.',
-  );
-}
-
-Future<void> _waitForTimelineFileChangeItem(
+Future<void> _waitForThreadControllerToSettle(
   WidgetTester tester, {
   required String bridgeApiBaseUrl,
   required String threadId,
-  required String probeFilePath,
   Duration timeout = const Duration(seconds: 30),
 }) async {
   final args = ThreadDetailControllerArgs(
@@ -359,84 +263,65 @@ Future<void> _waitForTimelineFileChangeItem(
 
   while (DateTime.now().isBefore(deadline)) {
     final state = container.read(threadDetailControllerProvider(args));
-    final hasProbeFileChange = state.visibleItems.any((item) {
-      if (item.type != ThreadActivityItemType.fileChange) {
-        return false;
-      }
-      final path = _extractFileChangePath(item.payload);
-      return path != null && path.trim().endsWith(probeFilePath);
-    });
-    if (hasProbeFileChange) {
+    if (!state.isLoading &&
+        state.hasThread &&
+        !state.isComposerMutationInFlight) {
       return;
     }
     await tester.pump(const Duration(milliseconds: 200));
   }
 
+  final state = container.read(threadDetailControllerProvider(args));
   fail(
-    'Timed out waiting for the thread timeline to surface a file change for $probeFilePath.',
+    'Timed out waiting for thread detail controller to settle for $threadId. '
+    'isLoading=${state.isLoading} '
+    'hasThread=${state.hasThread} '
+    'isComposerMutationInFlight=${state.isComposerMutationInFlight} '
+    'status=${state.thread?.status.wireValue}',
   );
 }
 
-String? _extractFileChangePath(Map<String, dynamic> payload) {
-  final directPath =
-      payload['path'] ?? payload['file_path'] ?? payload['filePath'];
-  if (directPath is String && directPath.trim().isNotEmpty) {
-    return directPath;
-  }
-
-  final input = payload['input'];
-  if (input is Map<String, dynamic>) {
-    final inputPath = input['path'] ?? input['file_path'] ?? input['filePath'];
-    if (inputPath is String && inputPath.trim().isNotEmpty) {
-      return inputPath;
-    }
-  }
-
-  final toolUseResult = payload['tool_use_result'];
-  if (toolUseResult is Map<String, dynamic>) {
-    final resultPath =
-        toolUseResult['path'] ??
-        toolUseResult['file_path'] ??
-        toolUseResult['filePath'];
-    if (resultPath is String && resultPath.trim().isNotEmpty) {
-      return resultPath;
-    }
-  }
-
-  return null;
-}
-
-Future<void> _approvePendingProviderPrompt(
+Future<void> _waitForCodexTurnCompletion(
   WidgetTester tester, {
   required String bridgeApiBaseUrl,
   required String threadId,
-  Duration timeout = const Duration(seconds: 20),
+  Duration timeout = const Duration(minutes: 2),
 }) async {
-  final optionFinder = find.byKey(
-    const Key('turn-composer-approval-option-allow_for_session'),
-  );
   final deadline = DateTime.now().add(timeout);
+
   while (DateTime.now().isBefore(deadline)) {
-    if (optionFinder.evaluate().isEmpty) {
-      await _pumpUntilFound(tester, optionFinder, timeout: timeout);
-    }
-
-    _tryHideTestKeyboard(tester);
-    await tester.pump(const Duration(milliseconds: 150));
-    await tester.tap(optionFinder, warnIfMissed: false);
-    await tester.pump(const Duration(milliseconds: 250));
-
     final snapshot = await _fetchThreadSnapshotJson(
       bridgeApiBaseUrl: bridgeApiBaseUrl,
       threadId: threadId,
     );
-    if (snapshot['pending_user_input'] == null) {
+    final thread = snapshot['thread'];
+    if (thread is! Map<String, dynamic>) {
+      fail('Expected thread payload for $threadId, got $thread');
+    }
+
+    final rawStatus = (thread['status'] as String?)?.trim() ?? '';
+    if (rawStatus == ThreadStatus.completed.wireValue) {
       return;
     }
-    await tester.pump(const Duration(milliseconds: 500));
+    if (rawStatus == ThreadStatus.failed.wireValue) {
+      fail('Codex thread $threadId failed during initial turn.');
+    }
+    if (rawStatus == ThreadStatus.interrupted.wireValue) {
+      fail('Codex thread $threadId was interrupted during initial turn.');
+    }
+
+    if (snapshot['pending_user_input'] != null) {
+      fail(
+        'Codex thread $threadId unexpectedly requested user input during initial turn.',
+      );
+    }
+
+    await tester.pump(const Duration(milliseconds: 400));
   }
 
-  fail('Timed out waiting for provider approval to resolve for $threadId.');
+  fail(
+    'Timed out waiting for Codex thread $threadId to complete its first turn.',
+  );
 }
 
 Future<Map<String, dynamic>> _fetchThreadSnapshotJson({
@@ -450,72 +335,40 @@ Future<Map<String, dynamic>> _fetchThreadSnapshotJson({
     );
     request.headers.set(HttpHeaders.acceptHeader, 'application/json');
     final response = await request.close();
-    final body = await response.transform(SystemEncoding().decoder).join();
+    final body = await utf8.decoder.bind(response).join();
     if (response.statusCode < 200 || response.statusCode >= 300) {
       fail(
-        'Snapshot request for $threadId failed with status ${response.statusCode}: $body',
+        'Snapshot request for $threadId failed with ${response.statusCode}: $body',
       );
     }
     final decoded = jsonDecode(body);
     if (decoded is! Map<String, dynamic>) {
-      fail('Expected snapshot JSON object for $threadId, got: $decoded');
+      fail('Snapshot response for $threadId was not a JSON object: $decoded');
     }
     return decoded;
   } finally {
-    client.close();
+    client.close(force: true);
   }
 }
 
-Uri _buildBridgeUri(String baseUrl, String routePath) {
+Uri _buildBridgeUri(String baseUrl, String path) {
   final baseUri = Uri.parse(baseUrl);
   final normalizedBasePath = baseUri.path.endsWith('/')
       ? baseUri.path.substring(0, baseUri.path.length - 1)
       : baseUri.path;
-  final normalizedRoute = routePath.startsWith('/') ? routePath : '/$routePath';
-  final fullPath =
-      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}$normalizedRoute';
-  return baseUri.replace(path: fullPath, queryParameters: null);
-}
-
-Future<void> _approveFollowupPromptIfVisible(
-  WidgetTester tester, {
-  required String bridgeApiBaseUrl,
-  required String threadId,
-}) async {
-  final approvalOption = find.byKey(
-    const Key('turn-composer-approval-option-allow_for_session'),
+  final normalizedPath = path.startsWith('/') ? path : '/$path';
+  return baseUri.replace(
+    path:
+        '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}$normalizedPath',
   );
-  if (approvalOption.evaluate().isEmpty) {
-    return;
-  }
-
-  await tester.tap(approvalOption, warnIfMissed: false);
-  await tester.pump(const Duration(milliseconds: 250));
-
-  final snapshot = await _fetchThreadSnapshotJson(
-    bridgeApiBaseUrl: bridgeApiBaseUrl,
-    threadId: threadId,
-  );
-  if (snapshot['pending_user_input'] != null) {
-    await tester.pump(const Duration(milliseconds: 200));
-  }
-}
-
-void _tryHideTestKeyboard(WidgetTester tester) {
-  try {
-    tester.testTextInput.hide();
-  } catch (_) {
-    // The integration harness may not have a registered fake keyboard.
-  }
 }
 
 Future<void> _pumpUntilFound(
   WidgetTester tester,
   Finder finder, {
-  Duration timeout = const Duration(seconds: 12),
+  Duration timeout = const Duration(seconds: 10),
 }) async {
   final deadline = DateTime.now().add(timeout);
-
   while (DateTime.now().isBefore(deadline)) {
     await tester.pump(const Duration(milliseconds: 100));
     if (finder.evaluate().isNotEmpty) {
@@ -524,4 +377,13 @@ Future<void> _pumpUntilFound(
   }
 
   fail('Timed out waiting for finder: $finder');
+}
+
+void _tryHideTestKeyboard(WidgetTester tester) {
+  final dynamic binding = tester.binding;
+  try {
+    binding.testTextInput.hide();
+  } catch (_) {
+    // Ignore keyboard teardown failures on emulator runs.
+  }
 }
