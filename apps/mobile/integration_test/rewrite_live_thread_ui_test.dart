@@ -62,6 +62,10 @@ void main() {
         prompt,
       );
       await tester.pump();
+      final promptTokenMatchCount = find
+          .textContaining(token)
+          .evaluate()
+          .length;
 
       final turnStopwatch = Stopwatch()..start();
       await tester.tap(submitFinder);
@@ -77,10 +81,11 @@ void main() {
       );
       final loadingShownMs = turnStopwatch.elapsedMilliseconds;
 
-      final streamedTextFinder = find.textContaining(token.substring(0, 12));
-      await _pumpUntilFound(
+      await _pumpUntil(
         tester,
-        streamedTextFinder,
+        () =>
+            find.textContaining(token).evaluate().length >
+            promptTokenMatchCount,
         timeout: const Duration(seconds: 15),
       );
       final firstVisibleAssistantMs = turnStopwatch.elapsedMilliseconds;
@@ -107,7 +112,10 @@ void main() {
       expect(loadingShownMs, lessThan(1500));
       expect(firstVisibleAssistantMs, lessThan(5000));
       expect(loadingGoneMs, greaterThanOrEqualTo(firstVisibleAssistantMs));
-      expect(find.textContaining(token), findsOneWidget);
+      expect(
+        find.textContaining(token).evaluate().length,
+        greaterThan(promptTokenMatchCount),
+      );
     },
     timeout: const Timeout(Duration(minutes: 3)),
   );
@@ -210,6 +218,22 @@ Future<void> _pumpUntilFound(
   }
 
   throw TestFailure('Timed out waiting for $finder.');
+}
+
+Future<void> _pumpUntil(
+  WidgetTester tester,
+  bool Function() condition, {
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  final endTime = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(endTime)) {
+    await tester.pump(const Duration(milliseconds: 100));
+    if (condition()) {
+      return;
+    }
+  }
+
+  throw TestFailure('Timed out waiting for condition.');
 }
 
 Future<void> _pumpUntilGone(

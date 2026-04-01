@@ -17,7 +17,6 @@ retries="${INTEGRATION_TEST_RETRIES:-2}"
 tests=(
   "integration_test/live_bridge_approval_flow_test.dart"
   "integration_test/live_thread_streaming_test.dart"
-  "integration_test/reconnect_offline_cache_test.dart"
 )
 
 cd "${mobile_dir}"

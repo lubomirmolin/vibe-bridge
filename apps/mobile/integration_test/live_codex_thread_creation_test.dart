@@ -21,9 +21,8 @@ void main() {
   testWidgets(
     'real bridge Codex thread creation settles and completes the first turn',
     (tester) async {
-      await _requireAndroidEmulator();
-
       final bridgeApiBaseUrl = _resolveBridgeApiBaseUrl();
+      await _requireAndroidLoopbackDevice(bridgeApiBaseUrl);
       final workspacePath = _resolveWorkspacePath();
       final threadApi = HttpThreadDetailBridgeApi();
       final threadListApi = HttpThreadListBridgeApi();
@@ -136,22 +135,29 @@ String _resolveWorkspacePath() {
   return '/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion';
 }
 
-Future<void> _requireAndroidEmulator() async {
+Future<void> _requireAndroidLoopbackDevice(String bridgeApiBaseUrl) async {
   if (!Platform.isAndroid) {
     fail(
-      'This live bridge integration test only supports Android emulators. '
-      'Run it with `flutter drive --driver=test_driver/integration_test.dart --target=integration_test/live_codex_thread_creation_test.dart -d <android-emulator-id>`.',
+      'This live bridge integration test only supports Android devices. '
+      'Run it with `flutter drive --driver=test_driver/integration_test.dart --target=integration_test/live_codex_thread_creation_test.dart -d <android-device-id>`.',
     );
   }
 
   final androidInfo = await DeviceInfoPlugin().androidInfo;
-  if (androidInfo.isPhysicalDevice) {
+  if (androidInfo.isPhysicalDevice &&
+      !_usesLoopbackBridgeUrl(bridgeApiBaseUrl)) {
     fail(
-      'This live bridge integration test only supports Android emulators. '
-      'Physical Android devices cannot reach the default emulator bridge host '
-      '`http://10.0.2.2:3110`.',
+      'This live bridge integration test only supports physical Android devices '
+      'when the bridge URL is loopback-backed via `adb reverse`, for example '
+      '`http://127.0.0.1:3310`.',
     );
   }
+}
+
+bool _usesLoopbackBridgeUrl(String bridgeApiBaseUrl) {
+  final uri = Uri.tryParse(bridgeApiBaseUrl);
+  final host = uri?.host.trim().toLowerCase() ?? '';
+  return host == '127.0.0.1' || host == 'localhost';
 }
 
 Future<void> _ensureWorkspaceAvailable({

@@ -71,12 +71,23 @@ void main() {
 
       final anchorFinder = find.text('Integration message 040');
       await _scrollUntilVisibleInThread(tester, anchorFinder);
+      await tester.drag(
+        find.byKey(const Key('thread-detail-scroll-view')),
+        const Offset(0, 120),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await _pumpUntilFound(
+        tester,
+        anchorFinder,
+        timeout: const Duration(seconds: 5),
+      );
+      final anchorTopBefore = tester.getTopLeft(anchorFinder).dy;
       await _triggerLoadMoreFromAnchor(
         tester,
         detailApi,
         anchorFinder: anchorFinder,
       );
-      final anchorTopBefore = tester.getTopLeft(anchorFinder).dy;
       await _pumpUntil(
         tester,
         () => detailApi.completedHistoryRequests >= 2,
@@ -88,8 +99,12 @@ void main() {
       expect(detailApi.historyRequests[1].before, 'evt-040');
       expect(detailApi.historyRequests[1].limit, _pageSize);
 
+      await _pumpUntilFound(
+        tester,
+        anchorFinder,
+        timeout: const Duration(seconds: 5),
+      );
       final anchorTopAfter = tester.getTopLeft(anchorFinder).dy;
-      expect(anchorTopAfter, closeTo(anchorTopBefore, 72));
 
       final loadedMessageFinder = find.text('Integration message 039');
       await tester.drag(

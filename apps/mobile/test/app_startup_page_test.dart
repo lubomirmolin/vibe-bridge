@@ -31,7 +31,7 @@ void main() {
       );
 
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 1200));
 
       expect(find.text('Initialize Pairing'), findsOneWidget);
     },

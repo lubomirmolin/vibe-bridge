@@ -8,9 +8,14 @@ import 'package:flutter/services.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 
 class AnimatedBridgeBackground extends StatefulWidget {
-  const AnimatedBridgeBackground({super.key, this.sceneScale = 1.2});
+  const AnimatedBridgeBackground({
+    super.key,
+    this.sceneScale = 1.2,
+    this.frozen = false,
+  });
 
   final double sceneScale;
+  final bool frozen;
 
   @override
   State<AnimatedBridgeBackground> createState() =>
@@ -22,6 +27,8 @@ class _AnimatedBridgeBackgroundState extends State<AnimatedBridgeBackground>
   late Ticker _ticker;
   final ValueNotifier<double> _timeNotifier = ValueNotifier(0.0);
   StreamSubscription<AccelerometerEvent>? _accelSubscription;
+  Duration _animationStartedAt = Duration.zero;
+  Duration _lastElapsed = Duration.zero;
   double _tiltX = 0;
   double _tiltY = 0;
   double _targetTiltX = 0;
@@ -36,11 +43,20 @@ class _AnimatedBridgeBackgroundState extends State<AnimatedBridgeBackground>
   void initState() {
     super.initState();
     _ticker = createTicker((elapsed) {
+      _lastElapsed = elapsed;
+      if (widget.frozen) {
+        _tiltX = 0;
+        _tiltY = 0;
+        _timeNotifier.value = 0.0;
+        return;
+      }
+
       // Lerp the tilt to heavily filter out accelerometer noise.
       _tiltX += (_targetTiltX - _tiltX) * 0.08;
       _tiltY += (_targetTiltY - _tiltY) * 0.08;
 
-      _timeNotifier.value = elapsed.inMicroseconds / 1000000.0;
+      final relativeElapsed = elapsed - _animationStartedAt;
+      _timeNotifier.value = relativeElapsed.inMicroseconds / 1000000.0;
     });
     _ticker.start();
 
@@ -61,6 +77,21 @@ class _AnimatedBridgeBackgroundState extends State<AnimatedBridgeBackground>
       } on MissingPluginException {
         // Fall back to the built-in drift animation on platforms without sensors.
       }
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant AnimatedBridgeBackground oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.frozen && !widget.frozen) {
+      _animationStartedAt = _lastElapsed;
+    }
+    if (!oldWidget.frozen && widget.frozen) {
+      _targetTiltX = 0;
+      _targetTiltY = 0;
+      _tiltX = 0;
+      _tiltY = 0;
+      _timeNotifier.value = 0.0;
     }
   }
 

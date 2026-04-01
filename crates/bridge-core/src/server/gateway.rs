@@ -1588,12 +1588,11 @@ fn fetch_thread_snapshot_from_archive(
     let timeline = service
         .timeline_page_response(thread_id, None, 500)
         .ok_or_else(|| format!("thread {thread_id} not found"))?;
-    let (entries, pending_user_input) =
-        filter_hidden_timeline_entries_and_extract_pending_input(
-            thread_id,
-            timeline.entries,
-            timeline.pending_user_input,
-        );
+    let (entries, pending_user_input) = filter_hidden_timeline_entries_and_extract_pending_input(
+        thread_id,
+        timeline.entries,
+        timeline.pending_user_input,
+    );
     let git_status = service
         .git_status_response(thread_id)
         .map(|response| GitStatusDto {
@@ -1635,8 +1634,7 @@ fn filter_hidden_timeline_entries_and_extract_pending_input(
             if next_pending_user_input.is_none()
                 && let Some(message_text) = payload_primary_text(&entry.payload)
             {
-                next_pending_user_input =
-                    parse_pending_user_input_payload(message_text, thread_id);
+                next_pending_user_input = parse_pending_user_input_payload(message_text, thread_id);
             }
             false
         })

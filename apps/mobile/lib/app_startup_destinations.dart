@@ -3,7 +3,10 @@ import 'package:vibe_bridge/features/threads/presentation/thread_list_page.dart'
 import 'package:flutter/widgets.dart';
 
 Widget buildPairingStartupDestination() {
-  return const BridgeHomePage(autoOpenThreadsOnPairing: false);
+  return const BridgeHomePage(
+    autoOpenThreadsOnPairing: false,
+    enableStartupIntro: true,
+  );
 }
 
 Widget buildLocalLoopbackDestination({required String bridgeApiBaseUrl}) {

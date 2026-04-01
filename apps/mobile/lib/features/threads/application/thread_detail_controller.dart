@@ -1468,11 +1468,11 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         return true;
       }
 
-      if (_activeTurnNeedsSnapshotCatchUp) {
-        return true;
-      }
-
-      return !_activeTurnSawMeaningfulLiveActivity;
+      // A completed turn can still have file changes or tool output that only
+      // become available in the archived snapshot/history after live text
+      // streaming has already started. Always reload the settled turn timeline
+      // once we have tracked it as active.
+      return true;
     } on FormatException {
       return true;
     }

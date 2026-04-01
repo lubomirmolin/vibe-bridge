@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="1000"
+    android:viewportHeight="1000">
+    <group
+        android:pivotX="500"
+        android:pivotY="500"
+        android:rotation="-5"
+        android:translateY="50">
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M280,100 L265,700 M320,100 L335,700 M675,100 L660,700 M725,100 L740,700"
+            android:strokeColor="#4DFFFFFF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:strokeWidth="10" />
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M275,100 L325,100 M278,115 L322,115 M282,130 L318,130 M675,100 L725,100 M678,115 L722,115 M682,130 L718,130"
+            android:strokeColor="#80FFFFFF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:strokeWidth="6" />
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M275,100 L325,100 M278,115 L322,115 M282,130 L318,130 M675,100 L725,100 M678,115 L722,115 M682,130 L718,130"
+            android:strokeColor="#4DFFFFFF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:strokeWidth="2" />
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M255,200 L345,200 M257,210 L343,210 M252,200 L348,300 M348,200 L252,300 M250,300 L350,300 M252,310 L348,310 M247,300 L353,400 M353,300 L247,400 M245,400 L355,400 M247,410 L353,410 M242,400 L358,500 M358,400 L242,500 M242,500 L358,500 M244,510 L356,510 M239,500 L361,620 M361,500 L239,620 M239,620 L361,620 M242,630 L358,630 M652,200 L748,200 M654,210 L746,210 M649,200 L751,300 M751,200 L649,300 M645,300 L755,300 M647,310 L753,310 M642,300 L758,400 M758,300 L642,400 M640,400 L760,400 M642,410 L758,410 M637,400 L763,500 M763,400 L637,500 M637,500 L763,500 M639,510 L761,510 M634,500 L766,620 M766,500 L634,620 M634,620 L766,620 M637,630 L763,630"
+            android:strokeColor="#4DFFFFFF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:strokeWidth="4" />
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M-120,610 L1120,610"
+            android:strokeColor="#4DFFFFFF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:strokeWidth="8" />
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M-120,600 L1120,600"
+            android:strokeColor="#99FFFFFF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:strokeWidth="6" />
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M-120,600 Q80,650 300,200 Q500,900 700,200 Q920,650 1120,600"
+            android:strokeColor="#26FFFFFF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:strokeWidth="20" />
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M-120,600 Q80,650 300,200 Q500,900 700,200 Q920,650 1120,600"
+            android:strokeColor="#E6FFFFFF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:strokeWidth="7" />
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M-90,598 L-90,600 M-30,576 L-30,600 M30,540 L30,600 M90,490 L90,600 M150,425 L150,600 M210,346 L210,600 M390,444 L390,600 M450,528 L450,600 M510,549 L510,600 M570,507 L570,600 M630,402 L630,600 M750,285 L750,600 M810,374 L810,600 M870,448 L870,600 M930,508 L930,600 M990,554 L990,600 M1050,585 L1050,600"
+            android:strokeColor="#73FFFFFF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:strokeWidth="3" />
+    </group>
+</vector>

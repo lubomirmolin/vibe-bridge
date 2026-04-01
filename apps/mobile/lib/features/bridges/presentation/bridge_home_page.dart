@@ -5,6 +5,7 @@ class BridgeHomePage extends ConnectionOverviewPage {
     super.key,
     super.enableCameraPreview = true,
     super.enableAnimatedBackground,
+    super.enableStartupIntro = false,
     super.initialScannerIssue,
     super.autoOpenThreadsOnPairing = false,
   });

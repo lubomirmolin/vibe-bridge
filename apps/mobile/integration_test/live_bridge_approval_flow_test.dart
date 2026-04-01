@@ -6,11 +6,11 @@ import 'package:vibe_bridge/features/bridges/domain/pairing_qr_payload.dart';
 import 'package:vibe_bridge/features/settings/data/settings_bridge_api.dart';
 import 'package:vibe_bridge/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:vibe_bridge/features/threads/data/thread_list_bridge_api.dart';
+import 'package:vibe_bridge/features/threads/presentation/thread_list_page.dart';
 import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
 import 'package:vibe_bridge/foundation/storage/secure_store.dart';
 import 'package:vibe_bridge/foundation/storage/secure_store_provider.dart';
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:vibe_bridge/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,7 +22,7 @@ void main() {
   testWidgets(
     'live branch-switch approval can be approved from the real approvals UI',
     (tester) async {
-      await _requireAndroidEmulator();
+      await _requireAndroidLoopbackDevice(_resolveBridgeApiBaseUrl());
       final harness = await _bootstrapLiveTestHarness();
 
       await harness.settingsApi.setAccessMode(
@@ -102,7 +102,7 @@ void main() {
   testWidgets(
     'live pull approval can be rejected from the real approvals UI',
     (tester) async {
-      await _requireAndroidEmulator();
+      await _requireAndroidLoopbackDevice(_resolveBridgeApiBaseUrl());
       final harness = await _bootstrapLiveTestHarness();
 
       await harness.settingsApi.setAccessMode(
@@ -224,7 +224,12 @@ Future<void> _launchTrustedBridgeApp(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [appSecureStoreProvider.overrideWithValue(secureStore)],
-      child: const VibeBridgeApp(),
+      child: MaterialApp(
+        home: ThreadListPage(
+          bridgeApiBaseUrl: bridgeApiBaseUrl,
+          autoOpenPreviouslySelectedThread: false,
+        ),
+      ),
     ),
   );
   await _pumpForTransition(tester);
@@ -235,12 +240,6 @@ Future<void> _openApprovalDetail(
   required String approvalId,
 }) async {
   final approvalsQueueButton = find.byKey(const Key('open-approvals-queue'));
-  if (approvalsQueueButton.evaluate().isEmpty) {
-    final openSessionsButton = find.text('Open sessions');
-    await _pumpUntilFound(tester, openSessionsButton);
-    await tester.tap(openSessionsButton);
-    await _pumpForTransition(tester);
-  }
   await _pumpUntilFound(tester, approvalsQueueButton);
   await tester.tap(approvalsQueueButton);
   await _pumpForTransition(tester);
@@ -260,22 +259,29 @@ String _resolveBridgeApiBaseUrl() {
   return 'http://10.0.2.2:3110';
 }
 
-Future<void> _requireAndroidEmulator() async {
+Future<void> _requireAndroidLoopbackDevice(String bridgeApiBaseUrl) async {
   if (!Platform.isAndroid) {
     fail(
-      'This live bridge integration test only supports Android emulators. '
-      'Run it with `flutter test integration_test/live_bridge_approval_flow_test.dart -d <android-emulator-id>`.',
+      'This live bridge integration test only supports Android devices. '
+      'Run it with `flutter test integration_test/live_bridge_approval_flow_test.dart -d <android-device-id>`.',
     );
   }
 
   final androidInfo = await DeviceInfoPlugin().androidInfo;
-  if (androidInfo.isPhysicalDevice) {
+  if (androidInfo.isPhysicalDevice &&
+      !_usesLoopbackBridgeUrl(bridgeApiBaseUrl)) {
     fail(
-      'This live bridge integration test only supports Android emulators. '
-      'Physical Android devices cannot reach the default emulator bridge host '
-      '`http://10.0.2.2:3110`.',
+      'This live bridge integration test only supports physical Android devices '
+      'when the bridge URL is loopback-backed via `adb reverse`, for example '
+      '`http://127.0.0.1:3310`.',
     );
   }
+}
+
+bool _usesLoopbackBridgeUrl(String bridgeApiBaseUrl) {
+  final uri = Uri.tryParse(bridgeApiBaseUrl);
+  final host = uri?.host.trim().toLowerCase() ?? '';
+  return host == '127.0.0.1' || host == 'localhost';
 }
 
 Future<_TrustedSession> _createTrustedSession(String bridgeApiBaseUrl) async {

@@ -8,6 +8,7 @@ import 'package:vibe_bridge/features/bridges/presentation/pairing_constants.dart
 import 'package:vibe_bridge/features/settings/presentation/settings_page.dart';
 import 'package:vibe_bridge/features/threads/presentation/thread_list_page.dart';
 import 'package:codex_ui/codex_ui.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -25,12 +26,14 @@ class ConnectionOverviewPage extends ConsumerStatefulWidget {
     super.key,
     this.enableCameraPreview = true,
     this.enableAnimatedBackground,
+    this.enableStartupIntro = false,
     this.initialScannerIssue,
     this.autoOpenThreadsOnPairing = false,
   });
 
   final bool enableCameraPreview;
   final bool? enableAnimatedBackground;
+  final bool enableStartupIntro;
   final PairingScannerIssue? initialScannerIssue;
   final bool autoOpenThreadsOnPairing;
 
@@ -47,11 +50,13 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
   late final MobileScannerController _cameraController;
   late final AnimationController _layoutTransitionController;
   late final AnimationController _flipRevealController;
+  late final AnimationController _startupIntroContentController;
   late final AnimationController _swipeHintController;
 
   // Animations
   late final Animation<double> _flipRotation;
   late final Animation<double> _flipScale;
+  late final Animation<Offset> _startupIntroContentOffset;
   late final Animation<double> _swipeHintLift;
   late final Animation<double> _swipeHintOpacity;
 
@@ -61,10 +66,13 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
   final GlobalKey _centerSlotKey = GlobalKey();
 
   Timer? _cameraMountTimer;
+  Timer? _startupBridgeTimer;
+  Timer? _startupContentTimer;
   PairingScannerIssue? _scannerIssue;
   bool _isAutoOpeningThreadList = false;
   bool _isCompactLayout = false;
   bool _isLockedOn = false;
+  bool _isStartupBridgeFrozen = false;
   bool _swappedDuringWipe = false;
   bool _cameraMounted = false;
   String? _scannedRawQr;
@@ -76,6 +84,7 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
     super.initState();
     _initializeControllers();
     _setupAnimations();
+    _configureStartupIntro();
     _scheduleCameraMount();
   }
 
@@ -92,6 +101,11 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
     _flipRevealController = AnimationController(
       vsync: this,
       duration: PairingConstants.flipReveal,
+    );
+    _startupIntroContentController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 620),
+      value: _shouldRunStartupIntro ? 0.0 : 1.0,
     );
     _swipeHintController = AnimationController(
       vsync: this,
@@ -115,6 +129,17 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
         curve: const Interval(0.30, 0.50, curve: Curves.easeInQuint),
       ),
     );
+
+    _startupIntroContentOffset =
+        Tween<Offset>(
+          begin: const Offset(0.0, 0.045),
+          end: Offset.zero,
+        ).animate(
+          CurvedAnimation(
+            parent: _startupIntroContentController,
+            curve: Curves.easeOutCubic,
+          ),
+        );
 
     _swipeHintLift = Tween<double>(begin: 2.0, end: -4.0).animate(
       CurvedAnimation(
@@ -151,14 +176,43 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
     _swipeHintController.repeat(reverse: true);
   }
 
+  bool get _shouldRunStartupIntro =>
+      widget.enableStartupIntro &&
+      !kIsWeb &&
+      defaultTargetPlatform == TargetPlatform.android;
+
+  void _configureStartupIntro() {
+    if (!_shouldRunStartupIntro) {
+      return;
+    }
+    _isStartupBridgeFrozen = true;
+    _startupBridgeTimer = Timer(const Duration(milliseconds: 360), () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isStartupBridgeFrozen = false;
+      });
+    });
+    _startupContentTimer = Timer(const Duration(milliseconds: 980), () {
+      if (!mounted) {
+        return;
+      }
+      _startupIntroContentController.forward();
+    });
+  }
+
   @override
   void dispose() {
     _manualPayloadController.dispose();
     _manualPayloadFocusNode.dispose();
     _cameraController.dispose();
     _cameraMountTimer?.cancel();
+    _startupBridgeTimer?.cancel();
+    _startupContentTimer?.cancel();
     _layoutTransitionController.dispose();
     _flipRevealController.dispose();
+    _startupIntroContentController.dispose();
     _swipeHintController.dispose();
     super.dispose();
   }
@@ -434,7 +488,10 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
 
   Widget _buildBackground() {
     return (widget.enableAnimatedBackground ?? widget.enableCameraPreview)
-        ? const AnimatedBridgeBackground(sceneScale: 0.9)
+        ? AnimatedBridgeBackground(
+            sceneScale: 0.9,
+            frozen: _isStartupBridgeFrozen,
+          )
         : const ColoredBox(color: AppTheme.background);
   }
 
@@ -442,59 +499,84 @@ class _ConnectionOverviewPageState extends ConsumerState<ConnectionOverviewPage>
     PairingState pairingState,
     PairingController pairingController,
   ) {
+    final Widget content;
     if (pairingState.isRestoringSavedBridges) {
-      return _buildRestoringSplash();
+      content = _buildRestoringSplash();
+    } else {
+      content = SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(32.0),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final titleSlotHeight = min(
+                220.0,
+                max(188.0, constraints.maxHeight * 0.24),
+              );
+              final titleTravel = max(0.0, constraints.maxHeight * 0.55);
+
+              return SizedBox(
+                key: _foregroundFrameKey,
+                width: double.infinity,
+                height: double.infinity,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Positioned.fill(
+                      child: _buildForegroundLayout(
+                        pairingState: pairingState,
+                        pairingController: pairingController,
+                        titleSlotHeight: titleSlotHeight,
+                        titleTravel: titleTravel,
+                        centerSlotKey: _centerSlotKey,
+                      ),
+                    ),
+                    Positioned.fill(
+                      child: _buildForegroundWipeOverlay(
+                        pairingState: pairingState,
+                        pairingController: pairingController,
+                        titleSlotHeight: titleSlotHeight,
+                        titleTravel: titleTravel,
+                      ),
+                    ),
+                    Positioned(
+                      top: 0,
+                      right: 0,
+                      child: _buildTopRightAction(
+                        pairingState,
+                        pairingController,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      );
     }
 
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(32.0),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final titleSlotHeight = min(
-              220.0,
-              max(188.0, constraints.maxHeight * 0.24),
-            );
-            final titleTravel = max(0.0, constraints.maxHeight * 0.55);
+    if (!_shouldRunStartupIntro) {
+      return content;
+    }
 
-            return SizedBox(
-              key: _foregroundFrameKey,
-              width: double.infinity,
-              height: double.infinity,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Positioned.fill(
-                    child: _buildForegroundLayout(
-                      pairingState: pairingState,
-                      pairingController: pairingController,
-                      titleSlotHeight: titleSlotHeight,
-                      titleTravel: titleTravel,
-                      centerSlotKey: _centerSlotKey,
-                    ),
-                  ),
-                  Positioned.fill(
-                    child: _buildForegroundWipeOverlay(
-                      pairingState: pairingState,
-                      pairingController: pairingController,
-                      titleSlotHeight: titleSlotHeight,
-                      titleTravel: titleTravel,
-                    ),
-                  ),
-                  Positioned(
-                    top: 0,
-                    right: 0,
-                    child: _buildTopRightAction(
-                      pairingState,
-                      pairingController,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
-      ),
+    return AnimatedBuilder(
+      animation: _startupIntroContentController,
+      child: content,
+      builder: (context, child) {
+        return IgnorePointer(
+          ignoring: _startupIntroContentController.value < 1.0,
+          child: FadeTransition(
+            opacity: CurvedAnimation(
+              parent: _startupIntroContentController,
+              curve: Curves.easeOutCubic,
+            ),
+            child: SlideTransition(
+              position: _startupIntroContentOffset,
+              child: child,
+            ),
+          ),
+        );
+      },
     );
   }
 
