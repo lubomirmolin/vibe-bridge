@@ -535,6 +535,8 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   bool _isDisposed = false;
   DateTime? _pendingPromptSubmittedAt;
   DateTime? _lastActiveTurnSignalAt;
+  bool _activeTurnSawMeaningfulLiveActivity = false;
+  bool _activeTurnNeedsSnapshotCatchUp = false;
 
   /// Resets all transient sub-state to initial values. Used when
   /// (re-)loading the thread or catching up after a reconnect.
@@ -797,6 +799,12 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   void _handleLiveStreamDisconnected() {
     if (_isDisposed) {
       return;
+    }
+
+    if (state.isTurnActive ||
+        _lastActiveTurnSignalAt != null ||
+        _pendingPromptSubmittedAt != null) {
+      _activeTurnNeedsSnapshotCatchUp = true;
     }
 
     state = state.copyWith(
@@ -1298,6 +1306,8 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       return;
     }
 
+    final shouldReloadTimeline = _shouldReloadTimelineAfterLiveEvent(event);
+
     if (event.kind == BridgeEventKind.userInputRequested) {
       final resolvedState = (event.payload['state'] as String?)?.trim();
       state = state.copyWith(
@@ -1339,6 +1349,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       mergedPayload: mergedPayload,
       nextItem: nextItem,
     );
+    _recordMeaningfulLiveActivity(nextItem);
     _logPromptResponseIfNeeded(event: event, nextItem: nextItem);
     final nextItems = List<ThreadActivityItem>.from(state.items);
     if (existingIndex >= 0) {
@@ -1366,7 +1377,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     }
 
     state = state.copyWith(items: nextItems, clearStreamErrorMessage: true);
-    if (_shouldReloadTimelineAfterLiveEvent(event)) {
+    if (shouldReloadTimeline) {
       _scheduleThreadSnapshotRefresh(delay: const Duration(milliseconds: 200));
     } else {
       _scheduleThreadDetailRefresh(delay: const Duration(milliseconds: 700));
@@ -1422,13 +1433,46 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       return false;
     }
 
+    final reason = (event.payload['reason'] as String?)?.trim();
+    if (reason == 'thread_title_generated') {
+      return false;
+    }
+
     final rawStatus = event.payload['status'];
     if (rawStatus is! String || rawStatus.trim().isEmpty) {
       return true;
     }
 
+    final thread = state.thread;
+    if (thread == null) {
+      return false;
+    }
+
     try {
-      return threadStatusFromWire(rawStatus.trim()) != ThreadStatus.running;
+      final status = threadStatusFromWire(rawStatus.trim());
+      if (status == ThreadStatus.running) {
+        return false;
+      }
+
+      final hadTrackedActiveTurn =
+          thread.status == ThreadStatus.running ||
+          _lastActiveTurnSignalAt != null ||
+          _pendingPromptSubmittedAt != null ||
+          _activeTurnNeedsSnapshotCatchUp ||
+          _activeTurnSawMeaningfulLiveActivity;
+      if (!hadTrackedActiveTurn) {
+        return false;
+      }
+
+      if (status == ThreadStatus.failed || status == ThreadStatus.interrupted) {
+        return true;
+      }
+
+      if (_activeTurnNeedsSnapshotCatchUp) {
+        return true;
+      }
+
+      return !_activeTurnSawMeaningfulLiveActivity;
     } on FormatException {
       return true;
     }
@@ -1650,6 +1694,14 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       return;
     }
 
+    if (status == ThreadStatus.running) {
+      if (thread.status != ThreadStatus.running) {
+        _startTrackingActiveTurn();
+      } else {
+        _recordActiveTurnSignal();
+      }
+    }
+
     _updateThreadStatus(
       status: status,
       updatedAt: event.occurredAt,
@@ -1662,6 +1714,10 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       updatedAt: event.occurredAt,
       title: _liveEventTitle(event),
     );
+
+    if (status != ThreadStatus.running) {
+      _finishTrackingActiveTurn();
+    }
   }
 
   Future<bool> submitComposerInput(
@@ -2216,11 +2272,10 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       ),
     );
     if (mutationResult.threadStatus != ThreadStatus.running) {
-      _pendingPromptSubmittedAt = null;
-      _lastActiveTurnSignalAt = null;
+      _finishTrackingActiveTurn();
     }
     if (mutationResult.threadStatus == ThreadStatus.running) {
-      _recordActiveTurnSignal();
+      _startTrackingActiveTurn();
     }
     _threadListController.applyThreadStatusUpdate(
       threadId: thread.threadId,
@@ -2317,6 +2372,39 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
   void _recordActiveTurnSignal() {
     _lastActiveTurnSignalAt = DateTime.now();
+  }
+
+  void _startTrackingActiveTurn() {
+    _activeTurnSawMeaningfulLiveActivity = false;
+    _activeTurnNeedsSnapshotCatchUp = false;
+    _recordActiveTurnSignal();
+  }
+
+  void _finishTrackingActiveTurn() {
+    _pendingPromptSubmittedAt = null;
+    _lastActiveTurnSignalAt = null;
+    _activeTurnSawMeaningfulLiveActivity = false;
+    _activeTurnNeedsSnapshotCatchUp = false;
+  }
+
+  void _recordMeaningfulLiveActivity(ThreadActivityItem item) {
+    if (_isMeaningfulTurnLiveActivity(item)) {
+      _activeTurnSawMeaningfulLiveActivity = true;
+    }
+  }
+
+  bool _isMeaningfulTurnLiveActivity(ThreadActivityItem item) {
+    if (item.body.trim().isEmpty) {
+      return false;
+    }
+
+    return switch (item.type) {
+      ThreadActivityItemType.assistantOutput => true,
+      ThreadActivityItemType.terminalOutput => true,
+      ThreadActivityItemType.fileChange => true,
+      ThreadActivityItemType.planUpdate => true,
+      _ => false,
+    };
   }
 
   void _logPromptResponseIfNeeded({
