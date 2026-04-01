@@ -163,6 +163,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   late final FocusNode _composerFocusNode;
   late final TextEditingController _gitBranchController;
   late final ScrollController _timelineScrollController;
+  final GlobalKey _timelineScrollViewKey = GlobalKey(
+    debugLabel: 'thread-detail-scroll-view',
+  );
   late final ValueNotifier<bool> _isHeaderCollapsed;
   late final ValueNotifier<bool> _showNewMessagePill;
   late final ValueNotifier<String?> _newMessagePreview;
@@ -995,14 +998,20 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   }
 
   _TimelineViewportAnchor? _captureLeadingVisibleTimelineAnchor() {
-    final viewportHeight = MediaQuery.sizeOf(context).height;
+    final viewportRenderBox = _timelineViewportRenderBox();
+    if (viewportRenderBox == null) {
+      return null;
+    }
+    final viewportHeight = viewportRenderBox.size.height;
     for (final blockId in _timelineBlockOrder) {
       final renderBox = _timelineBlockRenderBox(blockId);
       if (renderBox == null) {
         continue;
       }
 
-      final top = renderBox.localToGlobal(Offset.zero).dy;
+      final top = renderBox
+          .localToGlobal(Offset.zero, ancestor: viewportRenderBox)
+          .dy;
       final bottom = top + renderBox.size.height;
       if (bottom <= 0 || top >= viewportHeight) {
         continue;
@@ -1019,13 +1028,34 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       return null;
     }
 
+    final viewportRenderBox = _timelineViewportRenderBox();
+    if (viewportRenderBox == null) {
+      return null;
+    }
+
     final renderBox = _timelineBlockRenderBox(anchor.blockId);
     if (renderBox == null) {
       return null;
     }
 
-    final currentTop = renderBox.localToGlobal(Offset.zero).dy;
+    final currentTop = renderBox
+        .localToGlobal(Offset.zero, ancestor: viewportRenderBox)
+        .dy;
     return currentTop - anchor.top;
+  }
+
+  RenderBox? _timelineViewportRenderBox() {
+    final context = _timelineScrollViewKey.currentContext;
+    if (context == null) {
+      return null;
+    }
+
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.attached) {
+      return null;
+    }
+
+    return renderObject;
   }
 
   RenderBox? _timelineBlockRenderBox(String id) {
@@ -2143,6 +2173,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                   isTimelineCardExpanded: _isTimelineCardExpanded,
                   onTimelineCardExpansionChanged: _setTimelineCardExpanded,
                   timelineBlockMeasurementKey: _timelineBlockMeasurementKey,
+                  timelineScrollViewKey: _timelineScrollViewKey,
                 ),
                 Positioned(
                   top: 0,

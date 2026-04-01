@@ -1072,6 +1072,160 @@ void main() {
   );
 
   testWidgets(
+    'Fix Codex thread status older-history pagination follows the correct before cursor across deep archived pages',
+    (tester) async {
+      final latestPageFixture =
+          _loadFixCodexThreadStatusLatestTimelineFixture();
+      final firstOlderPageFixture =
+          _loadFixCodexThreadStatusOlderTimelineFixture();
+      final secondOlderPageFixture =
+          _loadFixCodexThreadStatusOldestTimelineFixture();
+
+      final detailApi = _ScriptedTimelinePageThreadDetailBridgeApi(
+        detail: latestPageFixture.thread,
+        pagesByBefore: {
+          null: latestPageFixture,
+          latestPageFixture.nextBefore!: firstOlderPageFixture,
+          firstOlderPageFixture.nextBefore!: secondOlderPageFixture,
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: latestPageFixture.thread.threadId,
+        initialVisibleTimelineEntries: 80,
+      );
+      await tester.pumpAndSettle();
+
+      final args = ThreadDetailControllerArgs(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: latestPageFixture.thread.threadId,
+        initialVisibleTimelineEntries: 80,
+      );
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ThreadDetailPage)),
+      );
+      final controller = container.read(
+        threadDetailControllerProvider(args).notifier,
+      );
+
+      expect(detailApi.historyRequests.length, 1);
+      expect(detailApi.historyRequests.single.before, isNull);
+
+      await controller.loadEarlierHistory();
+      await tester.pumpAndSettle();
+
+      var controllerState = container.read(
+        threadDetailControllerProvider(args),
+      );
+
+      expect(detailApi.historyRequests.length, 2);
+      expect(detailApi.historyRequests[1].before, latestPageFixture.nextBefore);
+      expect(
+        controllerState.visibleItems.any(
+          (item) => item.body.contains(
+            'I’m editing the controller now. The change is narrow',
+          ),
+        ),
+        isTrue,
+      );
+
+      await controller.loadEarlierHistory();
+      await tester.pumpAndSettle();
+
+      controllerState = container.read(threadDetailControllerProvider(args));
+
+      expect(detailApi.historyRequests.length, 3);
+      expect(
+        detailApi.historyRequests[2].before,
+        firstOlderPageFixture.nextBefore,
+      );
+      expect(controllerState.hasMoreBefore, isTrue);
+    },
+  );
+
+  testWidgets(
+    'Fix Codex thread status older-history pagination keeps the current viewport anchored across multi-page prepends',
+    (tester) async {
+      final latestPageFixture =
+          _loadFixCodexThreadStatusLatestTimelineFixture();
+      final firstOlderPageFixture =
+          _loadFixCodexThreadStatusOlderTimelineFixture();
+      final secondOlderPageFixture =
+          _loadFixCodexThreadStatusOldestTimelineFixture();
+
+      final detailApi = _ScriptedTimelinePageThreadDetailBridgeApi(
+        detail: latestPageFixture.thread,
+        pagesByBefore: {
+          null: latestPageFixture,
+          latestPageFixture.nextBefore!: firstOlderPageFixture,
+          firstOlderPageFixture.nextBefore!: secondOlderPageFixture,
+        },
+        delaysByBefore: {
+          latestPageFixture.nextBefore: const Duration(milliseconds: 120),
+          firstOlderPageFixture.nextBefore: const Duration(milliseconds: 120),
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: latestPageFixture.thread.threadId,
+        initialVisibleTimelineEntries: 80,
+      );
+      await tester.pumpAndSettle();
+
+      final scrollViewFinder = find.byKey(
+        const Key('thread-detail-scroll-view'),
+      );
+      final scrollView = tester.widget<ListView>(scrollViewFinder);
+      final scrollController = scrollView.controller!;
+      final args = ThreadDetailControllerArgs(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: latestPageFixture.thread.threadId,
+        initialVisibleTimelineEntries: 80,
+      );
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ThreadDetailPage)),
+      );
+      final controllerState = container.read(
+        threadDetailControllerProvider(args),
+      );
+      final initialBlocks = buildThreadTimelineBlocks(
+        controllerState.visibleItems,
+      );
+      final anchorBlock = initialBlocks.firstWhere(
+        (block) => block.item != null,
+        orElse: () => initialBlocks.first,
+      );
+      final anchorFinder = find.byKey(
+        ValueKey(_timelineBlockKeyForTest(anchorBlock)),
+      );
+
+      scrollController.jumpTo(100);
+      await tester.pump();
+
+      expect(anchorFinder, findsOneWidget);
+      final anchorTopBefore = tester.getTopLeft(anchorFinder).dy;
+
+      await tester.drag(scrollViewFinder, const Offset(0, 80));
+      await tester.pump();
+      await _pumpUntilCondition(
+        tester,
+        () => detailApi.completedHistoryRequests >= 2,
+      );
+      await tester.pumpAndSettle();
+
+      expect(detailApi.historyRequests.length, 2);
+      expect(detailApi.historyRequests[1].before, latestPageFixture.nextBefore);
+
+      final anchorTopAfter = tester.getTopLeft(anchorFinder).dy;
+      expect(anchorTopAfter, closeTo(anchorTopBefore, 72));
+    },
+  );
+
+  testWidgets(
     'real-thread apply_patch activity renders as file-change UI without raw patch scaffolding as the primary view',
     (tester) async {
       final fixture = _loadRealThreadFixture();
@@ -5272,6 +5426,22 @@ Future<void> _pumpForTransientUiWork(
   }
 }
 
+Future<void> _pumpUntilCondition(
+  WidgetTester tester,
+  bool Function() condition, {
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    if (condition()) {
+      return;
+    }
+    await tester.pump(const Duration(milliseconds: 16));
+  }
+
+  throw TestFailure('Timed out waiting for test condition.');
+}
+
 Future<XFile> _createTestImageFile(String fileName) async {
   return XFile.fromData(
     base64Decode(
@@ -5342,6 +5512,12 @@ const _realThreadFixtureOlderTimelinePath =
     'test/features/threads/fixtures/real_thread_019d_timeline_before_558_limit_80.json';
 const _realThreadFixtureSearchExplorationTimelinePath =
     'test/features/threads/fixtures/real_thread_019d_timeline_before_478_limit_80.json';
+const _fixCodexThreadStatusFixtureTimelinePath =
+    'test/features/threads/fixtures/real_thread_fix_codex_status_timeline_limit_80.json';
+const _fixCodexThreadStatusFixtureOlderTimelinePath =
+    'test/features/threads/fixtures/real_thread_fix_codex_status_timeline_before_1760_limit_80.json';
+const _fixCodexThreadStatusFixtureOldestTimelinePath =
+    'test/features/threads/fixtures/real_thread_fix_codex_status_timeline_before_1680_limit_80.json';
 
 _RealThreadFixture _loadRealThreadFixture() {
   final detailRaw = File(_realThreadFixtureDetailPath).readAsStringSync();
@@ -5379,6 +5555,30 @@ ThreadTimelinePageDto _loadRealThreadSearchExplorationTimelineFixture() {
   return ThreadTimelinePageDto.fromJson(timelineJson);
 }
 
+ThreadTimelinePageDto _loadFixCodexThreadStatusLatestTimelineFixture() {
+  final timelineRaw = File(
+    _fixCodexThreadStatusFixtureTimelinePath,
+  ).readAsStringSync();
+  final timelineJson = jsonDecode(timelineRaw) as Map<String, dynamic>;
+  return ThreadTimelinePageDto.fromJson(timelineJson);
+}
+
+ThreadTimelinePageDto _loadFixCodexThreadStatusOlderTimelineFixture() {
+  final timelineRaw = File(
+    _fixCodexThreadStatusFixtureOlderTimelinePath,
+  ).readAsStringSync();
+  final timelineJson = jsonDecode(timelineRaw) as Map<String, dynamic>;
+  return ThreadTimelinePageDto.fromJson(timelineJson);
+}
+
+ThreadTimelinePageDto _loadFixCodexThreadStatusOldestTimelineFixture() {
+  final timelineRaw = File(
+    _fixCodexThreadStatusFixtureOldestTimelinePath,
+  ).readAsStringSync();
+  final timelineJson = jsonDecode(timelineRaw) as Map<String, dynamic>;
+  return ThreadTimelinePageDto.fromJson(timelineJson);
+}
+
 class _RealThreadFixture {
   const _RealThreadFixture({required this.detail, required this.timelinePage});
 
@@ -5386,6 +5586,281 @@ class _RealThreadFixture {
   final ThreadTimelinePageDto timelinePage;
 
   List<ThreadTimelineEntryDto> get timelineEntries => timelinePage.entries;
+}
+
+class _HistoryRequest {
+  const _HistoryRequest({required this.before, required this.limit});
+
+  final String? before;
+  final int limit;
+}
+
+class _ScriptedTimelinePageThreadDetailBridgeApi
+    implements ThreadDetailBridgeApi {
+  _ScriptedTimelinePageThreadDetailBridgeApi({
+    required this.detail,
+    required Map<String?, ThreadTimelinePageDto> pagesByBefore,
+    this.delaysByBefore = const <String?, Duration>{},
+  }) : _pagesByBefore = Map<String?, ThreadTimelinePageDto>.from(pagesByBefore);
+
+  final ThreadDetailDto detail;
+  final Map<String?, ThreadTimelinePageDto> _pagesByBefore;
+  final Map<String?, Duration> delaysByBefore;
+  final List<_HistoryRequest> historyRequests = <_HistoryRequest>[];
+  int completedHistoryRequests = 0;
+
+  @override
+  Future<ModelCatalogDto> fetchModelCatalog({
+    required String bridgeApiBaseUrl,
+    required ProviderKind provider,
+  }) async {
+    return fallbackModelCatalogForProvider(provider);
+  }
+
+  @override
+  Future<SpeechModelStatusDto> fetchSpeechStatus({
+    required String bridgeApiBaseUrl,
+  }) async {
+    return const SpeechModelStatusDto(
+      contractVersion: contractVersion,
+      provider: 'fluid_audio',
+      modelId: 'parakeet-tdt-0.6b-v3-coreml',
+      state: SpeechModelState.unsupported,
+    );
+  }
+
+  @override
+  Future<SpeechTranscriptionResultDto> transcribeAudio({
+    required String bridgeApiBaseUrl,
+    required List<int> audioBytes,
+    String fileName = 'voice-message.wav',
+  }) {
+    throw const ThreadSpeechBridgeException(message: 'Speech is unused here.');
+  }
+
+  @override
+  Future<ThreadSnapshotDto> createThread({
+    required String bridgeApiBaseUrl,
+    required String workspace,
+    required ProviderKind provider,
+    String? model,
+  }) {
+    throw UnimplementedError('Thread creation is unused in this test.');
+  }
+
+  @override
+  Future<ThreadDetailDto> fetchThreadDetail({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    return detail;
+  }
+
+  @override
+  Future<ThreadUsageDto> fetchThreadUsage({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    throw const ThreadUsageBridgeException(
+      message: 'Usage is unavailable in this test.',
+    );
+  }
+
+  @override
+  Future<List<ThreadTimelineEntryDto>> fetchThreadTimeline({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    final entries =
+        _pagesByBefore.values
+            .expand((page) => page.entries)
+            .toList(growable: false)
+          ..sort((left, right) => left.occurredAt.compareTo(right.occurredAt));
+    return entries;
+  }
+
+  @override
+  Future<ThreadTimelinePageDto> fetchThreadTimelinePage({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? before,
+    int limit = 50,
+  }) async {
+    historyRequests.add(_HistoryRequest(before: before, limit: limit));
+    final delay = delaysByBefore[before];
+    if (delay != null) {
+      await Future<void>.delayed(delay);
+    }
+
+    final page = _pagesByBefore[before];
+    if (page == null) {
+      throw StateError('Missing scripted page for before="$before".');
+    }
+
+    completedHistoryRequests += 1;
+    return page;
+  }
+
+  @override
+  Future<TurnMutationResult> startTurn({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String prompt,
+    TurnMode mode = TurnMode.act,
+    List<String> images = const <String>[],
+    String? model,
+    String? effort,
+  }) async {
+    return _turnMutationResult(
+      threadId: threadId,
+      operation: 'turn_start',
+      status: ThreadStatus.running,
+      message: 'Turn started and streaming is active',
+    );
+  }
+
+  @override
+  Future<TurnMutationResult> respondToUserInput({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String requestId,
+    List<UserInputAnswerDto> answers = const <UserInputAnswerDto>[],
+    String? freeText,
+    String? model,
+    String? effort,
+  }) async {
+    return _turnMutationResult(
+      threadId: threadId,
+      operation: 'turn_respond',
+      status: ThreadStatus.running,
+      message: 'Pending input accepted',
+    );
+  }
+
+  @override
+  Future<TurnMutationResult> steerTurn({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String instruction,
+  }) async {
+    return _turnMutationResult(
+      threadId: threadId,
+      operation: 'turn_steer',
+      status: ThreadStatus.running,
+      message: 'Steer instruction applied to active turn',
+    );
+  }
+
+  @override
+  Future<TurnMutationResult> interruptTurn({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? turnId,
+  }) async {
+    return _turnMutationResult(
+      threadId: threadId,
+      operation: 'turn_interrupt',
+      status: ThreadStatus.idle,
+      message: 'Turn interrupted',
+    );
+  }
+
+  @override
+  Future<TurnMutationResult> startCommitAction({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? model,
+    String? effort,
+  }) async {
+    return _turnMutationResult(
+      threadId: threadId,
+      operation: 'turn_commit',
+      status: ThreadStatus.running,
+      message: 'Commit started',
+    );
+  }
+
+  @override
+  Future<GitStatusResponseDto> fetchGitStatus({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    return _gitStatus(
+      threadId: threadId,
+      workspace: detail.workspace,
+      repository: detail.repository,
+      branch: detail.branch,
+      remote: 'origin',
+    );
+  }
+
+  @override
+  Future<MutationResultResponseDto> switchBranch({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    required String branch,
+  }) async {
+    return _gitMutationResult(
+      threadId: threadId,
+      operation: 'git_branch_switch',
+      message: 'Switched branch to $branch',
+      repository: detail.repository,
+      branch: branch,
+      remote: 'origin',
+      workspace: detail.workspace,
+      dirty: false,
+      aheadBy: 0,
+      behindBy: 0,
+    );
+  }
+
+  @override
+  Future<MutationResultResponseDto> pullRepository({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? remote,
+  }) async {
+    return _gitMutationResult(
+      threadId: threadId,
+      operation: 'git_pull',
+      message: 'Pulled latest changes',
+      repository: detail.repository,
+      branch: detail.branch,
+      remote: remote ?? 'origin',
+      workspace: detail.workspace,
+      dirty: false,
+      aheadBy: 0,
+      behindBy: 0,
+    );
+  }
+
+  @override
+  Future<MutationResultResponseDto> pushRepository({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+    String? remote,
+  }) async {
+    return _gitMutationResult(
+      threadId: threadId,
+      operation: 'git_push',
+      message: 'Pushed local commits',
+      repository: detail.repository,
+      branch: detail.branch,
+      remote: remote ?? 'origin',
+      workspace: detail.workspace,
+      dirty: false,
+      aheadBy: 0,
+      behindBy: 0,
+    );
+  }
+
+  @override
+  Future<OpenOnMacResponseDto> openOnMac({
+    required String bridgeApiBaseUrl,
+    required String threadId,
+  }) async {
+    return _openOnMacResponse(threadId: threadId);
+  }
 }
 
 List<ThreadSummaryDto> _threadSummaries() {

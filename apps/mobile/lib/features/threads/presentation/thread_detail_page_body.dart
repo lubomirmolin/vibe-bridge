@@ -24,6 +24,7 @@ class _ThreadDetailBody extends StatelessWidget {
     required this.isTimelineCardExpanded,
     required this.onTimelineCardExpansionChanged,
     required this.timelineBlockMeasurementKey,
+    required this.timelineScrollViewKey,
   });
 
   final ThreadDetailState state;
@@ -50,6 +51,7 @@ class _ThreadDetailBody extends StatelessWidget {
   final void Function(String id, bool isExpanded)
   onTimelineCardExpansionChanged;
   final GlobalKey Function(String id) timelineBlockMeasurementKey;
+  final GlobalKey timelineScrollViewKey;
 
   @override
   Widget build(BuildContext context) {
@@ -113,53 +115,56 @@ class _ThreadDetailBody extends StatelessWidget {
           }
           return false;
         },
-        child: ListView.builder(
-          controller: scrollController,
-          key: const Key('thread-detail-scroll-view'),
-          cacheExtent: state.isLoadingEarlierHistory ? 8000 : 3200,
-          physics: const AlwaysScrollableScrollPhysics(
-            parent: BouncingScrollPhysics(),
-          ),
-          padding: EdgeInsets.only(
-            left: 24,
-            right: 24,
-            bottom: hasPinnedComposer ? 140 : 16,
-            top: 212,
-          ),
-          itemCount: itemCount,
-          itemBuilder: (context, index) {
-            Widget child;
-            if (index < leadingChildren.length) {
-              child = leadingChildren[index];
-            } else if (index < leadingChildren.length + timelineItemCount) {
-              child = _buildTimelineChild(
-                state: state,
-                timelineBlocks: timelineBlocks,
-                timelineIndex: index - leadingChildren.length,
-              );
-            } else {
-              child =
-                  trailingChildren[index -
-                      leadingChildren.length -
-                      timelineItemCount];
-            }
+        child: KeyedSubtree(
+          key: timelineScrollViewKey,
+          child: ListView.builder(
+            controller: scrollController,
+            key: const Key('thread-detail-scroll-view'),
+            cacheExtent: state.isLoadingEarlierHistory ? 8000 : 3200,
+            physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics(),
+            ),
+            padding: EdgeInsets.only(
+              left: 24,
+              right: 24,
+              bottom: hasPinnedComposer ? 140 : 16,
+              top: 212,
+            ),
+            itemCount: itemCount,
+            itemBuilder: (context, index) {
+              Widget child;
+              if (index < leadingChildren.length) {
+                child = leadingChildren[index];
+              } else if (index < leadingChildren.length + timelineItemCount) {
+                child = _buildTimelineChild(
+                  state: state,
+                  timelineBlocks: timelineBlocks,
+                  timelineIndex: index - leadingChildren.length,
+                );
+              } else {
+                child =
+                    trailingChildren[index -
+                        leadingChildren.length -
+                        timelineItemCount];
+              }
 
-            return Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(
-                  maxWidth: _ThreadDetailPageState._sessionContentMaxWidth,
+              return Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: _ThreadDetailPageState._sessionContentMaxWidth,
+                  ),
+                  child: SizedBox(
+                    key: index == 0
+                        ? const Key('thread-detail-session-content')
+                        : null,
+                    width: double.infinity,
+                    child: child,
+                  ),
                 ),
-                child: SizedBox(
-                  key: index == 0
-                      ? const Key('thread-detail-session-content')
-                      : null,
-                  width: double.infinity,
-                  child: child,
-                ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ),
     );
