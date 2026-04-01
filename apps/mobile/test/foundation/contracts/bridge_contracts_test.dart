@@ -24,7 +24,7 @@ void main() {
     final summary = ThreadSummaryDto.fromJson(fixtureJson);
 
     expect(summary.contractVersion, contractVersion);
-    expect(summary.threadId, 'thread-123');
+    expect(summary.threadId, 'codex:thread-123');
     expect(summary.status, ThreadStatus.running);
     expect(summary.repository, 'vibe-bridge');
   });
