@@ -62,6 +62,7 @@ struct BridgeAppStateInner {
     codex_health: RwLock<ServiceHealthDto>,
     available_models: RwLock<Vec<ModelOptionDto>>,
     active_turn_ids: RwLock<HashMap<String, String>>,
+    interrupted_threads: RwLock<HashSet<String>>,
     pending_bridge_owned_turns: RwLock<HashSet<String>>,
     awaiting_plan_question_prompts: RwLock<HashMap<String, String>>,
     pending_user_inputs: RwLock<HashMap<String, PendingUserInputSession>>,
@@ -234,6 +235,7 @@ impl BridgeAppState {
                 }),
                 available_models: RwLock::new(Vec::new()),
                 active_turn_ids: RwLock::new(HashMap::new()),
+                interrupted_threads: RwLock::new(HashSet::new()),
                 pending_bridge_owned_turns: RwLock::new(HashSet::new()),
                 awaiting_plan_question_prompts: RwLock::new(HashMap::new()),
                 pending_user_inputs: RwLock::new(HashMap::new()),
@@ -1060,6 +1062,66 @@ impl BridgeAppState {
             .remove(thread_id);
     }
 
+    async fn clear_interrupted_thread_state(&self, thread_id: &str) {
+        self.inner
+            .interrupted_threads
+            .write()
+            .await
+            .remove(thread_id);
+    }
+
+    async fn mark_thread_interrupt_requested(&self, thread_id: &str) {
+        self.inner
+            .interrupted_threads
+            .write()
+            .await
+            .insert(thread_id.to_string());
+    }
+
+    async fn should_preserve_interrupted_thread_state(&self, thread_id: &str) -> bool {
+        self.inner
+            .interrupted_threads
+            .read()
+            .await
+            .contains(thread_id)
+    }
+
+    async fn rewrite_interrupted_thread_status_event(
+        &self,
+        event: &mut BridgeEventEnvelope<Value>,
+    ) {
+        if event.kind != BridgeEventKind::ThreadStatusChanged {
+            return;
+        }
+
+        let Some(status) = event.payload.get("status").and_then(Value::as_str) else {
+            return;
+        };
+
+        if status == "running" {
+            self.clear_interrupted_thread_state(&event.thread_id).await;
+            return;
+        }
+
+        if !self
+            .should_preserve_interrupted_thread_state(&event.thread_id)
+            .await
+        {
+            return;
+        }
+
+        if let Some(payload) = event.payload.as_object_mut() {
+            payload.insert(
+                "status".to_string(),
+                Value::String("interrupted".to_string()),
+            );
+            payload.insert(
+                "reason".to_string(),
+                Value::String("interrupt_requested".to_string()),
+            );
+        }
+    }
+
     async fn finalize_bridge_owned_turn(&self, thread_id: &str) {
         self.refresh_snapshot_after_bridge_turn_completion(thread_id)
             .await;
@@ -1141,6 +1203,14 @@ impl BridgeAppState {
     ) {
         let previous_snapshot = self.projections().snapshot(thread_id).await;
         snapshot.thread.access_mode = self.access_mode().await;
+        if self
+            .should_preserve_interrupted_thread_state(thread_id)
+            .await
+            && snapshot.thread.status != ThreadStatus::Running
+        {
+            snapshot.thread.status = ThreadStatus::Interrupted;
+            snapshot.thread.active_turn_id = None;
+        }
 
         let mut compactor = LiveDeltaCompactor::default();
         let events = diff_thread_snapshots(previous_snapshot.as_ref(), &snapshot)
@@ -1705,6 +1775,7 @@ impl BridgeAppState {
             .filter(|image| !image.is_empty())
             .map(ToString::to_string)
             .collect::<Vec<_>>();
+        self.clear_interrupted_thread_state(thread_id).await;
         if !normalized_images.is_empty() {
             self.inner
                 .pending_user_message_images
@@ -1778,6 +1849,12 @@ impl BridgeAppState {
                 if should_suppress_live_event(&normalized) {
                     return;
                 }
+                let state = state.clone();
+                handle.block_on(async {
+                    state
+                        .rewrite_interrupted_thread_status_event(&mut normalized)
+                        .await;
+                });
                 let state = state.clone();
                 if handle.block_on(async {
                     state
@@ -2406,6 +2483,7 @@ impl BridgeAppState {
             .interrupt_turn(thread_id, &resolved_turn_id)
             .await?;
         let occurred_at = Utc::now().to_rfc3339();
+        self.mark_thread_interrupt_requested(thread_id).await;
         self.projections()
             .mark_thread_status(thread_id, ThreadStatus::Interrupted, &occurred_at)
             .await;
@@ -5314,6 +5392,78 @@ mod tests {
             &idle_status,
             true
         ));
+    }
+
+    #[tokio::test]
+    async fn interrupt_requested_threads_rewrite_upstream_idle_status_to_interrupted() {
+        let state = test_bridge_app_state().await;
+        state
+            .mark_thread_interrupt_requested("codex:thread-1")
+            .await;
+
+        let mut idle_status = BridgeEventEnvelope {
+            contract_version: CONTRACT_VERSION.to_string(),
+            event_id: "evt-status".to_string(),
+            thread_id: "codex:thread-1".to_string(),
+            kind: BridgeEventKind::ThreadStatusChanged,
+            occurred_at: "2026-03-29T09:00:01Z".to_string(),
+            payload: json!({
+                "status": "idle",
+                "reason": "upstream_notification",
+            }),
+            annotations: None,
+        };
+
+        state
+            .rewrite_interrupted_thread_status_event(&mut idle_status)
+            .await;
+
+        assert_eq!(idle_status.payload["status"], "interrupted");
+        assert_eq!(idle_status.payload["reason"], "interrupt_requested");
+    }
+
+    #[tokio::test]
+    async fn interrupt_requested_threads_preserve_interrupted_status_in_completion_snapshot() {
+        let state = test_bridge_app_state().await;
+        let thread_id = "codex:thread-1";
+        state.mark_thread_interrupt_requested(thread_id).await;
+
+        let snapshot = ThreadSnapshotDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: ThreadDetailDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: thread_id.to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
+                title: "Thread".to_string(),
+                status: ThreadStatus::Idle,
+                workspace: "/repo".to_string(),
+                repository: "repo".to_string(),
+                branch: "main".to_string(),
+                created_at: "2026-03-27T20:00:00Z".to_string(),
+                updated_at: "2026-03-27T20:00:10Z".to_string(),
+                source: "codex_app_ipc".to_string(),
+                access_mode: shared_contracts::AccessMode::ControlWithApprovals,
+                last_turn_summary: "idle".to_string(),
+                active_turn_id: None,
+            },
+            entries: vec![],
+            approvals: Vec::new(),
+            git_status: None,
+            pending_user_input: None,
+        };
+
+        state
+            .apply_bridge_turn_completion_snapshot(thread_id, snapshot)
+            .await;
+
+        let stored = state
+            .projections()
+            .snapshot(thread_id)
+            .await
+            .expect("snapshot should be stored");
+        assert_eq!(stored.thread.status, ThreadStatus::Interrupted);
     }
 
     #[test]
