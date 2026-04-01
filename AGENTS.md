@@ -19,6 +19,14 @@ The system connects a mobile app to a locally running Codex session through a ho
 - **Desktop UI Independence**: Do not attempt to automate or scrape the `Codex.app` Electron GUI. Rely on local SQLite/JSONL state under `~/.codex` and the `app-server` runtime protocol.
 - **QR Pairing Mechanism**: Trust between mobile and a host bridge is established via a QR-based pairing process generating persistent keys (e.g., Ed25519 identity).
 
+### Codex App-Server Protocol Notes
+- **Handshake is two-step, not one-step**: After opening a Codex app-server transport, clients must send `initialize` and then immediately send an `initialized` notification on the same connection. Sending only `initialize` is not enough.
+- **Missing `initialized` can break live streaming without breaking requests**: The bridge previously started turns successfully but received no live `item/*` notifications because the transport never sent `initialized`. This presents as "final archive appears later, but no live assistant/tool stream".
+- **Live turn stream is carried by JSON-RPC notifications**: After `turn/start`, keep reading the same transport for `turn/started`, `item/started`, item deltas such as `item/agentMessage/delta`, tool output events, `item/completed`, and finally `turn/completed`.
+- **`thread/start` auto-subscribes the connection to thread events**: Fresh threads do not need extra subscription logic beyond the normal app-server protocol. `thread/resume` is for continuing an existing thread on a connection.
+- **Notification opt-out is exact-match only**: `initialize.params.capabilities.optOutNotificationMethods` suppresses only the exact method names listed. Be careful not to suppress `item/agentMessage/delta` or other `item/*` notifications needed for live mobile streaming.
+- **Reference source**: The authoritative app-server implementation/docs for this repo-local debugging flow are in `/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/tmp/codex/codex-rs/app-server/README.md`, `/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/tmp/codex/codex-rs/app-server/src/message_processor.rs`, and `/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/tmp/codex/codex-rs/app-server/src/transport/mod.rs`.
+
 ## 3. Tech Stack and Tooling
 - **Flutter / Dart** for the mobile app (`apps/mobile`).
   - *Key Packages*: Riverpod (State), Go Router, Freezed (DTOs).

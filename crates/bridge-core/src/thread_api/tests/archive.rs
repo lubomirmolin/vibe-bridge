@@ -916,7 +916,7 @@ fn merge_thread_snapshots_prefers_fresher_archive_metadata_for_real_thread_detai
     assert_eq!(merged_record.repository_name, "codex-mobile-companion");
     assert_eq!(merged_record.branch_name, "master");
     assert_eq!(merged_record.source, "vscode");
-    assert_eq!(merged_record.lifecycle_state, "done");
+    assert_eq!(merged_record.lifecycle_state, "active");
     assert_eq!(
         merged_record.last_turn_summary,
         "All of the old local app/server processes are down."
@@ -924,7 +924,7 @@ fn merge_thread_snapshots_prefers_fresher_archive_metadata_for_real_thread_detai
     assert_eq!(merged_record.updated_at, "2026-03-20T21:40:09.107Z");
 
     let detail = super::map_thread_detail(merged_record);
-    assert_eq!(detail.status, ThreadStatus::Completed);
+    assert_eq!(detail.status, ThreadStatus::Running);
     assert_eq!(
         detail.last_turn_summary,
         "All of the old local app/server processes are down."

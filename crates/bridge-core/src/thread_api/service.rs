@@ -75,6 +75,32 @@ impl ThreadApiService {
         Ok(service)
     }
 
+    pub fn from_codex_app_server_thread(
+        command: &str,
+        args: &[String],
+        endpoint: Option<&str>,
+        thread_id: &str,
+    ) -> Result<Self, String> {
+        let codex_home = resolve_codex_home_dir()?;
+        let (thread_records, timeline_by_thread_id) =
+            load_thread_snapshot_for_id(command, args, endpoint, &codex_home, thread_id)?;
+
+        let mut service = Self {
+            thread_records,
+            timeline_by_thread_id,
+            thread_sync_receipts_by_id: HashMap::new(),
+            next_event_sequence: 10,
+            sync_config: Some(ThreadSyncConfig {
+                codex_command: command.to_string(),
+                codex_args: args.to_vec(),
+                codex_endpoint: endpoint.map(ToOwned::to_owned),
+                codex_home,
+            }),
+        };
+        service.refresh_all_thread_sync_receipts();
+        Ok(service)
+    }
+
     pub fn sync_from_upstream(&mut self) -> Result<(), String> {
         let Some(sync_config) = &self.sync_config else {
             return Ok(());

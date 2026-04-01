@@ -5,6 +5,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use shared_contracts::{ProviderKind, ThreadClientKind, ThreadTimelineEntryDto};
@@ -274,10 +275,11 @@ fn merge_detail_record_for_thread(
     merged_timeline: &[UpstreamTimelineEvent],
     archive_timeline: &[UpstreamTimelineEvent],
 ) -> UpstreamThreadRecord {
+    let rpc_updated_at_before_timeline = rpc_record.updated_at.clone();
+
     if let Some(archive_record) = archive_record {
         if should_prefer_archive_metadata(&rpc_record, archive_record, archive_timeline) {
             rpc_record.headline = archive_record.headline.clone();
-            rpc_record.lifecycle_state = archive_record.lifecycle_state.clone();
             rpc_record.workspace_path = archive_record.workspace_path.clone();
             rpc_record.repository_name = archive_record.repository_name.clone();
             rpc_record.branch_name = archive_record.branch_name.clone();
@@ -285,13 +287,17 @@ fn merge_detail_record_for_thread(
             rpc_record.source = archive_record.source.clone();
         } else {
             backfill_detail_identity_from_archive(&mut rpc_record, archive_record);
-            if rpc_record.lifecycle_state == "idle" && archive_record.lifecycle_state != "idle" {
-                rpc_record.lifecycle_state = archive_record.lifecycle_state.clone();
-            }
         }
     }
 
     cohere_detail_record_with_timeline(&mut rpc_record, merged_timeline);
+    if should_infer_active_lifecycle_state_from_fresher_timeline(
+        &rpc_record,
+        merged_timeline,
+        &rpc_updated_at_before_timeline,
+    ) {
+        rpc_record.lifecycle_state = "active".to_string();
+    }
     rpc_record
 }
 
@@ -398,6 +404,48 @@ fn latest_timeline_lifecycle_state(timeline: &[UpstreamTimelineEvent]) -> Option
             .and_then(Value::as_str)
             .map(map_wire_thread_status_to_lifecycle_state)
     })
+}
+
+fn should_infer_active_lifecycle_state_from_fresher_timeline(
+    thread_record: &UpstreamThreadRecord,
+    timeline: &[UpstreamTimelineEvent],
+    baseline_updated_at: &str,
+) -> bool {
+    should_infer_active_lifecycle_state_from_fresher_timeline_at(
+        thread_record,
+        timeline,
+        baseline_updated_at,
+        Utc::now(),
+    )
+}
+
+fn should_infer_active_lifecycle_state_from_fresher_timeline_at(
+    thread_record: &UpstreamThreadRecord,
+    timeline: &[UpstreamTimelineEvent],
+    baseline_updated_at: &str,
+    now: DateTime<Utc>,
+) -> bool {
+    const RECENT_ACTIVITY_WINDOW_SECONDS: i64 = 20;
+
+    if thread_record.lifecycle_state != "idle"
+        || latest_timeline_lifecycle_state(timeline).is_some()
+    {
+        return false;
+    }
+
+    let Some(latest_visible_at) = latest_visible_timeline_timestamp(timeline) else {
+        return false;
+    };
+    if !baseline_updated_at.trim().is_empty() && latest_visible_at.as_str() > baseline_updated_at {
+        return true;
+    }
+
+    let Ok(parsed_latest_visible_at) = DateTime::parse_from_rfc3339(&latest_visible_at) else {
+        return false;
+    };
+    now.signed_duration_since(parsed_latest_visible_at.with_timezone(&Utc))
+        .num_seconds()
+        <= RECENT_ACTIVITY_WINDOW_SECONDS
 }
 
 fn detail_identity_looks_placeholder(record: &UpstreamThreadRecord) -> bool {
@@ -1642,6 +1690,26 @@ fn map_archived_session_event(
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             match payload_type {
+                "task_started" => Some(UpstreamTimelineEvent {
+                    id: format!("{thread_id}-archive-{sequence}"),
+                    event_type: "thread_status_changed".to_string(),
+                    happened_at: timestamp.to_string(),
+                    summary_text: "running".to_string(),
+                    data: json!({
+                        "status": "running",
+                        "reason": "task_started",
+                    }),
+                }),
+                "task_complete" => Some(UpstreamTimelineEvent {
+                    id: format!("{thread_id}-archive-{sequence}"),
+                    event_type: "thread_status_changed".to_string(),
+                    happened_at: timestamp.to_string(),
+                    summary_text: "completed".to_string(),
+                    data: json!({
+                        "status": "completed",
+                        "reason": "task_complete",
+                    }),
+                }),
                 "user_message" => {
                     let message = payload.get("message").and_then(Value::as_str)?.trim();
                     let content = archived_event_message_content(
@@ -2237,7 +2305,17 @@ pub(crate) fn load_archive_timeline_entries_for_session_path(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_file_change_custom_tool, is_file_change_text};
+    use std::collections::HashMap;
+
+    use chrono::{DateTime, Utc};
+    use serde_json::json;
+    use shared_contracts::{ProviderKind, ThreadClientKind};
+
+    use super::{
+        UpstreamThreadRecord, UpstreamTimelineEvent, is_file_change_custom_tool,
+        is_file_change_text, map_archived_session_event, merge_thread_snapshots,
+        provider_thread_id, should_infer_active_lifecycle_state_from_fresher_timeline_at,
+    };
 
     #[test]
     fn file_change_detection_covers_patch_and_tool_names() {
@@ -2246,5 +2324,178 @@ mod tests {
             "*** Begin Patch\n*** Update File: src/lib.rs"
         ));
         assert!(!is_file_change_text("plain text output"));
+    }
+
+    #[test]
+    fn archive_merge_keeps_rpc_status_when_archive_only_adds_fresher_activity() {
+        let thread_id = provider_thread_id(ProviderKind::Codex, "thread-123");
+        let rpc_record = test_thread_record(&thread_id, "active", "Untitled thread");
+        let archive_record = test_thread_record(&thread_id, "done", "Real title");
+
+        let (records, timelines) = merge_thread_snapshots(
+            (vec![rpc_record], HashMap::new()),
+            (
+                vec![archive_record],
+                HashMap::from([(
+                    thread_id.clone(),
+                    vec![UpstreamTimelineEvent {
+                        id: "archive-msg".to_string(),
+                        event_type: "agent_message_delta".to_string(),
+                        happened_at: "2026-03-19T10:00:05Z".to_string(),
+                        summary_text: "Still working".to_string(),
+                        data: json!({"delta": "Still working", "role": "assistant"}),
+                    }],
+                )]),
+            ),
+        );
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].headline, "Real title");
+        assert_eq!(records[0].lifecycle_state, "active");
+        assert_eq!(records[0].updated_at, "2026-03-19T10:00:05Z");
+        assert_eq!(records[0].last_turn_summary, "Still working");
+        assert_eq!(
+            timelines
+                .get(&thread_id)
+                .expect("merged timeline should keep fresher archive activity")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn archive_merge_uses_explicit_timeline_status_when_present() {
+        let thread_id = provider_thread_id(ProviderKind::Codex, "thread-123");
+        let rpc_record = test_thread_record(&thread_id, "active", "Untitled thread");
+        let archive_record = test_thread_record(&thread_id, "done", "Real title");
+
+        let (records, _) = merge_thread_snapshots(
+            (vec![rpc_record], HashMap::new()),
+            (
+                vec![archive_record],
+                HashMap::from([(
+                    thread_id.clone(),
+                    vec![UpstreamTimelineEvent {
+                        id: "archive-status".to_string(),
+                        event_type: "thread_status_changed".to_string(),
+                        happened_at: "2026-03-19T10:00:05Z".to_string(),
+                        summary_text: "completed".to_string(),
+                        data: json!({"status": "completed"}),
+                    }],
+                )]),
+            ),
+        );
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].headline, "Real title");
+        assert_eq!(records[0].lifecycle_state, "done");
+        assert_eq!(records[0].updated_at, "2026-03-19T10:00:05Z");
+    }
+
+    #[test]
+    fn archive_merge_marks_idle_rpc_thread_active_when_archive_activity_is_newer() {
+        let thread_id = provider_thread_id(ProviderKind::Codex, "thread-123");
+        let rpc_record = test_thread_record(&thread_id, "idle", "Untitled thread");
+        let archive_record = test_thread_record(&thread_id, "done", "Real title");
+
+        let (records, _) = merge_thread_snapshots(
+            (vec![rpc_record], HashMap::new()),
+            (
+                vec![archive_record],
+                HashMap::from([(
+                    thread_id.clone(),
+                    vec![UpstreamTimelineEvent {
+                        id: "archive-msg".to_string(),
+                        event_type: "agent_message_delta".to_string(),
+                        happened_at: "2026-03-19T10:00:05Z".to_string(),
+                        summary_text: "Still working".to_string(),
+                        data: json!({"delta": "Still working", "role": "assistant"}),
+                    }],
+                )]),
+            ),
+        );
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].headline, "Real title");
+        assert_eq!(records[0].lifecycle_state, "active");
+        assert_eq!(records[0].updated_at, "2026-03-19T10:00:05Z");
+    }
+
+    #[test]
+    fn recent_archive_activity_keeps_idle_rpc_thread_active_even_without_newer_rpc_timestamp() {
+        let thread_id = provider_thread_id(ProviderKind::Codex, "thread-123");
+        let rpc_record = test_thread_record(&thread_id, "idle", "Untitled thread");
+        let timeline = vec![UpstreamTimelineEvent {
+            id: "archive-msg".to_string(),
+            event_type: "agent_message_delta".to_string(),
+            happened_at: "2026-03-19T10:00:05Z".to_string(),
+            summary_text: "Still working".to_string(),
+            data: json!({"delta": "Still working", "role": "assistant"}),
+        }];
+
+        assert!(
+            should_infer_active_lifecycle_state_from_fresher_timeline_at(
+                &rpc_record,
+                &timeline,
+                "2026-03-19T10:00:05Z",
+                DateTime::parse_from_rfc3339("2026-03-19T10:00:15Z")
+                    .expect("timestamp should parse")
+                    .with_timezone(&Utc),
+            )
+        );
+    }
+
+    #[test]
+    fn archived_task_events_map_to_thread_status_changes() {
+        let started = map_archived_session_event(
+            "codex:thread-123",
+            "2026-03-19T10:00:00Z",
+            "event_msg",
+            &json!({"type": "task_started"}),
+            1,
+            Some("/Users/test/workspace"),
+        )
+        .expect("task_started should map to a status event");
+        assert_eq!(started.event_type, "thread_status_changed");
+        assert_eq!(started.data["status"], "running");
+
+        let completed = map_archived_session_event(
+            "codex:thread-123",
+            "2026-03-19T10:00:05Z",
+            "event_msg",
+            &json!({"type": "task_complete"}),
+            2,
+            Some("/Users/test/workspace"),
+        )
+        .expect("task_complete should map to a status event");
+        assert_eq!(completed.event_type, "thread_status_changed");
+        assert_eq!(completed.data["status"], "completed");
+    }
+
+    fn test_thread_record(
+        thread_id: &str,
+        lifecycle_state: &str,
+        headline: &str,
+    ) -> UpstreamThreadRecord {
+        UpstreamThreadRecord {
+            id: thread_id.to_string(),
+            native_id: "thread-123".to_string(),
+            provider: ProviderKind::Codex,
+            client: ThreadClientKind::Cli,
+            headline: headline.to_string(),
+            lifecycle_state: lifecycle_state.to_string(),
+            workspace_path: "/Users/test/workspace".to_string(),
+            repository_name: "project".to_string(),
+            branch_name: "main".to_string(),
+            remote_name: "origin".to_string(),
+            git_dirty: false,
+            git_ahead_by: 0,
+            git_behind_by: 0,
+            created_at: "2026-03-19T09:59:00Z".to_string(),
+            updated_at: "2026-03-19T10:00:00Z".to_string(),
+            source: "cli".to_string(),
+            approval_mode: "control_with_approvals".to_string(),
+            last_turn_summary: "Initial summary".to_string(),
+        }
     }
 }

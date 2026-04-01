@@ -95,7 +95,14 @@ impl CodexJsonTransport {
                 }
             }),
         )
-        .map(|_| ())
+        .map(|_| ())?;
+        let notification = json!({
+            "method": "initialized",
+        });
+        let line = serde_json::to_string(&notification).map_err(|error| {
+            format!("failed to serialize codex rpc notification 'initialized': {error}")
+        })?;
+        self.send_line("initialized", &line)
     }
 
     pub fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {

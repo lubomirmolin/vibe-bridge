@@ -444,7 +444,14 @@ impl BridgeAppState {
             return Ok(snapshot);
         }
 
-        let mut snapshot = self.inner.gateway.fetch_thread_snapshot(thread_id).await?;
+        let mut snapshot = if is_provider_thread_id(thread_id, ProviderKind::Codex) {
+            self.inner
+                .gateway
+                .fetch_thread_snapshot_with_archive(thread_id)
+                .await?
+        } else {
+            self.inner.gateway.fetch_thread_snapshot(thread_id).await?
+        };
         snapshot.thread.access_mode = self.access_mode().await;
         self.projections().put_snapshot(snapshot.clone()).await;
         self.request_notification_thread_resume(thread_id).await;
@@ -1054,7 +1061,6 @@ impl BridgeAppState {
     }
 
     async fn finalize_bridge_owned_turn(&self, thread_id: &str) {
-        self.clear_transient_thread_state(thread_id).await;
         self.refresh_snapshot_after_bridge_turn_completion(thread_id)
             .await;
     }
@@ -1120,7 +1126,11 @@ impl BridgeAppState {
                 return;
             }
         };
-        self.apply_bridge_turn_completion_snapshot(thread_id, snapshot)
+        if should_defer_bridge_owned_turn_finalization(snapshot.thread.status) {
+            return;
+        }
+
+        self.finalize_bridge_owned_turn_with_snapshot(thread_id, snapshot)
             .await;
     }
 
@@ -1299,7 +1309,7 @@ impl BridgeAppState {
                 });
                 if let Err(error) =
                     resume_notification_threads(resumed_threads.iter(), |thread_id| {
-                        tolerate_notification_resume_error(notifications.resume_thread(thread_id))
+                        notifications.resume_thread(thread_id)
                     })
                 {
                     eprintln!("bridge notification resume sync failed: {error}");
@@ -1310,9 +1320,7 @@ impl BridgeAppState {
                 loop {
                     if let Err(error) =
                         drain_notification_control_messages(&control_rx, |thread_id| {
-                            tolerate_notification_resume_error(
-                                notifications.resume_thread(thread_id),
-                            )
+                            notifications.resume_thread(thread_id)
                         })
                     {
                         eprintln!("bridge notification control failed: {error}");
@@ -1321,7 +1329,7 @@ impl BridgeAppState {
 
                     match notifications.next_event() {
                         Ok(Some(event)) => {
-                            let normalized = compactor.compact(event);
+                            let mut normalized = compactor.compact(event);
                             if !should_publish_compacted_event(&normalized) {
                                 continue;
                             }
@@ -1337,9 +1345,20 @@ impl BridgeAppState {
                                 if should_suppress_for_bridge_owned_turn {
                                     return;
                                 }
+                                if state
+                                    .should_suppress_duplicate_synthetic_user_message(&normalized)
+                                    .await
+                                {
+                                    return;
+                                }
                                 if should_clear_transient_thread_state(&normalized) {
                                     state
                                         .clear_transient_thread_state(&normalized.thread_id)
+                                        .await;
+                                }
+                                if normalized.kind != BridgeEventKind::ThreadStatusChanged {
+                                    state
+                                        .merge_pending_user_message_images(&mut normalized)
                                         .await;
                                 }
                                 state.projections().apply_live_event(&normalized).await;
@@ -1434,9 +1453,8 @@ impl BridgeAppState {
                 }
 
                 loop {
-                    if let Err(error) = drain_notification_control_messages(
-                        &control_rx,
-                        |thread_id| {
+                    if let Err(error) =
+                        drain_notification_control_messages(&control_rx, |thread_id| {
                             tracked_threads.insert(thread_id.to_string());
                             if let Some(conversation_state) =
                                 conversation_state_by_thread.get(thread_id).cloned()
@@ -1459,6 +1477,12 @@ impl BridgeAppState {
                                 });
                                 let access_mode =
                                     handle.block_on(async { state.access_mode().await });
+                                let latest_raw_turn_status = conversation_state
+                                    .get("turns")
+                                    .and_then(Value::as_array)
+                                    .and_then(|turns| turns.last())
+                                    .and_then(raw_turn_status)
+                                    .map(ToString::to_string);
                                 if let Ok((next_snapshot, events)) =
                                     build_desktop_ipc_snapshot_update(
                                         previous_snapshot.as_ref(),
@@ -1467,25 +1491,12 @@ impl BridgeAppState {
                                         access_mode,
                                         &mut compactor,
                                         false,
-                                        None,
+                                        latest_raw_turn_status.as_deref(),
+                                        handle.block_on(async {
+                                            state.has_bridge_owned_active_turn(thread_id).await
+                                        }),
                                     )
                                 {
-                                    let should_suppress_for_bridge_owned_turn =
-                                        should_suppress_desktop_ipc_live_update_for_bridge_active_turn(
-                                            handle.block_on(async {
-                                                state.has_bridge_owned_active_turn(thread_id).await
-                                            }),
-                                        );
-                                    if should_suppress_for_bridge_owned_turn {
-                                        match client.external_resume_thread(thread_id) {
-                                            Ok(()) => Ok(()),
-                                            Err(error) if error.contains("no-client-found") => {
-                                                Ok(())
-                                            }
-                                            Err(error) => Err(error),
-                                        }?;
-                                        return Ok(());
-                                    }
                                     let state = state.clone();
                                     handle.block_on(async move {
                                         state
@@ -1499,8 +1510,8 @@ impl BridgeAppState {
                                 Err(error) if error.contains("no-client-found") => Ok(()),
                                 Err(error) => Err(error),
                             }
-                        },
-                    ) {
+                        })
+                    {
                         eprintln!("bridge desktop IPC control failed: {error}");
                         break;
                     }
@@ -1566,6 +1577,9 @@ impl BridgeAppState {
                         &mut compactor,
                         is_patch_update,
                         latest_raw_turn_status.as_deref(),
+                        handle.block_on(async {
+                            state.has_bridge_owned_active_turn(&thread_id).await
+                        }),
                     ) {
                         Ok(update) => update,
                         Err(error) => {
@@ -1575,13 +1589,6 @@ impl BridgeAppState {
                             continue;
                         }
                     };
-                    if should_suppress_desktop_ipc_live_update_for_bridge_active_turn(
-                        handle.block_on(async {
-                            state.has_bridge_owned_active_turn(&thread_id).await
-                        }),
-                    ) {
-                        continue;
-                    }
 
                     let state = state.clone();
                     handle.block_on(async move {
@@ -3665,24 +3672,49 @@ fn thread_status_wire_value(status: ThreadStatus) -> &'static str {
 
 fn should_publish_compacted_event(event: &BridgeEventEnvelope<Value>) -> bool {
     match event.kind {
-        BridgeEventKind::MessageDelta
-        | BridgeEventKind::PlanDelta
-        | BridgeEventKind::CommandDelta
-        | BridgeEventKind::FileChange => {
-            let replace = event
-                .payload
-                .get("replace")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let delta = event
-                .payload
-                .get("delta")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            replace || !delta.is_empty()
+        BridgeEventKind::MessageDelta => {
+            payload_has_visible_live_content(&event.payload, &["delta", "text", "message"], &[])
         }
+        BridgeEventKind::PlanDelta => {
+            payload_has_visible_live_content(&event.payload, &["delta", "text"], &["steps"])
+        }
+        BridgeEventKind::CommandDelta => payload_has_visible_live_content(
+            &event.payload,
+            &["delta", "output", "aggregatedOutput"],
+            &["arguments", "input"],
+        ),
+        BridgeEventKind::FileChange => payload_has_visible_live_content(
+            &event.payload,
+            &["delta", "resolved_unified_diff", "output"],
+            &[],
+        ),
         _ => true,
     }
+}
+
+fn payload_has_visible_live_content(
+    payload: &Value,
+    text_keys: &[&str],
+    structured_keys: &[&str],
+) -> bool {
+    if payload
+        .get("replace")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    if text_keys.iter().any(|key| {
+        payload
+            .get(*key)
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+    }) {
+        return true;
+    }
+    structured_keys
+        .iter()
+        .any(|key| payload.get(*key).is_some_and(|value| !value.is_null()))
 }
 
 fn should_suppress_live_event(event: &BridgeEventEnvelope<Value>) -> bool {
@@ -3698,22 +3730,14 @@ fn should_clear_transient_thread_state(event: &BridgeEventEnvelope<Value>) -> bo
             .is_some_and(|status| status != "running")
 }
 
-fn should_suppress_desktop_ipc_live_update_for_bridge_active_turn(
-    has_bridge_owned_active_turn: bool,
-) -> bool {
-    has_bridge_owned_active_turn
-}
-
 fn should_suppress_notification_event_for_bridge_active_turn(
     event: &BridgeEventEnvelope<Value>,
     has_bridge_owned_active_turn: bool,
 ) -> bool {
-    has_bridge_owned_active_turn
-        && (event.kind != BridgeEventKind::ThreadStatusChanged
-            || should_suppress_non_running_thread_status_for_bridge_active_turn(
-                event,
-                has_bridge_owned_active_turn,
-            ))
+    should_suppress_non_running_thread_status_for_bridge_active_turn(
+        event,
+        has_bridge_owned_active_turn,
+    )
 }
 
 fn should_suppress_non_running_thread_status_for_bridge_active_turn(
@@ -3729,6 +3753,10 @@ fn should_suppress_non_running_thread_status_for_bridge_active_turn(
             .is_some_and(|status| status != "running")
 }
 
+fn should_defer_bridge_owned_turn_finalization(status: ThreadStatus) -> bool {
+    status == ThreadStatus::Running
+}
+
 fn build_desktop_ipc_snapshot_update(
     previous_snapshot: Option<&ThreadSnapshotDto>,
     previous_summary_status: Option<ThreadStatus>,
@@ -3737,6 +3765,7 @@ fn build_desktop_ipc_snapshot_update(
     compactor: &mut LiveDeltaCompactor,
     is_patch_update: bool,
     latest_raw_turn_status: Option<&str>,
+    has_bridge_owned_active_turn: bool,
 ) -> Result<(ThreadSnapshotDto, Vec<BridgeEventEnvelope<Value>>), String> {
     let mut next_snapshot =
         snapshot_from_conversation_state(conversation_state, previous_snapshot, access_mode)?;
@@ -3752,6 +3781,12 @@ fn build_desktop_ipc_snapshot_update(
         is_patch_update,
         latest_raw_turn_status,
     );
+    preserve_running_status_for_bridge_owned_desktop_update(
+        previous_snapshot,
+        &mut next_snapshot,
+        latest_raw_turn_status,
+        has_bridge_owned_active_turn,
+    );
 
     let events = diff_thread_snapshots(previous_snapshot, &next_snapshot)
         .into_iter()
@@ -3764,6 +3799,56 @@ fn build_desktop_ipc_snapshot_update(
         .collect::<Vec<_>>();
 
     Ok((next_snapshot, events))
+}
+
+fn preserve_running_status_for_bridge_owned_desktop_update(
+    previous_snapshot: Option<&ThreadSnapshotDto>,
+    next_snapshot: &mut ThreadSnapshotDto,
+    latest_raw_turn_status: Option<&str>,
+    has_bridge_owned_active_turn: bool,
+) {
+    if !has_bridge_owned_active_turn {
+        return;
+    }
+    if previous_snapshot
+        .map(|snapshot| snapshot.thread.status != ThreadStatus::Running)
+        .unwrap_or(true)
+    {
+        return;
+    }
+    if next_snapshot.thread.status == ThreadStatus::Running {
+        return;
+    }
+    if desktop_raw_turn_status_is_terminal(latest_raw_turn_status) {
+        return;
+    }
+
+    next_snapshot.thread.status = ThreadStatus::Running;
+}
+
+fn desktop_raw_turn_status_is_terminal(latest_raw_turn_status: Option<&str>) -> bool {
+    matches!(
+        latest_raw_turn_status.map(|status| status.trim().to_ascii_lowercase()),
+        Some(status)
+            if matches!(
+                status.as_str(),
+                "completed"
+                    | "complete"
+                    | "done"
+                    | "success"
+                    | "ok"
+                    | "succeeded"
+                    | "interrupted"
+                    | "halted"
+                    | "cancelled"
+                    | "canceled"
+                    | "failed"
+                    | "fail"
+                    | "error"
+                    | "errored"
+                    | "denied"
+            )
+    )
 }
 
 fn preserve_bootstrap_status_for_cached_desktop_snapshot(
@@ -3920,7 +4005,7 @@ where
     F: FnMut(&str) -> Result<(), String>,
 {
     for thread_id in thread_ids {
-        resume_thread(thread_id)?;
+        resume_notification_thread_until_rollout_exists(thread_id, &mut resume_thread)?;
     }
     Ok(())
 }
@@ -3935,7 +4020,7 @@ where
     loop {
         match control_rx.try_recv() {
             Ok(NotificationControlMessage::ResumeThread(thread_id)) => {
-                resume_thread(&thread_id)?;
+                resume_notification_thread_until_rollout_exists(&thread_id, &mut resume_thread)?;
             }
             Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => {
                 return Ok(());
@@ -3944,11 +4029,33 @@ where
     }
 }
 
-fn tolerate_notification_resume_error(result: Result<(), String>) -> Result<(), String> {
-    match result {
-        Err(error) if error.contains("no rollout found") => Ok(()),
-        other => other,
+fn resume_notification_thread_until_rollout_exists<F>(
+    thread_id: &str,
+    mut resume_thread: F,
+) -> Result<(), String>
+where
+    F: FnMut(&str) -> Result<(), String>,
+{
+    const MAX_ATTEMPTS: usize = 20;
+    const RETRY_DELAY: Duration = Duration::from_millis(50);
+
+    let mut last_missing_rollout_error: Option<String> = None;
+    for attempt in 0..MAX_ATTEMPTS {
+        match resume_thread(thread_id) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.contains("no rollout found") => {
+                last_missing_rollout_error = Some(error);
+                if attempt + 1 < MAX_ATTEMPTS {
+                    std::thread::sleep(RETRY_DELAY);
+                    continue;
+                }
+            }
+            Err(error) => return Err(error),
+        }
     }
+
+    Err(last_missing_rollout_error
+        .unwrap_or_else(|| format!("codex rpc request 'thread/resume' failed for {thread_id}")))
 }
 
 #[cfg(test)]
@@ -3977,11 +4084,12 @@ mod tests {
         drain_notification_control_messages, ensure_running_status_for_desktop_patch_update,
         is_duplicate_synthetic_user_message, parse_provider_approval_selection,
         payload_contains_hidden_message, preserve_bootstrap_status_for_cached_desktop_snapshot,
-        resume_notification_threads, should_clear_transient_thread_state,
-        should_suppress_desktop_ipc_live_update_for_bridge_active_turn,
+        preserve_running_status_for_bridge_owned_desktop_update,
+        resume_notification_thread_until_rollout_exists, resume_notification_threads,
+        should_clear_transient_thread_state, should_defer_bridge_owned_turn_finalization,
+        should_publish_compacted_event,
         should_suppress_non_running_thread_status_for_bridge_active_turn,
         should_suppress_notification_event_for_bridge_active_turn,
-        tolerate_notification_resume_error,
     };
 
     async fn test_bridge_app_state() -> BridgeAppState {
@@ -4317,20 +4425,35 @@ mod tests {
     }
 
     #[test]
-    fn tolerate_notification_resume_error_ignores_missing_rollouts() {
-        assert!(tolerate_notification_resume_error(Ok(())).is_ok());
-        assert!(
-            tolerate_notification_resume_error(Err(
-                "codex rpc request 'thread/resume' failed: no rollout found".to_string()
-            ))
-            .is_ok()
-        );
+    fn resume_notification_thread_retries_missing_rollout_until_success() {
+        let mut attempts = 0usize;
+        let result = resume_notification_thread_until_rollout_exists("thread-123", |_| {
+            attempts += 1;
+            if attempts < 3 {
+                return Err(
+                    "codex rpc request 'thread/resume' failed: no rollout found".to_string()
+                );
+            }
+            Ok(())
+        });
+
+        assert!(result.is_ok());
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn resume_notification_thread_returns_non_rollout_errors_immediately() {
+        let mut attempts = 0usize;
+        let result = resume_notification_thread_until_rollout_exists("thread-123", |_| {
+            attempts += 1;
+            Err("codex rpc request 'thread/resume' failed: invalid thread id".to_string())
+        });
+
         assert_eq!(
-            tolerate_notification_resume_error(Err(
-                "codex rpc request 'thread/resume' failed: invalid thread id".to_string()
-            )),
+            result,
             Err("codex rpc request 'thread/resume' failed: invalid thread id".to_string())
         );
+        assert_eq!(attempts, 1);
     }
 
     #[tokio::test]
@@ -4860,6 +4983,7 @@ mod tests {
             &mut compactor,
             false,
             None,
+            false,
         )
         .expect("cached desktop snapshot should materialize");
 
@@ -4977,6 +5101,24 @@ mod tests {
     }
 
     #[test]
+    fn message_events_with_text_but_no_delta_still_publish() {
+        let event = BridgeEventEnvelope {
+            contract_version: CONTRACT_VERSION.to_string(),
+            event_id: "evt-message".to_string(),
+            thread_id: "thread-1".to_string(),
+            kind: BridgeEventKind::MessageDelta,
+            occurred_at: "2026-03-27T20:00:10Z".to_string(),
+            payload: json!({
+                "role": "assistant",
+                "text": "Streaming now",
+            }),
+            annotations: None,
+        };
+
+        assert!(should_publish_compacted_event(&event));
+    }
+
+    #[test]
     fn running_thread_status_events_do_not_clear_transient_thread_state() {
         let event = BridgeEventEnvelope {
             contract_version: CONTRACT_VERSION.to_string(),
@@ -4995,13 +5137,121 @@ mod tests {
     }
 
     #[test]
-    fn desktop_ipc_live_updates_are_suppressed_for_bridge_active_turns() {
-        assert!(should_suppress_desktop_ipc_live_update_for_bridge_active_turn(true));
-        assert!(!should_suppress_desktop_ipc_live_update_for_bridge_active_turn(false));
+    fn bridge_owned_desktop_updates_preserve_running_until_terminal_raw_status() {
+        let previous_snapshot = ThreadSnapshotDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: ThreadDetailDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
+                title: "Thread".to_string(),
+                status: ThreadStatus::Running,
+                workspace: "/repo".to_string(),
+                repository: "repo".to_string(),
+                branch: "main".to_string(),
+                created_at: "2026-03-27T20:00:00Z".to_string(),
+                updated_at: "2026-03-27T20:00:00Z".to_string(),
+                source: "codex_app_ipc".to_string(),
+                access_mode: shared_contracts::AccessMode::ControlWithApprovals,
+                last_turn_summary: "working".to_string(),
+                active_turn_id: None,
+            },
+            entries: vec![ThreadTimelineEntryDto {
+                event_id: "evt-1".to_string(),
+                kind: BridgeEventKind::MessageDelta,
+                occurred_at: "2026-03-27T20:00:00Z".to_string(),
+                summary: "working".to_string(),
+                payload: json!({"delta":"working","replace":true}),
+                annotations: None,
+            }],
+            approvals: Vec::new(),
+            git_status: None,
+            pending_user_input: None,
+        };
+        let mut next_snapshot = ThreadSnapshotDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: ThreadDetailDto {
+                status: ThreadStatus::Idle,
+                updated_at: "2026-03-27T20:00:10Z".to_string(),
+                ..previous_snapshot.thread.clone()
+            },
+            entries: vec![ThreadTimelineEntryDto {
+                event_id: "evt-2".to_string(),
+                kind: BridgeEventKind::MessageDelta,
+                occurred_at: "2026-03-27T20:00:10Z".to_string(),
+                summary: "still working".to_string(),
+                payload: json!({"delta":"still working","replace":true}),
+                annotations: None,
+            }],
+            approvals: Vec::new(),
+            git_status: None,
+            pending_user_input: None,
+        };
+
+        preserve_running_status_for_bridge_owned_desktop_update(
+            Some(&previous_snapshot),
+            &mut next_snapshot,
+            Some("idle"),
+            true,
+        );
+
+        assert_eq!(next_snapshot.thread.status, ThreadStatus::Running);
     }
 
     #[test]
-    fn notification_events_are_suppressed_for_bridge_active_turns_except_status() {
+    fn bridge_owned_desktop_updates_allow_terminal_raw_status() {
+        let previous_snapshot = ThreadSnapshotDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: ThreadDetailDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
+                title: "Thread".to_string(),
+                status: ThreadStatus::Running,
+                workspace: "/repo".to_string(),
+                repository: "repo".to_string(),
+                branch: "main".to_string(),
+                created_at: "2026-03-27T20:00:00Z".to_string(),
+                updated_at: "2026-03-27T20:00:00Z".to_string(),
+                source: "codex_app_ipc".to_string(),
+                access_mode: shared_contracts::AccessMode::ControlWithApprovals,
+                last_turn_summary: "working".to_string(),
+                active_turn_id: None,
+            },
+            entries: vec![],
+            approvals: Vec::new(),
+            git_status: None,
+            pending_user_input: None,
+        };
+        let mut next_snapshot = ThreadSnapshotDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: ThreadDetailDto {
+                status: ThreadStatus::Completed,
+                updated_at: "2026-03-27T20:00:10Z".to_string(),
+                ..previous_snapshot.thread.clone()
+            },
+            entries: vec![],
+            approvals: Vec::new(),
+            git_status: None,
+            pending_user_input: None,
+        };
+
+        preserve_running_status_for_bridge_owned_desktop_update(
+            Some(&previous_snapshot),
+            &mut next_snapshot,
+            Some("completed"),
+            true,
+        );
+
+        assert_eq!(next_snapshot.thread.status, ThreadStatus::Completed);
+    }
+
+    #[test]
+    fn notification_events_continue_streaming_for_bridge_active_turns() {
         let message = BridgeEventEnvelope {
             contract_version: CONTRACT_VERSION.to_string(),
             event_id: "evt-message".to_string(),
@@ -5021,7 +5271,7 @@ mod tests {
             annotations: None,
         };
 
-        assert!(should_suppress_notification_event_for_bridge_active_turn(
+        assert!(!should_suppress_notification_event_for_bridge_active_turn(
             &message, true
         ));
         assert!(!should_suppress_notification_event_for_bridge_active_turn(
@@ -5063,6 +5313,19 @@ mod tests {
         assert!(should_suppress_notification_event_for_bridge_active_turn(
             &idle_status,
             true
+        ));
+    }
+
+    #[test]
+    fn bridge_owned_turn_finalization_waits_for_non_running_snapshot() {
+        assert!(should_defer_bridge_owned_turn_finalization(
+            ThreadStatus::Running
+        ));
+        assert!(!should_defer_bridge_owned_turn_finalization(
+            ThreadStatus::Idle
+        ));
+        assert!(!should_defer_bridge_owned_turn_finalization(
+            ThreadStatus::Completed
         ));
     }
 }

@@ -41,7 +41,10 @@ impl ProjectionStore {
         state.snapshots.retain(|thread_id, snapshot| {
             summaries_by_thread_id
                 .get(thread_id)
-                .map(|summary| summary.updated_at <= snapshot.thread.updated_at)
+                .map(|summary| {
+                    summary.updated_at <= snapshot.thread.updated_at
+                        || should_preserve_live_running_snapshot(snapshot, summary)
+                })
                 .unwrap_or(true)
         });
     }
@@ -365,6 +368,13 @@ fn parse_thread_status(raw: &str) -> ThreadStatus {
         "failed" => ThreadStatus::Failed,
         _ => ThreadStatus::Idle,
     }
+}
+
+fn should_preserve_live_running_snapshot(
+    snapshot: &ThreadSnapshotDto,
+    summary: &ThreadSummaryDto,
+) -> bool {
+    snapshot.thread.status == ThreadStatus::Running && summary.status == ThreadStatus::Idle
 }
 
 fn approval_summary_from_payload(payload: &Value, thread_id: &str) -> Option<ApprovalSummaryDto> {
@@ -1019,6 +1029,88 @@ mod tests {
             store.snapshot("thread-1").await.is_none(),
             "stale cached snapshots should be evicted so the next detail/history read refetches"
         );
+    }
+
+    #[tokio::test]
+    async fn replace_summaries_keeps_running_snapshot_when_newer_summary_regresses_to_idle() {
+        let store = ProjectionStore::new();
+        store
+            .replace_summaries(vec![ThreadSummaryDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
+                title: "Thread".to_string(),
+                status: ThreadStatus::Running,
+                workspace: "/tmp/a".to_string(),
+                repository: "repo-a".to_string(),
+                branch: "main".to_string(),
+                updated_at: "2026-03-21T10:00:00Z".to_string(),
+            }])
+            .await;
+        store
+            .put_snapshot(ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
+                    title: "Thread".to_string(),
+                    status: ThreadStatus::Running,
+                    workspace: "/tmp/a".to_string(),
+                    repository: "repo-a".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-03-21T09:00:00Z".to_string(),
+                    updated_at: "2026-03-21T10:00:10Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "working".to_string(),
+                    active_turn_id: Some("turn-1".to_string()),
+                },
+                entries: vec![ThreadTimelineEntryDto {
+                    event_id: "evt-1".to_string(),
+                    kind: BridgeEventKind::MessageDelta,
+                    occurred_at: "2026-03-21T10:00:10Z".to_string(),
+                    summary: "working".to_string(),
+                    payload: json!({
+                        "id": "msg-1",
+                        "type": "message",
+                        "role": "assistant",
+                        "text": "working",
+                    }),
+                    annotations: None,
+                }],
+                approvals: vec![],
+                git_status: None,
+                pending_user_input: None,
+            })
+            .await;
+
+        store
+            .replace_summaries(vec![ThreadSummaryDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
+                title: "Thread".to_string(),
+                status: ThreadStatus::Idle,
+                workspace: "/tmp/a".to_string(),
+                repository: "repo-a".to_string(),
+                branch: "main".to_string(),
+                updated_at: "2026-03-21T10:05:00Z".to_string(),
+            }])
+            .await;
+
+        let snapshot = store
+            .snapshot("thread-1")
+            .await
+            .expect("running cached snapshot should be preserved");
+        assert_eq!(snapshot.thread.status, ThreadStatus::Running);
+        assert_eq!(snapshot.entries.len(), 1);
     }
 
     #[tokio::test]

@@ -1121,7 +1121,11 @@ fn start_turn_with_resume(
     match start_turn(transport, thread_id, prompt, images, model, effort) {
         Ok(response) => Ok(response),
         Err(error) if should_resume_thread(&error) => {
-            resume_thread(transport, thread_id)?;
+            if let Err(resume_error) = resume_thread(transport, thread_id)
+                && !resume_error.contains("no rollout found")
+            {
+                return Err(resume_error);
+            }
             start_turn(transport, thread_id, prompt, images, model, effort)
         }
         Err(error) => Err(error),
@@ -1572,13 +1576,24 @@ fn fetch_thread_snapshot_from_archive(
         CodexRuntimeMode::Spawn => None,
         _ => config.endpoint.as_deref(),
     };
-    let service = ThreadApiService::from_codex_app_server(&config.command, &config.args, endpoint)?;
+    let service = ThreadApiService::from_codex_app_server_thread(
+        &config.command,
+        &config.args,
+        endpoint,
+        thread_id,
+    )?;
     let detail = service
         .detail_response(thread_id)
         .ok_or_else(|| format!("thread {thread_id} not found"))?;
     let timeline = service
         .timeline_page_response(thread_id, None, 500)
         .ok_or_else(|| format!("thread {thread_id} not found"))?;
+    let (entries, pending_user_input) =
+        filter_hidden_timeline_entries_and_extract_pending_input(
+            thread_id,
+            timeline.entries,
+            timeline.pending_user_input,
+        );
     let git_status = service
         .git_status_response(thread_id)
         .map(|response| GitStatusDto {
@@ -1595,11 +1610,39 @@ fn fetch_thread_snapshot_from_archive(
     Ok(ThreadSnapshotDto {
         contract_version: CONTRACT_VERSION.to_string(),
         thread: detail.thread,
-        entries: timeline.entries,
+        entries,
         approvals: Vec::new(),
         git_status,
-        pending_user_input: timeline.pending_user_input,
+        pending_user_input,
     })
+}
+
+fn filter_hidden_timeline_entries_and_extract_pending_input(
+    thread_id: &str,
+    entries: Vec<ThreadTimelineEntryDto>,
+    pending_user_input: Option<PendingUserInputDto>,
+) -> (Vec<ThreadTimelineEntryDto>, Option<PendingUserInputDto>) {
+    let mut next_pending_user_input = pending_user_input;
+    let visible_entries = entries
+        .into_iter()
+        .filter(|entry| {
+            if entry.kind != BridgeEventKind::MessageDelta
+                || !payload_contains_hidden_message(&entry.payload)
+            {
+                return true;
+            }
+
+            if next_pending_user_input.is_none()
+                && let Some(message_text) = payload_primary_text(&entry.payload)
+            {
+                next_pending_user_input =
+                    parse_pending_user_input_payload(message_text, thread_id);
+            }
+            false
+        })
+        .collect();
+
+    (visible_entries, next_pending_user_input)
 }
 
 fn fetch_model_catalog(transport: &mut CodexJsonTransport) -> Vec<ModelOptionDto> {
