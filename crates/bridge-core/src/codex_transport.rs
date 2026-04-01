@@ -121,19 +121,18 @@ impl CodexJsonTransport {
         self.send_line(method, &line)?;
 
         loop {
-            let response = self
-                .next_message(method)?
-                .ok_or_else(|| format!("codex upstream closed while waiting for '{method}'"))?;
-            let Some(response_id) = response.get("id").and_then(Value::as_i64) else {
-                continue;
-            };
-
-            if response_id != id {
-                self.pending_messages.push_back(response);
-                continue;
+            if let Some(response) = pop_matching_pending_response(&mut self.pending_messages, id) {
+                return parse_codex_rpc_response(method, response);
             }
 
-            return parse_codex_rpc_response(method, response);
+            let response = self
+                .read_wire_message(method)?
+                .ok_or_else(|| format!("codex upstream closed while waiting for '{method}'"))?;
+            if let Some(response) =
+                preserve_or_match_request_message(&mut self.pending_messages, id, response)
+            {
+                return parse_codex_rpc_response(method, response);
+            }
         }
     }
 
@@ -170,6 +169,10 @@ impl CodexJsonTransport {
             return Ok(Some(message));
         }
 
+        self.read_wire_message(context)
+    }
+
+    fn read_wire_message(&mut self, context: &str) -> Result<Option<Value>, String> {
         match &mut self.connection {
             CodexConnection::Stdio { stdout, .. } => loop {
                 let mut line = String::new();
@@ -268,4 +271,113 @@ fn parse_codex_rpc_response(method: &str, response: Value) -> Result<Value, Stri
         .get("result")
         .cloned()
         .ok_or_else(|| format!("codex rpc response for '{method}' did not include result"))
+}
+
+fn preserve_or_match_request_message(
+    pending_messages: &mut VecDeque<Value>,
+    request_id: i64,
+    message: Value,
+) -> Option<Value> {
+    let Some(response_id) = message.get("id").and_then(Value::as_i64) else {
+        pending_messages.push_back(message);
+        return None;
+    };
+
+    if response_id != request_id {
+        pending_messages.push_back(message);
+        return None;
+    }
+
+    Some(message)
+}
+
+fn pop_matching_pending_response(
+    pending_messages: &mut VecDeque<Value>,
+    request_id: i64,
+) -> Option<Value> {
+    let mut remaining = VecDeque::with_capacity(pending_messages.len());
+    let mut matched = None;
+
+    while let Some(message) = pending_messages.pop_front() {
+        if matched.is_none() && message.get("id").and_then(Value::as_i64) == Some(request_id) {
+            matched = Some(message);
+            continue;
+        }
+        remaining.push_back(message);
+    }
+
+    *pending_messages = remaining;
+    matched
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+
+    use serde_json::json;
+
+    use super::{pop_matching_pending_response, preserve_or_match_request_message};
+
+    #[test]
+    fn preserve_or_match_request_message_keeps_notifications() {
+        let mut pending_messages = VecDeque::new();
+        let matched = preserve_or_match_request_message(
+            &mut pending_messages,
+            7,
+            json!({
+                "method": "turn/started",
+                "params": {
+                    "threadId": "thr_123",
+                }
+            }),
+        );
+
+        assert!(matched.is_none());
+        assert_eq!(pending_messages.len(), 1);
+        assert_eq!(pending_messages[0]["method"], "turn/started");
+    }
+
+    #[test]
+    fn preserve_or_match_request_message_returns_matching_response() {
+        let mut pending_messages = VecDeque::new();
+        let matched = preserve_or_match_request_message(
+            &mut pending_messages,
+            7,
+            json!({
+                "id": 7,
+                "result": {
+                    "turn": { "id": "turn_123" }
+                }
+            }),
+        )
+        .expect("response should match");
+
+        assert!(pending_messages.is_empty());
+        assert_eq!(matched["result"]["turn"]["id"], "turn_123");
+    }
+
+    #[test]
+    fn pop_matching_pending_response_returns_only_matching_response() {
+        let mut pending_messages = VecDeque::from(vec![
+            json!({
+                "method": "turn/started",
+                "params": {
+                    "threadId": "thr_123",
+                }
+            }),
+            json!({
+                "id": 7,
+                "result": {
+                    "turn": { "id": "turn_123" }
+                }
+            }),
+        ]);
+
+        let matched =
+            pop_matching_pending_response(&mut pending_messages, 7).expect("response should match");
+
+        assert_eq!(matched["result"]["turn"]["id"], "turn_123");
+        assert_eq!(pending_messages.len(), 1);
+        assert_eq!(pending_messages[0]["method"], "turn/started");
+    }
 }

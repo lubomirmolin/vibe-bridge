@@ -94,6 +94,19 @@ impl CodexNotificationStream {
             .map(|_| ())
     }
 
+    pub fn unsubscribe_thread(&mut self, thread_id: &str) -> Result<(), String> {
+        let native_thread_id =
+            native_thread_id_for_provider(thread_id, ProviderKind::Codex).unwrap_or(thread_id);
+        self.transport
+            .request(
+                "thread/unsubscribe",
+                json!({
+                    "threadId": native_thread_id,
+                }),
+            )
+            .map(|_| ())
+    }
+
     pub fn next_event(&mut self) -> Result<Option<BridgeEventEnvelope<Value>>, String> {
         loop {
             let Some(message) = self.transport.next_message("notification")? else {

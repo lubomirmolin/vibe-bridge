@@ -250,7 +250,7 @@ impl CodexGateway {
             let response = transport.request("thread/start", Value::Object(params))?;
             let payload: CodexThreadStartResult = serde_json::from_value(response)
                 .map_err(|error| format!("invalid thread/start response from codex: {error}"))?;
-            let thread_id = payload.thread.id.clone();
+            let reserved_thread_id = provider_thread_id(ProviderKind::Codex, &payload.thread.id);
             let thread = match read_thread_with_resume(&mut transport, &payload.thread.id, true) {
                 Ok(thread) => thread,
                 Err(error) if should_read_without_turns(&error) => {
@@ -258,13 +258,13 @@ impl CodexGateway {
                 }
                 Err(error) if should_resume_thread(&error) => {
                     let snapshot = map_thread_snapshot(payload.thread);
-                    reserve_transport(&reserved_transports, thread_id, transport);
+                    reserve_transport(&reserved_transports, reserved_thread_id, transport);
                     return Ok(snapshot);
                 }
                 Err(error) => return Err(error),
             };
             let snapshot = map_thread_snapshot(thread.thread);
-            reserve_transport(&reserved_transports, thread_id, transport);
+            reserve_transport(&reserved_transports, reserved_thread_id, transport);
             Ok(snapshot)
         })
         .await
@@ -355,22 +355,57 @@ impl CodexGateway {
                 },
             };
 
-            let _ = resume_thread(&mut transport, &thread_id);
-            let payload = match start_turn_with_resume(
-                &mut transport,
-                &thread_id,
-                &prompt,
-                &images,
-                model.as_deref(),
-                effort.as_deref(),
-            ) {
-                Ok(payload) => payload,
-                Err(error) => {
-                    if had_reserved_transport {
-                        reserve_transport(&reserved_transports, thread_id.clone(), transport);
+            let payload = if had_reserved_transport {
+                match start_turn(
+                    &mut transport,
+                    &thread_id,
+                    &prompt,
+                    &images,
+                    model.as_deref(),
+                    effort.as_deref(),
+                ) {
+                    Ok(payload) => payload,
+                    Err(error) if should_resume_thread(&error) => {
+                        match start_turn_with_resume(
+                            &mut transport,
+                            &thread_id,
+                            &prompt,
+                            &images,
+                            model.as_deref(),
+                            effort.as_deref(),
+                        ) {
+                            Ok(payload) => payload,
+                            Err(error) => {
+                                reserve_transport(
+                                    &reserved_transports,
+                                    thread_id.clone(),
+                                    transport,
+                                );
+                                let _ = result_tx.send(Err(error));
+                                return;
+                            }
+                        }
                     }
-                    let _ = result_tx.send(Err(error));
-                    return;
+                    Err(error) => {
+                        reserve_transport(&reserved_transports, thread_id.clone(), transport);
+                        let _ = result_tx.send(Err(error));
+                        return;
+                    }
+                }
+            } else {
+                match start_turn_with_resume(
+                    &mut transport,
+                    &thread_id,
+                    &prompt,
+                    &images,
+                    model.as_deref(),
+                    effort.as_deref(),
+                ) {
+                    Ok(payload) => payload,
+                    Err(error) => {
+                        let _ = result_tx.send(Err(error));
+                        return;
+                    }
                 }
             };
 

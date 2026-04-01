@@ -67,6 +67,7 @@ struct BridgeAppStateInner {
     awaiting_plan_question_prompts: RwLock<HashMap<String, String>>,
     pending_user_inputs: RwLock<HashMap<String, PendingUserInputSession>>,
     resumed_notification_threads: RwLock<HashSet<String>>,
+    suspended_notification_threads: RwLock<HashSet<String>>,
     inflight_thread_title_generations: RwLock<HashSet<String>>,
     pending_user_message_images: RwLock<HashMap<String, Vec<String>>>,
     pending_synthetic_user_messages: RwLock<HashMap<String, String>>,
@@ -86,6 +87,7 @@ struct BridgeAppStateInner {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum NotificationControlMessage {
     ResumeThread(String),
+    UnsubscribeThread(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -240,6 +242,7 @@ impl BridgeAppState {
                 awaiting_plan_question_prompts: RwLock::new(HashMap::new()),
                 pending_user_inputs: RwLock::new(HashMap::new()),
                 resumed_notification_threads: RwLock::new(HashSet::new()),
+                suspended_notification_threads: RwLock::new(HashSet::new()),
                 inflight_thread_title_generations: RwLock::new(HashSet::new()),
                 pending_user_message_images: RwLock::new(HashMap::new()),
                 pending_synthetic_user_messages: RwLock::new(HashMap::new()),
@@ -1004,6 +1007,20 @@ impl BridgeAppState {
             return;
         }
 
+        if self
+            .inner
+            .suspended_notification_threads
+            .read()
+            .await
+            .contains(normalized_thread_id)
+        {
+            return;
+        }
+
+        self.dispatch_notification_thread_resume(next_thread_id);
+    }
+
+    fn dispatch_notification_thread_resume(&self, thread_id: String) {
         let sender = self
             .inner
             .notification_control_tx
@@ -1011,7 +1028,7 @@ impl BridgeAppState {
             .expect("notification control lock should not be poisoned")
             .clone();
         if let Some(sender) = sender {
-            let _ = sender.send(NotificationControlMessage::ResumeThread(next_thread_id));
+            let _ = sender.send(NotificationControlMessage::ResumeThread(thread_id.clone()));
         }
         let desktop_sender = self
             .inner
@@ -1020,13 +1037,11 @@ impl BridgeAppState {
             .expect("desktop IPC control lock should not be poisoned")
             .clone();
         if let Some(sender) = desktop_sender {
-            let _ = sender.send(NotificationControlMessage::ResumeThread(
-                normalized_thread_id.to_string(),
-            ));
+            let _ = sender.send(NotificationControlMessage::ResumeThread(thread_id));
         }
     }
 
-    async fn force_request_notification_thread_resume(&self, thread_id: &str) {
+    async fn suspend_notification_thread_subscription(&self, thread_id: &str) {
         let normalized_thread_id = thread_id.trim();
         if normalized_thread_id.is_empty()
             || !is_provider_thread_id(normalized_thread_id, shared_contracts::ProviderKind::Codex)
@@ -1038,9 +1053,83 @@ impl BridgeAppState {
             .resumed_notification_threads
             .write()
             .await
+            .insert(normalized_thread_id.to_string());
+
+        let was_new = self
+            .inner
+            .suspended_notification_threads
+            .write()
+            .await
+            .insert(normalized_thread_id.to_string());
+        if !was_new {
+            return;
+        }
+
+        let sender = self
+            .inner
+            .notification_control_tx
+            .lock()
+            .expect("notification control lock should not be poisoned")
+            .clone();
+        if let Some(sender) = sender {
+            let _ = sender.send(NotificationControlMessage::UnsubscribeThread(
+                normalized_thread_id.to_string(),
+            ));
+        }
+        let desktop_sender = self
+            .inner
+            .desktop_ipc_control_tx
+            .lock()
+            .expect("desktop IPC control lock should not be poisoned")
+            .clone();
+        if let Some(sender) = desktop_sender {
+            let _ = sender.send(NotificationControlMessage::UnsubscribeThread(
+                normalized_thread_id.to_string(),
+            ));
+        }
+    }
+
+    async fn restore_notification_thread_subscription(&self, thread_id: &str) {
+        let normalized_thread_id = thread_id.trim();
+        if normalized_thread_id.is_empty()
+            || !is_provider_thread_id(normalized_thread_id, shared_contracts::ProviderKind::Codex)
+        {
+            return;
+        }
+
+        let was_suspended = self
+            .inner
+            .suspended_notification_threads
+            .write()
+            .await
             .remove(normalized_thread_id);
-        self.request_notification_thread_resume(normalized_thread_id)
-            .await;
+        if !was_suspended {
+            return;
+        }
+
+        self.dispatch_notification_thread_resume(normalized_thread_id.to_string());
+    }
+
+    async fn is_notification_thread_suspended(&self, thread_id: &str) -> bool {
+        self.inner
+            .suspended_notification_threads
+            .read()
+            .await
+            .contains(thread_id)
+    }
+
+    async fn resumable_notification_threads(&self) -> HashSet<String> {
+        let resumed_threads = self.inner.resumed_notification_threads.read().await.clone();
+        let suspended_threads = self
+            .inner
+            .suspended_notification_threads
+            .read()
+            .await
+            .clone();
+        resumed_threads
+            .into_iter()
+            .filter(|thread_id| !suspended_threads.contains(thread_id))
+            .collect()
     }
 
     async fn clear_transient_thread_state(&self, thread_id: &str) {
@@ -1170,6 +1259,8 @@ impl BridgeAppState {
     ) {
         self.clear_transient_thread_state(thread_id).await;
         self.apply_bridge_turn_completion_snapshot(thread_id, snapshot)
+            .await;
+        self.restore_notification_thread_subscription(thread_id)
             .await;
     }
 
@@ -1369,14 +1460,8 @@ impl BridgeAppState {
                     }
                 };
 
-                let resumed_threads = handle.block_on(async {
-                    state
-                        .inner
-                        .resumed_notification_threads
-                        .read()
-                        .await
-                        .clone()
-                });
+                let resumed_threads =
+                    handle.block_on(async { state.resumable_notification_threads().await });
                 if let Err(error) =
                     resume_notification_threads(resumed_threads.iter(), |thread_id| {
                         notifications.resume_thread(thread_id)
@@ -1389,8 +1474,16 @@ impl BridgeAppState {
 
                 loop {
                     if let Err(error) =
-                        drain_notification_control_messages(&control_rx, |thread_id| {
-                            notifications.resume_thread(thread_id)
+                        drain_notification_control_messages(&control_rx, |message| match message {
+                            NotificationControlMessage::ResumeThread(thread_id) => {
+                                resume_notification_thread_until_rollout_exists(
+                                    &thread_id,
+                                    |thread_id| notifications.resume_thread(thread_id),
+                                )
+                            }
+                            NotificationControlMessage::UnsubscribeThread(thread_id) => {
+                                notifications.unsubscribe_thread(&thread_id)
+                            }
                         })
                     {
                         eprintln!("bridge notification control failed: {error}");
@@ -1405,6 +1498,12 @@ impl BridgeAppState {
                             }
                             let state = state.clone();
                             handle.block_on(async move {
+                                if state
+                                    .is_notification_thread_suspended(&normalized.thread_id)
+                                    .await
+                                {
+                                    return;
+                                }
                                 let should_suppress_for_bridge_owned_turn =
                                     should_suppress_notification_event_for_bridge_active_turn(
                                         &normalized,
@@ -1502,14 +1601,8 @@ impl BridgeAppState {
                     }
                 };
 
-                let mut tracked_threads = handle.block_on(async {
-                    state
-                        .inner
-                        .resumed_notification_threads
-                        .read()
-                        .await
-                        .clone()
-                });
+                let mut tracked_threads =
+                    handle.block_on(async { state.resumable_notification_threads().await });
                 if let Err(error) =
                     resume_notification_threads(tracked_threads.iter(), |thread_id| {
                         match client.external_resume_thread(thread_id) {
@@ -1524,61 +1617,72 @@ impl BridgeAppState {
 
                 loop {
                     if let Err(error) =
-                        drain_notification_control_messages(&control_rx, |thread_id| {
-                            tracked_threads.insert(thread_id.to_string());
-                            if let Some(conversation_state) =
-                                conversation_state_by_thread.get(thread_id).cloned()
-                            {
-                                let previous_snapshot = handle.block_on(async {
-                                    state.projections().snapshot(thread_id).await
-                                });
-                                if previous_snapshot.as_ref().is_some_and(|snapshot| {
-                                    snapshot.thread.status == ThreadStatus::Running
-                                }) {
-                                    match client.external_resume_thread(thread_id) {
-                                        Ok(()) => Ok(()),
-                                        Err(error) if error.contains("no-client-found") => Ok(()),
-                                        Err(error) => Err(error),
-                                    }?;
-                                    return Ok(());
-                                }
-                                let previous_summary_status = handle.block_on(async {
-                                    state.projections().summary_status(thread_id).await
-                                });
-                                let access_mode =
-                                    handle.block_on(async { state.access_mode().await });
-                                let latest_raw_turn_status = conversation_state
-                                    .get("turns")
-                                    .and_then(Value::as_array)
-                                    .and_then(|turns| turns.last())
-                                    .and_then(raw_turn_status)
-                                    .map(ToString::to_string);
-                                if let Ok((next_snapshot, events)) =
-                                    build_desktop_ipc_snapshot_update(
-                                        previous_snapshot.as_ref(),
-                                        previous_summary_status,
-                                        &conversation_state,
-                                        access_mode,
-                                        &mut compactor,
-                                        false,
-                                        latest_raw_turn_status.as_deref(),
-                                        handle.block_on(async {
-                                            state.has_bridge_owned_active_turn(thread_id).await
-                                        }),
-                                    )
+                        drain_notification_control_messages(&control_rx, |message| match message {
+                            NotificationControlMessage::ResumeThread(thread_id) => {
+                                tracked_threads.insert(thread_id.to_string());
+                                if let Some(conversation_state) =
+                                    conversation_state_by_thread.get(&thread_id).cloned()
                                 {
-                                    let state = state.clone();
-                                    handle.block_on(async move {
-                                        state
-                                            .apply_external_snapshot_update(next_snapshot, events)
-                                            .await;
+                                    let previous_snapshot = handle.block_on(async {
+                                        state.projections().snapshot(&thread_id).await
                                     });
+                                    if previous_snapshot.as_ref().is_some_and(|snapshot| {
+                                        snapshot.thread.status == ThreadStatus::Running
+                                    }) {
+                                        match client.external_resume_thread(&thread_id) {
+                                            Ok(()) => Ok(()),
+                                            Err(error) if error.contains("no-client-found") => {
+                                                Ok(())
+                                            }
+                                            Err(error) => Err(error),
+                                        }?;
+                                        return Ok(());
+                                    }
+                                    let previous_summary_status = handle.block_on(async {
+                                        state.projections().summary_status(&thread_id).await
+                                    });
+                                    let access_mode =
+                                        handle.block_on(async { state.access_mode().await });
+                                    let latest_raw_turn_status = conversation_state
+                                        .get("turns")
+                                        .and_then(Value::as_array)
+                                        .and_then(|turns| turns.last())
+                                        .and_then(raw_turn_status)
+                                        .map(ToString::to_string);
+                                    if let Ok((next_snapshot, events)) =
+                                        build_desktop_ipc_snapshot_update(
+                                            previous_snapshot.as_ref(),
+                                            previous_summary_status,
+                                            &conversation_state,
+                                            access_mode,
+                                            &mut compactor,
+                                            false,
+                                            latest_raw_turn_status.as_deref(),
+                                            handle.block_on(async {
+                                                state.has_bridge_owned_active_turn(&thread_id).await
+                                            }),
+                                        )
+                                    {
+                                        let state = state.clone();
+                                        handle.block_on(async move {
+                                            state
+                                                .apply_external_snapshot_update(
+                                                    next_snapshot,
+                                                    events,
+                                                )
+                                                .await;
+                                        });
+                                    }
+                                }
+                                match client.external_resume_thread(&thread_id) {
+                                    Ok(()) => Ok(()),
+                                    Err(error) if error.contains("no-client-found") => Ok(()),
+                                    Err(error) => Err(error),
                                 }
                             }
-                            match client.external_resume_thread(thread_id) {
-                                Ok(()) => Ok(()),
-                                Err(error) if error.contains("no-client-found") => Ok(()),
-                                Err(error) => Err(error),
+                            NotificationControlMessage::UnsubscribeThread(thread_id) => {
+                                tracked_threads.remove(&thread_id);
+                                Ok(())
                             }
                         })
                     {
@@ -1811,6 +1915,8 @@ impl BridgeAppState {
             .write()
             .await
             .insert(thread_id.to_string());
+        self.suspend_notification_thread_subscription(thread_id)
+            .await;
         let result = match self.inner.gateway.start_turn_streaming(
             thread_id,
             TurnStartRequest {
@@ -1908,6 +2014,8 @@ impl BridgeAppState {
         ) {
             Ok(result) => result,
             Err(error) => {
+                self.restore_notification_thread_subscription(thread_id)
+                    .await;
                 self.clear_transient_thread_state(thread_id).await;
                 return Err(error);
             }
@@ -1935,9 +2043,10 @@ impl BridgeAppState {
                 .write()
                 .await
                 .insert(thread_id.to_string(), turn_id);
-            self.force_request_notification_thread_resume(thread_id)
-                .await;
             self.schedule_bridge_owned_turn_watchdog(thread_id);
+        } else {
+            self.restore_notification_thread_subscription(thread_id)
+                .await;
         }
         let occurred_at = Utc::now().to_rfc3339();
         self.projections()
@@ -4090,16 +4199,14 @@ where
 
 fn drain_notification_control_messages<F>(
     control_rx: &mpsc::Receiver<NotificationControlMessage>,
-    mut resume_thread: F,
+    mut handle_message: F,
 ) -> Result<(), String>
 where
-    F: FnMut(&str) -> Result<(), String>,
+    F: FnMut(NotificationControlMessage) -> Result<(), String>,
 {
     loop {
         match control_rx.try_recv() {
-            Ok(NotificationControlMessage::ResumeThread(thread_id)) => {
-                resume_notification_thread_until_rollout_exists(&thread_id, &mut resume_thread)?;
-            }
+            Ok(message) => handle_message(message)?,
             Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => {
                 return Ok(());
             }
@@ -4476,6 +4583,38 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn suspended_notification_threads_do_not_resume_until_restored() {
+        let state = test_bridge_app_state().await;
+        let (tx, rx) = mpsc::channel();
+        *state
+            .inner
+            .notification_control_tx
+            .lock()
+            .expect("notification control lock should not be poisoned") = Some(tx);
+
+        state
+            .suspend_notification_thread_subscription("codex:thread-123")
+            .await;
+        assert_eq!(
+            rx.recv().expect("unsubscribe message should be sent"),
+            NotificationControlMessage::UnsubscribeThread("codex:thread-123".to_string())
+        );
+
+        state
+            .request_notification_thread_resume("codex:thread-123")
+            .await;
+        assert!(rx.try_recv().is_err());
+
+        state
+            .restore_notification_thread_subscription("codex:thread-123")
+            .await;
+        assert_eq!(
+            rx.recv().expect("resume message should be sent"),
+            NotificationControlMessage::ResumeThread("codex:thread-123".to_string())
+        );
+    }
+
     #[test]
     fn drain_notification_control_messages_resumes_new_threads_until_queue_is_empty() {
         let (tx, rx) = mpsc::channel();
@@ -4490,8 +4629,16 @@ mod tests {
         drop(tx);
 
         let mut resumed = Vec::new();
-        drain_notification_control_messages(&rx, |thread_id| {
-            resumed.push(thread_id.to_string());
+        let mut unsubscribed = Vec::new();
+        drain_notification_control_messages(&rx, |message| {
+            match message {
+                NotificationControlMessage::ResumeThread(thread_id) => {
+                    resumed.push(thread_id);
+                }
+                NotificationControlMessage::UnsubscribeThread(thread_id) => {
+                    unsubscribed.push(thread_id);
+                }
+            }
             Ok(())
         })
         .expect("draining control messages should succeed");
@@ -4500,6 +4647,39 @@ mod tests {
             resumed,
             vec!["thread-123".to_string(), "thread-456".to_string()]
         );
+        assert!(unsubscribed.is_empty());
+    }
+
+    #[test]
+    fn drain_notification_control_messages_applies_unsubscribes() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(NotificationControlMessage::ResumeThread(
+            "thread-123".to_string(),
+        ))
+        .expect("control message should enqueue");
+        tx.send(NotificationControlMessage::UnsubscribeThread(
+            "thread-123".to_string(),
+        ))
+        .expect("control message should enqueue");
+        drop(tx);
+
+        let mut resumed = Vec::new();
+        let mut unsubscribed = Vec::new();
+        drain_notification_control_messages(&rx, |message| {
+            match message {
+                NotificationControlMessage::ResumeThread(thread_id) => {
+                    resumed.push(thread_id);
+                }
+                NotificationControlMessage::UnsubscribeThread(thread_id) => {
+                    unsubscribed.push(thread_id);
+                }
+            }
+            Ok(())
+        })
+        .expect("draining control messages should succeed");
+
+        assert_eq!(resumed, vec!["thread-123".to_string()]);
+        assert_eq!(unsubscribed, vec!["thread-123".to_string()]);
     }
 
     #[test]
