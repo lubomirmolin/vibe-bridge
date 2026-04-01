@@ -2838,37 +2838,16 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       await tester.pumpAndSettle();
 
       expect(find.text('Approve command execution?'), findsOneWidget);
-      await tester.tap(find.text('Allow once'));
-      await tester.pumpAndSettle();
       expect(
-        find.text(
-          'Selection saved. Add optional context below, or press submit.',
-        ),
+        find.byKey(const Key('turn-composer-approval-card')),
         findsOneWidget,
       );
+      expect(find.byKey(const Key('turn-composer-input')), findsNothing);
+      expect(find.byKey(const Key('turn-composer-plan-submit')), findsNothing);
 
-      final container = ProviderScope.containerOf(
-        tester.element(find.byType(ThreadDetailPage)),
+      await tester.tap(
+        find.byKey(const Key('turn-composer-approval-option-allow_once')),
       );
-      final controller = container.read(
-        threadDetailControllerProvider(
-          const ThreadDetailControllerArgs(
-            bridgeApiBaseUrl: _bridgeApiBaseUrl,
-            threadId: 'thread-123',
-            initialVisibleTimelineEntries: 20,
-          ),
-        ).notifier,
-      );
-      final submitSuccess = await controller.respondToPendingUserInput(
-        freeText: '',
-        answers: const <UserInputAnswerDto>[
-          UserInputAnswerDto(
-            questionId: 'approval_decision',
-            optionId: 'allow_once',
-          ),
-        ],
-      );
-      expect(submitSuccess, isTrue);
       await tester.pumpAndSettle();
 
       expect(detailApi.respondToUserInputCalls, hasLength(1));
@@ -2889,6 +2868,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
           payload: {'request_id': 'provider-approval-1', 'state': 'resolved'},
         ),
       );
+      await tester.pump(const Duration(milliseconds: 250));
       await tester.pumpAndSettle();
 
       expect(find.text('Approve command execution?'), findsNothing);

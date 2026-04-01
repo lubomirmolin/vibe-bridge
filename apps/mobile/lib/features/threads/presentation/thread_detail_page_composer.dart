@@ -4,6 +4,12 @@ const double _composerPrimaryButtonSize = 56;
 const double _composerModePeekOffset = 62;
 const double _composerPrimaryRailWidth = 74;
 
+bool _isProviderApprovalPrompt(PendingUserInputDto? pendingUserInput) {
+  return pendingUserInput != null &&
+      pendingUserInput.questions.length == 1 &&
+      pendingUserInput.questions.first.questionId == 'approval_decision';
+}
+
 class _PinnedTurnComposer extends StatelessWidget {
   const _PinnedTurnComposer({
     required this.composerController,
@@ -70,6 +76,9 @@ class _PinnedTurnComposer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasPendingUserInput = pendingUserInput != null;
+    final isProviderApprovalPrompt = _isProviderApprovalPrompt(
+      pendingUserInput,
+    );
     final canEditPinnedControls =
         !isComposerMutationInFlight &&
         !isInterruptMutationInFlight &&
@@ -91,6 +100,13 @@ class _PinnedTurnComposer extends StatelessWidget {
         }
       });
     }
+    if (isProviderApprovalPrompt && composerFocusNode.hasFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (composerFocusNode.hasFocus) {
+          composerFocusNode.unfocus();
+        }
+      });
+    }
 
     Future<void> submitCurrentInput() async {
       final success = hasPendingUserInput
@@ -100,6 +116,85 @@ class _PinnedTurnComposer extends StatelessWidget {
       if (success) {
         composerController.clear();
       }
+    }
+
+    Widget buildStatusMessages() {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (session == null) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: const Text(
+                'Pair with a host bridge to change access mode from here.',
+                key: Key('turn-composer-access-mode-pairing-note'),
+                style: TextStyle(color: AppTheme.textSubtle, fontSize: 12),
+              ),
+            ),
+          ],
+          if (accessModeErrorMessage != null) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                accessModeErrorMessage!,
+                key: const Key('turn-composer-access-mode-error'),
+                style: const TextStyle(color: AppTheme.rose, fontSize: 12),
+              ),
+            ),
+          ],
+          if (speechMessage != null) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                speechMessage!,
+                key: const Key('turn-composer-speech-message'),
+                style: TextStyle(
+                  color: speechMessageIsError
+                      ? AppTheme.rose
+                      : AppTheme.textSubtle,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ],
+      );
+    }
+
+    if (isProviderApprovalPrompt) {
+      final approvalQuestion = pendingUserInput!.questions.first;
+      return Padding(
+        key: const Key('pinned-turn-composer'),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
+        child: Align(
+          alignment: Alignment.bottomCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: _ThreadDetailPageState._sessionContentMaxWidth,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _PendingProviderApprovalCard(
+                  pendingUserInput: pendingUserInput!,
+                  question: approvalQuestion,
+                  selectedOptionId:
+                      selectedPlanOptionByQuestionId[approvalQuestion
+                          .questionId],
+                  isSubmitting:
+                      isComposerMutationInFlight || isInterruptMutationInFlight,
+                  onSelectOption: onSelectPlanOption,
+                ),
+                buildStatusMessages(),
+              ],
+            ),
+          ),
+        ),
+      );
     }
 
     return Padding(
@@ -393,50 +488,7 @@ class _PinnedTurnComposer extends StatelessWidget {
                   const SizedBox(height: 8),
                   _ThreadUsageMicroBars(threadUsage: threadUsage!),
                 ],
-                if (session == null) ...[
-                  const SizedBox(height: 10),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: const Text(
-                      'Pair with a host bridge to change access mode from here.',
-                      key: Key('turn-composer-access-mode-pairing-note'),
-                      style: TextStyle(
-                        color: AppTheme.textSubtle,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ],
-                if (accessModeErrorMessage != null) ...[
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      accessModeErrorMessage!,
-                      key: const Key('turn-composer-access-mode-error'),
-                      style: const TextStyle(
-                        color: AppTheme.rose,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ],
-                if (speechMessage != null) ...[
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      speechMessage!,
-                      key: const Key('turn-composer-speech-message'),
-                      style: TextStyle(
-                        color: speechMessageIsError
-                            ? AppTheme.rose
-                            : AppTheme.textSubtle,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ],
+                buildStatusMessages(),
               ],
             ),
           ),
@@ -849,6 +901,315 @@ class _PendingUserInputQuestionCard extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+class _PendingProviderApprovalCard extends StatelessWidget {
+  const _PendingProviderApprovalCard({
+    required this.pendingUserInput,
+    required this.question,
+    required this.selectedOptionId,
+    required this.isSubmitting,
+    required this.onSelectOption,
+  });
+
+  final PendingUserInputDto pendingUserInput;
+  final UserInputQuestionDto question;
+  final String? selectedOptionId;
+  final bool isSubmitting;
+  final void Function(String questionId, String optionId) onSelectOption;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('turn-composer-approval-card'),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF171D22), Color(0xFF1D242A)],
+        ),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: const Color(0xFF6B7280).withValues(alpha: 0.3),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.16),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF59E0B).withValues(alpha: 0.16),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: const Color(0xFFF59E0B).withValues(alpha: 0.34),
+                  ),
+                ),
+                child: Center(
+                  child: PhosphorIcon(
+                    PhosphorIcons.shieldWarning(PhosphorIconsStyle.fill),
+                    color: const Color(0xFFF59E0B),
+                    size: 20,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      pendingUserInput.title,
+                      style: const TextStyle(
+                        color: AppTheme.textMain,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Choose the permission response directly here. The turn resumes immediately after you select one.',
+                      style: TextStyle(
+                        color: AppTheme.textMuted,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (pendingUserInput.detail case final detail?)
+            Padding(
+              padding: const EdgeInsets.only(top: 14),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F1419).withValues(alpha: 0.74),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.06),
+                  ),
+                ),
+                child: Text(
+                  detail,
+                  style: GoogleFonts.jetBrainsMono(
+                    color: const Color(0xFFD6DEE7),
+                    fontSize: 11,
+                    height: 1.45,
+                  ),
+                ),
+              ),
+            ),
+          const SizedBox(height: 14),
+          Column(
+            children: question.options
+                .map(
+                  (option) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _PendingProviderApprovalActionButton(
+                      option: option,
+                      isSelected: selectedOptionId == option.optionId,
+                      isSubmitting: isSubmitting,
+                      onTap: isSubmitting
+                          ? null
+                          : () => onSelectOption(
+                              question.questionId,
+                              option.optionId,
+                            ),
+                    ),
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PendingProviderApprovalActionButton extends StatelessWidget {
+  const _PendingProviderApprovalActionButton({
+    required this.option,
+    required this.isSelected,
+    required this.isSubmitting,
+    required this.onTap,
+  });
+
+  final UserInputOptionDto option;
+  final bool isSelected;
+  final bool isSubmitting;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final tone = _ProviderApprovalTone.fromOptionId(option.optionId);
+    final backgroundColor = isSelected
+        ? tone.surface.withValues(alpha: 0.94)
+        : tone.surface.withValues(alpha: 0.42);
+    final borderColor = isSelected
+        ? tone.border.withValues(alpha: 0.96)
+        : tone.border.withValues(alpha: 0.42);
+    final labelColor = isSelected ? tone.foreground : AppTheme.textMain;
+
+    return Material(
+      color: Colors.transparent,
+      child: TextButton(
+        key: Key('turn-composer-approval-option-${option.optionId}'),
+        onPressed: onTap,
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+          backgroundColor: backgroundColor,
+          foregroundColor: labelColor,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+            side: BorderSide(color: borderColor),
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              margin: const EdgeInsets.only(top: 1),
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: tone.foreground.withValues(
+                  alpha: isSelected ? 0.18 : 0.1,
+                ),
+                shape: BoxShape.circle,
+              ),
+              child: Center(
+                child: isSubmitting && isSelected
+                    ? SizedBox.square(
+                        dimension: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: tone.foreground,
+                        ),
+                      )
+                    : PhosphorIcon(tone.icon, color: tone.foreground, size: 18),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          option.label,
+                          style: TextStyle(
+                            color: labelColor,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      if (option.isRecommended)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            'RECOMMENDED',
+                            style: GoogleFonts.jetBrainsMono(
+                              color: const Color(0xFFFCD34D),
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  if (option.description.trim().isNotEmpty) ...[
+                    const SizedBox(height: 5),
+                    Text(
+                      option.description,
+                      style: TextStyle(
+                        color: AppTheme.textMuted,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProviderApprovalTone {
+  const _ProviderApprovalTone({
+    required this.surface,
+    required this.border,
+    required this.foreground,
+    required this.icon,
+  });
+
+  final Color surface;
+  final Color border;
+  final Color foreground;
+  final IconData icon;
+
+  factory _ProviderApprovalTone.fromOptionId(String optionId) {
+    switch (optionId) {
+      case 'allow_once':
+        return _ProviderApprovalTone(
+          surface: const Color(0xFF0F2B2B),
+          border: const Color(0xFF2DD4BF),
+          foreground: const Color(0xFF5EEAD4),
+          icon: PhosphorIcons.check(),
+        );
+      case 'allow_for_session':
+        return _ProviderApprovalTone(
+          surface: const Color(0xFF13263B),
+          border: const Color(0xFF60A5FA),
+          foreground: const Color(0xFF93C5FD),
+          icon: PhosphorIcons.clockClockwise(),
+        );
+      case 'deny':
+        return _ProviderApprovalTone(
+          surface: const Color(0xFF33151B),
+          border: const Color(0xFFFB7185),
+          foreground: const Color(0xFFFDA4AF),
+          icon: PhosphorIcons.x(),
+        );
+      default:
+        return _ProviderApprovalTone(
+          surface: const Color(0xFF20262D),
+          border: const Color(0xFF94A3B8),
+          foreground: const Color(0xFFE2E8F0),
+          icon: PhosphorIcons.dot(),
+        );
+    }
   }
 }
 

@@ -1286,8 +1286,12 @@ Uri _buildThreadTurnMutationUri(
   final normalizedBasePath = baseUri.path.endsWith('/')
       ? baseUri.path.substring(0, baseUri.path.length - 1)
       : baseUri.path;
+  final normalizedActionPath = action
+      .split('/')
+      .map(Uri.encodeComponent)
+      .join('/');
   final fullPath =
-      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/${Uri.encodeComponent(action)}';
+      '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/threads/${Uri.encodeComponent(threadId)}/$normalizedActionPath';
   return baseUri.replace(path: fullPath, queryParameters: null);
 }
 

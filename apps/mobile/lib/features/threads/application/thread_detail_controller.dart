@@ -1699,6 +1699,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearTurnControlError: true,
         clearPendingUserInput: true,
       );
+      unawaited(_refreshThreadSnapshotAfterMutation());
       return true;
     } on ThreadTurnBridgeException catch (error) {
       state = state.copyWith(
@@ -2117,6 +2118,63 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       status: mutationResult.threadStatus,
       updatedAt: updatedAt,
     );
+  }
+
+  Future<void> _refreshThreadSnapshotAfterMutation() async {
+    final requestedThreadId = state.threadId;
+    if (_isDisposed || requestedThreadId.trim().isEmpty) {
+      return;
+    }
+
+    try {
+      final detail = await _bridgeApi.fetchThreadDetail(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: requestedThreadId,
+      );
+      if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
+        return;
+      }
+      final scopedDetail = _ensureScopedThreadDetail(
+        detail: detail,
+        expectedThreadId: requestedThreadId,
+        context: 'refreshing thread detail after mutation',
+      );
+
+      final page = await _bridgeApi.fetchThreadTimelinePage(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: requestedThreadId,
+        limit: _initialVisibleTimelineEntries,
+      );
+      if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
+        return;
+      }
+      final scopedPage = _ensureScopedTimelinePage(
+        page: page,
+        expectedThreadId: requestedThreadId,
+        context: 'refreshing thread timeline after mutation',
+      );
+
+      final items = _mergeTimelineEntries(
+        currentItems: state.items,
+        timeline: scopedPage.entries,
+      );
+      _trackKnownEventIds(items);
+
+      state = state.copyWith(
+        thread: scopedDetail,
+        items: items,
+        pendingUserInput: scopedPage.pendingUserInput,
+        hasMoreBefore: scopedPage.hasMoreBefore,
+        nextBefore: scopedPage.nextBefore,
+        clearErrorMessage: true,
+        clearStreamErrorMessage: true,
+        clearStaleMessage: true,
+      );
+      _threadListController.syncThreadDetail(scopedDetail);
+    } catch (_) {
+      // Avoid disrupting the active thread when the follow-up refresh fails.
+      return;
+    }
   }
 
   void _updateThreadStatus({

@@ -1670,6 +1670,25 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     return true;
   }
 
+  void _handlePendingUserInputSelection(
+    ThreadDetailController controller,
+    PendingUserInputDto pendingUserInput,
+    String questionId,
+    String optionId,
+  ) {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _selectedPlanOptionByQuestionId[questionId] = optionId;
+    });
+
+    if (_isProviderApprovalPrompt(pendingUserInput)) {
+      unawaited(_submitPendingUserInput(controller, pendingUserInput, ''));
+    }
+  }
+
   Future<List<String>> _encodeAttachedImages(List<XFile> images) async {
     final encoded = <String>[];
     for (final image in images) {
@@ -2288,10 +2307,16 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                                 });
                               },
                               onSelectPlanOption: (questionId, optionId) {
-                                setState(() {
-                                  _selectedPlanOptionByQuestionId[questionId] =
-                                      optionId;
-                                });
+                                final activePendingUserInput = pendingUserInput;
+                                if (activePendingUserInput == null) {
+                                  return;
+                                }
+                                _handlePendingUserInputSelection(
+                                  controller,
+                                  activePendingUserInput,
+                                  questionId,
+                                  optionId,
+                                );
                               },
                               onSubmitComposer: (value) =>
                                   _submitComposerInput(controller, value),
