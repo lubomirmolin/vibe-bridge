@@ -94,10 +94,7 @@ class _ThreadDetailBody extends StatelessWidget {
       openOnMacMessage: openOnMacMessage,
       openOnMacErrorMessage: openOnMacErrorMessage,
     );
-    final trailingChildren = _buildTrailingChildren(
-      state: state,
-      controlsEnabled: controlsEnabled,
-    );
+    final trailingChildren = _buildTrailingChildren(state: state);
     final timelineItemCount =
         state.isInitialTimelineLoading || state.visibleItems.isEmpty
         ? 1
@@ -288,13 +285,8 @@ class _ThreadDetailBody extends StatelessWidget {
     );
   }
 
-  List<Widget> _buildTrailingChildren({
-    required ThreadDetailState state,
-    required bool controlsEnabled,
-  }) {
+  List<Widget> _buildTrailingChildren({required ThreadDetailState state}) {
     return <Widget>[
-      if (!state.isInitialTimelineLoading && state.visibleItems.isNotEmpty)
-        const SizedBox(height: 12),
       if (state.isTurnActive) ...[
         _ChatLoadingMessageCard(
           phaseLabel: _runningTurnPhaseLabel(state.visibleItems),
@@ -304,6 +296,8 @@ class _ThreadDetailBody extends StatelessWidget {
         ),
         const SizedBox(height: 12),
       ],
+      if (!state.isInitialTimelineLoading && state.visibleItems.isNotEmpty)
+        const SizedBox(height: 12),
     ];
   }
 
