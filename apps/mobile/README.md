@@ -70,6 +70,9 @@ local bridge through the emulator loopback host:
 It defaults to `http://10.0.2.2:3110`. Override `LIVE_BRIDGE_BASE_URL` only
 when you need a different emulator-reachable bridge URL.
 
+For agent-oriented guidance on building and running real emulator E2Es, see
+[integration_test/README.md](/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile/integration_test/README.md).
+
 ## Notes
 
 - Use simulators/emulators only for this mission.

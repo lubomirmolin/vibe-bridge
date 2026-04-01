@@ -52,6 +52,8 @@ dependencies:
 
 dev_dependencies:
   device_info_plus: ^11.5.0
+  flutter_driver:
+    sdk: flutter
   flutter_test:
     sdk: flutter
   integration_test:
