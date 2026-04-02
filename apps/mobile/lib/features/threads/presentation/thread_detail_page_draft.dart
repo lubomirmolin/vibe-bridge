@@ -45,6 +45,7 @@ class _DraftThreadDetailHeader extends StatelessWidget {
                   'New Thread',
                   key: const Key('thread-draft-title'),
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: AppTheme.textMain,
                     fontWeight: FontWeight.w500,
                     letterSpacing: -0.5,
                     fontSize: 18,

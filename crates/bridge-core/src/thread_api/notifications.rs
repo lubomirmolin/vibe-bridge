@@ -8,7 +8,7 @@ use crate::codex_transport::CodexJsonTransport;
 use crate::incremental_text::merge_incremental_text;
 
 use super::patch_diff::resolve_apply_patch_to_unified_diff;
-use super::rpc::{CodexThreadStatus, CodexTurn};
+use super::rpc::CodexThreadStatus;
 use super::timeline::{
     build_timeline_event_envelope, current_timestamp_string, map_codex_status_to_lifecycle_state,
     map_thread_status, normalize_custom_tool_output, payload_contains_hidden_message,
@@ -70,7 +70,13 @@ struct CodexItemLifecycleNotification {
 struct CodexTurnNotification {
     #[serde(rename = "threadId")]
     thread_id: String,
-    turn: CodexTurn,
+    turn: CodexTurnHandle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CodexTurnHandle {
+    id: String,
+    status: Option<String>,
 }
 
 impl CodexNotificationStream {
@@ -155,7 +161,17 @@ impl CodexNotificationNormalizer {
                 {
                     self.active_turn_id_by_thread.remove(&thread_id);
                 }
-                None
+                let occurred_at = current_timestamp_string();
+                Some(BridgeEventEnvelope::new(
+                    format!("{thread_id}-status-{occurred_at}"),
+                    thread_id,
+                    BridgeEventKind::ThreadStatusChanged,
+                    occurred_at,
+                    json!({
+                        "status": map_codex_turn_status_to_wire_status(notification.turn.status.as_deref()),
+                        "reason": "turn_completed",
+                    }),
+                ))
             }
             "thread/status/changed" => {
                 let notification: CodexThreadStatusChangedNotification =
@@ -281,7 +297,38 @@ impl CodexNotificationNormalizer {
             self.message_event_ids_with_delta.insert(event_id.clone());
         }
 
-        let (kind, normalized_payload) = normalize_realtime_item_payload(payload)?;
+        let (kind, normalized_payload) = match (canonical_item_type, target) {
+            ("userMessage", DeltaTarget::Text) => (
+                BridgeEventKind::MessageDelta,
+                json!({
+                    "id": notification.item_id,
+                    "type": "userMessage",
+                    "role": "user",
+                    "delta": notification.delta,
+                    "replace": false,
+                }),
+            ),
+            ("agentMessage", DeltaTarget::Text) => (
+                BridgeEventKind::MessageDelta,
+                json!({
+                    "id": notification.item_id,
+                    "type": "agentMessage",
+                    "role": "assistant",
+                    "delta": notification.delta,
+                    "replace": false,
+                }),
+            ),
+            ("plan", DeltaTarget::Text) => (
+                BridgeEventKind::PlanDelta,
+                json!({
+                    "id": notification.item_id,
+                    "type": "plan",
+                    "delta": notification.delta,
+                    "replace": false,
+                }),
+            ),
+            _ => normalize_realtime_item_payload(payload)?,
+        };
         if !should_publish_live_payload(kind, &normalized_payload) {
             return None;
         }
@@ -299,6 +346,15 @@ impl CodexNotificationNormalizer {
             .get(thread_id)
             .map(|turn_id| format!("{turn_id}-{item_id}"))
             .unwrap_or_else(|| item_id.to_string())
+    }
+}
+
+fn map_codex_turn_status_to_wire_status(status: Option<&str>) -> &'static str {
+    match status.unwrap_or("completed") {
+        "interrupted" => "interrupted",
+        "failed" => "failed",
+        "inProgress" => "running",
+        _ => "completed",
     }
 }
 
@@ -334,6 +390,7 @@ pub(crate) fn should_publish_live_payload(kind: BridgeEventKind, payload: &Value
             }
             payload
                 .get("text")
+                .or_else(|| payload.get("delta"))
                 .and_then(Value::as_str)
                 .is_some_and(|text| !text.trim().is_empty())
                 || payload
@@ -802,7 +859,7 @@ mod tests {
     }
 
     #[test]
-    fn delta_notifications_accumulate_text_and_skip_hidden_messages() {
+    fn delta_notifications_publish_raw_text_deltas_and_skip_hidden_messages() {
         let mut normalizer = CodexNotificationNormalizer::default();
         let _ = normalizer.normalize(
             "turn/started",
@@ -825,8 +882,12 @@ mod tests {
             .expect("first delta should publish");
         assert_eq!(first.thread_id, "codex:thread-123");
         assert_eq!(
-            first.payload.get("text").and_then(|v| v.as_str()),
+            first.payload.get("delta").and_then(|v| v.as_str()),
             Some("Hello")
+        );
+        assert_eq!(
+            first.payload.get("replace").and_then(|v| v.as_bool()),
+            Some(false)
         );
         assert!(should_publish_live_payload(first.kind, &first.payload));
 
@@ -859,5 +920,32 @@ mod tests {
         assert_eq!(event.thread_id, "codex:thread-456");
         assert_eq!(event.kind, BridgeEventKind::ThreadStatusChanged);
         assert_eq!(event.payload["status"], "running");
+    }
+
+    #[test]
+    fn turn_completed_notifications_publish_terminal_thread_status() {
+        let mut normalizer = CodexNotificationNormalizer::default();
+        let _ = normalizer.normalize(
+            "turn/started",
+            &json!({
+                "threadId": "thread-789",
+                "turn": {"id": "turn-1", "status": "inProgress"}
+            }),
+        );
+
+        let event = normalizer
+            .normalize(
+                "turn/completed",
+                &json!({
+                    "threadId": "thread-789",
+                    "turn": {"id": "turn-1", "status": "completed"}
+                }),
+            )
+            .expect("turn/completed should publish");
+
+        assert_eq!(event.thread_id, "codex:thread-789");
+        assert_eq!(event.kind, BridgeEventKind::ThreadStatusChanged);
+        assert_eq!(event.payload["status"], "completed");
+        assert_eq!(event.payload["reason"], "turn_completed");
     }
 }

@@ -7,6 +7,11 @@ import 'package:integration_test/integration_test_driver.dart';
 const String _probeFilePath = 'apps/mobile/lib/live_approval_probe.dart';
 
 Future<void> main() async {
+  if (!_shouldRunClaudeTeardownVerification()) {
+    await integrationDriver();
+    return;
+  }
+
   final bridgeApiBaseUrl = _resolveBridgeApiBaseUrl();
   final workspacePath = _resolveWorkspacePath();
   final probeFile = File(_resolveProbeFilePath());
@@ -39,6 +44,18 @@ Future<void> main() async {
       'a newer Claude Code thread completed the probe edit through the bridge.',
     );
   }
+}
+
+bool _shouldRunClaudeTeardownVerification() {
+  final hasClaudeBridge =
+      (Platform.environment['LIVE_CLAUDE_APPROVAL_BRIDGE_BASE_URL'] ?? '')
+          .trim()
+          .isNotEmpty;
+  final hasClaudeWorkspace =
+      (Platform.environment['LIVE_CLAUDE_APPROVAL_WORKSPACE'] ?? '')
+          .trim()
+          .isNotEmpty;
+  return hasClaudeBridge || hasClaudeWorkspace;
 }
 
 String _resolveBridgeApiBaseUrl() {

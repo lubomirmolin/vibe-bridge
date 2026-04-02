@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:vibe_bridge/foundation/connectivity/live_connection_state.dart';
 import 'package:vibe_bridge/foundation/connectivity/reconnect_scheduler.dart';
@@ -528,6 +529,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   StreamSubscription<BridgeEventEnvelope<Map<String, dynamic>>>?
   _liveEventSubscription;
   Timer? _detailRefreshTimer;
+  Timer? _snapshotRefreshTimer;
   bool _isDetailRefreshInFlight = false;
   bool _isSnapshotRefreshInFlight = false;
   bool _shouldRefreshDetailAfterCurrentRequest = false;
@@ -924,11 +926,8 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   List<ThreadActivityItem> _mergeTimeline(
     List<ThreadTimelineEntryDto> timeline,
   ) {
-    final nextItems = _mergeTimelineEntries(
-      currentItems: state.items,
-      timeline: timeline,
-    );
-    _trackKnownEventIds(nextItems);
+    final nextItems = _replaceTimelineItems(timeline);
+    _replaceKnownEventIds(nextItems);
     return nextItems;
   }
 
@@ -962,6 +961,20 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
   void _trackKnownEventIds(List<ThreadActivityItem> items) {
     _knownEventIds.addAll(items.map((item) => item.eventId));
+  }
+
+  void _replaceKnownEventIds(List<ThreadActivityItem> items) {
+    _knownEventIds
+      ..clear()
+      ..addAll(items.map((item) => item.eventId));
+  }
+
+  List<ThreadActivityItem> _replaceTimelineItems(
+    List<ThreadTimelineEntryDto> timeline,
+  ) {
+    return List<ThreadActivityItem>.unmodifiable(
+      timeline.map(ThreadActivityItem.fromTimelineEntry),
+    );
   }
 
   List<ThreadActivityItem> _prependTimelineEntries(
@@ -1049,7 +1062,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       if (existing.type != ThreadActivityItemType.assistantOutput) {
         continue;
       }
-      if (_normalizeActivityBody(existing.body) != candidateBody) {
+      if (!_areEquivalentAssistantBodies(existing.body, candidateBody)) {
         continue;
       }
       if (!_areTimelineMomentsWithinReplayWindow(
@@ -1171,12 +1184,20 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       return false;
     }
 
+    final compactLeft = _compactActivityBody(normalizedLeft);
+    final compactRight = _compactActivityBody(normalizedRight);
+
     return normalizedLeft == normalizedRight ||
+        compactLeft == compactRight ||
         normalizedLeft.startsWith(normalizedRight) ||
         normalizedRight.startsWith(normalizedLeft);
   }
 
   String _normalizeActivityBody(String body) => body.trim();
+
+  String _compactActivityBody(String body) {
+    return body.replaceAll(RegExp(r'\s+'), '');
+  }
 
   ThreadDetailDto? _fresherThreadDetail({
     required ThreadDetailDto? current,
@@ -1353,7 +1374,10 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     _logPromptResponseIfNeeded(event: event, nextItem: nextItem);
     final nextItems = List<ThreadActivityItem>.from(state.items);
     if (existingIndex >= 0) {
-      nextItems[existingIndex] = nextItem;
+      nextItems[existingIndex] = _preferTimelineMergedItem(
+        current: nextItems[existingIndex],
+        candidate: nextItem,
+      );
     } else {
       nextItems.add(nextItem);
     }
@@ -1409,6 +1433,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       return;
     }
 
+    if (_snapshotRefreshTimer?.isActive ?? false) {
+      return;
+    }
     _detailRefreshTimer?.cancel();
     _detailRefreshTimer = Timer(delay, () {
       unawaited(_refreshThreadDetailFromBridge());
@@ -1420,8 +1447,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       return;
     }
 
+    _snapshotRefreshTimer?.cancel();
     _detailRefreshTimer?.cancel();
-    _detailRefreshTimer = Timer(delay, () {
+    _snapshotRefreshTimer = Timer(delay, () {
       unawaited(_refreshThreadSnapshotFromBridge());
     });
   }
@@ -1556,7 +1584,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       final page = await _bridgeApi.fetchThreadTimelinePage(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
         threadId: requestedThreadId,
-        limit: _initialVisibleTimelineEntries,
+        limit: _timelineRefreshLimit(),
       );
       if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
         return;
@@ -1574,11 +1602,8 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
           ? scopedDetail
           : (state.thread ?? scopedDetail);
 
-      final items = _mergeTimelineEntries(
-        currentItems: state.items,
-        timeline: scopedPage.entries,
-      );
-      _trackKnownEventIds(items);
+      final items = _replaceTimelineItems(scopedPage.entries);
+      _replaceKnownEventIds(items);
 
       state = state.copyWith(
         thread: nextThread,
@@ -1660,6 +1685,20 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     final lastActiveTurnSignalAt = _lastActiveTurnSignalAt;
     if (lastActiveTurnSignalAt == null) {
       return false;
+    }
+
+    final isTerminalRefresh =
+        refreshed.status == ThreadStatus.completed ||
+        refreshed.status == ThreadStatus.failed ||
+        refreshed.status == ThreadStatus.interrupted;
+    if (isTerminalRefresh) {
+      final currentUpdatedAt = DateTime.tryParse(current.updatedAt);
+      final refreshedUpdatedAt = DateTime.tryParse(refreshed.updatedAt);
+      if (currentUpdatedAt != null &&
+          refreshedUpdatedAt != null &&
+          refreshedUpdatedAt.isAfter(currentUpdatedAt)) {
+        return false;
+      }
     }
 
     return DateTime.now().difference(lastActiveTurnSignalAt) <=
@@ -2307,7 +2346,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       final page = await _bridgeApi.fetchThreadTimelinePage(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
         threadId: requestedThreadId,
-        limit: _initialVisibleTimelineEntries,
+        limit: _timelineRefreshLimit(),
       );
       if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
         return;
@@ -2318,11 +2357,8 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         context: 'refreshing thread timeline after mutation',
       );
 
-      final items = _mergeTimelineEntries(
-        currentItems: state.items,
-        timeline: scopedPage.entries,
-      );
-      _trackKnownEventIds(items);
+      final items = _replaceTimelineItems(scopedPage.entries);
+      _replaceKnownEventIds(items);
 
       state = state.copyWith(
         thread: scopedDetail,
@@ -2339,6 +2375,10 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       // Avoid disrupting the active thread when the follow-up refresh fails.
       return;
     }
+  }
+
+  int _timelineRefreshLimit() {
+    return math.max(_initialVisibleTimelineEntries, state.items.length * 2);
   }
 
   void _updateThreadStatus({
@@ -2566,6 +2606,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     _isDisposed = true;
     _reconnectScheduler.dispose();
     _detailRefreshTimer?.cancel();
+    _snapshotRefreshTimer?.cancel();
     unawaited(_closeLiveSubscription());
     super.dispose();
   }

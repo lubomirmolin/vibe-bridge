@@ -122,6 +122,87 @@ codex-mobile-companion/
 3. **Commands** — Mobile approves/rejects commands via bridge proxy
 4. **Sessions** — Bridge monitors Codex state from local SQLite/JSONL
 
+## Live Streaming Correctness
+
+The bridge must preserve Codex live text exactly. For message and plan streaming, the mobile app should see the same text that Codex app-server emits, in the same order, without bridge-added reconstruction artifacts.
+
+### Bug Class We Hit
+
+We investigated a recurring live-text corruption bug where the bridge stream could produce output like:
+
+- `first20 seconds` instead of `first 20 seconds`
+- `GIF2.` instead of `GIF\n2.`
+- missing markdown markers or indentation before headings and bullets
+- earlier duplicate-fragment issues such as repeated chunks on second turns
+
+The important finding was that bridge `/history` often remained clean while raw bridge `/events` was wrong. That means the corruption was happening in the bridge live path, not necessarily in Codex final stored history.
+
+### Root Causes
+
+We found multiple independent bridge bugs:
+
+1. Exact duplicate live assistant frames were being published from two internal bridge paths at the same time:
+   - the bridge-owned turn stream
+   - the background notification forwarder
+
+2. Whitespace-only live deltas were being dropped by the bridge because publish gating treated `" "` and `"\n"` as empty content.
+
+3. Real Codex `item/*/delta` notifications were being expanded into accumulated full text inside the bridge and then compacted back into deltas again before publication. That extra transform layer could distort separator and markdown boundaries.
+
+4. Desktop IPC snapshot updates were also allowed to emit competing live message events during bridge-owned turns.
+
+### Fixes
+
+The fixes are structural, not post-hoc masking:
+
+1. During a bridge-owned active Codex turn, the bridge does not allow overlapping live publication paths for the same assistant output.
+
+2. Whitespace-only deltas are treated as real live content and are no longer dropped.
+
+3. For Codex text streaming notifications, the bridge now forwards raw upstream deltas instead of reconstructing full text and re-deltafying it.
+
+4. The live compactor is now reserved for snapshot-style full-text sources. Raw Codex text deltas pass through unchanged.
+
+5. Desktop IPC may still refresh snapshots, but it must not publish competing live message events for bridge-owned turns.
+
+### Invariants To Preserve
+
+If you touch bridge live streaming, these must remain true:
+
+1. Raw bridge `/events` for Codex text streaming should match Codex app-server text deltas semantically 1:1.
+2. Bridge `/history` and raw bridge `/events` should converge to the same final assistant text for a completed turn.
+3. Whitespace-only deltas are valid and must not be filtered out.
+4. Only one bridge path should be authoritative for live assistant text during a bridge-owned turn.
+5. Snapshot refresh sources must not race with or rewrite active raw text streaming.
+
+### Debugging Recipe
+
+When debugging a live-text issue, verify in this order:
+
+1. Probe Codex app-server directly and compare:
+   - raw `item/agentMessage/delta`
+   - final `item/completed.item.text`
+
+2. Probe bridge raw `/events` directly and compare it to bridge `/history`.
+
+3. Only after that, check Flutter/controller reconciliation.
+
+This order matters because it tells you whether the bug is:
+
+- upstream in Codex
+- introduced in the bridge live path
+- or introduced in the mobile merge/replay path
+
+### Regression Coverage
+
+The bridge and app now have targeted regression coverage for this class of issue:
+
+- bridge duplicate live frame detection
+- whitespace-only live delta publication
+- raw Codex text delta passthrough
+- bridge-owned desktop IPC live-event suppression
+- live mobile thread creation / second-turn streaming regression
+
 ## Development
 
 ### Building

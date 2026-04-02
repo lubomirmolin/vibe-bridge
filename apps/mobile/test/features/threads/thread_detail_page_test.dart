@@ -60,6 +60,13 @@ void main() {
         'Implement shared contracts',
       );
       expect(
+        tester
+            .widget<Text>(find.byKey(const Key('thread-detail-title')))
+            .style
+            ?.color,
+        AppTheme.textMain,
+      );
+      expect(
         find.byKey(const Key('thread-detail-metadata-scroll')),
         findsOneWidget,
       );
@@ -515,6 +522,13 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('thread-draft-title')), findsOneWidget);
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('thread-draft-title')))
+            .style
+            ?.color,
+        AppTheme.textMain,
+      );
       expect(
         find.byKey(const Key('thread-draft-workspace-path')),
         findsOneWidget,

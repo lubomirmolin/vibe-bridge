@@ -172,6 +172,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
                         title,
                         key: const Key('thread-detail-title'),
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          color: AppTheme.textMain,
                           fontWeight: FontWeight.w500,
                           letterSpacing: -0.5,
                           fontSize: 18,

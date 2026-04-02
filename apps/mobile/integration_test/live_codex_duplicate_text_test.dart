@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:device_info_plus/device_info_plus.dart';
@@ -16,6 +15,8 @@ import 'package:vibe_bridge/features/threads/presentation/thread_list_page.dart'
 import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
 import 'package:vibe_bridge/foundation/storage/secure_store.dart';
 import 'package:vibe_bridge/foundation/storage/secure_store_provider.dart';
+
+import 'support/live_codex_turn_wait.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -81,29 +82,36 @@ void main() {
         bridgeApiBaseUrl: bridgeApiBaseUrl,
         threadId: createdThreadId,
       );
-      await _waitForCodexTurnCompletion(
+      await waitForCodexTurnCompletion(
         tester,
         bridgeApiBaseUrl: bridgeApiBaseUrl,
         threadId: createdThreadId,
         promptLabel: 'first',
+        expectedPrompt: _buildFirstProbePrompt(),
+        expectedUserPromptCount: 1,
       );
+
+      final firstPrompt = _buildFirstProbePrompt();
+      final secondPrompt = _buildSecondProbePrompt();
 
       await _waitForCanonicalTimelineAlignment(
         tester,
         threadApi: threadApi,
         bridgeApiBaseUrl: bridgeApiBaseUrl,
         threadId: createdThreadId,
-        expectedUserPrompts: const [_firstProbePrompt],
+        expectedUserPrompts: [firstPrompt],
         minimumAssistantMessageCount: 1,
       );
 
-      await _submitPrompt(tester, prompt: _buildSecondProbePrompt());
+      await _submitPrompt(tester, prompt: secondPrompt);
 
-      await _waitForCodexTurnCompletion(
+      await waitForCodexTurnCompletion(
         tester,
         bridgeApiBaseUrl: bridgeApiBaseUrl,
         threadId: createdThreadId,
         promptLabel: 'second',
+        expectedPrompt: secondPrompt,
+        expectedUserPromptCount: 2,
       );
 
       final alignment = await _waitForCanonicalTimelineAlignment(
@@ -111,7 +119,7 @@ void main() {
         threadApi: threadApi,
         bridgeApiBaseUrl: bridgeApiBaseUrl,
         threadId: createdThreadId,
-        expectedUserPrompts: const [_firstProbePrompt, _secondProbePrompt],
+        expectedUserPrompts: [firstPrompt, secondPrompt],
         minimumAssistantMessageCount: 2,
       );
 
@@ -133,20 +141,36 @@ void main() {
   );
 }
 
-const String _firstProbePrompt =
+const String _defaultFirstProbePrompt =
     'Inspect only apps/mobile/lib/app_startup_page.dart and '
     'apps/mobile/android/app/src/main/res/drawable/launch_background.xml. '
     'Reply in exactly 2 short sentences about how splash handoff works. '
     'Do not edit files, do not use apply_patch, and do not ask for approval.';
 
-const String _secondProbePrompt =
+const String _defaultSecondProbePrompt =
     'Inspect only packages/codex_ui/lib/src/widgets/animated_bridge_background.dart. '
     'Reply in exactly 2 short sentences about whether that bridge artwork is reusable for Android splash work. '
     'Do not edit files, do not use apply_patch, and do not ask for approval.';
 
-String _buildFirstProbePrompt() => _firstProbePrompt;
+String _buildFirstProbePrompt() {
+  const configured = String.fromEnvironment(
+    'LIVE_CODEX_THREAD_CREATION_PROMPT_ONE',
+  );
+  if (configured.isNotEmpty) {
+    return configured;
+  }
+  return _defaultFirstProbePrompt;
+}
 
-String _buildSecondProbePrompt() => _secondProbePrompt;
+String _buildSecondProbePrompt() {
+  const configured = String.fromEnvironment(
+    'LIVE_CODEX_THREAD_CREATION_PROMPT_TWO',
+  );
+  if (configured.isNotEmpty) {
+    return configured;
+  }
+  return _defaultSecondProbePrompt;
+}
 
 String _resolveBridgeApiBaseUrl() {
   const configured = String.fromEnvironment(
@@ -345,79 +369,6 @@ Future<void> _waitForThreadControllerToSettle(
   );
 }
 
-Future<void> _waitForCodexTurnCompletion(
-  WidgetTester tester, {
-  required String bridgeApiBaseUrl,
-  required String threadId,
-  required String promptLabel,
-  Duration timeout = const Duration(minutes: 3),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-
-  while (DateTime.now().isBefore(deadline)) {
-    final snapshot = await _fetchThreadSnapshotJson(
-      bridgeApiBaseUrl: bridgeApiBaseUrl,
-      threadId: threadId,
-    );
-    final thread = snapshot['thread'];
-    if (thread is! Map<String, dynamic>) {
-      fail('Expected thread payload for $threadId, got $thread');
-    }
-
-    final rawStatus = (thread['status'] as String?)?.trim() ?? '';
-    if (rawStatus == ThreadStatus.completed.wireValue) {
-      return;
-    }
-    if (rawStatus == ThreadStatus.failed.wireValue) {
-      fail('Codex thread $threadId failed during the $promptLabel turn.');
-    }
-    if (rawStatus == ThreadStatus.interrupted.wireValue) {
-      fail(
-        'Codex thread $threadId was interrupted during the $promptLabel turn.',
-      );
-    }
-
-    if (snapshot['pending_user_input'] != null) {
-      fail(
-        'Codex thread $threadId unexpectedly requested user input during the $promptLabel turn.',
-      );
-    }
-
-    await tester.pump(const Duration(milliseconds: 400));
-  }
-
-  fail(
-    'Timed out waiting for Codex thread $threadId to complete its $promptLabel turn.',
-  );
-}
-
-Future<Map<String, dynamic>> _fetchThreadSnapshotJson({
-  required String bridgeApiBaseUrl,
-  required String threadId,
-}) async {
-  final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
-  try {
-    final request = await client.getUrl(
-      _buildBridgeUri(bridgeApiBaseUrl, '/threads/$threadId/snapshot'),
-    );
-    request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-    final response = await request.close();
-    final body = await utf8.decoder.bind(response).join();
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      fail(
-        'Snapshot request for $threadId failed with ${response.statusCode}: $body',
-      );
-    }
-    final decoded = jsonDecode(body);
-    if (decoded is! Map<String, dynamic>) {
-      fail('Snapshot response for $threadId was not a JSON object: $decoded');
-    }
-    return decoded;
-  } finally {
-    client.close(force: true);
-  }
-}
-
 Future<_TimelineAlignmentReport> _waitForCanonicalTimelineAlignment(
   WidgetTester tester, {
   required HttpThreadDetailBridgeApi threadApi,
@@ -547,18 +498,6 @@ String _singleLinePreview(String text) {
     return normalized;
   }
   return '${normalized.substring(0, 100)}...';
-}
-
-Uri _buildBridgeUri(String baseUrl, String path) {
-  final baseUri = Uri.parse(baseUrl);
-  final normalizedBasePath = baseUri.path.endsWith('/')
-      ? baseUri.path.substring(0, baseUri.path.length - 1)
-      : baseUri.path;
-  final normalizedPath = path.startsWith('/') ? path : '/$path';
-  return baseUri.replace(
-    path:
-        '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}$normalizedPath',
-  );
 }
 
 Future<void> _pumpUntilFound(

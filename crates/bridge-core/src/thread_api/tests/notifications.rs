@@ -47,7 +47,8 @@ fn codex_notification_normalizer_accumulates_agent_message_deltas() {
         )
         .expect("first delta should produce an event");
     assert_eq!(first.event_id, "turn-123-msg-1");
-    assert_eq!(first.payload["text"], "Hel");
+    assert_eq!(first.payload["delta"], "Hel");
+    assert_eq!(first.payload["replace"], false);
 
     let second = normalizer
         .normalize(
@@ -61,7 +62,8 @@ fn codex_notification_normalizer_accumulates_agent_message_deltas() {
         )
         .expect("second delta should produce an event");
     assert_eq!(second.event_id, "turn-123-msg-1");
-    assert_eq!(second.payload["text"], "Hello");
+    assert_eq!(second.payload["delta"], "lo");
+    assert_eq!(second.payload["replace"], false);
 }
 
 #[test]
@@ -115,9 +117,10 @@ fn codex_notification_normalizer_ignores_message_item_added_and_merges_cumulativ
 
     assert_eq!(cumulative.event_id, "turn-123-msg-1");
     assert_eq!(
-        cumulative.payload["text"], "I'm checking",
-        "The bridge should treat cumulative assistant deltas as the new full message text."
+        cumulative.payload["delta"], "I'm checking",
+        "The bridge should preserve the raw assistant delta payload."
     );
+    assert_eq!(cumulative.payload["replace"], false);
 }
 
 #[test]

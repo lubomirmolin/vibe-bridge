@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 // Live bridge approval tests ask Claude Code to toggle this value.
-const Color liveApprovalProbeIconColor = Color(0xFF2563EB);
+const Color liveApprovalProbeIconColor = Color(0xFFF97316);
 
 class LiveApprovalProbeIcon extends StatelessWidget {
   const LiveApprovalProbeIcon({super.key});

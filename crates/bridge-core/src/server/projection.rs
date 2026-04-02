@@ -176,6 +176,9 @@ impl ProjectionStore {
                     .map(parse_thread_status)
             {
                 snapshot.thread.status = next_status;
+                if next_status != ThreadStatus::Running {
+                    snapshot.thread.active_turn_id = None;
+                }
             }
 
             if event.kind == BridgeEventKind::UserInputRequested {
@@ -1191,5 +1194,74 @@ mod tests {
             snapshot.entries[0].payload["steps"][1]["status"].as_str(),
             Some("in_progress")
         );
+    }
+
+    #[tokio::test]
+    async fn terminal_live_thread_status_clears_active_turn_id() {
+        let store = ProjectionStore::new();
+        store
+            .replace_summaries(vec![ThreadSummaryDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
+                title: "Thread".to_string(),
+                status: ThreadStatus::Running,
+                workspace: "/tmp/a".to_string(),
+                repository: "repo-a".to_string(),
+                branch: "main".to_string(),
+                updated_at: "2026-03-21T10:00:00Z".to_string(),
+            }])
+            .await;
+        store
+            .put_snapshot(ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
+                    title: "Thread".to_string(),
+                    status: ThreadStatus::Running,
+                    workspace: "/tmp/a".to_string(),
+                    repository: "repo-a".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-03-21T09:00:00Z".to_string(),
+                    updated_at: "2026-03-21T10:00:00Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "initial".to_string(),
+                    active_turn_id: Some("turn-1".to_string()),
+                },
+                entries: vec![],
+                approvals: vec![],
+                git_status: None,
+                pending_user_input: None,
+            })
+            .await;
+
+        store
+            .apply_live_event(&BridgeEventEnvelope {
+                contract_version: CONTRACT_VERSION.to_string(),
+                event_id: "evt-status".to_string(),
+                thread_id: "thread-1".to_string(),
+                kind: BridgeEventKind::ThreadStatusChanged,
+                occurred_at: "2026-03-21T10:01:00Z".to_string(),
+                payload: json!({
+                    "status": "completed",
+                    "reason": "upstream_notification",
+                }),
+                annotations: None,
+            })
+            .await;
+
+        let snapshot = store
+            .snapshot("thread-1")
+            .await
+            .expect("snapshot should exist");
+        assert_eq!(snapshot.thread.status, ThreadStatus::Completed);
+        assert_eq!(snapshot.thread.active_turn_id, None);
     }
 }

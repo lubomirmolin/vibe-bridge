@@ -618,7 +618,7 @@ String _resolveProbePrompt() {
     return configured;
   }
 
-  return 'how are we doing the thread title?';
+  return 'Reply in exactly one short sentence describing apps/mobile/lib/features/threads/application/thread_detail_controller.dart. Do not edit files.';
 }
 
 bool _runLiveDuplicateProbe() {

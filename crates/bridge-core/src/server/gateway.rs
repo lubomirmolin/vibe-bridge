@@ -215,17 +215,6 @@ impl CodexGateway {
         .map_err(|error| format!("codex thread snapshot task failed: {error}"))?
     }
 
-    pub async fn fetch_thread_snapshot_with_archive(
-        &self,
-        thread_id: &str,
-    ) -> Result<ThreadSnapshotDto, String> {
-        let config = self.config.clone();
-        let thread_id = thread_id.to_string();
-        tokio::task::spawn_blocking(move || fetch_thread_snapshot_from_archive(&config, &thread_id))
-            .await
-            .map_err(|error| format!("codex archive snapshot task failed: {error}"))?
-    }
-
     pub async fn create_thread(
         &self,
         provider: ProviderKind,
@@ -305,18 +294,20 @@ impl CodexGateway {
         self.config.desktop_ipc_socket_path.clone()
     }
 
-    pub fn start_turn_streaming<F, G, H>(
+    pub fn start_turn_streaming<F, G, H, I>(
         &self,
         thread_id: &str,
         request: TurnStartRequest,
         on_event: F,
         on_control_request: H,
         on_turn_completed: G,
+        on_stream_finished: I,
     ) -> Result<GatewayTurnMutation, String>
     where
         F: Fn(BridgeEventEnvelope<Value>) + Send + 'static,
         H: Fn(GatewayTurnControlRequest) -> Result<Option<Value>, String> + Send + Sync + 'static,
         G: Fn(String) + Send + 'static,
+        I: Fn(String) + Send + Sync + 'static,
     {
         if is_provider_thread_id(thread_id, ProviderKind::ClaudeCode) {
             return self.start_claude_turn_streaming(
@@ -325,6 +316,7 @@ impl CodexGateway {
                 on_event,
                 on_control_request,
                 on_turn_completed,
+                on_stream_finished,
             );
         }
 
@@ -339,6 +331,7 @@ impl CodexGateway {
         } = request;
         let reserved_transports = Arc::clone(&self.reserved_transports);
         let on_control_request = Arc::new(on_control_request);
+        let on_stream_finished = Arc::new(on_stream_finished);
         let (result_tx, result_rx) = mpsc::sync_channel(1);
 
         std::thread::spawn(move || {
@@ -419,13 +412,18 @@ impl CodexGateway {
                 },
                 turn_id: Some(payload.turn.id),
             };
-
             if result_tx.send(Ok(result.clone())).is_err() {
+                on_stream_finished(thread_id.clone());
                 return;
             }
 
             let mut normalizer = CodexNotificationNormalizer::default();
-            while let Ok(Some(message)) = transport.next_message("turn stream") {
+            loop {
+                let message = match transport.next_message("turn stream") {
+                    Ok(Some(message)) => message,
+                    Ok(None) => break,
+                    Err(_) => break,
+                };
                 if let Some(request_id) = message.get("id").cloned() {
                     let Some(method) = message.get("method").and_then(Value::as_str) else {
                         continue;
@@ -468,6 +466,7 @@ impl CodexGateway {
                     break;
                 }
             }
+            on_stream_finished(thread_id.clone());
         });
 
         result_rx
@@ -475,18 +474,20 @@ impl CodexGateway {
             .map_err(|error| format!("failed to receive codex turn-start result: {error}"))?
     }
 
-    fn start_claude_turn_streaming<F, G, H>(
+    fn start_claude_turn_streaming<F, G, H, I>(
         &self,
         thread_id: &str,
         request: TurnStartRequest,
         on_event: F,
         on_control_request: H,
         on_turn_completed: G,
+        _on_stream_finished: I,
     ) -> Result<GatewayTurnMutation, String>
     where
         F: Fn(BridgeEventEnvelope<Value>) + Send + 'static,
         H: Fn(GatewayTurnControlRequest) -> Result<Option<Value>, String> + Send + Sync + 'static,
         G: Fn(String) + Send + 'static,
+        I: Fn(String) + Send + Sync + 'static,
     {
         if !is_provider_thread_id(thread_id, ProviderKind::ClaudeCode) {
             return Err(format!("thread {thread_id} is not a Claude Code thread"));
@@ -3996,6 +3997,7 @@ mod tests {
                         let _ = event_tx.send(event);
                     },
                     |_| Ok(None),
+                    |_| {},
                     |_| {},
                 )
                 .expect("turn should start");

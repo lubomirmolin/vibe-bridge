@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:vibe_bridge/features/threads/application/thread_detail_controller.dart';
 import 'package:vibe_bridge/features/threads/application/thread_list_controller.dart';
 import 'package:vibe_bridge/features/threads/data/thread_detail_bridge_api.dart';
 import 'package:vibe_bridge/features/threads/data/thread_list_bridge_api.dart';
@@ -20,7 +19,7 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets(
-    'real bridge Codex thread creation settles and completes the first turn',
+    'real bridge Codex thread generates a non-placeholder title',
     (tester) async {
       final bridgeApiBaseUrl = _resolveBridgeApiBaseUrl();
       await _requireAndroidLoopbackDevice(bridgeApiBaseUrl);
@@ -65,9 +64,10 @@ void main() {
         timeout: const Duration(seconds: 12),
       );
 
+      final prompt = _buildTitleProbePrompt();
       await tester.enterText(
         find.byKey(const Key('turn-composer-input')),
-        _buildCodexProbePrompt(),
+        prompt,
       );
       await tester.pump();
       await tester.tap(find.byKey(const Key('turn-composer-submit')));
@@ -82,29 +82,42 @@ void main() {
         timeout: const Duration(seconds: 25),
       );
 
-      await _waitForThreadControllerToSettle(
-        tester,
-        bridgeApiBaseUrl: bridgeApiBaseUrl,
-        threadId: createdThreadId,
-      );
       await waitForCodexTurnCompletion(
         tester,
         bridgeApiBaseUrl: bridgeApiBaseUrl,
         threadId: createdThreadId,
         promptLabel: 'first',
-        expectedPrompt: _buildCodexProbePrompt(),
+        expectedPrompt: prompt,
         expectedUserPromptCount: 1,
       );
 
-      expect(
-        find.byKey(const Key('thread-detail-session-content')),
-        findsOneWidget,
+      final generatedTitle = await _waitForGeneratedThreadTitle(
+        tester: tester,
+        threadListApi: threadListApi,
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: createdThreadId,
       );
-      expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
+
+      await _pumpUntilThreadDetailTitle(
+        tester,
+        expectedTitle: generatedTitle,
+        timeout: const Duration(seconds: 30),
+      );
+
+      expect(generatedTitle.length, lessThanOrEqualTo(80));
+      expect(
+        generatedTitle.toLowerCase(),
+        anyOf(contains('titl'), contains('triage')),
+      );
+      expect(
+        generatedTitle.toLowerCase(),
+        anyOf(contains('mobile'), contains('triage'), contains('thread')),
+      );
 
       debugPrint(
-        'LIVE_CODEX_THREAD_CREATION_RESULT '
+        'LIVE_CODEX_TITLE_RESULT '
         'thread_id=$createdThreadId '
+        'title=$generatedTitle '
         'workspace=$workspacePath',
       );
     },
@@ -112,8 +125,8 @@ void main() {
   );
 }
 
-String _buildCodexProbePrompt() {
-  return 'Reply with the exact word READY. '
+String _buildTitleProbePrompt() {
+  return 'Explain why thread titles help mobile triage. '
       'Do not use tools, do not edit files, and do not ask for approval.';
 }
 
@@ -143,7 +156,7 @@ Future<void> _requireAndroidLoopbackDevice(String bridgeApiBaseUrl) async {
   if (!Platform.isAndroid) {
     fail(
       'This live bridge integration test only supports Android devices. '
-      'Run it with `flutter drive --driver=test_driver/integration_test.dart --target=integration_test/live_codex_thread_creation_test.dart -d <android-device-id>`.',
+      'Run it with `flutter drive --driver=test_driver/integration_test.dart --target=integration_test/live_codex_title_generation_test.dart -d <android-device-id>`.',
     );
   }
 
@@ -256,47 +269,129 @@ Future<String> _waitForSelectedThreadId(
   );
 }
 
-Future<void> _waitForThreadControllerToSettle(
-  WidgetTester tester, {
+Future<String> _waitForGeneratedThreadTitle({
+  required WidgetTester tester,
+  required HttpThreadListBridgeApi threadListApi,
   required String bridgeApiBaseUrl,
   required String threadId,
-  Duration timeout = const Duration(seconds: 30),
+  Duration timeout = const Duration(minutes: 2),
 }) async {
-  final args = ThreadDetailControllerArgs(
-    bridgeApiBaseUrl: bridgeApiBaseUrl,
-    threadId: threadId,
+  final deadline = DateTime.now().add(timeout);
+  String? lastRenderedTitle;
+
+  while (DateTime.now().isBefore(deadline)) {
+    await tester.pump(const Duration(milliseconds: 100));
+    final renderedTitle = _readRenderedThreadDetailTitle(tester);
+    if (renderedTitle != null) {
+      if (renderedTitle.isEmpty) {
+        fail(
+          'Thread detail title rendered an empty string while waiting for generated title for $threadId.',
+        );
+      }
+      lastRenderedTitle = renderedTitle;
+    }
+
+    final snapshot = await fetchThreadSnapshotJson(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+    );
+    final thread = snapshot['thread'];
+    if (thread is! Map<String, dynamic>) {
+      fail('Expected thread payload for $threadId, got $thread');
+    }
+
+    final rawStatus = thread['status'];
+    if (rawStatus == ThreadStatus.failed.wireValue) {
+      fail('Codex thread $threadId failed before generating a title.');
+    }
+    if (rawStatus == ThreadStatus.interrupted.wireValue) {
+      fail('Codex thread $threadId was interrupted before generating a title.');
+    }
+
+    if (snapshot['pending_user_input'] != null) {
+      fail(
+        'Codex thread $threadId unexpectedly requested approval during title generation.',
+      );
+    }
+
+    final snapshotTitle = (thread['title'] as String?)?.trim() ?? '';
+    final threads = await threadListApi.fetchThreads(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+    );
+    final matchingSummary = threads.where(
+      (thread) => thread.threadId == threadId,
+    );
+    final summaryTitle = matchingSummary.isEmpty
+        ? ''
+        : matchingSummary.first.title.trim();
+
+    if (!_isPlaceholderThreadTitle(snapshotTitle) &&
+        snapshotTitle == summaryTitle) {
+      return snapshotTitle;
+    }
+
+    await tester.pump(const Duration(milliseconds: 300));
+  }
+
+  fail(
+    'Timed out waiting for Codex to publish a generated title. '
+    'last_rendered_title=${lastRenderedTitle ?? '<missing>'}',
   );
-  final container = ProviderScope.containerOf(
-    tester.element(find.byType(MaterialApp)),
-  );
+}
+
+bool _isPlaceholderThreadTitle(String title) {
+  final normalized = title.trim().toLowerCase();
+  return normalized.isEmpty ||
+      normalized == 'untitled thread' ||
+      normalized == 'new thread' ||
+      normalized == 'fresh session';
+}
+
+Future<void> _pumpUntilThreadDetailTitle(
+  WidgetTester tester, {
+  required String expectedTitle,
+  Duration timeout = const Duration(seconds: 20),
+}) async {
   final deadline = DateTime.now().add(timeout);
 
   while (DateTime.now().isBefore(deadline)) {
-    final state = container.read(threadDetailControllerProvider(args));
-    if (!state.isLoading &&
-        state.hasThread &&
-        !state.isComposerMutationInFlight) {
+    await tester.pump(const Duration(milliseconds: 100));
+    final titleFinder = find.byKey(const Key('thread-detail-title'));
+    if (titleFinder.evaluate().isEmpty) {
+      continue;
+    }
+    final renderedTitle = tester.widget<Text>(titleFinder).data?.trim() ?? '';
+    if (renderedTitle == expectedTitle) {
       return;
     }
-    await tester.pump(const Duration(milliseconds: 200));
   }
 
-  final state = container.read(threadDetailControllerProvider(args));
-  fail(
-    'Timed out waiting for thread detail controller to settle for $threadId. '
-    'isLoading=${state.isLoading} '
-    'hasThread=${state.hasThread} '
-    'isComposerMutationInFlight=${state.isComposerMutationInFlight} '
-    'status=${state.thread?.status.wireValue}',
-  );
+  fail('Timed out waiting for thread detail title `$expectedTitle`.');
+}
+
+String? _readRenderedThreadDetailTitle(WidgetTester tester) {
+  final titleFinder = find.byKey(const Key('thread-detail-title'));
+  if (titleFinder.evaluate().isEmpty) {
+    return null;
+  }
+  return tester.widget<Text>(titleFinder).data?.trim() ?? '';
+}
+
+void _tryHideTestKeyboard(WidgetTester tester) {
+  try {
+    tester.testTextInput.hide();
+  } catch (_) {
+    // The integration harness may not have a registered fake keyboard.
+  }
 }
 
 Future<void> _pumpUntilFound(
   WidgetTester tester,
   Finder finder, {
-  Duration timeout = const Duration(seconds: 10),
+  Duration timeout = const Duration(seconds: 12),
 }) async {
   final deadline = DateTime.now().add(timeout);
+
   while (DateTime.now().isBefore(deadline)) {
     await tester.pump(const Duration(milliseconds: 100));
     if (finder.evaluate().isNotEmpty) {
@@ -305,13 +400,4 @@ Future<void> _pumpUntilFound(
   }
 
   fail('Timed out waiting for finder: $finder');
-}
-
-void _tryHideTestKeyboard(WidgetTester tester) {
-  final dynamic binding = tester.binding;
-  try {
-    binding.testTextInput.hide();
-  } catch (_) {
-    // Ignore keyboard teardown failures on emulator runs.
-  }
 }

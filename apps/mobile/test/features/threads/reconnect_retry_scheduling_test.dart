@@ -452,6 +452,112 @@ void main() {
   );
 
   test(
+    'thread-detail accepts newer completed detail when the live completion event is missed',
+    () async {
+      final listController = ThreadListController(
+        bridgeApi: ScriptedThreadListBridgeApi(
+          scriptedResults: [
+            _threadSummaries(
+              reconnectThreadStatus: ThreadStatus.idle,
+              reconnectUpdatedAt: '2026-03-18T09:30:00Z',
+            ),
+          ],
+        ),
+        cacheRepository: _newCacheRepository(),
+        liveStream: ScriptedThreadLiveStream(),
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+      );
+      addTearDown(listController.dispose);
+
+      final detailApi = ScriptedThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.idle,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:00:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Normalize event payloads',
+            ),
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.completed,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:05:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Patched tests cleanly.',
+            ),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+      );
+      final liveStream = ScriptedThreadLiveStream();
+
+      final detailController = ThreadDetailController(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: 'thread-123',
+        initialVisibleTimelineEntries: 20,
+        bridgeApi: detailApi,
+        liveStream: liveStream,
+        threadListController: listController,
+      );
+      addTearDown(detailController.dispose);
+
+      await _waitUntil(() => !detailController.state.isLoading);
+      await _waitUntil(() => liveStream.totalSubscriptions >= 1);
+
+      final submitted = await detailController.submitComposerInput(
+        'Please stream this fix live.',
+      );
+      expect(submitted, isTrue);
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-assistant-live',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:04:00Z',
+          payload: {
+            'type': 'agentMessage',
+            'role': 'assistant',
+            'text': 'Streaming the fix live.',
+          },
+        ),
+      );
+
+      await _waitUntil(
+        () =>
+            detailApi.detailFetchCount >= 2 &&
+            detailController.state.thread?.status == ThreadStatus.completed,
+      );
+
+      expect(detailController.state.thread?.status, ThreadStatus.completed);
+      final assistantBodies = detailController.state.items
+          .where((item) => item.type == ThreadActivityItemType.assistantOutput)
+          .map((item) => item.body)
+          .toList(growable: false);
+      expect(assistantBodies, ['Streaming the fix live.']);
+      expect(detailApi.timelineFetchCount, 1);
+    },
+  );
+
+  test(
     'thread-detail refreshes snapshot timeline after completion without meaningful live activity',
     () async {
       final listController = ThreadListController(
@@ -681,6 +787,322 @@ void main() {
     },
   );
 
+  test(
+    'thread-detail snapshot refresh fetches enough history to replace older malformed live assistant text',
+    () async {
+      final listController = ThreadListController(
+        bridgeApi: ScriptedThreadListBridgeApi(
+          scriptedResults: [
+            _threadSummaries(
+              reconnectThreadStatus: ThreadStatus.idle,
+              reconnectUpdatedAt: '2026-03-18T09:30:00Z',
+            ),
+          ],
+        ),
+        cacheRepository: _newCacheRepository(),
+        liveStream: ScriptedThreadLiveStream(),
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+      );
+      addTearDown(listController.dispose);
+
+      final timelineEntries = <ThreadTimelineEntryDto>[
+        _timelineEvent(
+          id: 'evt-assistant-review',
+          kind: BridgeEventKind.messageDelta,
+          summary:
+              'hero + badges + screenshot - 3-line value proposition - key features',
+          payload: {
+            'type': 'agentMessage',
+            'role': 'assistant',
+            'text':
+                'hero + badges + screenshot - 3-line value proposition - key features',
+          },
+          occurredAt: '2026-03-18T10:04:01Z',
+        ),
+        for (var index = 0; index < 25; index += 1)
+          _timelineEvent(
+            id: 'evt-filler-$index',
+            kind: BridgeEventKind.commandDelta,
+            summary: 'filler $index',
+            payload: {'type': 'command', 'output': 'filler $index'},
+            occurredAt:
+                '2026-03-18T10:${(5 + index).toString().padLeft(2, '0')}:00Z',
+          ),
+      ];
+
+      final detailApi = ScriptedThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.idle,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:00:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Normalize event payloads',
+            ),
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.completed,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:31:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Patched tests from snapshot replay.',
+            ),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[], timelineEntries],
+        },
+      );
+      final liveStream = ScriptedThreadLiveStream();
+
+      final detailController = ThreadDetailController(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: 'thread-123',
+        initialVisibleTimelineEntries: 20,
+        bridgeApi: detailApi,
+        liveStream: liveStream,
+        threadListController: listController,
+      );
+      addTearDown(detailController.dispose);
+
+      await _waitUntil(() => !detailController.state.isLoading);
+      await _waitUntil(() => liveStream.totalSubscriptions >= 1);
+
+      final submitted = await detailController.submitComposerInput(
+        'Please finish this turn.',
+      );
+      expect(submitted, isTrue);
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-assistant-review',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:04:01Z',
+          payload: {
+            'type': 'agentMessage',
+            'role': 'assistant',
+            'delta':
+                'hero + badges + screenshot-3-line value proposition- key features',
+            'replace': true,
+          },
+        ),
+      );
+
+      for (var index = 0; index < 19; index += 1) {
+        liveStream.emit(
+          BridgeEventEnvelope<Map<String, dynamic>>(
+            contractVersion: contractVersion,
+            eventId: 'evt-live-filler-$index',
+            threadId: 'thread-123',
+            kind: BridgeEventKind.commandDelta,
+            occurredAt:
+                '2026-03-18T10:${(5 + index).toString().padLeft(2, '0')}:00Z',
+            payload: {'type': 'command', 'output': 'live filler $index'},
+          ),
+        );
+      }
+
+      await _waitUntil(() => detailController.state.items.length == 20);
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-status-complete',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.threadStatusChanged,
+          occurredAt: '2026-03-18T10:30:00Z',
+          payload: {'status': 'completed', 'reason': 'upstream_notification'},
+        ),
+      );
+
+      await _waitUntil(() => detailApi.timelineFetchCount >= 2);
+      await _waitUntil(
+        () => detailController.state.items.any(
+          (item) =>
+              item.eventId == 'evt-assistant-review' &&
+              item.body ==
+                  'hero + badges + screenshot - 3-line value proposition - key features',
+        ),
+      );
+
+      expect(
+        detailController.state.items
+            .firstWhere((item) => item.eventId == 'evt-assistant-review')
+            .body,
+        'hero + badges + screenshot - 3-line value proposition - key features',
+      );
+    },
+  );
+
+  test(
+    'thread-detail keeps pending snapshot refresh after completed status even if trailing live deltas arrive',
+    () async {
+      final listController = ThreadListController(
+        bridgeApi: ScriptedThreadListBridgeApi(
+          scriptedResults: [
+            _threadSummaries(
+              reconnectThreadStatus: ThreadStatus.idle,
+              reconnectUpdatedAt: '2026-03-18T09:30:00Z',
+            ),
+          ],
+        ),
+        cacheRepository: _newCacheRepository(),
+        liveStream: ScriptedThreadLiveStream(),
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+      );
+      addTearDown(listController.dispose);
+
+      final detailApi = ScriptedThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.idle,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:00:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Normalize event payloads',
+            ),
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.completed,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:05:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Pair your phone in 5 minutes.',
+            ),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            <ThreadTimelineEntryDto>[],
+            <ThreadTimelineEntryDto>[
+              _timelineEvent(
+                id: 'evt-assistant-final',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Pair your phone in 5 minutes.',
+                payload: {
+                  'type': 'agentMessage',
+                  'role': 'assistant',
+                  'text': 'Pair your phone in 5 minutes.',
+                },
+                occurredAt: '2026-03-18T10:04:03Z',
+              ),
+            ],
+          ],
+        },
+      );
+      final liveStream = ScriptedThreadLiveStream();
+
+      final detailController = ThreadDetailController(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: 'thread-123',
+        initialVisibleTimelineEntries: 20,
+        bridgeApi: detailApi,
+        liveStream: liveStream,
+        threadListController: listController,
+      );
+      addTearDown(detailController.dispose);
+
+      await _waitUntil(() => !detailController.state.isLoading);
+      await _waitUntil(() => liveStream.totalSubscriptions >= 1);
+
+      final submitted = await detailController.submitComposerInput(
+        'Please finish this turn.',
+      );
+      expect(submitted, isTrue);
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-assistant-final',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:04:01Z',
+          payload: {
+            'type': 'agentMessage',
+            'role': 'assistant',
+            'delta': 'Pair your phone in5 minutes.',
+            'replace': true,
+          },
+        ),
+      );
+      await _waitUntil(() => detailController.state.items.isNotEmpty);
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-status-complete',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.threadStatusChanged,
+          occurredAt: '2026-03-18T10:04:02Z',
+          payload: {'status': 'completed', 'reason': 'upstream_notification'},
+        ),
+      );
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-assistant-final',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:04:03Z',
+          payload: {
+            'type': 'agentMessage',
+            'role': 'assistant',
+            'delta': '.',
+            'replace': false,
+          },
+        ),
+      );
+
+      await _waitUntil(() => detailApi.timelineFetchCount >= 2);
+      await _waitUntil(
+        () => detailController.state.items.any(
+          (item) =>
+              item.eventId == 'evt-assistant-final' &&
+              item.body == 'Pair your phone in 5 minutes.',
+        ),
+      );
+
+      expect(detailApi.timelineFetchCount, 2);
+      expect(
+        detailController.state.items
+            .firstWhere((item) => item.eventId == 'evt-assistant-final')
+            .body,
+        'Pair your phone in 5 minutes.',
+      );
+    },
+  );
+
   test('thread-detail ignores exact duplicate live assistant frames', () async {
     final listController = ThreadListController(
       bridgeApi: ScriptedThreadListBridgeApi(
@@ -761,6 +1183,165 @@ void main() {
       hasLength(1),
     );
   });
+
+  test(
+    'thread-detail replaces replayed live prompt and assistant items with canonical snapshot timeline',
+    () async {
+      final listController = ThreadListController(
+        bridgeApi: ScriptedThreadListBridgeApi(
+          scriptedResults: [
+            _threadSummaries(
+              reconnectThreadStatus: ThreadStatus.idle,
+              reconnectUpdatedAt: '2026-03-18T09:30:00Z',
+            ),
+          ],
+        ),
+        cacheRepository: _newCacheRepository(),
+        liveStream: ScriptedThreadLiveStream(),
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+      );
+      addTearDown(listController.dispose);
+
+      final detailApi = ScriptedThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.idle,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:00:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Normalize event payloads',
+            ),
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.completed,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:05:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Patched tests',
+            ),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            <ThreadTimelineEntryDto>[],
+            <ThreadTimelineEntryDto>[
+              _timelineEvent(
+                id: 'evt-user-canonical',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Ship the fix',
+                payload: {
+                  'type': 'userMessage',
+                  'role': 'user',
+                  'text': 'Ship the fix',
+                },
+                occurredAt: '2026-03-18T10:04:00Z',
+              ),
+              _timelineEvent(
+                id: 'evt-assistant-canonical',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Patched tests',
+                payload: {
+                  'type': 'agentMessage',
+                  'role': 'assistant',
+                  'text': 'Patched tests',
+                },
+                occurredAt: '2026-03-18T10:04:01Z',
+              ),
+            ],
+          ],
+        },
+      );
+      final liveStream = ScriptedThreadLiveStream();
+
+      final detailController = ThreadDetailController(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: 'thread-123',
+        initialVisibleTimelineEntries: 20,
+        bridgeApi: detailApi,
+        liveStream: liveStream,
+        threadListController: listController,
+      );
+      addTearDown(detailController.dispose);
+
+      await _waitUntil(() => !detailController.state.isLoading);
+      await _waitUntil(() => liveStream.totalSubscriptions >= 1);
+
+      final submitted = await detailController.submitComposerInput(
+        'Ship the fix',
+      );
+      expect(submitted, isTrue);
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-user-live',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:04:00Z',
+          payload: {
+            'type': 'userMessage',
+            'role': 'user',
+            'text': 'Ship the fix',
+          },
+        ),
+      );
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-assistant-live',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:04:01Z',
+          payload: {'type': 'agentMessage', 'role': 'assistant', 'text': 'Pat'},
+        ),
+      );
+
+      await _waitUntil(() => detailController.state.items.length == 2);
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-status-complete',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.threadStatusChanged,
+          occurredAt: '2026-03-18T10:04:02Z',
+          payload: {'status': 'completed', 'reason': 'upstream_notification'},
+        ),
+      );
+
+      await _waitUntil(() => detailApi.timelineFetchCount >= 2);
+      await _waitUntil(
+        () =>
+            detailController.state.items.length == 2 &&
+            detailController.state.items[0].eventId == 'evt-user-canonical' &&
+            detailController.state.items[1].eventId ==
+                'evt-assistant-canonical',
+      );
+
+      expect(
+        detailController.state.items.map((item) => item.eventId).toList(),
+        ['evt-user-canonical', 'evt-assistant-canonical'],
+      );
+      expect(detailController.state.items.map((item) => item.body).toList(), [
+        'Ship the fix',
+        'Patched tests',
+      ]);
+    },
+  );
 
   test(
     'thread-detail should not duplicate logically identical live and catch-up messages with different event ids',
@@ -904,6 +1485,131 @@ void main() {
       expect(promptBodies, ['Ship the fix']);
       expect(assistantBodies, ['Patched tests']);
       expect(detailController.state.items, hasLength(2));
+    },
+  );
+
+  test(
+    'thread-detail reconciles archived assistant text when live text only differs by dropped spaces',
+    () async {
+      final listController = ThreadListController(
+        bridgeApi: ScriptedThreadListBridgeApi(
+          scriptedResults: [
+            _threadSummaries(
+              reconnectThreadStatus: ThreadStatus.idle,
+              reconnectUpdatedAt: '2026-03-18T09:30:00Z',
+            ),
+          ],
+        ),
+        cacheRepository: _newCacheRepository(),
+        liveStream: ScriptedThreadLiveStream(),
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+      );
+      addTearDown(listController.dispose);
+
+      final detailApi = ScriptedThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.idle,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:00:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Normalize event payloads',
+            ),
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.running,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:04:05Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary:
+                  'Rewrite Quick Start around “pair your phone in 5 minutes.”',
+            ),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            <ThreadTimelineEntryDto>[],
+            <ThreadTimelineEntryDto>[
+              _timelineEvent(
+                id: 'evt-assistant-catchup',
+                kind: BridgeEventKind.messageDelta,
+                summary:
+                    '- Add 1-2 real product screenshots. Rewrite Quick Start around “pair your phone in 5 minutes.”',
+                payload: {
+                  'type': 'agentMessage',
+                  'role': 'assistant',
+                  'text':
+                      '- Add 1-2 real product screenshots. Rewrite Quick Start around “pair your phone in 5 minutes.”',
+                },
+                occurredAt: '2026-03-18T10:04:01Z',
+              ),
+            ],
+          ],
+        },
+      );
+      final liveStream = ScriptedThreadLiveStream();
+
+      final detailController = ThreadDetailController(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: 'thread-123',
+        initialVisibleTimelineEntries: 20,
+        bridgeApi: detailApi,
+        liveStream: liveStream,
+        threadListController: listController,
+      );
+      addTearDown(detailController.dispose);
+
+      await _waitUntil(() => !detailController.state.isLoading);
+      await _waitUntil(() => liveStream.totalSubscriptions >= 1);
+
+      final submitted = await detailController.submitComposerInput(
+        'Ship the README polish.',
+      );
+      expect(submitted, isTrue);
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-assistant-live',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:04:01Z',
+          payload: {
+            'type': 'agentMessage',
+            'role': 'assistant',
+            'text':
+                '- Add1-2 real product screenshots. Rewrite Quick Start around “pair your phone in5 minutes.”',
+          },
+        ),
+      );
+
+      await _waitUntil(() => detailController.state.items.length == 1);
+
+      await detailController.retryReconnectCatchUp();
+
+      final assistantBodies = detailController.state.items
+          .where((item) => item.type == ThreadActivityItemType.assistantOutput)
+          .map((item) => item.body)
+          .toList(growable: false);
+
+      expect(assistantBodies, [
+        '- Add 1-2 real product screenshots. Rewrite Quick Start around “pair your phone in 5 minutes.”',
+      ]);
+      expect(detailController.state.items, hasLength(1));
     },
   );
 
