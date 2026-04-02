@@ -494,11 +494,17 @@ fn summarize_live_payload(kind: BridgeEventKind, payload: &Value) -> String {
                     .unwrap_or_default()
             })
             .to_string(),
-        BridgeEventKind::ThreadStatusChanged => payload
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
+        BridgeEventKind::ThreadStatusChanged => {
+            if payload.get("reason").and_then(Value::as_str) == Some("turn_started") {
+                String::new()
+            } else {
+                payload
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            }
+        }
         BridgeEventKind::ApprovalRequested => payload
             .get("message")
             .and_then(Value::as_str)
@@ -1263,5 +1269,85 @@ mod tests {
             .expect("snapshot should exist");
         assert_eq!(snapshot.thread.status, ThreadStatus::Completed);
         assert_eq!(snapshot.thread.active_turn_id, None);
+    }
+
+    #[tokio::test]
+    async fn turn_started_status_event_keeps_last_turn_summary() {
+        let store = ProjectionStore::new();
+        store
+            .replace_summaries(vec![ThreadSummaryDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
+                title: "Thread".to_string(),
+                status: ThreadStatus::Idle,
+                workspace: "/tmp/a".to_string(),
+                repository: "repo-a".to_string(),
+                branch: "main".to_string(),
+                updated_at: "2026-03-21T10:00:00Z".to_string(),
+            }])
+            .await;
+        store
+            .put_snapshot(ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
+                    title: "Thread".to_string(),
+                    status: ThreadStatus::Idle,
+                    workspace: "/tmp/a".to_string(),
+                    repository: "repo-a".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-03-21T09:00:00Z".to_string(),
+                    updated_at: "2026-03-21T10:00:00Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "previous assistant reply".to_string(),
+                    active_turn_id: None,
+                },
+                entries: vec![],
+                approvals: vec![],
+                git_status: None,
+                pending_user_input: None,
+            })
+            .await;
+
+        store
+            .apply_live_event(&BridgeEventEnvelope {
+                contract_version: CONTRACT_VERSION.to_string(),
+                event_id: "evt-turn-started".to_string(),
+                thread_id: "thread-1".to_string(),
+                kind: BridgeEventKind::ThreadStatusChanged,
+                occurred_at: "2026-03-21T10:01:00Z".to_string(),
+                payload: json!({
+                    "status": "running",
+                    "reason": "turn_started",
+                    "model": "gpt-5-mini",
+                    "reasoning_effort": "medium",
+                    "turn_id": "turn-1",
+                }),
+                annotations: None,
+            })
+            .await;
+
+        let snapshot = store
+            .snapshot("thread-1")
+            .await
+            .expect("snapshot should exist");
+        assert_eq!(snapshot.thread.status, ThreadStatus::Running);
+        assert_eq!(
+            snapshot.thread.last_turn_summary,
+            "previous assistant reply"
+        );
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(
+            snapshot.entries[0].payload["model"].as_str(),
+            Some("gpt-5-mini")
+        );
     }
 }

@@ -61,6 +61,7 @@ struct BridgeAppStateInner {
     projections: ProjectionStore,
     codex_health: RwLock<ServiceHealthDto>,
     available_models: RwLock<Vec<ModelOptionDto>>,
+    bridge_turn_metadata: RwLock<HashMap<String, Vec<ThreadTimelineEntryDto>>>,
     active_turn_ids: RwLock<HashMap<String, String>>,
     active_turn_stream_threads: RwLock<HashSet<String>>,
     interrupted_threads: RwLock<HashSet<String>>,
@@ -234,6 +235,7 @@ impl BridgeAppState {
                     message: Some("codex bootstrap has not run yet".to_string()),
                 }),
                 available_models: RwLock::new(Vec::new()),
+                bridge_turn_metadata: RwLock::new(HashMap::new()),
                 active_turn_ids: RwLock::new(HashMap::new()),
                 active_turn_stream_threads: RwLock::new(HashSet::new()),
                 interrupted_threads: RwLock::new(HashSet::new()),
@@ -448,6 +450,7 @@ impl BridgeAppState {
 
         let mut snapshot = self.inner.gateway.fetch_thread_snapshot(thread_id).await?;
         snapshot.thread.access_mode = self.access_mode().await;
+        self.merge_bridge_turn_metadata(&mut snapshot).await;
         self.projections().put_snapshot(snapshot.clone()).await;
         self.request_notification_thread_resume(thread_id).await;
         Ok(snapshot)
@@ -465,6 +468,7 @@ impl BridgeAppState {
             .create_thread(provider, workspace, model)
             .await?;
         snapshot.thread.access_mode = self.access_mode().await;
+        self.merge_bridge_turn_metadata(&mut snapshot).await;
         let mut summaries = self.projections().list_summaries().await;
         let next_summary = thread_summary_from_snapshot(&snapshot);
         if let Some(index) = summaries
@@ -741,11 +745,70 @@ impl BridgeAppState {
         *self.inner.available_models.write().await = models;
     }
 
+    async fn record_bridge_turn_metadata(&self, event: &BridgeEventEnvelope<Value>) {
+        let mut metadata_by_thread = self.inner.bridge_turn_metadata.write().await;
+        let entries = metadata_by_thread
+            .entry(event.thread_id.clone())
+            .or_insert_with(Vec::new);
+        let next_entry = ThreadTimelineEntryDto {
+            event_id: event.event_id.clone(),
+            kind: event.kind,
+            occurred_at: event.occurred_at.clone(),
+            summary: String::new(),
+            payload: event.payload.clone(),
+            annotations: event.annotations.clone(),
+        };
+        if let Some(index) = entries
+            .iter()
+            .position(|existing| existing.event_id == next_entry.event_id)
+        {
+            entries[index] = next_entry;
+        } else {
+            entries.push(next_entry);
+        }
+        entries.sort_by(|left, right| {
+            left.occurred_at
+                .cmp(&right.occurred_at)
+                .then_with(|| left.event_id.cmp(&right.event_id))
+        });
+    }
+
+    async fn merge_bridge_turn_metadata(&self, snapshot: &mut ThreadSnapshotDto) {
+        let metadata_entries = self
+            .inner
+            .bridge_turn_metadata
+            .read()
+            .await
+            .get(&snapshot.thread.thread_id)
+            .cloned()
+            .unwrap_or_default();
+        if metadata_entries.is_empty() {
+            return;
+        }
+
+        for metadata_entry in metadata_entries {
+            if snapshot
+                .entries
+                .iter()
+                .any(|existing| existing.event_id == metadata_entry.event_id)
+            {
+                continue;
+            }
+            snapshot.entries.push(metadata_entry);
+        }
+        snapshot.entries.sort_by(|left, right| {
+            left.occurred_at
+                .cmp(&right.occurred_at)
+                .then_with(|| left.event_id.cmp(&right.event_id))
+        });
+    }
+
     async fn apply_external_snapshot_update(
         &self,
         mut snapshot: ThreadSnapshotDto,
         events: Vec<BridgeEventEnvelope<Value>>,
     ) {
+        self.merge_bridge_turn_metadata(&mut snapshot).await;
         if let Some(previous_snapshot) = self
             .projections()
             .snapshot(&snapshot.thread.thread_id)
@@ -1943,6 +2006,18 @@ impl BridgeAppState {
         self.projections()
             .mark_thread_running(thread_id, &occurred_at, result.response.turn_id.as_deref())
             .await;
+        let turn_started_event = build_turn_started_history_event(
+            thread_id,
+            &occurred_at,
+            result.response.turn_id.as_deref(),
+            model,
+            effort,
+        );
+        self.record_bridge_turn_metadata(&turn_started_event).await;
+        self.projections()
+            .apply_live_event(&turn_started_event)
+            .await;
+        self.event_hub().publish(turn_started_event);
         if !visible_prompt.is_empty() {
             let workspace = self
                 .projections()
@@ -3698,6 +3773,38 @@ fn thread_status_wire_value(status: ThreadStatus) -> &'static str {
         ThreadStatus::Completed => "completed",
         ThreadStatus::Interrupted => "interrupted",
         ThreadStatus::Failed => "failed",
+    }
+}
+
+fn build_turn_started_history_event(
+    thread_id: &str,
+    occurred_at: &str,
+    turn_id: Option<&str>,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> BridgeEventEnvelope<Value> {
+    let mut payload = json!({
+        "status": "running",
+        "reason": "turn_started",
+    });
+    if let Some(turn_id) = turn_id.filter(|value| !value.trim().is_empty()) {
+        payload["turn_id"] = Value::String(turn_id.to_string());
+    }
+    if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
+        payload["model"] = Value::String(model.to_string());
+    }
+    if let Some(effort) = effort.filter(|value| !value.trim().is_empty()) {
+        payload["reasoning_effort"] = Value::String(effort.to_string());
+    }
+
+    BridgeEventEnvelope {
+        contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+        event_id: format!("{thread_id}-status-turn-started-{occurred_at}"),
+        thread_id: thread_id.to_string(),
+        kind: BridgeEventKind::ThreadStatusChanged,
+        occurred_at: occurred_at.to_string(),
+        payload,
+        annotations: None,
     }
 }
 
