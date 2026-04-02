@@ -8,6 +8,10 @@ class _ChatMessageCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isUser = item.type == ThreadActivityItemType.userPrompt;
+    final isSending =
+        item.localMessageState == ThreadActivityLocalMessageState.sending;
+    final isFailed =
+        item.localMessageState == ThreadActivityLocalMessageState.failed;
 
     return _SwipeToRevealMessageTimestamp(
       eventId: item.eventId,
@@ -41,6 +45,31 @@ class _ChatMessageCard extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
+                  if (isSending || isFailed) ...[
+                    const SizedBox(width: 10),
+                    if (isSending)
+                      PhosphorIcon(
+                        PhosphorIcons.circleNotch(),
+                        color: AppTheme.emerald,
+                        size: 13,
+                      )
+                    else
+                      PhosphorIcon(
+                        PhosphorIcons.warningCircle(),
+                        color: AppTheme.rose,
+                        size: 13,
+                      ),
+                    const SizedBox(width: 6),
+                    Text(
+                      isSending ? 'Sending' : 'Send failed',
+                      key: Key('thread-message-local-state-${item.eventId}'),
+                      style: GoogleFonts.jetBrainsMono(
+                        color: isSending ? AppTheme.emerald : AppTheme.rose,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
                 ],
               ),
               const SizedBox(height: 6),
@@ -776,10 +805,7 @@ class _InlineQuoteParser {
       flushText();
       final quotedText = text.substring(index + 1, closingIndex);
       spans.add(
-        TextSpan(
-          text: quotedText,
-          style: _buildInlineCodeStyle(textStyle),
-        ),
+        TextSpan(text: quotedText, style: _buildInlineCodeStyle(textStyle)),
       );
       index = closingIndex + 1;
     }

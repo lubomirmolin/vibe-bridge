@@ -541,7 +541,7 @@ void main() {
       await tester.pump();
       await tester.tap(find.byKey(const Key('turn-composer-submit')));
       await tester.pump();
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 50));
 
       expect(detailApi.createThreadCallCount, 1);
       expect(
@@ -749,7 +749,8 @@ void main() {
     await tester.showKeyboard(composerInput);
     await tester.enterText(composerInput, 'Send this from the keyboard.');
     await tester.testTextInput.receiveAction(TextInputAction.send);
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
 
     expect(detailApi.startTurnPromptsByThreadId['thread-456'], [
       'Send this from the keyboard.',
@@ -853,7 +854,8 @@ void main() {
       );
       await tester.pump();
       await tester.tap(find.byKey(const Key('turn-composer-submit')));
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
@@ -2934,13 +2936,237 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     );
     await tester.pump();
     await tester.tap(find.byKey(const Key('turn-composer-submit')));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
 
     expect(detailApi.startTurnPromptsByThreadId['thread-456'], [
       'Draft release notes for today\'s bridge changes.',
     ]);
     expect(find.text('Running'), findsOneWidget);
   });
+
+  testWidgets(
+    'idle composer shows a local sending bubble until the canonical user event arrives',
+    (tester) async {
+      final startTurnCompleter = Completer<TurnMutationResult>();
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-456': [_thread456Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-456': [<ThreadTimelineEntryDto>[]],
+        },
+        startTurnScriptByThreadId: {
+          'thread-456': [startTurnCompleter.future],
+        },
+      );
+      final liveStream = FakeThreadLiveStream();
+      const prompt = 'Compare the latest rollout against the local bridge.';
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-456',
+        liveStream: liveStream,
+      );
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ThreadDetailPage)),
+      );
+      const args = ThreadDetailControllerArgs(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: 'thread-456',
+        initialVisibleTimelineEntries: 20,
+      );
+
+      await tester.enterText(
+        find.byKey(const Key('turn-composer-input')),
+        prompt,
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('turn-composer-submit')));
+      await tester.pump();
+
+      expect(
+        container
+            .read(threadDetailControllerProvider(args))
+            .pendingLocalUserPrompts
+            .length,
+        1,
+      );
+      expect(find.text('Sending'), findsOneWidget);
+
+      startTurnCompleter.complete(
+        _turnMutationResult(
+          threadId: 'thread-456',
+          operation: 'turn_start',
+          status: ThreadStatus.running,
+          message: 'Turn started and streaming is active',
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-canonical-user-prompt',
+          threadId: 'thread-456',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T09:31:00Z',
+          payload: {
+            'type': 'userMessage',
+            'role': 'user',
+            'source': 'user',
+            'delta': prompt,
+            'replace': true,
+          },
+        ),
+      );
+      await tester.pump();
+
+      final reconciledState = container.read(
+        threadDetailControllerProvider(args),
+      );
+      expect(reconciledState.pendingLocalUserPrompts, isEmpty);
+      expect(
+        reconciledState.items
+            .where(
+              (item) =>
+                  item.type == ThreadActivityItemType.userPrompt &&
+                  item.body == prompt,
+            )
+            .length,
+        1,
+      );
+      expect(find.text('Sending'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'idle composer drops the local sending bubble after snapshot catch-up if the live user event is missed',
+    (tester) async {
+      final startTurnCompleter = Completer<TurnMutationResult>();
+      final refreshedDetail = ThreadDetailDto(
+        contractVersion: contractVersion,
+        threadId: 'thread-456',
+        title: 'Investigate reconnect dedup',
+        status: ThreadStatus.completed,
+        workspace: '/workspace/codex-runtime-tools',
+        repository: 'codex-runtime-tools',
+        branch: 'develop',
+        createdAt: '2026-03-18T08:45:00Z',
+        updatedAt: '2026-03-18T09:31:01Z',
+        source: 'cli',
+        accessMode: AccessMode.controlWithApprovals,
+        lastTurnSummary: 'Caught up from snapshot refresh',
+      );
+      const prompt = 'Summarize the bridge race in 3 bullet points.';
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-456': [_thread456Detail(), refreshedDetail],
+        },
+        timelineScriptByThreadId: {
+          'thread-456': [
+            <ThreadTimelineEntryDto>[],
+            <ThreadTimelineEntryDto>[
+              _timelineEvent(
+                id: 'evt-canonical-user-prompt',
+                kind: BridgeEventKind.messageDelta,
+                summary: prompt,
+                payload: <String, dynamic>{
+                  'type': 'userMessage',
+                  'role': 'user',
+                  'source': 'user',
+                  'delta': prompt,
+                  'replace': true,
+                },
+                occurredAt: '2026-03-18T09:31:00Z',
+              ),
+            ],
+          ],
+        },
+        startTurnScriptByThreadId: {
+          'thread-456': [startTurnCompleter.future],
+        },
+      );
+      final liveStream = FakeThreadLiveStream();
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-456',
+        liveStream: liveStream,
+      );
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ThreadDetailPage)),
+      );
+      const args = ThreadDetailControllerArgs(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: 'thread-456',
+        initialVisibleTimelineEntries: 20,
+      );
+
+      await tester.enterText(
+        find.byKey(const Key('turn-composer-input')),
+        prompt,
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('turn-composer-submit')));
+      await tester.pump();
+
+      expect(
+        container
+            .read(threadDetailControllerProvider(args))
+            .pendingLocalUserPrompts
+            .length,
+        1,
+      );
+      expect(find.text('Sending'), findsOneWidget);
+
+      startTurnCompleter.complete(
+        _turnMutationResult(
+          threadId: 'thread-456',
+          operation: 'turn_start',
+          status: ThreadStatus.running,
+          message: 'Turn started and streaming is active',
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-status-completed',
+          threadId: 'thread-456',
+          kind: BridgeEventKind.threadStatusChanged,
+          occurredAt: '2026-03-18T09:31:01Z',
+          payload: <String, dynamic>{
+            'status': 'completed',
+            'reason': 'task_complete',
+          },
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
+
+      final refreshedState = container.read(
+        threadDetailControllerProvider(args),
+      );
+      expect(refreshedState.pendingLocalUserPrompts, isEmpty);
+      expect(
+        refreshedState.items
+            .where(
+              (item) =>
+                  item.type == ThreadActivityItemType.userPrompt &&
+                  item.body == prompt,
+            )
+            .length,
+        1,
+      );
+      expect(find.text('Sending'), findsNothing);
+    },
+  );
 
   testWidgets(
     'pending approval prompts submit during active turn and clear on resolved event',
@@ -3357,12 +3583,14 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     );
     await tester.pump();
     await tester.tap(find.byKey(const Key('turn-composer-submit')));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
 
     expect(find.text('bridge rejected prompt payload.'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('turn-composer-submit')));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
 
     expect(find.text('bridge rejected prompt payload.'), findsNothing);
     expect(find.text('Running'), findsOneWidget);
@@ -6457,6 +6685,9 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     final scriptedResult = _nextResult(_startTurnScriptByThreadId, threadId);
     if (scriptedResult is TurnMutationResult) {
       return scriptedResult;
+    }
+    if (scriptedResult is Future<TurnMutationResult>) {
+      return await scriptedResult;
     }
     if (scriptedResult is ThreadTurnBridgeException) {
       throw scriptedResult;

@@ -70,7 +70,6 @@ struct BridgeAppStateInner {
     resumed_notification_threads: RwLock<HashSet<String>>,
     inflight_thread_title_generations: RwLock<HashSet<String>>,
     pending_user_message_images: RwLock<HashMap<String, Vec<String>>>,
-    pending_synthetic_user_messages: RwLock<HashMap<String, String>>,
     access_mode: RwLock<AccessMode>,
     security_events: RwLock<Vec<SecurityEventRecordDto>>,
     codex_usage_client: RwLock<CodexUsageClient>,
@@ -244,7 +243,6 @@ impl BridgeAppState {
                 resumed_notification_threads: RwLock::new(HashSet::new()),
                 inflight_thread_title_generations: RwLock::new(HashSet::new()),
                 pending_user_message_images: RwLock::new(HashMap::new()),
-                pending_synthetic_user_messages: RwLock::new(HashMap::new()),
                 access_mode: RwLock::new(AccessMode::ControlWithApprovals),
                 security_events: RwLock::new(Vec::new()),
                 codex_usage_client: RwLock::new(CodexUsageClient::default()),
@@ -1058,11 +1056,6 @@ impl BridgeAppState {
             .write()
             .await
             .remove(thread_id);
-        self.inner
-            .pending_synthetic_user_messages
-            .write()
-            .await
-            .remove(thread_id);
     }
 
     async fn clear_interrupted_thread_state(&self, thread_id: &str) {
@@ -1415,12 +1408,6 @@ impl BridgeAppState {
                                             .await,
                                     );
                                 if should_suppress_for_bridge_owned_turn {
-                                    return;
-                                }
-                                if state
-                                    .should_suppress_duplicate_synthetic_user_message(&normalized)
-                                    .await
-                                {
                                     return;
                                 }
                                 if should_clear_transient_thread_state(&normalized) {
@@ -1823,20 +1810,6 @@ impl BridgeAppState {
                 .insert(thread_id.to_string(), normalized_images.clone());
         }
         let visible_prompt = visible_prompt.trim();
-        if !visible_prompt.is_empty() {
-            self.publish_synthetic_user_message(thread_id, visible_prompt, &normalized_images)
-                .await;
-            self.inner
-                .pending_synthetic_user_messages
-                .write()
-                .await
-                .insert(thread_id.to_string(), visible_prompt.to_string());
-            self.inner
-                .pending_user_message_images
-                .write()
-                .await
-                .remove(thread_id);
-        }
         let state = self.clone();
         let handle = tokio::runtime::Handle::current();
         let completion_handle = handle.clone();
@@ -1897,14 +1870,6 @@ impl BridgeAppState {
                         .rewrite_interrupted_thread_status_event(&mut normalized)
                         .await;
                 });
-                let state = state.clone();
-                if handle.block_on(async {
-                    state
-                        .should_suppress_duplicate_synthetic_user_message(&normalized)
-                        .await
-                }) {
-                    return;
-                }
                 handle.block_on(async move {
                     if should_clear_transient_thread_state(&normalized) {
                         state
@@ -1962,11 +1927,6 @@ impl BridgeAppState {
         if result.turn_id.is_none() {
             self.inner
                 .pending_user_message_images
-                .write()
-                .await
-                .remove(thread_id);
-            self.inner
-                .pending_synthetic_user_messages
                 .write()
                 .await
                 .remove(thread_id);
@@ -2271,39 +2231,6 @@ impl BridgeAppState {
         }
     }
 
-    async fn publish_synthetic_user_message(
-        &self,
-        thread_id: &str,
-        message: &str,
-        images: &[String],
-    ) {
-        let image_payload = images
-            .iter()
-            .map(|image| image.trim())
-            .filter(|image| !image.is_empty())
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
-        let occurred_at = Utc::now().to_rfc3339();
-        let event = BridgeEventEnvelope {
-            contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
-            event_id: format!("{thread_id}-user-{}", occurred_at),
-            thread_id: thread_id.to_string(),
-            kind: BridgeEventKind::MessageDelta,
-            occurred_at,
-            payload: json!({
-                "id": format!("{thread_id}-user-message"),
-                "type": "message",
-                "role": "user",
-                "delta": message,
-                "replace": true,
-                "images": image_payload,
-            }),
-            annotations: None,
-        };
-        self.projections().apply_live_event(&event).await;
-        self.event_hub().publish(event);
-    }
-
     async fn clear_pending_user_input(&self, thread_id: &str) {
         self.inner
             .awaiting_plan_question_prompts
@@ -2411,30 +2338,6 @@ impl BridgeAppState {
         };
         self.projections().apply_live_event(&event).await;
         self.event_hub().publish(event);
-    }
-
-    async fn should_suppress_duplicate_synthetic_user_message(
-        &self,
-        event: &BridgeEventEnvelope<Value>,
-    ) -> bool {
-        let mut pending = self.inner.pending_synthetic_user_messages.write().await;
-        let Some(expected_text) = pending.get(&event.thread_id).map(String::as_str) else {
-            return false;
-        };
-
-        if !is_duplicate_synthetic_user_message(expected_text, event) {
-            return false;
-        }
-
-        pending.remove(&event.thread_id);
-        drop(pending);
-
-        self.inner
-            .pending_user_message_images
-            .write()
-            .await
-            .remove(&event.thread_id);
-        true
     }
 
     async fn merge_pending_user_message_images(&self, event: &mut BridgeEventEnvelope<Value>) {
@@ -4103,27 +4006,6 @@ fn payload_primary_text(payload: &Value) -> Option<&str> {
         .filter(|text| !text.is_empty())
 }
 
-fn is_duplicate_synthetic_user_message(
-    expected_text: &str,
-    event: &BridgeEventEnvelope<Value>,
-) -> bool {
-    if event.kind != BridgeEventKind::MessageDelta {
-        return false;
-    }
-    if event.payload.get("role").and_then(Value::as_str) != Some("user") {
-        return false;
-    }
-
-    let Some(live_text) = payload_primary_text(&event.payload).map(str::trim) else {
-        return false;
-    };
-    if live_text.is_empty() {
-        return false;
-    }
-
-    expected_text.trim() == live_text
-}
-
 fn is_hidden_message(message: &str) -> bool {
     let trimmed = message.trim();
     trimmed.starts_with("# AGENTS.md instructions for ")
@@ -4251,8 +4133,8 @@ mod tests {
         build_codex_approval_response, build_desktop_ipc_snapshot_update,
         build_pending_provider_approval_from_codex, build_provider_approval_questionnaire,
         drain_notification_control_messages, ensure_running_status_for_desktop_patch_update,
-        is_duplicate_synthetic_user_message, parse_provider_approval_selection,
-        payload_contains_hidden_message, preserve_bootstrap_status_for_cached_desktop_snapshot,
+        parse_provider_approval_selection, payload_contains_hidden_message,
+        preserve_bootstrap_status_for_cached_desktop_snapshot,
         preserve_running_status_for_bridge_owned_desktop_update,
         resume_notification_thread_until_rollout_exists, resume_notification_threads,
         should_clear_transient_thread_state, should_defer_bridge_owned_turn_finalization,
@@ -4299,64 +4181,6 @@ mod tests {
             pairing_route,
             speech,
         )
-    }
-
-    #[test]
-    fn duplicate_synthetic_user_message_matches_trimmed_user_delta() {
-        let event = BridgeEventEnvelope {
-            contract_version: CONTRACT_VERSION.to_string(),
-            event_id: "evt-1".to_string(),
-            thread_id: "thread-1".to_string(),
-            kind: BridgeEventKind::MessageDelta,
-            occurred_at: "2026-03-22T10:00:00Z".to_string(),
-            payload: json!({
-                "role": "user",
-                "delta": "hello",
-                "replace": true,
-            }),
-            annotations: None,
-        };
-
-        assert!(is_duplicate_synthetic_user_message(" hello ", &event));
-    }
-
-    #[test]
-    fn duplicate_synthetic_user_message_rejects_non_user_or_mismatched_text() {
-        let assistant_event = BridgeEventEnvelope {
-            contract_version: CONTRACT_VERSION.to_string(),
-            event_id: "evt-2".to_string(),
-            thread_id: "thread-1".to_string(),
-            kind: BridgeEventKind::MessageDelta,
-            occurred_at: "2026-03-22T10:00:00Z".to_string(),
-            payload: json!({
-                "role": "assistant",
-                "delta": "hello",
-                "replace": true,
-            }),
-            annotations: None,
-        };
-        assert!(!is_duplicate_synthetic_user_message(
-            "hello",
-            &assistant_event
-        ));
-
-        let mismatched_text_event = BridgeEventEnvelope {
-            contract_version: CONTRACT_VERSION.to_string(),
-            event_id: "evt-3".to_string(),
-            thread_id: "thread-1".to_string(),
-            kind: BridgeEventKind::MessageDelta,
-            occurred_at: "2026-03-22T10:00:00Z".to_string(),
-            payload: json!({
-                "role": "user",
-                "delta": "hello world",
-                "replace": true,
-            }),
-            annotations: None,
-        };
-        assert!(!is_duplicate_synthetic_user_message(
-            "hello",
-            &mismatched_text_event
-        ));
     }
 
     #[test]

@@ -53,6 +53,8 @@ class ThreadActivityPresentation {
 
 enum ThreadPlanStepStatus { pending, inProgress, completed, unknown }
 
+enum ThreadActivityLocalMessageState { none, sending, failed }
+
 class ThreadPlanStep {
   const ThreadPlanStep({required this.step, required this.status});
 
@@ -140,6 +142,8 @@ class ThreadActivityItem {
     this.parsedCommandOutput,
     this.plan,
     this.startsNewVisualGroup = false,
+    this.localMessageState = ThreadActivityLocalMessageState.none,
+    this.localErrorMessage,
   });
 
   final String eventId;
@@ -154,6 +158,8 @@ class ThreadActivityItem {
   final ParsedCommandOutput? parsedCommandOutput;
   final ThreadPlanSnapshot? plan;
   final bool startsNewVisualGroup;
+  final ThreadActivityLocalMessageState localMessageState;
+  final String? localErrorMessage;
 
   factory ThreadActivityItem.fromTimelineEntry(ThreadTimelineEntryDto entry) {
     return ThreadActivityItem._fromEvent(
@@ -217,7 +223,40 @@ class ThreadActivityItem {
     );
   }
 
-  ThreadActivityItem copyWith({bool? startsNewVisualGroup}) {
+  factory ThreadActivityItem.localUserPrompt({
+    required String eventId,
+    required String occurredAt,
+    required String body,
+    List<String> messageImageUrls = const <String>[],
+    ThreadActivityLocalMessageState localMessageState =
+        ThreadActivityLocalMessageState.sending,
+    String? localErrorMessage,
+  }) {
+    return ThreadActivityItem(
+      eventId: eventId,
+      kind: BridgeEventKind.messageDelta,
+      type: ThreadActivityItemType.userPrompt,
+      occurredAt: occurredAt,
+      title: _titleForType(ThreadActivityItemType.userPrompt),
+      body: body,
+      payload: <String, dynamic>{
+        'type': 'message',
+        'role': 'user',
+        'text': body,
+        'images': messageImageUrls,
+      },
+      messageImageUrls: messageImageUrls,
+      localMessageState: localMessageState,
+      localErrorMessage: localErrorMessage,
+    );
+  }
+
+  ThreadActivityItem copyWith({
+    bool? startsNewVisualGroup,
+    ThreadActivityLocalMessageState? localMessageState,
+    String? localErrorMessage,
+    bool clearLocalErrorMessage = false,
+  }) {
     return ThreadActivityItem(
       eventId: eventId,
       kind: kind,
@@ -231,6 +270,10 @@ class ThreadActivityItem {
       parsedCommandOutput: parsedCommandOutput,
       plan: plan,
       startsNewVisualGroup: startsNewVisualGroup ?? this.startsNewVisualGroup,
+      localMessageState: localMessageState ?? this.localMessageState,
+      localErrorMessage: clearLocalErrorMessage
+          ? null
+          : (localErrorMessage ?? this.localErrorMessage),
     );
   }
 }

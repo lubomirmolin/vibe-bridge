@@ -182,6 +182,7 @@ class ThreadDetailState {
     this.liveConnectionState = LiveConnectionState.connected,
     this.thread,
     this.items = const <ThreadActivityItem>[],
+    this.pendingLocalUserPrompts = const <ThreadActivityItem>[],
     this.pendingUserInput,
     this.errorMessage,
     this.streamErrorMessage,
@@ -202,6 +203,7 @@ class ThreadDetailState {
   final LiveConnectionState liveConnectionState;
   final ThreadDetailDto? thread;
   final List<ThreadActivityItem> items;
+  final List<ThreadActivityItem> pendingLocalUserPrompts;
   final PendingUserInputDto? pendingUserInput;
   final String? errorMessage;
   final String? streamErrorMessage;
@@ -238,9 +240,10 @@ class ThreadDetailState {
   bool get isTurnActive => thread?.status == ThreadStatus.running;
 
   List<ThreadActivityItem> get conversationItems =>
-      List<ThreadActivityItem>.unmodifiable(
-        items.where(_isConversationTimelineItem),
-      );
+      List<ThreadActivityItem>.unmodifiable(<ThreadActivityItem>[
+        ...items.where(_isConversationTimelineItem),
+        ...pendingLocalUserPrompts,
+      ]);
 
   int get hiddenHistoryCount => 0;
 
@@ -273,6 +276,7 @@ class ThreadDetailState {
     ThreadDetailDto? thread,
     bool clearThread = false,
     List<ThreadActivityItem>? items,
+    List<ThreadActivityItem>? pendingLocalUserPrompts,
     PendingUserInputDto? pendingUserInput,
     bool clearPendingUserInput = false,
     String? errorMessage,
@@ -353,6 +357,8 @@ class ThreadDetailState {
       liveConnectionState: liveConnectionState ?? this.liveConnectionState,
       thread: clearThread ? null : (thread ?? this.thread),
       items: items ?? this.items,
+      pendingLocalUserPrompts:
+          pendingLocalUserPrompts ?? this.pendingLocalUserPrompts,
       pendingUserInput: clearPendingUserInput
           ? null
           : (pendingUserInput ?? this.pendingUserInput),
@@ -544,6 +550,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   /// (re-)loading the thread or catching up after a reconnect.
   ThreadDetailState _resetTransientState(ThreadDetailState base) {
     return base.copyWith(
+      pendingLocalUserPrompts: const <ThreadActivityItem>[],
       clearPendingUserInput: true,
       clearErrorMessage: true,
       clearStreamErrorMessage: true,
@@ -885,6 +892,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       state = state.copyWith(
         thread: scopedDetail,
         items: mergedItems,
+        pendingLocalUserPrompts: _reconcilePendingLocalUserPrompts(mergedItems),
         pendingUserInput: scopedPage.pendingUserInput,
         liveConnectionState: LiveConnectionState.connected,
         clearErrorMessage: true,
@@ -1400,7 +1408,11 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       );
     }
 
-    state = state.copyWith(items: nextItems, clearStreamErrorMessage: true);
+    state = state.copyWith(
+      items: nextItems,
+      pendingLocalUserPrompts: _reconcilePendingLocalUserPrompts(nextItems),
+      clearStreamErrorMessage: true,
+    );
     if (shouldReloadTimeline) {
       _scheduleThreadSnapshotRefresh(delay: const Duration(milliseconds: 200));
     } else {
@@ -1608,6 +1620,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       state = state.copyWith(
         thread: nextThread,
         items: items,
+        pendingLocalUserPrompts: _reconcilePendingLocalUserPrompts(items),
         pendingUserInput: scopedPage.pendingUserInput,
         hasMoreBefore: scopedPage.hasMoreBefore,
         nextBefore: scopedPage.nextBefore,
@@ -1805,6 +1818,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       isComposerMutationInFlight: true,
       clearTurnControlError: true,
     );
+    final localPendingPromptId = state.isTurnActive
+        ? null
+        : _appendPendingLocalUserPrompt(input: input, images: normalizedImages);
 
     try {
       final mutationResult = state.isTurnActive
@@ -1831,12 +1847,14 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       );
       return true;
     } on ThreadTurnBridgeException catch (error) {
+      _removePendingLocalUserPrompt(localPendingPromptId);
       state = state.copyWith(
         isComposerMutationInFlight: false,
         turnControlErrorMessage: error.message,
       );
       return false;
     } catch (_) {
+      _removePendingLocalUserPrompt(localPendingPromptId);
       state = state.copyWith(
         isComposerMutationInFlight: false,
         turnControlErrorMessage:
@@ -2425,6 +2443,109 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     _lastActiveTurnSignalAt = null;
     _activeTurnSawMeaningfulLiveActivity = false;
     _activeTurnNeedsSnapshotCatchUp = false;
+  }
+
+  String? _appendPendingLocalUserPrompt({
+    required String input,
+    required List<String> images,
+  }) {
+    if (input.isEmpty && images.isEmpty) {
+      return null;
+    }
+
+    final occurredAt = DateTime.now().toUtc().toIso8601String();
+    final localEventId = 'local-user-${DateTime.now().microsecondsSinceEpoch}';
+    final pendingItem = ThreadActivityItem.localUserPrompt(
+      eventId: localEventId,
+      occurredAt: occurredAt,
+      body: input,
+      messageImageUrls: images,
+    );
+
+    state = state.copyWith(
+      pendingLocalUserPrompts: List<ThreadActivityItem>.unmodifiable(
+        <ThreadActivityItem>[...state.pendingLocalUserPrompts, pendingItem],
+      ),
+    );
+    return localEventId;
+  }
+
+  void _removePendingLocalUserPrompt(String? localEventId) {
+    if (localEventId == null) {
+      return;
+    }
+
+    state = state.copyWith(
+      pendingLocalUserPrompts: List<ThreadActivityItem>.unmodifiable(
+        state.pendingLocalUserPrompts
+            .where((item) => item.eventId != localEventId)
+            .toList(growable: false),
+      ),
+    );
+  }
+
+  List<ThreadActivityItem> _reconcilePendingLocalUserPrompts(
+    List<ThreadActivityItem> canonicalItems,
+  ) {
+    final pendingItems = state.pendingLocalUserPrompts;
+    if (pendingItems.isEmpty) {
+      return pendingItems;
+    }
+
+    final canonicalUserPrompts = canonicalItems
+        .where((item) => item.type == ThreadActivityItemType.userPrompt)
+        .toList(growable: false);
+    if (canonicalUserPrompts.isEmpty) {
+      return pendingItems;
+    }
+
+    final remaining = <ThreadActivityItem>[];
+    var searchStart = 0;
+    for (final pendingItem in pendingItems) {
+      final matchIndex = _findCanonicalPendingPromptMatchIndex(
+        canonicalUserPrompts: canonicalUserPrompts,
+        pendingItem: pendingItem,
+        searchStart: searchStart,
+      );
+      if (matchIndex >= 0) {
+        searchStart = matchIndex + 1;
+        continue;
+      }
+      remaining.add(pendingItem);
+    }
+
+    return List<ThreadActivityItem>.unmodifiable(remaining);
+  }
+
+  int _findCanonicalPendingPromptMatchIndex({
+    required List<ThreadActivityItem> canonicalUserPrompts,
+    required ThreadActivityItem pendingItem,
+    required int searchStart,
+  }) {
+    final normalizedPendingBody = _normalizeActivityBody(pendingItem.body);
+    final pendingImages = pendingItem.messageImageUrls.toSet();
+
+    for (
+      var index = searchStart;
+      index < canonicalUserPrompts.length;
+      index += 1
+    ) {
+      final candidate = canonicalUserPrompts[index];
+      final normalizedCandidateBody = _normalizeActivityBody(candidate.body);
+      if (normalizedPendingBody != normalizedCandidateBody) {
+        continue;
+      }
+
+      final candidateImages = candidate.messageImageUrls.toSet();
+      if (pendingImages.isNotEmpty &&
+          candidateImages.isNotEmpty &&
+          !setEquals(pendingImages, candidateImages)) {
+        continue;
+      }
+      return index;
+    }
+
+    return -1;
   }
 
   void _recordMeaningfulLiveActivity(ThreadActivityItem item) {
