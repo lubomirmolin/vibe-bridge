@@ -110,6 +110,60 @@ fn codex_rpc_timeline_maps_tool_calls_to_command_and_file_change_events() {
 }
 
 #[test]
+fn codex_rpc_timeline_maps_web_search_items_to_command_events() {
+    let timeline = super::map_codex_thread_to_timeline_events(&CodexThread {
+        id: "thread-123".to_string(),
+        name: Some("Inspect RPC timeline".to_string()),
+        preview: Some("Preview".to_string()),
+        status: CodexThreadStatus {
+            kind: "active".to_string(),
+        },
+        cwd: "/Users/test/workspace".to_string(),
+        git_info: None,
+        created_at: 1,
+        updated_at: 2,
+        source: json!("cli"),
+        turns: vec![CodexTurn {
+            id: "turn-123".to_string(),
+            items: vec![
+                json!({
+                    "id":"web-1",
+                    "type":"webSearch",
+                    "action":{
+                        "type":"search",
+                        "query":"GitHub R2Explorer README",
+                        "queries":["GitHub R2Explorer README"]
+                    }
+                }),
+                json!({
+                    "id":"web-2",
+                    "type":"webSearch",
+                    "action":{
+                        "type":"open_page",
+                        "url":"https://github.com/G4brym/R2-Explorer"
+                    }
+                }),
+            ],
+        }],
+    });
+
+    assert_eq!(timeline.len(), 2);
+    assert_eq!(timeline[0].event_type, "command_output_delta");
+    assert_eq!(timeline[0].data["command"], "web_search");
+    assert_eq!(timeline[0].data["action"], "search");
+    assert_eq!(
+        timeline[0].data["output"],
+        "search: GitHub R2Explorer README"
+    );
+    assert_eq!(timeline[1].event_type, "command_output_delta");
+    assert_eq!(timeline[1].data["action"], "open_page");
+    assert_eq!(
+        timeline[1].data["output"],
+        "open_page: https://github.com/G4brym/R2-Explorer"
+    );
+}
+
+#[test]
 fn codex_rpc_timeline_prefers_item_timestamps_and_turn_fallback_over_thread_updated_at() {
     let timeline = super::map_codex_thread_to_timeline_events(&CodexThread {
         id: "thread-123".to_string(),

@@ -1932,6 +1932,30 @@ fn map_archived_session_event(
                         data,
                     })
                 }
+                "web_search_call" | "webSearch" => {
+                    let arguments = payload
+                        .get("action")
+                        .cloned()
+                        .unwrap_or_else(|| payload.get("query").cloned().unwrap_or(Value::Null));
+                    let summary = summarize_archived_web_search_action(payload);
+                    Some(UpstreamTimelineEvent {
+                        id: format!("{thread_id}-archive-{sequence}"),
+                        event_type: "command_output_delta".to_string(),
+                        happened_at: timestamp.to_string(),
+                        summary_text: "Called web_search".to_string(),
+                        data: json!({
+                            "command": "web_search",
+                            "action": payload
+                                .get("action")
+                                .and_then(Value::as_object)
+                                .and_then(|value| value.get("type"))
+                                .and_then(Value::as_str)
+                                .unwrap_or_default(),
+                            "arguments": arguments,
+                            "output": summary,
+                        }),
+                    })
+                }
                 "message" => {
                     let role = payload
                         .get("role")
@@ -2067,6 +2091,54 @@ fn normalize_archived_update_plan_payload(input: Option<&Value>) -> Option<Value
     }
 
     Some(payload)
+}
+
+fn summarize_archived_web_search_action(payload: &Value) -> String {
+    let Some(action) = payload.get("action").and_then(Value::as_object) else {
+        return payload
+            .get("query")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+    };
+
+    match action
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+    {
+        "search" => action
+            .get("query")
+            .and_then(Value::as_str)
+            .map(|query| format!("search: {query}"))
+            .unwrap_or_else(|| "search".to_string()),
+        "open_page" => action
+            .get("url")
+            .and_then(Value::as_str)
+            .map(|url| format!("open_page: {url}"))
+            .unwrap_or_else(|| "open_page".to_string()),
+        "find_in_page" => {
+            let query = action
+                .get("query")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let url = action
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            match (query.is_empty(), url.is_empty()) {
+                (false, false) => format!("find_in_page: {query} @ {url}"),
+                (false, true) => format!("find_in_page: {query}"),
+                (true, false) => format!("find_in_page: {url}"),
+                (true, true) => "find_in_page".to_string(),
+            }
+        }
+        _ => payload
+            .get("query")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    }
 }
 
 fn render_archived_update_plan_text(

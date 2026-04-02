@@ -334,6 +334,34 @@ fn codex_notification_normalizer_maps_custom_tool_output_deltas() {
 }
 
 #[test]
+fn codex_notification_normalizer_maps_web_search_items_to_command_events() {
+    let mut normalizer = CodexNotificationNormalizer::default();
+
+    let event = normalizer
+        .normalize(
+            "thread/realtime/itemAdded",
+            &json!({
+                "threadId": "thread-123",
+                "item": {
+                    "id": "web-1",
+                    "type": "webSearch",
+                    "action": {
+                        "type": "search",
+                        "query": "GitHub R2Explorer README",
+                        "queries": ["GitHub R2Explorer README"]
+                    }
+                }
+            }),
+        )
+        .expect("web search should produce a command event");
+
+    assert_eq!(event.kind, BridgeEventKind::CommandDelta);
+    assert_eq!(event.payload["command"], "web_search");
+    assert_eq!(event.payload["action"], "search");
+    assert_eq!(event.payload["output"], "search: GitHub R2Explorer README");
+}
+
+#[test]
 fn codex_notification_normalizer_keeps_exploration_annotations_on_command_output_deltas() {
     let mut normalizer = CodexNotificationNormalizer::default();
 

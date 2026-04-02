@@ -185,6 +185,88 @@ fn archived_custom_tool_file_changes_map_to_file_change_events() {
 }
 
 #[test]
+fn archived_web_search_calls_map_to_command_events() {
+    let codex_home = unique_test_codex_home();
+    let sessions_directory = codex_home.join("sessions/2026/03/19");
+    fs::create_dir_all(&sessions_directory).expect("test sessions directory should exist");
+    fs::write(
+        codex_home.join("session_index.jsonl"),
+        r#"{"id":"thread-archive-web-search","thread_name":"Web search fallback","updated_at":"2026-03-19T10:00:00Z"}"#,
+    )
+    .expect("session index should be writable");
+
+    let session_path =
+        sessions_directory.join("rollout-2026-03-19T10-00-00-thread-archive-web-search.jsonl");
+    let entries = vec![
+        json!({
+            "timestamp":"2026-03-19T09:55:00Z",
+            "type":"session_meta",
+            "payload":{
+                "id":"thread-archive-web-search",
+                "timestamp":"2026-03-19T09:55:00Z",
+                "cwd":"/Users/test/workspace",
+                "source":"cli",
+                "git":{"branch":"main","repository_url":"git@github.com:example/project.git"}
+            }
+        }),
+        json!({
+            "timestamp":"2026-03-19T09:56:00Z",
+            "type":"response_item",
+            "payload":{
+                "type":"web_search_call",
+                "status":"completed",
+                "action":{
+                    "type":"search",
+                    "query":"GitHub R2Explorer README",
+                    "queries":["GitHub R2Explorer README"]
+                }
+            }
+        }),
+        json!({
+            "timestamp":"2026-03-19T09:56:02Z",
+            "type":"response_item",
+            "payload":{
+                "type":"web_search_call",
+                "status":"completed",
+                "action":{
+                    "type":"open_page",
+                    "url":"https://github.com/G4brym/R2-Explorer"
+                }
+            }
+        }),
+    ];
+    let content = entries
+        .into_iter()
+        .map(|entry| entry.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(session_path, format!("{content}\n")).expect("session log should be writable");
+
+    let (_, timeline) = super::load_thread_snapshot_from_codex_archive(&codex_home)
+        .expect("archive fallback should load");
+
+    let thread_timeline = timeline
+        .get(&codex_thread_id("thread-archive-web-search"))
+        .expect("timeline should exist for archived thread");
+    assert_eq!(thread_timeline.len(), 2);
+    assert_eq!(thread_timeline[0].event_type, "command_output_delta");
+    assert_eq!(thread_timeline[0].data["command"], "web_search");
+    assert_eq!(thread_timeline[0].data["action"], "search");
+    assert_eq!(
+        thread_timeline[0].data["output"],
+        "search: GitHub R2Explorer README"
+    );
+    assert_eq!(thread_timeline[1].event_type, "command_output_delta");
+    assert_eq!(thread_timeline[1].data["action"], "open_page");
+    assert_eq!(
+        thread_timeline[1].data["output"],
+        "open_page: https://github.com/G4brym/R2-Explorer"
+    );
+
+    let _ = fs::remove_dir_all(codex_home);
+}
+
+#[test]
 fn archived_delete_file_patch_resolves_to_deleted_unified_diff() {
     let codex_home = unique_test_codex_home();
     let workspace_directory = codex_home.join("workspace");

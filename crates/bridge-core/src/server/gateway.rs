@@ -2899,6 +2899,10 @@ fn normalize_codex_item_payload(item: &Value) -> Option<(BridgeEventKind, Value)
             BridgeEventKind::FileChange,
             normalize_file_change_item(item),
         )),
+        "webSearch" => Some((
+            BridgeEventKind::CommandDelta,
+            normalize_web_search_item(item),
+        )),
         "functionCall" | "customToolCall" => normalize_codex_tool_invocation_item(item),
         "functionCallOutput" | "customToolCallOutput" => normalize_codex_tool_output_item(item),
         _ => None,
@@ -2911,6 +2915,7 @@ fn canonicalize_codex_item_type(item_type: &str) -> &str {
         "function_call_output" => "functionCallOutput",
         "custom_tool_call" => "customToolCall",
         "custom_tool_call_output" => "customToolCallOutput",
+        "web_search_call" => "webSearch",
         other => other,
     }
 }
@@ -3140,6 +3145,78 @@ fn normalize_command_item(item: &Value) -> Value {
         "cmd": item.get("cmd").and_then(Value::as_str),
         "workdir": item.get("cwd").and_then(Value::as_str),
     })
+}
+
+fn normalize_web_search_item(item: &Value) -> Value {
+    let action = item.get("action").cloned().unwrap_or(Value::Null);
+
+    serde_json::json!({
+        "id": item.get("id").and_then(Value::as_str).unwrap_or_default(),
+        "type": "command",
+        "command": "web_search",
+        "action": item
+            .get("action")
+            .and_then(Value::as_object)
+            .and_then(|value| value.get("type"))
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        "arguments": if action.is_null() {
+            item.get("query").cloned().unwrap_or(Value::Null)
+        } else {
+            action
+        },
+        "output": summarize_web_search_action(item),
+        "cmd": Value::Null,
+        "workdir": Value::Null,
+    })
+}
+
+fn summarize_web_search_action(item: &Value) -> String {
+    let Some(action) = item.get("action").and_then(Value::as_object) else {
+        return item
+            .get("query")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+    };
+
+    match action
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+    {
+        "search" => action
+            .get("query")
+            .and_then(Value::as_str)
+            .map(|query| format!("search: {query}"))
+            .unwrap_or_else(|| "search".to_string()),
+        "open_page" => action
+            .get("url")
+            .and_then(Value::as_str)
+            .map(|url| format!("open_page: {url}"))
+            .unwrap_or_else(|| "open_page".to_string()),
+        "find_in_page" => {
+            let query = action
+                .get("query")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let url = action
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            match (query.is_empty(), url.is_empty()) {
+                (false, false) => format!("find_in_page: {query} @ {url}"),
+                (false, true) => format!("find_in_page: {query}"),
+                (true, false) => format!("find_in_page: {url}"),
+                (true, true) => "find_in_page".to_string(),
+            }
+        }
+        _ => item
+            .get("query")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    }
 }
 
 fn normalize_file_change_item(item: &Value) -> Value {
@@ -3562,6 +3639,26 @@ mod tests {
             payload["text"].as_str(),
             Some("1 out of 2 tasks completed\n1. Inspect bridge payload\n2. Add Flutter card")
         );
+    }
+
+    #[test]
+    fn web_search_item_normalizes_to_command_delta() {
+        let item = json!({
+            "id": "web-1",
+            "type": "webSearch",
+            "action": {
+                "type": "search",
+                "query": "GitHub R2Explorer README",
+                "queries": ["GitHub R2Explorer README"]
+            }
+        });
+
+        let (kind, payload) =
+            normalize_codex_item_payload(&item).expect("web search should normalize");
+        assert_eq!(kind, BridgeEventKind::CommandDelta);
+        assert_eq!(payload["command"], "web_search");
+        assert_eq!(payload["action"], "search");
+        assert_eq!(payload["output"], "search: GitHub R2Explorer README");
     }
 
     #[test]
