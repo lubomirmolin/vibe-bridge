@@ -4276,9 +4276,10 @@ mod tests {
 
     use serde_json::{Value, json};
     use shared_contracts::{
-        AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ProviderKind,
-        ThreadClientKind, ThreadDetailDto, ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto,
-        ThreadTimelineEntryDto,
+        AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, PendingUserInputDto,
+        ProviderKind, ThreadClientKind, ThreadDetailDto, ThreadSnapshotDto, ThreadStatus,
+        ThreadSummaryDto, ThreadTimelineEntryDto, UserInputAnswerDto, UserInputOptionDto,
+        UserInputQuestionDto,
     };
 
     use crate::pairing::PairingSessionService;
@@ -4362,6 +4363,52 @@ mod tests {
             "Commit",
             &super::build_hidden_commit_prompt(),
         ));
+        assert!(super::should_synthesize_visible_user_prompt(
+            "Plan quick-action coverage",
+            &super::build_hidden_plan_question_prompt("Plan quick-action coverage"),
+        ));
+        let questionnaire = PendingUserInputDto {
+            request_id: "plan-1".to_string(),
+            title: "Clarify".to_string(),
+            detail: Some("Choose a shape".to_string()),
+            questions: vec![UserInputQuestionDto {
+                question_id: "scope".to_string(),
+                prompt: "Scope?".to_string(),
+                options: vec![
+                    UserInputOptionDto {
+                        option_id: "a".to_string(),
+                        label: "A".to_string(),
+                        description: String::new(),
+                        is_recommended: true,
+                    },
+                    UserInputOptionDto {
+                        option_id: "b".to_string(),
+                        label: "B".to_string(),
+                        description: String::new(),
+                        is_recommended: false,
+                    },
+                    UserInputOptionDto {
+                        option_id: "c".to_string(),
+                        label: "C".to_string(),
+                        description: String::new(),
+                        is_recommended: false,
+                    },
+                ],
+            }],
+        };
+        let answers = vec![UserInputAnswerDto {
+            question_id: "scope".to_string(),
+            option_id: "a".to_string(),
+        }];
+        assert!(super::should_synthesize_visible_user_prompt(
+            "Plan clarification\n- Scope?: A",
+            &super::build_hidden_plan_followup_prompt(
+                "Plan quick-action coverage",
+                &questionnaire,
+                &answers,
+                Some("Keep it short"),
+            ),
+        ));
         assert!(!super::should_synthesize_visible_user_prompt(
             "Commit", "Commit",
         ));
@@ -4431,6 +4478,98 @@ mod tests {
         assert_eq!(snapshot.entries.len(), 1);
         assert_eq!(snapshot.entries[0].event_id, "turn-1-visible-user-prompt");
         assert_eq!(snapshot.entries[0].payload["text"], "Commit");
+    }
+
+    #[tokio::test]
+    async fn bridge_turn_metadata_does_not_duplicate_existing_synthetic_visible_user_message() {
+        let state = test_bridge_app_state().await;
+        let event = super::build_visible_user_message_event(
+            "codex:thread-1",
+            "2026-04-03T08:00:00Z",
+            Some("turn-1"),
+            "Commit",
+        );
+
+        state.record_bridge_turn_metadata(&event).await;
+
+        let mut snapshot = ThreadSnapshotDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: ThreadDetailDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "codex:thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: ProviderKind::Codex,
+                client: ThreadClientKind::Cli,
+                title: "Thread".to_string(),
+                status: ThreadStatus::Idle,
+                workspace: "/repo".to_string(),
+                repository: "repo".to_string(),
+                branch: "main".to_string(),
+                created_at: "2026-04-03T08:00:00Z".to_string(),
+                updated_at: "2026-04-03T08:00:00Z".to_string(),
+                source: "cli".to_string(),
+                access_mode: AccessMode::ControlWithApprovals,
+                last_turn_summary: String::new(),
+                active_turn_id: None,
+            },
+            entries: vec![ThreadTimelineEntryDto {
+                event_id: "turn-1-visible-user-prompt".to_string(),
+                kind: BridgeEventKind::MessageDelta,
+                occurred_at: "2026-04-03T08:00:00Z".to_string(),
+                summary: "Commit".to_string(),
+                payload: json!({
+                    "type": "userMessage",
+                    "role": "user",
+                    "text": "Commit",
+                }),
+                annotations: None,
+            }],
+            approvals: Vec::new(),
+            git_status: None,
+            pending_user_input: None,
+        };
+
+        state.merge_bridge_turn_metadata(&mut snapshot).await;
+
+        assert_eq!(snapshot.entries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn pending_images_attach_to_synthetic_visible_user_message() {
+        let state = test_bridge_app_state().await;
+        state
+            .inner
+            .pending_user_message_images
+            .write()
+            .await
+            .insert(
+                "codex:thread-1".to_string(),
+                vec![
+                    "https://example.test/a.png".to_string(),
+                    "https://example.test/b.png".to_string(),
+                ],
+            );
+        let mut event = super::build_visible_user_message_event(
+            "codex:thread-1",
+            "2026-04-03T08:00:00Z",
+            Some("turn-1"),
+            "Commit",
+        );
+
+        state.merge_pending_user_message_images(&mut event).await;
+
+        assert_eq!(
+            event.payload["images"],
+            json!(["https://example.test/a.png", "https://example.test/b.png"])
+        );
+        assert!(
+            !state
+                .inner
+                .pending_user_message_images
+                .read()
+                .await
+                .contains_key("codex:thread-1")
+        );
     }
 
     #[test]
