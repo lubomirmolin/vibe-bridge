@@ -40,6 +40,7 @@ pub mod codex_ipc;
 pub mod codex_runtime;
 pub mod codex_transport;
 pub(crate) mod incremental_text;
+pub mod legacy;
 pub mod logging;
 pub mod pairing;
 pub mod persistence;
