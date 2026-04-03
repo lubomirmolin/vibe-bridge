@@ -2018,6 +2018,22 @@ impl BridgeAppState {
             .apply_live_event(&turn_started_event)
             .await;
         self.event_hub().publish(turn_started_event);
+        if should_synthesize_visible_user_prompt(visible_prompt, upstream_prompt) {
+            let mut visible_prompt_event = build_visible_user_message_event(
+                thread_id,
+                &occurred_at,
+                result.response.turn_id.as_deref(),
+                visible_prompt,
+            );
+            self.merge_pending_user_message_images(&mut visible_prompt_event)
+                .await;
+            self.record_bridge_turn_metadata(&visible_prompt_event)
+                .await;
+            self.projections()
+                .apply_live_event(&visible_prompt_event)
+                .await;
+            self.event_hub().publish(visible_prompt_event);
+        }
         if !visible_prompt.is_empty() {
             let workspace = self
                 .projections()
@@ -3808,6 +3824,42 @@ fn build_turn_started_history_event(
     }
 }
 
+fn should_synthesize_visible_user_prompt(visible_prompt: &str, upstream_prompt: &str) -> bool {
+    !visible_prompt.trim().is_empty() && is_hidden_message(upstream_prompt)
+}
+
+fn build_visible_user_message_event(
+    thread_id: &str,
+    occurred_at: &str,
+    turn_id: Option<&str>,
+    visible_prompt: &str,
+) -> BridgeEventEnvelope<Value> {
+    let prompt = visible_prompt.trim();
+    let payload = json!({
+        "type": "userMessage",
+        "role": "user",
+        "text": prompt,
+        "content": [{
+            "text": prompt,
+        }],
+    });
+
+    let event_id = match turn_id.filter(|value| !value.trim().is_empty()) {
+        Some(turn_id) => format!("{turn_id}-visible-user-prompt"),
+        None => format!("{thread_id}-visible-user-prompt-{occurred_at}"),
+    };
+
+    BridgeEventEnvelope {
+        contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+        event_id,
+        thread_id: thread_id.to_string(),
+        kind: BridgeEventKind::MessageDelta,
+        occurred_at: occurred_at.to_string(),
+        payload,
+        annotations: None,
+    }
+}
+
 fn should_publish_compacted_event(event: &BridgeEventEnvelope<Value>) -> bool {
     match event.kind {
         BridgeEventKind::MessageDelta => {
@@ -4224,8 +4276,9 @@ mod tests {
 
     use serde_json::{Value, json};
     use shared_contracts::{
-        BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ThreadDetailDto, ThreadSnapshotDto,
-        ThreadStatus, ThreadSummaryDto, ThreadTimelineEntryDto,
+        AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ProviderKind,
+        ThreadClientKind, ThreadDetailDto, ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto,
+        ThreadTimelineEntryDto,
     };
 
     use crate::pairing::PairingSessionService;
@@ -4301,6 +4354,83 @@ mod tests {
         assert!(!payload_contains_hidden_message(&json!({
             "text": "Plan how to cover the critical mobile flows."
         })));
+    }
+
+    #[test]
+    fn hidden_upstream_prompts_synthesize_visible_user_messages() {
+        assert!(super::should_synthesize_visible_user_prompt(
+            "Commit",
+            &super::build_hidden_commit_prompt(),
+        ));
+        assert!(!super::should_synthesize_visible_user_prompt(
+            "Commit", "Commit",
+        ));
+        assert!(!super::should_synthesize_visible_user_prompt(
+            "",
+            &super::build_hidden_commit_prompt(),
+        ));
+    }
+
+    #[test]
+    fn visible_user_message_event_uses_user_message_payload() {
+        let event = super::build_visible_user_message_event(
+            "codex:thread-1",
+            "2026-04-03T08:00:00Z",
+            Some("turn-1"),
+            "Commit",
+        );
+
+        assert_eq!(event.kind, BridgeEventKind::MessageDelta);
+        assert_eq!(event.event_id, "turn-1-visible-user-prompt");
+        assert_eq!(event.payload["type"], "userMessage");
+        assert_eq!(event.payload["role"], "user");
+        assert_eq!(event.payload["text"], "Commit");
+        assert_eq!(event.payload["content"][0]["text"], "Commit");
+    }
+
+    #[tokio::test]
+    async fn bridge_turn_metadata_merges_synthetic_visible_user_messages() {
+        let state = test_bridge_app_state().await;
+        let event = super::build_visible_user_message_event(
+            "codex:thread-1",
+            "2026-04-03T08:00:00Z",
+            Some("turn-1"),
+            "Commit",
+        );
+
+        state.record_bridge_turn_metadata(&event).await;
+
+        let mut snapshot = ThreadSnapshotDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: ThreadDetailDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "codex:thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: ProviderKind::Codex,
+                client: ThreadClientKind::Cli,
+                title: "Thread".to_string(),
+                status: ThreadStatus::Idle,
+                workspace: "/repo".to_string(),
+                repository: "repo".to_string(),
+                branch: "main".to_string(),
+                created_at: "2026-04-03T08:00:00Z".to_string(),
+                updated_at: "2026-04-03T08:00:00Z".to_string(),
+                source: "cli".to_string(),
+                access_mode: AccessMode::ControlWithApprovals,
+                last_turn_summary: String::new(),
+                active_turn_id: None,
+            },
+            entries: Vec::new(),
+            approvals: Vec::new(),
+            git_status: None,
+            pending_user_input: None,
+        };
+
+        state.merge_bridge_turn_metadata(&mut snapshot).await;
+
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.entries[0].event_id, "turn-1-visible-user-prompt");
+        assert_eq!(snapshot.entries[0].payload["text"], "Commit");
     }
 
     #[test]
