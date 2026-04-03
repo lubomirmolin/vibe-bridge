@@ -345,6 +345,11 @@ String _resolveBridgeApiBaseUrl() {
 }
 
 String _resolveWorkspacePath() {
+  const isolated = String.fromEnvironment('LIVE_CODEX_QUICK_ACTION_WORKSPACE');
+  if (isolated.isNotEmpty) {
+    return isolated;
+  }
+
   const configured = String.fromEnvironment(
     'LIVE_CODEX_THREAD_CREATION_WORKSPACE',
   );
