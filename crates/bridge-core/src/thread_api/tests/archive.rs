@@ -446,6 +446,58 @@ fn archived_sessions_keep_visible_user_messages_when_event_msg_is_missing() {
 }
 
 #[test]
+fn archived_sessions_preserve_repeated_identical_assistant_messages_across_turns() {
+    let codex_home = unique_test_codex_home();
+    let sessions_directory = codex_home.join("sessions/2026/03/19");
+    fs::create_dir_all(&sessions_directory).expect("test sessions directory should exist");
+    fs::write(
+        codex_home.join("session_index.jsonl"),
+        r#"{"id":"thread-archive-repeat","thread_name":"Repeat assistant text","updated_at":"2026-03-19T10:00:00Z"}"#,
+    )
+    .expect("session index should be writable");
+    fs::write(
+        sessions_directory.join("rollout-2026-03-19T10-00-00-thread-archive-repeat.jsonl"),
+        concat!(
+            r#"{"timestamp":"2026-03-19T09:55:00Z","type":"session_meta","payload":{"id":"thread-archive-repeat","timestamp":"2026-03-19T09:55:00Z","cwd":"/Users/test/workspace","source":"cli","git":{"branch":"main","repository_url":"git@github.com:example/project.git"}}}"#,
+            "\n",
+            r#"{"timestamp":"2026-03-19T09:56:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Commit"}]}}"#,
+            "\n",
+            r#"{"timestamp":"2026-03-19T09:56:01Z","type":"event_msg","payload":{"type":"agent_message","message":"No commit was created."}}"#,
+            "\n",
+            r#"{"timestamp":"2026-03-19T09:56:02Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"No commit was created."}]}}"#,
+            "\n",
+            r#"{"timestamp":"2026-03-19T09:56:03Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Commit"}]}}"#,
+            "\n",
+            r#"{"timestamp":"2026-03-19T09:56:04Z","type":"event_msg","payload":{"type":"agent_message","message":"No commit was created."}}"#,
+            "\n",
+            r#"{"timestamp":"2026-03-19T09:56:05Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"No commit was created."}]}}"#,
+            "\n"
+        ),
+    )
+    .expect("session log should be writable");
+
+    let (_, timeline) = super::load_thread_snapshot_from_codex_archive(&codex_home)
+        .expect("archive fallback should load");
+
+    let thread_timeline = timeline
+        .get(&codex_thread_id("thread-archive-repeat"))
+        .expect("timeline should exist for archived thread");
+
+    let assistant_messages = thread_timeline
+        .iter()
+        .filter(|event| {
+            event.event_type == "agent_message_delta"
+                && event.data.get("role").and_then(Value::as_str) == Some("assistant")
+        })
+        .count();
+
+    assert_eq!(thread_timeline.len(), 4);
+    assert_eq!(assistant_messages, 2);
+
+    let _ = fs::remove_dir_all(codex_home);
+}
+
+#[test]
 fn archive_loader_can_fetch_requested_thread_outside_latest_archive_window() {
     let codex_home = unique_test_codex_home();
     let sessions_directory = codex_home.join("sessions/2026/03/19");

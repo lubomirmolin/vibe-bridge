@@ -2087,6 +2087,23 @@ impl BridgeAppState {
         effort: Option<&str>,
     ) -> Result<TurnMutationAcceptedDto, String> {
         let free_text = free_text.map(str::trim).filter(|value| !value.is_empty());
+        if self
+            .inner
+            .pending_user_inputs
+            .read()
+            .await
+            .get(thread_id)
+            .is_none()
+            && let Some(reconstructed) = self
+                .reconstruct_plan_questionnaire_from_snapshot(thread_id, request_id)
+                .await
+        {
+            self.inner
+                .pending_user_inputs
+                .write()
+                .await
+                .insert(thread_id.to_string(), reconstructed);
+        }
         let session = {
             let mut pending = self.inner.pending_user_inputs.write().await;
             let Some(existing_request_id) = pending.get(thread_id).map(|session| match session {
@@ -2198,6 +2215,37 @@ impl BridgeAppState {
                 })
             }
         }
+    }
+
+    async fn reconstruct_plan_questionnaire_from_snapshot(
+        &self,
+        thread_id: &str,
+        request_id: &str,
+    ) -> Option<PendingUserInputSession> {
+        let snapshot = match self.projections().snapshot(thread_id).await {
+            Some(snapshot) => snapshot,
+            None => self.ensure_snapshot(thread_id).await.ok()?,
+        };
+        let questionnaire = snapshot.pending_user_input?;
+        if questionnaire.request_id != request_id
+            || looks_like_provider_approval_questionnaire(&questionnaire)
+        {
+            return None;
+        }
+
+        let original_prompt = snapshot
+            .entries
+            .iter()
+            .rev()
+            .filter(|entry| entry.kind == BridgeEventKind::MessageDelta)
+            .filter(|entry| entry.payload.get("role").and_then(Value::as_str) == Some("user"))
+            .filter_map(|entry| extract_text_from_payload(&entry.payload))
+            .find(|text| !is_hidden_message(text))?;
+
+        Some(PendingUserInputSession::PlanQuestionnaire {
+            questionnaire,
+            original_prompt,
+        })
     }
 
     async fn handle_turn_control_request(
@@ -3343,6 +3391,20 @@ fn parse_provider_approval_selection(
         USER_INPUT_OPTION_DENY => Some(ProviderApprovalSelection::Deny),
         _ => None,
     }
+}
+
+fn looks_like_provider_approval_questionnaire(questionnaire: &PendingUserInputDto) -> bool {
+    questionnaire.questions.len() == 1
+        && questionnaire.questions[0].question_id == "approval_decision"
+        && questionnaire.questions[0]
+            .options
+            .iter()
+            .map(|option| option.option_id.as_str())
+            .eq([
+                USER_INPUT_OPTION_ALLOW_ONCE,
+                USER_INPUT_OPTION_ALLOW_SESSION,
+                USER_INPUT_OPTION_DENY,
+            ])
 }
 
 fn build_provider_approval_questionnaire(
@@ -4570,6 +4632,131 @@ mod tests {
                 .await
                 .contains_key("codex:thread-1")
         );
+    }
+
+    #[test]
+    fn provider_approval_questionnaires_are_not_reconstructed_as_plan_sessions() {
+        let questionnaire = PendingUserInputDto {
+            request_id: "approval-1".to_string(),
+            title: "Approve command execution?".to_string(),
+            detail: None,
+            questions: vec![UserInputQuestionDto {
+                question_id: "approval_decision".to_string(),
+                prompt: "Choose an action".to_string(),
+                options: vec![
+                    UserInputOptionDto {
+                        option_id: "allow_once".to_string(),
+                        label: "Allow once".to_string(),
+                        description: String::new(),
+                        is_recommended: true,
+                    },
+                    UserInputOptionDto {
+                        option_id: "allow_for_session".to_string(),
+                        label: "Allow for session".to_string(),
+                        description: String::new(),
+                        is_recommended: false,
+                    },
+                    UserInputOptionDto {
+                        option_id: "deny".to_string(),
+                        label: "Deny".to_string(),
+                        description: String::new(),
+                        is_recommended: false,
+                    },
+                ],
+            }],
+        };
+
+        assert!(super::looks_like_provider_approval_questionnaire(
+            &questionnaire
+        ));
+    }
+
+    #[tokio::test]
+    async fn plan_questionnaire_can_be_reconstructed_from_snapshot() {
+        let state = test_bridge_app_state().await;
+        let questionnaire = PendingUserInputDto {
+            request_id: "plan-request-1".to_string(),
+            title: "Clarify the implementation".to_string(),
+            detail: Some("Choose a shape".to_string()),
+            questions: vec![UserInputQuestionDto {
+                question_id: "scope".to_string(),
+                prompt: "Scope?".to_string(),
+                options: vec![
+                    UserInputOptionDto {
+                        option_id: "bridge".to_string(),
+                        label: "Bridge".to_string(),
+                        description: String::new(),
+                        is_recommended: true,
+                    },
+                    UserInputOptionDto {
+                        option_id: "mobile".to_string(),
+                        label: "Mobile".to_string(),
+                        description: String::new(),
+                        is_recommended: false,
+                    },
+                    UserInputOptionDto {
+                        option_id: "both".to_string(),
+                        label: "Both".to_string(),
+                        description: String::new(),
+                        is_recommended: false,
+                    },
+                ],
+            }],
+        };
+        state
+            .projections()
+            .put_snapshot(ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "codex:thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: ProviderKind::Codex,
+                    client: ThreadClientKind::Cli,
+                    title: "Thread".to_string(),
+                    status: ThreadStatus::Idle,
+                    workspace: "/repo".to_string(),
+                    repository: "repo".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-04-03T08:00:00Z".to_string(),
+                    updated_at: "2026-04-03T08:00:00Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: String::new(),
+                    active_turn_id: None,
+                },
+                entries: vec![ThreadTimelineEntryDto {
+                    event_id: "turn-1-visible-user-prompt".to_string(),
+                    kind: BridgeEventKind::MessageDelta,
+                    occurred_at: "2026-04-03T08:00:00Z".to_string(),
+                    summary: "Plan quick-action coverage".to_string(),
+                    payload: json!({
+                        "type": "userMessage",
+                        "role": "user",
+                        "text": "Plan quick-action coverage",
+                    }),
+                    annotations: None,
+                }],
+                approvals: Vec::new(),
+                git_status: None,
+                pending_user_input: Some(questionnaire.clone()),
+            })
+            .await;
+
+        let reconstructed = state
+            .reconstruct_plan_questionnaire_from_snapshot("codex:thread-1", "plan-request-1")
+            .await;
+
+        match reconstructed {
+            Some(PendingUserInputSession::PlanQuestionnaire {
+                questionnaire: reconstructed_questionnaire,
+                original_prompt,
+            }) => {
+                assert_eq!(reconstructed_questionnaire, questionnaire);
+                assert_eq!(original_prompt, "Plan quick-action coverage");
+            }
+            other => panic!("expected reconstructed plan questionnaire, got {other:?}"),
+        }
     }
 
     #[test]

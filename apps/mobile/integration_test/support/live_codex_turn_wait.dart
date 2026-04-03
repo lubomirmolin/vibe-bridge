@@ -142,6 +142,9 @@ class _SnapshotTurnSignals {
 
       if (kind == 'message_delta') {
         final role = (payload['role'] as String?)?.trim();
+        if (_payloadContainsHiddenMessage(payload)) {
+          continue;
+        }
         final text = _extractMessageText(payload);
         if (text.isEmpty) {
           continue;
@@ -212,6 +215,24 @@ String _extractMessageText(Map<String, dynamic> payload) {
 
 String _normalizeText(String text) {
   return text.replaceAll(RegExp(r'\s+'), ' ').trim();
+}
+
+bool _payloadContainsHiddenMessage(Map<String, dynamic> payload) {
+  final primaryText = _extractMessageText(payload);
+  return _isHiddenMessage(primaryText);
+}
+
+bool _isHiddenMessage(String message) {
+  final trimmed = message.trim();
+  return trimmed.startsWith('# AGENTS.md instructions for ') ||
+      trimmed.startsWith('<permissions instructions>') ||
+      trimmed.startsWith('<app-context>') ||
+      trimmed.startsWith('<environment_context>') ||
+      trimmed.startsWith('<collaboration_mode>') ||
+      trimmed.startsWith('<turn_aborted>') ||
+      trimmed.startsWith('You are running in mobile plan intake mode.') ||
+      trimmed.startsWith('You are continuing a mobile planning workflow.') ||
+      trimmed.contains('<codex-plan-questions>');
 }
 
 Uri _buildBridgeUri(String baseUrl, String path) {

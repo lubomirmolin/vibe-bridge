@@ -895,7 +895,7 @@ fn parse_claude_archived_session(
     let mut first_user_message = None;
     let mut last_turn_summary = None;
     let mut timeline = Vec::new();
-    let mut visible_message_fingerprints = HashSet::new();
+    let mut last_visible_message_fingerprint: Option<String> = None;
     let mut tool_name_by_id = HashMap::new();
     let mut file_change_tool_ids = HashSet::new();
 
@@ -990,9 +990,10 @@ fn parse_claude_archived_session(
                 }
             }
 
-            if let Some(fingerprint) = archived_message_fingerprint(&event)
-                && !visible_message_fingerprints.insert(fingerprint)
-            {
+            if should_skip_adjacent_duplicate_archived_message(
+                &event,
+                &mut last_visible_message_fingerprint,
+            ) {
                 continue;
             }
             last_turn_summary = Some(event.summary_text.clone());
@@ -1537,7 +1538,7 @@ fn parse_archived_session(
     let mut source: Option<String> = None;
     let mut timeline = Vec::new();
     let mut last_turn_summary: Option<String> = None;
-    let mut visible_message_fingerprints = HashSet::new();
+    let mut last_visible_message_fingerprint: Option<String> = None;
     let thread_id = provider_thread_id(ProviderKind::Codex, &index_entry.id);
 
     for line in raw.lines().filter(|line| !line.trim().is_empty()) {
@@ -1599,9 +1600,10 @@ fn parse_archived_session(
             timeline.len() as u64 + 1,
             cwd.as_deref(),
         ) {
-            if let Some(fingerprint) = archived_message_fingerprint(&event)
-                && !visible_message_fingerprints.insert(fingerprint)
-            {
+            if should_skip_adjacent_duplicate_archived_message(
+                &event,
+                &mut last_visible_message_fingerprint,
+            ) {
                 continue;
             }
             last_turn_summary = Some(event.summary_text.clone());
@@ -2325,6 +2327,21 @@ fn archived_message_fingerprint(event: &UpstreamTimelineEvent) -> Option<String>
     }
 
     Some(format!("{role}:{message}"))
+}
+
+fn should_skip_adjacent_duplicate_archived_message(
+    event: &UpstreamTimelineEvent,
+    last_visible_message_fingerprint: &mut Option<String>,
+) -> bool {
+    let Some(fingerprint) = archived_message_fingerprint(event) else {
+        return false;
+    };
+
+    let is_duplicate = last_visible_message_fingerprint
+        .as_deref()
+        .is_some_and(|previous| previous == fingerprint);
+    *last_visible_message_fingerprint = Some(fingerprint);
+    is_duplicate
 }
 
 pub(crate) fn load_archive_timeline_entries_for_thread(

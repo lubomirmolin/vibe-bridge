@@ -445,6 +445,9 @@ List<String> _extractUserPromptsFromSnapshot(List<dynamic> entries) {
     if ((payload['role'] as String?)?.trim() != 'user') {
       continue;
     }
+    if (_payloadContainsHiddenMessage(payload)) {
+      continue;
+    }
     final text = _extractPayloadText(payload);
     if (text.isNotEmpty) {
       prompts.add(text);
@@ -459,6 +462,7 @@ List<String> _extractUserPromptsFromTimeline(
   return entries
       .where((entry) => entry.kind == BridgeEventKind.messageDelta)
       .where((entry) => (entry.payload['role'] as String?)?.trim() == 'user')
+      .where((entry) => !_payloadContainsHiddenMessage(entry.payload))
       .map((entry) => _extractPayloadText(entry.payload))
       .where((text) => text.isNotEmpty)
       .toList(growable: false);
@@ -470,6 +474,7 @@ List<String> _extractUserPromptsFromLiveEvents(
   return events
       .where((event) => event.kind == BridgeEventKind.messageDelta)
       .where((event) => (event.payload['role'] as String?)?.trim() == 'user')
+      .where((event) => !_payloadContainsHiddenMessage(event.payload))
       .map((event) => _extractPayloadText(event.payload))
       .where((text) => text.isNotEmpty)
       .toList(growable: false);
@@ -542,11 +547,24 @@ String _normalizeText(String text) {
   return text.replaceAll(RegExp(r'\s+'), ' ').trim();
 }
 
+bool _payloadContainsHiddenMessage(Map<String, dynamic> payload) {
+  final primaryText = _extractPayloadText(payload);
+  return _containsHiddenProtocolMessage(primaryText);
+}
+
+bool _containsHiddenProtocolMessage(String message) {
+  final trimmed = message.trim();
+  return trimmed.startsWith('# AGENTS.md instructions for ') ||
+      trimmed.startsWith('<permissions instructions>') ||
+      trimmed.startsWith('<app-context>') ||
+      trimmed.startsWith('<environment_context>') ||
+      trimmed.startsWith('<collaboration_mode>') ||
+      trimmed.startsWith('<turn_aborted>') ||
+      trimmed.startsWith('You are running in mobile plan intake mode.') ||
+      trimmed.startsWith('You are continuing a mobile planning workflow.') ||
+      trimmed.contains('<codex-plan-questions>');
+}
+
 bool _containsHiddenProtocolText(List<String> prompts) {
-  return prompts.any((prompt) {
-    return prompt.contains('<app-context>') ||
-        prompt.contains('<codex-plan-questions>') ||
-        prompt.contains('You are running in mobile plan intake mode.') ||
-        prompt.contains('You are continuing a mobile planning workflow.');
-  });
+  return prompts.any(_containsHiddenProtocolMessage);
 }
