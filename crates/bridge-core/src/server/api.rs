@@ -125,7 +125,14 @@ async fn healthz() -> Json<serde_json::Value> {
 }
 
 async fn bootstrap(State(state): State<BridgeAppState>) -> Json<BootstrapDto> {
-    Json(state.bootstrap_payload().await)
+    eprintln!("bridge api bootstrap start");
+    let payload = state.bootstrap_payload().await;
+    eprintln!(
+        "bridge api bootstrap done threads={} trust_trusted={}",
+        payload.threads.len(),
+        payload.trust.trusted
+    );
+    Json(payload)
 }
 
 #[derive(Debug, Deserialize)]
@@ -549,7 +556,14 @@ async fn pairing_revoke(
 }
 
 async fn pairing_trust(State(state): State<BridgeAppState>) -> Json<PairingTrustSnapshot> {
-    Json(state.trust_snapshot())
+    eprintln!("bridge api pairing_trust start");
+    let snapshot = state.trust_snapshot();
+    eprintln!(
+        "bridge api pairing_trust done trusted_devices={} trusted_sessions={}",
+        snapshot.trusted_devices.len(),
+        snapshot.trusted_sessions.len()
+    );
+    Json(snapshot)
 }
 
 async fn pairing_route(State(state): State<BridgeAppState>) -> Json<PairingRouteInventoryDto> {

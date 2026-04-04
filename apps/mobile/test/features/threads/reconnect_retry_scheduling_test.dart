@@ -152,6 +152,413 @@ void main() {
   );
 
   test(
+    'thread-detail automatically catches up after a dropped live stream without duplicating canonical items',
+    () async {
+      final listController = ThreadListController(
+        bridgeApi: ScriptedThreadListBridgeApi(
+          scriptedResults: [
+            _threadSummaries(
+              reconnectThreadStatus: ThreadStatus.idle,
+              reconnectUpdatedAt: '2026-03-18T09:30:00Z',
+            ),
+          ],
+        ),
+        cacheRepository: _newCacheRepository(),
+        liveStream: ScriptedThreadLiveStream(),
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+      );
+      addTearDown(listController.dispose);
+
+      final detailApi = ScriptedThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.idle,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:00:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Normalize event payloads',
+            ),
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.completed,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:05:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Patched tests',
+            ),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            <ThreadTimelineEntryDto>[],
+            <ThreadTimelineEntryDto>[
+              _timelineEvent(
+                id: 'evt-user-canonical',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Ship the fix',
+                payload: {
+                  'type': 'userMessage',
+                  'role': 'user',
+                  'text': 'Ship the fix',
+                },
+                occurredAt: '2026-03-18T10:04:00Z',
+              ),
+              _timelineEvent(
+                id: 'evt-assistant-canonical',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Patched tests',
+                payload: {
+                  'type': 'agentMessage',
+                  'role': 'assistant',
+                  'text': 'Patched tests',
+                },
+                occurredAt: '2026-03-18T10:04:01Z',
+              ),
+            ],
+          ],
+        },
+      );
+      final liveStream = ScriptedThreadLiveStream();
+
+      final detailController = ThreadDetailController(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: 'thread-123',
+        initialVisibleTimelineEntries: 20,
+        bridgeApi: detailApi,
+        liveStream: liveStream,
+        threadListController: listController,
+      );
+      addTearDown(detailController.dispose);
+
+      await _waitUntil(() => !detailController.state.isLoading);
+      await _waitUntil(() => liveStream.totalSubscriptions >= 1);
+
+      final submitted = await detailController.submitComposerInput(
+        'Ship the fix',
+      );
+      expect(submitted, isTrue);
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-assistant-live',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:04:01Z',
+          payload: {'delta': 'Pat', 'replace': true},
+        ),
+      );
+      await _waitUntil(() => detailController.state.items.length == 1);
+
+      liveStream.emitErrorAll();
+
+      await _waitUntil(
+        () =>
+            liveStream.totalSubscriptions >= 2 &&
+            detailController.state.liveConnectionState ==
+                LiveConnectionState.connected,
+        timeout: const Duration(seconds: 6),
+      );
+      await _waitUntil(
+        () =>
+            detailController.state.items.length == 2 &&
+            detailController.state.items.any(
+              (item) =>
+                  item.eventId == 'evt-assistant-canonical' &&
+                  item.body == 'Patched tests',
+            ),
+        timeout: const Duration(seconds: 6),
+      );
+
+      final promptBodies = detailController.state.items
+          .where((item) => item.type == ThreadActivityItemType.userPrompt)
+          .map((item) => item.body)
+          .toList(growable: false);
+      final assistantBodies = detailController.state.items
+          .where((item) => item.type == ThreadActivityItemType.assistantOutput)
+          .map((item) => item.body)
+          .toList(growable: false);
+
+      expect(promptBodies, ['Ship the fix']);
+      expect(assistantBodies, ['Patched tests']);
+      expect(detailController.state.items, hasLength(2));
+    },
+  );
+
+  test(
+    'thread-detail silent turn watchdog reloads snapshot history after a stalled turn',
+    () async {
+      final listController = ThreadListController(
+        bridgeApi: ScriptedThreadListBridgeApi(
+          scriptedResults: [
+            _threadSummaries(
+              reconnectThreadStatus: ThreadStatus.idle,
+              reconnectUpdatedAt: '2026-03-18T09:30:00Z',
+            ),
+          ],
+        ),
+        cacheRepository: _newCacheRepository(),
+        liveStream: ScriptedThreadLiveStream(),
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+      );
+      addTearDown(listController.dispose);
+
+      final detailApi = ScriptedThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.idle,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:00:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Normalize event payloads',
+            ),
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.completed,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:05:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Recovered from the stalled turn.',
+            ),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            <ThreadTimelineEntryDto>[],
+            <ThreadTimelineEntryDto>[
+              _timelineEvent(
+                id: 'evt-assistant-watchdog',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Recovered from the stalled turn.',
+                payload: {
+                  'type': 'agentMessage',
+                  'role': 'assistant',
+                  'text': 'Recovered from the stalled turn.',
+                },
+                occurredAt: '2026-03-18T10:04:05Z',
+              ),
+            ],
+          ],
+        },
+      );
+      final liveStream = ScriptedThreadLiveStream();
+
+      final detailController = ThreadDetailController(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: 'thread-123',
+        initialVisibleTimelineEntries: 20,
+        bridgeApi: detailApi,
+        liveStream: liveStream,
+        threadListController: listController,
+      );
+      addTearDown(detailController.dispose);
+
+      await _waitUntil(() => !detailController.state.isLoading);
+      await _waitUntil(() => liveStream.totalSubscriptions >= 1);
+
+      final submitted = await detailController.submitComposerInput(
+        'Please finish even if streaming stalls.',
+      );
+      expect(submitted, isTrue);
+
+      await _waitUntil(
+        () =>
+            detailApi.timelineFetchCount >= 2 &&
+            detailController.state.items.any(
+              (item) =>
+                  item.eventId == 'evt-assistant-watchdog' &&
+                  item.body == 'Recovered from the stalled turn.',
+            ),
+        timeout: const Duration(seconds: 7),
+      );
+
+      expect(detailController.state.thread?.status, ThreadStatus.completed);
+      expect(
+        detailController.state.items
+            .where(
+              (item) => item.type == ThreadActivityItemType.assistantOutput,
+            )
+            .map((item) => item.body)
+            .toList(growable: false),
+        ['Recovered from the stalled turn.'],
+      );
+    },
+  );
+
+  test(
+    'thread-detail does not reconcile a new pending prompt against an older identical prompt',
+    () async {
+      final listController = ThreadListController(
+        bridgeApi: ScriptedThreadListBridgeApi(
+          scriptedResults: [
+            _threadSummaries(
+              reconnectThreadStatus: ThreadStatus.idle,
+              reconnectUpdatedAt: '2026-03-18T09:30:00Z',
+            ),
+          ],
+        ),
+        cacheRepository: _newCacheRepository(),
+        liveStream: ScriptedThreadLiveStream(),
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+      );
+      addTearDown(listController.dispose);
+
+      final detailApi = ScriptedThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.idle,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:00:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Normalize event payloads',
+            ),
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.completed,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:05:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'No upstream user message was recorded.',
+            ),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            <ThreadTimelineEntryDto>[
+              _timelineEvent(
+                id: 'evt-user-old',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Retry this prompt',
+                payload: {
+                  'type': 'userMessage',
+                  'role': 'user',
+                  'text': 'Retry this prompt',
+                },
+                occurredAt: '2026-03-18T09:00:00Z',
+              ),
+            ],
+            <ThreadTimelineEntryDto>[
+              _timelineEvent(
+                id: 'evt-user-old',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Retry this prompt',
+                payload: {
+                  'type': 'userMessage',
+                  'role': 'user',
+                  'text': 'Retry this prompt',
+                },
+                occurredAt: '2026-03-18T09:00:00Z',
+              ),
+            ],
+          ],
+        },
+      );
+      final liveStream = ScriptedThreadLiveStream();
+      final logs = <String>[];
+
+      final detailController = ThreadDetailController(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: 'thread-123',
+        initialVisibleTimelineEntries: 20,
+        bridgeApi: detailApi,
+        liveStream: liveStream,
+        threadListController: listController,
+        debugLog: logs.add,
+      );
+      addTearDown(detailController.dispose);
+
+      await _waitUntil(() => !detailController.state.isLoading);
+      await _waitUntil(() => liveStream.totalSubscriptions >= 1);
+
+      final submitted = await detailController.submitComposerInput(
+        'Retry this prompt',
+      );
+      expect(submitted, isTrue);
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-status-complete',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.threadStatusChanged,
+          occurredAt: '2026-03-18T10:04:02Z',
+          payload: {'status': 'completed', 'reason': 'upstream_notification'},
+        ),
+      );
+
+      await _waitUntil(
+        () =>
+            detailController.state.pendingLocalUserPrompts.length == 1 &&
+            detailController
+                    .state
+                    .pendingLocalUserPrompts
+                    .first
+                    .localMessageState ==
+                ThreadActivityLocalMessageState.failed,
+      );
+
+      expect(
+        detailController.state.pendingLocalUserPrompts.first.body,
+        'Retry this prompt',
+      );
+      expect(
+        logs.any(
+          (entry) => entry.contains('thread_detail_pending_prompt_failed'),
+        ),
+        isTrue,
+      );
+      expect(
+        logs.any(
+          (entry) => entry.contains('thread_detail_pending_prompt_reconciled'),
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test(
     'thread-detail logs when the first assistant message arrives after submit',
     () async {
       final listController = ThreadListController(

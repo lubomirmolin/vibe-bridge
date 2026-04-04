@@ -1108,8 +1108,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   void _scrollToTimelineBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_timelineScrollController.hasClients) return;
+      if (!_isTimelineAutoFollowEnabled) {
+        return;
+      }
       final position = _timelineScrollController.position;
-      _isTimelineAutoFollowEnabled = true;
       _timelineScrollController.animateTo(
         position.maxScrollExtent,
         duration: const Duration(milliseconds: 250),
@@ -1494,6 +1496,11 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     }
 
     _markTimelineUserScroll();
+    if (direction == ScrollDirection.forward) {
+      _isTimelineAutoFollowEnabled = false;
+      return;
+    }
+
     if (!_isTimelineNearBottom(tolerance: 180)) {
       _isTimelineAutoFollowEnabled = false;
       return;

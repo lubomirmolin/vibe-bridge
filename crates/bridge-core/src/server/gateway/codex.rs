@@ -4,6 +4,8 @@ mod rpc;
 mod titles;
 mod transport;
 
+use std::time::Instant;
+
 use super::mapping::{extract_generated_thread_title, map_thread_snapshot};
 use super::*;
 pub(crate) use archive::fetch_thread_snapshot_from_archive;
@@ -154,13 +156,20 @@ impl CodexGateway {
         let (result_tx, result_rx) = mpsc::sync_channel(1);
 
         std::thread::spawn(move || {
+            let stream_started_at = Instant::now();
             let reserved_transport = take_reserved_transport(&reserved_transports, &thread_id);
             let had_reserved_transport = reserved_transport.is_some();
+            eprintln!(
+                "bridge codex turn stream init thread_id={thread_id} had_reserved_transport={had_reserved_transport}"
+            );
             let mut transport = match reserved_transport {
                 Some(transport) => transport,
                 None => match connect_transport(&config) {
                     Ok(transport) => transport,
                     Err(error) => {
+                        eprintln!(
+                            "bridge codex turn stream connect failed thread_id={thread_id}: {error}"
+                        );
                         let _ = result_tx.send(Err(error));
                         return;
                     }
@@ -178,6 +187,9 @@ impl CodexGateway {
                 ) {
                     Ok(payload) => payload,
                     Err(error) if should_resume_thread(&error) => {
+                        eprintln!(
+                            "bridge codex turn stream retrying start with resume thread_id={thread_id}: {error}"
+                        );
                         match start_turn_with_resume(
                             &mut transport,
                             &thread_id,
@@ -188,6 +200,9 @@ impl CodexGateway {
                         ) {
                             Ok(payload) => payload,
                             Err(error) => {
+                                eprintln!(
+                                    "bridge codex turn stream start_turn_with_resume failed thread_id={thread_id}: {error}"
+                                );
                                 reserve_transport(
                                     &reserved_transports,
                                     thread_id.clone(),
@@ -199,6 +214,9 @@ impl CodexGateway {
                         }
                     }
                     Err(error) => {
+                        eprintln!(
+                            "bridge codex turn stream start_turn failed thread_id={thread_id}: {error}"
+                        );
                         reserve_transport(&reserved_transports, thread_id.clone(), transport);
                         let _ = result_tx.send(Err(error));
                         return;
@@ -215,11 +233,18 @@ impl CodexGateway {
                 ) {
                     Ok(payload) => payload,
                     Err(error) => {
+                        eprintln!(
+                            "bridge codex turn stream start_turn_with_resume failed thread_id={thread_id}: {error}"
+                        );
                         let _ = result_tx.send(Err(error));
                         return;
                     }
                 }
             };
+            eprintln!(
+                "bridge codex turn stream accepted thread_id={thread_id} turn_id={}",
+                payload.turn.id
+            );
 
             let result = GatewayTurnMutation {
                 response: TurnMutationAcceptedDto {
@@ -232,16 +257,31 @@ impl CodexGateway {
                 turn_id: Some(payload.turn.id),
             };
             if result_tx.send(Ok(result.clone())).is_err() {
+                eprintln!("bridge codex turn stream result receiver dropped thread_id={thread_id}");
                 on_stream_finished(thread_id.clone());
                 return;
             }
 
             let mut normalizer = CodexNotificationNormalizer::default();
+            let mut observed_notification_count: u64 = 0;
+            let mut last_method = "<none>".to_string();
             loop {
                 let message = match transport.next_message("turn stream") {
                     Ok(Some(message)) => message,
-                    Ok(None) => break,
-                    Err(_) => break,
+                    Ok(None) => {
+                        eprintln!(
+                            "bridge codex turn stream ended unexpectedly (EOF) thread_id={thread_id} notifications={observed_notification_count} elapsed_ms={}",
+                            stream_started_at.elapsed().as_millis()
+                        );
+                        break;
+                    }
+                    Err(error) => {
+                        eprintln!(
+                            "bridge codex turn stream next_message failed thread_id={thread_id} notifications={observed_notification_count} last_method={last_method} elapsed_ms={} error={error}",
+                            stream_started_at.elapsed().as_millis()
+                        );
+                        break;
+                    }
                 };
                 if let Some(request_id) = message.get("id").cloned() {
                     let Some(method) = message.get("method").and_then(Value::as_str) else {
@@ -272,6 +312,8 @@ impl CodexGateway {
                 let Some(method) = message.get("method").and_then(Value::as_str) else {
                     continue;
                 };
+                observed_notification_count = observed_notification_count.saturating_add(1);
+                last_method = method.to_string();
                 let params = message.get("params").cloned().unwrap_or(Value::Null);
 
                 if let Some(event) = normalizer.normalize(method, &params)
@@ -281,10 +323,18 @@ impl CodexGateway {
                 }
 
                 if method == "turn/completed" {
+                    eprintln!(
+                        "bridge codex turn stream completed thread_id={thread_id} notifications={observed_notification_count} elapsed_ms={}",
+                        stream_started_at.elapsed().as_millis()
+                    );
                     on_turn_completed(thread_id.clone());
                     break;
                 }
             }
+            eprintln!(
+                "bridge codex turn stream finished callback thread_id={thread_id} notifications={observed_notification_count} last_method={last_method} elapsed_ms={}",
+                stream_started_at.elapsed().as_millis()
+            );
             on_stream_finished(thread_id.clone());
         });
 

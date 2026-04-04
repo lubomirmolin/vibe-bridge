@@ -491,6 +491,8 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   static const Duration _activeTurnRefreshGuardWindow = Duration(seconds: 5);
   static const Duration _assistantReplayDedupWindow = Duration(minutes: 2);
   static const Duration _silentTurnSnapshotWatchdogDelay = Duration(seconds: 4);
+  static const int _silentTurnWatchdogReconnectThreshold = 3;
+  static const Duration _pendingPromptMatchLeadSkew = Duration(seconds: 2);
 
   ThreadDetailController({
     required String bridgeApiBaseUrl,
@@ -547,6 +549,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   DateTime? _lastActiveTurnSignalAt;
   bool _activeTurnSawMeaningfulLiveActivity = false;
   bool _activeTurnNeedsSnapshotCatchUp = false;
+  bool _activeTurnSawLiveUserPrompt = false;
+  bool _activeTurnSawIncrementalDelta = false;
+  int _silentTurnWatchdogStrikeCount = 0;
 
   /// Resets all transient sub-state to initial values. Used when
   /// (re-)loading the thread or catching up after a reconnect.
@@ -908,6 +913,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         isConnectivityUnavailable: false,
         git: ThreadGitState.initial,
       );
+      _markUnconfirmedPendingPromptsAsFailedIfThreadSettled();
 
       await refreshGitStatus(showLoading: false);
       await _startLiveSubscription();
@@ -1381,6 +1387,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       mergedPayload: mergedPayload,
       nextItem: nextItem,
     );
+    _recordLiveTurnShape(event: event, item: nextItem);
     _recordMeaningfulLiveActivity(nextItem);
     _logPromptResponseIfNeeded(event: event, nextItem: nextItem);
     final nextItems = List<ThreadActivityItem>.from(state.items);
@@ -1511,6 +1518,14 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         return true;
       }
 
+      if (status == ThreadStatus.completed &&
+          _activeTurnSawMeaningfulLiveActivity &&
+          !_activeTurnNeedsSnapshotCatchUp &&
+          !_activeTurnSawLiveUserPrompt &&
+          !_activeTurnSawIncrementalDelta) {
+        return false;
+      }
+
       // A completed turn can still have file changes or tool output that only
       // become available in the archived snapshot/history after live text
       // streaming has already started. Always reload the settled turn timeline
@@ -1615,6 +1630,13 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         expectedThreadId: requestedThreadId,
         context: 'refreshing live thread snapshot timeline',
       );
+      _debugLog(
+        'thread_detail_snapshot_refresh_result '
+        'threadId=${state.threadId} '
+        'status=${scopedDetail.status.wireValue} '
+        'entryCount=${scopedPage.entries.length} '
+        'hasPendingUserInput=${scopedPage.pendingUserInput != null}',
+      );
       final nextThread =
           _shouldApplyRefreshedThreadDetail(
             current: state.thread,
@@ -1623,8 +1645,21 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
           ? scopedDetail
           : (state.thread ?? scopedDetail);
 
-      final items = _replaceTimelineItems(scopedPage.entries);
-      _replaceKnownEventIds(items);
+      final shouldPreserveLiveItems =
+          _activeTurnSawMeaningfulLiveActivity &&
+          scopedPage.entries.isEmpty &&
+          state.items.isNotEmpty;
+      final items = shouldPreserveLiveItems
+          ? state.items
+          : _replaceTimelineItems(scopedPage.entries);
+      if (!shouldPreserveLiveItems) {
+        _replaceKnownEventIds(items);
+      } else {
+        _debugLog(
+          'thread_detail_snapshot_refresh_preserve_live_items '
+          'threadId=${state.threadId}',
+        );
+      }
 
       state = state.copyWith(
         thread: nextThread,
@@ -1637,6 +1672,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearStreamErrorMessage: true,
         clearStaleMessage: true,
       );
+      _markUnconfirmedPendingPromptsAsFailedIfThreadSettled();
       _threadListController.syncThreadDetail(nextThread);
       if (nextThread.status != ThreadStatus.running) {
         _finishTrackingActiveTurn();
@@ -1665,6 +1701,16 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     }
     if (_threadDetailEquals(current, refreshed)) {
       return false;
+    }
+    final refreshedIsTerminal =
+        refreshed.status == ThreadStatus.completed ||
+        refreshed.status == ThreadStatus.failed ||
+        refreshed.status == ThreadStatus.interrupted;
+    if (current.status == ThreadStatus.running &&
+        refreshedIsTerminal &&
+        _activeTurnNeedsSnapshotCatchUp &&
+        !_activeTurnSawMeaningfulLiveActivity) {
+      return true;
     }
 
     final currentUpdatedAt = DateTime.tryParse(current.updatedAt);
@@ -1718,6 +1764,11 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         refreshed.status == ThreadStatus.completed ||
         refreshed.status == ThreadStatus.failed ||
         refreshed.status == ThreadStatus.interrupted;
+    if (isTerminalRefresh &&
+        _activeTurnNeedsSnapshotCatchUp &&
+        !_activeTurnSawMeaningfulLiveActivity) {
+      return false;
+    }
     if (isTerminalRefresh) {
       final currentUpdatedAt = DateTime.tryParse(current.updatedAt);
       final refreshedUpdatedAt = DateTime.tryParse(refreshed.updatedAt);
@@ -1782,6 +1833,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     );
 
     if (status != ThreadStatus.running) {
+      _markUnconfirmedPendingPromptsAsFailedIfThreadSettled();
       _finishTrackingActiveTurn();
     }
   }
@@ -2469,6 +2521,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearStreamErrorMessage: true,
         clearStaleMessage: true,
       );
+      _markUnconfirmedPendingPromptsAsFailedIfThreadSettled();
       _threadListController.syncThreadDetail(scopedDetail);
     } catch (_) {
       // Avoid disrupting the active thread when the follow-up refresh fails.
@@ -2502,11 +2555,6 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
             : null,
       ),
     );
-
-    if (status != ThreadStatus.running) {
-      _pendingPromptSubmittedAt = null;
-      _lastActiveTurnSignalAt = null;
-    }
   }
 
   void _recordActiveTurnSignal() {
@@ -2517,6 +2565,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   void _startTrackingActiveTurn() {
     _activeTurnSawMeaningfulLiveActivity = false;
     _activeTurnNeedsSnapshotCatchUp = false;
+    _activeTurnSawLiveUserPrompt = false;
+    _activeTurnSawIncrementalDelta = false;
+    _silentTurnWatchdogStrikeCount = 0;
     _recordActiveTurnSignal();
   }
 
@@ -2524,8 +2575,10 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     _cancelSilentTurnWatchdog();
     _pendingPromptSubmittedAt = null;
     _lastActiveTurnSignalAt = null;
-    _activeTurnSawMeaningfulLiveActivity = false;
     _activeTurnNeedsSnapshotCatchUp = false;
+    _activeTurnSawLiveUserPrompt = false;
+    _activeTurnSawIncrementalDelta = false;
+    _silentTurnWatchdogStrikeCount = 0;
   }
 
   String? _appendPendingLocalUserPrompt({
@@ -2591,6 +2644,12 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         searchStart: searchStart,
       );
       if (matchIndex >= 0) {
+        _debugLog(
+          'thread_detail_pending_prompt_reconciled '
+          'threadId=${state.threadId} '
+          'pendingEventId=${pendingItem.eventId} '
+          'canonicalEventId=${canonicalUserPrompts[matchIndex].eventId}',
+        );
         searchStart = matchIndex + 1;
         continue;
       }
@@ -2618,6 +2677,12 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       if (normalizedPendingBody != normalizedCandidateBody) {
         continue;
       }
+      if (!_isCanonicalPromptTimeCompatible(
+        pendingOccurredAt: pendingItem.occurredAt,
+        candidateOccurredAt: candidate.occurredAt,
+      )) {
+        continue;
+      }
 
       final candidateImages = candidate.messageImageUrls.toSet();
       if (pendingImages.isNotEmpty &&
@@ -2631,9 +2696,72 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     return -1;
   }
 
+  bool _isCanonicalPromptTimeCompatible({
+    required String pendingOccurredAt,
+    required String candidateOccurredAt,
+  }) {
+    final pendingTime = DateTime.tryParse(pendingOccurredAt);
+    final candidateTime = DateTime.tryParse(candidateOccurredAt);
+    if (pendingTime == null || candidateTime == null) {
+      return true;
+    }
+
+    return !candidateTime.isBefore(
+      pendingTime.subtract(_pendingPromptMatchLeadSkew),
+    );
+  }
+
+  void _markUnconfirmedPendingPromptsAsFailedIfThreadSettled() {
+    final threadStatus = state.thread?.status;
+    if (threadStatus == null || threadStatus == ThreadStatus.running) {
+      return;
+    }
+    if (_pendingPromptSubmittedAt == null) {
+      return;
+    }
+
+    final pendingItems = state.pendingLocalUserPrompts;
+    if (pendingItems.isEmpty) {
+      return;
+    }
+
+    var changed = false;
+    final updatedPendingItems = pendingItems
+        .map((item) {
+          if (item.localMessageState !=
+              ThreadActivityLocalMessageState.sending) {
+            return item;
+          }
+          changed = true;
+          return item.copyWith(
+            localMessageState: ThreadActivityLocalMessageState.failed,
+            localErrorMessage:
+                'Bridge did not confirm this message before the turn settled.',
+          );
+        })
+        .toList(growable: false);
+
+    if (!changed) {
+      return;
+    }
+
+    _debugLog(
+      'thread_detail_pending_prompt_failed '
+      'threadId=${state.threadId} '
+      'count=${updatedPendingItems.length} '
+      'threadStatus=${threadStatus.wireValue}',
+    );
+    state = state.copyWith(
+      pendingLocalUserPrompts: List<ThreadActivityItem>.unmodifiable(
+        updatedPendingItems,
+      ),
+    );
+  }
+
   void _recordMeaningfulLiveActivity(ThreadActivityItem item) {
     if (_isMeaningfulTurnLiveActivity(item)) {
       _activeTurnSawMeaningfulLiveActivity = true;
+      _silentTurnWatchdogStrikeCount = 0;
       _cancelSilentTurnWatchdog();
     }
   }
@@ -2650,6 +2778,39 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       ThreadActivityItemType.planUpdate => true,
       _ => false,
     };
+  }
+
+  void _recordLiveTurnShape({
+    required BridgeEventEnvelope<Map<String, dynamic>> event,
+    required ThreadActivityItem item,
+  }) {
+    if (item.type == ThreadActivityItemType.userPrompt) {
+      _activeTurnSawLiveUserPrompt = true;
+    }
+    if (_eventUsesIncrementalDelta(event)) {
+      _activeTurnSawIncrementalDelta = true;
+    }
+  }
+
+  bool _eventUsesIncrementalDelta(
+    BridgeEventEnvelope<Map<String, dynamic>> event,
+  ) {
+    switch (event.kind) {
+      case BridgeEventKind.messageDelta:
+      case BridgeEventKind.planDelta:
+      case BridgeEventKind.commandDelta:
+      case BridgeEventKind.fileChange:
+        break;
+      case BridgeEventKind.threadStatusChanged:
+      case BridgeEventKind.userInputRequested:
+      case BridgeEventKind.approvalRequested:
+      case BridgeEventKind.securityAudit:
+        return false;
+    }
+
+    return event.payload['replace'] == true ||
+        (event.payload['delta'] is String &&
+            (event.payload['delta'] as String).isNotEmpty);
   }
 
   void _syncSilentTurnWatchdog() {
@@ -2688,12 +2849,25 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       return;
     }
 
+    _silentTurnWatchdogStrikeCount += 1;
     _activeTurnNeedsSnapshotCatchUp = true;
     _debugLog(
       'thread_detail_silent_turn_watchdog '
       'threadId=${state.threadId} '
-      'pendingPrompt=${_pendingPromptSubmittedAt != null}',
+      'pendingPrompt=${_pendingPromptSubmittedAt != null} '
+      'strike=$_silentTurnWatchdogStrikeCount',
     );
+    if (_silentTurnWatchdogStrikeCount >=
+        _silentTurnWatchdogReconnectThreshold) {
+      _debugLog(
+        'thread_detail_silent_turn_watchdog_reconnect '
+        'threadId=${state.threadId} '
+        'strike=$_silentTurnWatchdogStrikeCount',
+      );
+      _silentTurnWatchdogStrikeCount = 0;
+      _handleLiveStreamDisconnected();
+      return;
+    }
     _scheduleThreadSnapshotRefresh(delay: const Duration(milliseconds: 100));
     _syncSilentTurnWatchdog();
   }

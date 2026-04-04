@@ -19,6 +19,7 @@ impl BridgeAppState {
         if !is_new {
             return;
         }
+        eprintln!("bridge notification resume requested thread_id={next_thread_id}");
 
         self.dispatch_notification_thread_resume(next_thread_id);
     }
@@ -142,10 +143,12 @@ impl BridgeAppState {
     }
 
     pub(super) async fn finalize_bridge_owned_turn(&self, thread_id: &str) {
+        eprintln!("bridge turn finalize thread_id={thread_id}");
         self.clear_transient_thread_state(thread_id).await;
     }
 
     pub(super) async fn mark_bridge_turn_stream_started(&self, thread_id: &str) {
+        eprintln!("bridge turn stream started thread_id={thread_id}");
         self.inner
             .active_turn_stream_threads
             .write()
@@ -154,6 +157,7 @@ impl BridgeAppState {
     }
 
     pub(super) async fn mark_bridge_turn_stream_finished(&self, thread_id: &str) {
+        eprintln!("bridge turn stream finished thread_id={thread_id}");
         self.inner
             .active_turn_stream_threads
             .write()
@@ -261,6 +265,10 @@ impl BridgeAppState {
 
                 let resumed_threads =
                     handle.block_on(async { state.resumable_notification_threads().await });
+                eprintln!(
+                    "bridge notification resume sync start tracked_threads={}",
+                    resumed_threads.len()
+                );
                 let dropped_threads =
                     match resume_notification_threads(resumed_threads.iter(), |thread_id| {
                         notifications.resume_thread(thread_id)
@@ -272,6 +280,13 @@ impl BridgeAppState {
                             continue;
                         }
                     };
+                if !dropped_threads.is_empty() {
+                    eprintln!(
+                        "bridge notification resume sync dropped_threads={} ids={:?}",
+                        dropped_threads.len(),
+                        dropped_threads
+                    );
+                }
                 if !dropped_threads.is_empty() {
                     let state = state.clone();
                     handle.block_on(async move {

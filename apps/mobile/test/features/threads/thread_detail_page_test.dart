@@ -2994,6 +2994,10 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
         1,
       );
       expect(find.text('Sending'), findsOneWidget);
+      expect(
+        find.byKey(const Key('thread-message-sending-spinner')),
+        findsOneWidget,
+      );
 
       startTurnCompleter.complete(
         _turnMutationResult(
@@ -3039,6 +3043,10 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
         1,
       );
       expect(find.text('Sending'), findsNothing);
+      expect(
+        find.byKey(const Key('thread-message-sending-spinner')),
+        findsNothing,
+      );
     },
   );
 
@@ -4655,6 +4663,83 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
         findsNothing,
       );
       expect(find.text('First streamed event'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'user can scroll up during streaming chunks without being snapped to bottom',
+    (tester) async {
+      final timeline = List<ThreadTimelineEntryDto>.generate(
+        64,
+        (index) => _timelineEvent(
+          id: 'evt-stream-$index',
+          kind: BridgeEventKind.messageDelta,
+          summary: 'Assistant output $index',
+          payload: {'delta': 'Existing stream event $index'},
+          occurredAt:
+              '2026-03-18T09:${(index % 60).toString().padLeft(2, '0')}:00Z',
+        ),
+      );
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [timeline],
+        },
+      );
+      final liveStream = FakeThreadLiveStream();
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+        liveStream: liveStream,
+      );
+      await tester.pumpAndSettle();
+
+      final scrollView = find.byKey(const Key('thread-detail-scroll-view'));
+      final scrollPosition = _threadDetailScrollPosition(tester);
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-streaming-message',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:30:00Z',
+          payload: {'type': 'agentMessage', 'delta': 'Chunk 1'},
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.drag(scrollView, const Offset(0, 220));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+
+      final offsetAfterUserScroll = scrollPosition.pixels;
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-streaming-message',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:30:01Z',
+          payload: {'type': 'agentMessage', 'delta': 'Chunk 2'},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        scrollPosition.pixels,
+        lessThan(scrollPosition.maxScrollExtent - 8),
+      );
+      expect(scrollPosition.pixels, lessThanOrEqualTo(offsetAfterUserScroll));
+      expect(
+        find.byKey(const Key('thread-detail-new-message-button')),
+        findsOneWidget,
+      );
     },
   );
 

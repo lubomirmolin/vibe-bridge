@@ -66,6 +66,14 @@ impl BridgeAppState {
             .filter(|image| !image.is_empty())
             .map(ToString::to_string)
             .collect::<Vec<_>>();
+        eprintln!(
+            "bridge turn start requested thread_id={thread_id} visible_prompt_chars={} upstream_prompt_chars={} images={} model={} effort={}",
+            visible_prompt.trim().chars().count(),
+            upstream_prompt.chars().count(),
+            normalized_images.len(),
+            model.unwrap_or("<default>"),
+            effort.unwrap_or("<default>")
+        );
         self.clear_interrupted_thread_state(thread_id).await;
         if !normalized_images.is_empty() {
             self.inner
@@ -179,11 +187,17 @@ impl BridgeAppState {
         ) {
             Ok(result) => result,
             Err(error) => {
+                eprintln!("bridge turn start stream failed thread_id={thread_id}: {error}");
                 self.mark_bridge_turn_stream_finished(thread_id).await;
                 self.clear_transient_thread_state(thread_id).await;
                 return Err(error);
             }
         };
+        eprintln!(
+            "bridge turn start accepted thread_id={thread_id} turn_id={} thread_status={:?}",
+            result.response.turn_id.as_deref().unwrap_or("<none>"),
+            result.response.thread_status
+        );
         self.inner
             .pending_bridge_owned_turns
             .write()
