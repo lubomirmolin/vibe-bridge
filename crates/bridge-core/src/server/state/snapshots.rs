@@ -7,10 +7,7 @@ impl BridgeAppState {
             return Ok(snapshot);
         }
 
-        let mut snapshot = self.inner.gateway.fetch_thread_snapshot(thread_id).await?;
-        snapshot.thread.access_mode = self.access_mode().await;
-        self.merge_bridge_turn_metadata(&mut snapshot).await;
-        self.projections().put_snapshot(snapshot.clone()).await;
+        let snapshot = self.refresh_snapshot_from_gateway(thread_id).await?;
         self.request_notification_thread_resume(thread_id).await;
         Ok(snapshot)
     }
@@ -50,8 +47,16 @@ impl BridgeAppState {
         before: Option<&str>,
         limit: usize,
     ) -> Result<ThreadTimelinePageDto, String> {
-        if self.projections().snapshot(thread_id).await.is_none() {
-            self.ensure_snapshot(thread_id).await?;
+        let cached_snapshot = self.projections().snapshot(thread_id).await;
+        let cached_summary = self.projections().summary(thread_id).await;
+        let should_refresh = cached_snapshot
+            .as_ref()
+            .map(|snapshot| {
+                should_refresh_terminal_timeline_snapshot(before, snapshot, cached_summary.as_ref())
+            })
+            .unwrap_or(true);
+        if should_refresh {
+            self.refresh_snapshot_from_gateway(thread_id).await?;
         }
 
         let mut page = self
@@ -61,6 +66,18 @@ impl BridgeAppState {
             .ok_or_else(|| format!("thread {thread_id} not found"))?;
         page.thread.access_mode = self.access_mode().await;
         Ok(page)
+    }
+
+    async fn refresh_snapshot_from_gateway(
+        &self,
+        thread_id: &str,
+    ) -> Result<ThreadSnapshotDto, String> {
+        let mut snapshot = self.inner.gateway.fetch_thread_snapshot(thread_id).await?;
+        snapshot.thread.access_mode = self.access_mode().await;
+        self.merge_bridge_turn_metadata(&mut snapshot).await;
+        self.apply_external_snapshot_update(snapshot.clone(), Vec::new())
+            .await;
+        Ok(snapshot)
     }
 
     pub async fn git_status(&self, thread_id: &str) -> Result<GitStatusResponse, String> {
@@ -454,4 +471,43 @@ impl BridgeAppState {
         });
         Ok(())
     }
+}
+
+pub(super) fn should_refresh_terminal_timeline_snapshot(
+    before: Option<&str>,
+    snapshot: &ThreadSnapshotDto,
+    summary: Option<&ThreadSummaryDto>,
+) -> bool {
+    if before.is_some() || snapshot.thread.status == ThreadStatus::Running {
+        return false;
+    }
+
+    if summary
+        .map(|summary| summary.updated_at > snapshot.thread.updated_at)
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    snapshot
+        .entries
+        .iter()
+        .any(entry_needs_exploration_annotation_refresh)
+}
+
+fn entry_needs_exploration_annotation_refresh(entry: &ThreadTimelineEntryDto) -> bool {
+    if entry.kind != BridgeEventKind::CommandDelta || entry.annotations.is_some() {
+        return false;
+    }
+
+    crate::thread_api::build_timeline_event_envelope(
+        format!("refresh-check-{}", entry.event_id),
+        "refresh-check-thread",
+        entry.kind,
+        entry.occurred_at.clone(),
+        entry.payload.clone(),
+    )
+    .annotations
+    .and_then(|annotations| annotations.exploration_kind)
+    .is_some()
 }

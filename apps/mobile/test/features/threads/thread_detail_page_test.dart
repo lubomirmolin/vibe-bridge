@@ -3169,6 +3169,134 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
   );
 
   testWidgets(
+    'idle composer drops the local sending bubble after silent-turn watchdog snapshot catch-up',
+    (tester) async {
+      final startTurnCompleter = Completer<TurnMutationResult>();
+      final refreshedDetail = ThreadDetailDto(
+        contractVersion: contractVersion,
+        threadId: 'thread-456',
+        title: 'Investigate reconnect dedup',
+        status: ThreadStatus.completed,
+        workspace: '/workspace/codex-runtime-tools',
+        repository: 'codex-runtime-tools',
+        branch: 'develop',
+        createdAt: '2026-03-18T08:45:00Z',
+        updatedAt: '2026-03-18T09:31:05Z',
+        source: 'cli',
+        accessMode: AccessMode.controlWithApprovals,
+        lastTurnSummary: 'Caught up from silent turn snapshot refresh',
+      );
+      const prompt = 'Create live Codex probe file and return WRITE_OK.';
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-456': [_thread456Detail(), refreshedDetail],
+        },
+        timelineScriptByThreadId: {
+          'thread-456': [
+            <ThreadTimelineEntryDto>[],
+            <ThreadTimelineEntryDto>[
+              _timelineEvent(
+                id: 'evt-canonical-user-prompt',
+                kind: BridgeEventKind.messageDelta,
+                summary: prompt,
+                payload: <String, dynamic>{
+                  'type': 'userMessage',
+                  'role': 'user',
+                  'source': 'user',
+                  'delta': prompt,
+                  'replace': true,
+                },
+                occurredAt: '2026-03-18T09:31:00Z',
+              ),
+              _timelineEvent(
+                id: 'evt-canonical-assistant-output',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'WRITE_OK',
+                payload: <String, dynamic>{
+                  'type': 'agentMessage',
+                  'role': 'assistant',
+                  'delta': 'WRITE_OK',
+                  'replace': true,
+                },
+                occurredAt: '2026-03-18T09:31:04Z',
+              ),
+            ],
+          ],
+        },
+        startTurnScriptByThreadId: {
+          'thread-456': [startTurnCompleter.future],
+        },
+      );
+      final liveStream = FakeThreadLiveStream();
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-456',
+        liveStream: liveStream,
+      );
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ThreadDetailPage)),
+      );
+      const args = ThreadDetailControllerArgs(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: 'thread-456',
+        initialVisibleTimelineEntries: 20,
+      );
+
+      await tester.enterText(
+        find.byKey(const Key('turn-composer-input')),
+        prompt,
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('turn-composer-submit')));
+      await tester.pump();
+
+      expect(
+        container
+            .read(threadDetailControllerProvider(args))
+            .pendingLocalUserPrompts
+            .length,
+        1,
+      );
+      expect(find.text('Sending'), findsOneWidget);
+
+      startTurnCompleter.complete(
+        _turnMutationResult(
+          threadId: 'thread-456',
+          operation: 'turn_start',
+          status: ThreadStatus.running,
+          message: 'Turn started and streaming is active',
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+
+      final refreshedState = container.read(
+        threadDetailControllerProvider(args),
+      );
+      expect(refreshedState.pendingLocalUserPrompts, isEmpty);
+      expect(
+        refreshedState.items
+            .where(
+              (item) =>
+                  item.type == ThreadActivityItemType.userPrompt &&
+                  item.body == prompt,
+            )
+            .length,
+        1,
+      );
+      expect(find.text('WRITE_OK'), findsOneWidget);
+      expect(find.text('Sending'), findsNothing);
+      expect(detailApi.detailFetchCount, greaterThanOrEqualTo(2));
+      expect(detailApi.timelineFetchCount, greaterThanOrEqualTo(2));
+    },
+  );
+
+  testWidgets(
     'pending approval prompts submit during active turn and clear on resolved event',
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(
@@ -4488,6 +4616,47 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     final olderY = tester.getTopLeft(find.text('Older event')).dy;
     expect(oldestY, lessThan(olderY));
   });
+
+  testWidgets(
+    'new live messages auto-scroll when timeline starts at bottom with short content',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+      );
+      final liveStream = FakeThreadLiveStream();
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+        liveStream: liveStream,
+      );
+      await tester.pumpAndSettle();
+
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-live-short-thread',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:30:00Z',
+          payload: {'type': 'agentMessage', 'text': 'First streamed event'},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('thread-detail-new-message-button')),
+        findsNothing,
+      );
+      expect(find.text('First streamed event'), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'new live messages still surface the badge when scrolled away from the bottom',

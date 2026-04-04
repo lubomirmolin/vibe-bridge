@@ -11,6 +11,7 @@ Future<void> waitForCodexTurnCompletion(
   required String promptLabel,
   required String expectedPrompt,
   required int expectedUserPromptCount,
+  Future<void> Function()? onPendingUserInput,
   Duration timeout = const Duration(minutes: 3),
 }) async {
   final deadline = DateTime.now().add(timeout);
@@ -42,6 +43,11 @@ Future<void> waitForCodexTurnCompletion(
       );
     }
     if (snapshot['pending_user_input'] != null) {
+      if (onPendingUserInput != null) {
+        await onPendingUserInput();
+        await tester.pump(const Duration(milliseconds: 300));
+        continue;
+      }
       fail(
         'Codex thread $threadId unexpectedly requested user input during the $promptLabel turn.',
       );

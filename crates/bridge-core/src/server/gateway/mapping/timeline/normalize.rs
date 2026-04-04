@@ -354,7 +354,56 @@ fn extract_file_change_path(item: &Value) -> String {
                 .find_map(|change| change.get("path").and_then(Value::as_str))
                 .map(ToString::to_string)
         })
+        .or_else(|| {
+            ["resolved_unified_diff", "output", "change"]
+                .into_iter()
+                .filter_map(|key| item.get(key).and_then(Value::as_str))
+                .find_map(extract_file_change_path_from_text)
+        })
         .unwrap_or_default()
+}
+
+fn extract_file_change_path_from_text(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if let Some(path) = trimmed
+            .strip_prefix("*** Update File: ")
+            .or_else(|| trimmed.strip_prefix("*** Add File: "))
+            .or_else(|| trimmed.strip_prefix("*** Delete File: "))
+        {
+            let path = path.trim();
+            if !path.is_empty() {
+                return Some(path.to_string());
+            }
+        }
+
+        if let Some(path) = trimmed
+            .strip_prefix("M ")
+            .or_else(|| trimmed.strip_prefix("A "))
+            .or_else(|| trimmed.strip_prefix("D "))
+            .or_else(|| trimmed.strip_prefix("R "))
+            .or_else(|| trimmed.strip_prefix("C "))
+            .or_else(|| trimmed.strip_prefix("? "))
+        {
+            let path = path.trim();
+            if !path.is_empty() {
+                return Some(path.to_string());
+            }
+        }
+
+        if let Some(path) = trimmed.strip_prefix("diff --git a/") {
+            let path = path.split_whitespace().next().unwrap_or_default().trim();
+            if !path.is_empty() {
+                return Some(path.to_string());
+            }
+        }
+    }
+
+    None
 }
 
 fn is_file_change_custom_tool(tool_name: &str) -> bool {

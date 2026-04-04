@@ -1,0 +1,3 @@
+LIVE_CODEX_REGULAR_FLOW_NEEDLE
+stream mobile tool coverage
+This fixture exists so the live Codex regular-flow test can force one search and one read before replying.

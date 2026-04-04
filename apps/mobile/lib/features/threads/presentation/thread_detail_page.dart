@@ -708,11 +708,11 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
           position.maxScrollExtent,
         );
     final remainingDistance = position.maxScrollExtent - effectiveOffset;
-    final effectiveTolerance = math.min(
-      tolerance,
-      position.maxScrollExtent * 0.25,
+    final effectiveTolerance = math.max(
+      24,
+      math.min(tolerance, position.maxScrollExtent * 0.25),
     );
-    return remainingDistance < effectiveTolerance;
+    return remainingDistance <= effectiveTolerance;
   }
 
   void _maybeAutoLoadEarlierHistory() {
@@ -824,6 +824,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       _didRestoreComposerDraft = false;
       _lastPersistedComposerDraftValue = null;
       _isTimelineAutoFollowEnabled = true;
+      _lastScrollOffset = 0;
+      _scrollOffsetOnDirectionChange = 0;
+      _isScrollingDown = false;
       _timelineBottomFollowRunId += 1;
       _timelineExpansionState.clear();
       _threadUsage = null;
@@ -933,6 +936,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       return;
     }
     _didInitialScrollToBottom = true;
+    _isTimelineAutoFollowEnabled = true;
     _followTimelineBottomUntilSettled();
   }
 
@@ -1606,6 +1610,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
         _draftThreadErrorMessage = null;
         _didInitialScrollToBottom = false;
         _didSubmitInitialComposerInput = false;
+        _isTimelineAutoFollowEnabled = true;
+        _lastScrollOffset = 0;
+        _scrollOffsetOnDirectionChange = 0;
+        _isScrollingDown = false;
         _timelineExpansionState.clear();
         _attachedImages = List<XFile>.unmodifiable(
           transition.initialAttachedImages,
@@ -1647,6 +1655,13 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     TurnMode? mode,
     List<XFile>? attachedImages,
   }) async {
+    final effectiveThreadId = _effectiveThreadId ?? 'draft';
+    debugPrint(
+      'thread_detail_page_submit_composer '
+      'threadId=$effectiveThreadId '
+      'chars=${rawInput.trim().length} '
+      'mode=${(mode ?? _composerMode).wireValue}',
+    );
     final imageDataUrls = await _encodeAttachedImages(
       attachedImages ?? _attachedImages,
     );
@@ -1656,6 +1671,12 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       images: imageDataUrls,
       model: _selectedModel,
       reasoningEffort: _selectedReasoningEffortWireValue(),
+    );
+    debugPrint(
+      'thread_detail_page_submit_composer_result '
+      'threadId=$effectiveThreadId '
+      'success=$success '
+      'mounted=$mounted',
     );
     if (!mounted || !success) {
       return success;

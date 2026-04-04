@@ -113,8 +113,16 @@ fn extract_shell_like_command(value: &Value) -> Option<String> {
                 return None;
             }
             if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
-                return extract_shell_like_command(&parsed)
-                    .or_else(|| parse_background_command(trimmed));
+                return match parsed {
+                    Value::Object(_) | Value::Array(_) => extract_shell_like_command(&parsed)
+                        .or_else(|| parse_background_command(trimmed)),
+                    Value::String(parsed_text) => {
+                        parse_background_command(&parsed_text).or(Some(parsed_text))
+                    }
+                    Value::Null | Value::Bool(_) | Value::Number(_) => {
+                        parse_background_command(trimmed)
+                    }
+                };
             }
             parse_background_command(trimmed).or_else(|| Some(trimmed.to_string()))
         }
@@ -126,9 +134,7 @@ fn extract_shell_like_command(value: &Value) -> Option<String> {
             .or_else(|| object.get("input").and_then(extract_shell_like_command))
             .or_else(|| object.get("arguments").and_then(extract_shell_like_command)),
         Value::Array(values) => values.iter().find_map(extract_shell_like_command),
-        other => {
-            value_to_text(other).and_then(|text| extract_shell_like_command(&Value::String(text)))
-        }
+        Value::Bool(_) | Value::Number(_) => None,
     }
 }
 

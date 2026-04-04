@@ -61,6 +61,11 @@ impl ProjectionStore {
         state.summaries.get(thread_id).map(|summary| summary.status)
     }
 
+    pub async fn summary(&self, thread_id: &str) -> Option<ThreadSummaryDto> {
+        let state = self.inner.read().await;
+        state.summaries.get(thread_id).cloned()
+    }
+
     pub async fn thread_title(&self, thread_id: &str) -> Option<String> {
         let state = self.inner.read().await;
         state

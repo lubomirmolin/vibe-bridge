@@ -490,6 +490,7 @@ bool _isExplorationTimelineItem(ThreadActivityItem item) {
 class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   static const Duration _activeTurnRefreshGuardWindow = Duration(seconds: 5);
   static const Duration _assistantReplayDedupWindow = Duration(minutes: 2);
+  static const Duration _silentTurnSnapshotWatchdogDelay = Duration(seconds: 4);
 
   ThreadDetailController({
     required String bridgeApiBaseUrl,
@@ -536,6 +537,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   _liveEventSubscription;
   Timer? _detailRefreshTimer;
   Timer? _snapshotRefreshTimer;
+  Timer? _silentTurnWatchdogTimer;
   bool _isDetailRefreshInFlight = false;
   bool _isSnapshotRefreshInFlight = false;
   bool _shouldRefreshDetailAfterCurrentRequest = false;
@@ -810,6 +812,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       return;
     }
 
+    _cancelSilentTurnWatchdog();
     if (state.isTurnActive ||
         _lastActiveTurnSignalAt != null ||
         _pendingPromptSubmittedAt != null) {
@@ -1549,11 +1552,17 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         current: state.thread,
         refreshed: scopedDetail,
       )) {
+        _syncSilentTurnWatchdog();
         return;
       }
 
       state = state.copyWith(thread: scopedDetail);
       _threadListController.syncThreadDetail(scopedDetail);
+      if (scopedDetail.status != ThreadStatus.running) {
+        _finishTrackingActiveTurn();
+      } else {
+        _syncSilentTurnWatchdog();
+      }
     } on ThreadDetailBridgeException {
       // Keep the current live state when a background metadata refresh fails.
     } catch (_) {
@@ -1629,6 +1638,11 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearStaleMessage: true,
       );
       _threadListController.syncThreadDetail(nextThread);
+      if (nextThread.status != ThreadStatus.running) {
+        _finishTrackingActiveTurn();
+      } else {
+        _syncSilentTurnWatchdog();
+      }
     } on ThreadDetailBridgeException {
       // Keep the current live state when a background snapshot refresh fails.
     } catch (_) {
@@ -1818,12 +1832,22 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       isComposerMutationInFlight: true,
       clearTurnControlError: true,
     );
-    final localPendingPromptId = state.isTurnActive
+    final shouldSteer = await _shouldRouteComposerInputToActiveTurnSteer();
+    _debugLog(
+      'thread_detail_submit_composer '
+      'threadId=${state.threadId} '
+      'chars=${input.length} '
+      'images=${normalizedImages.length} '
+      'localIsTurnActive=${state.isTurnActive} '
+      'shouldSteer=$shouldSteer '
+      'mode=${mode.wireValue}',
+    );
+    final localPendingPromptId = shouldSteer
         ? null
         : _appendPendingLocalUserPrompt(input: input, images: normalizedImages);
 
     try {
-      final mutationResult = state.isTurnActive
+      final mutationResult = shouldSteer
           ? await _bridgeApi.steerTurn(
               bridgeApiBaseUrl: _bridgeApiBaseUrl,
               threadId: state.threadId,
@@ -1840,6 +1864,14 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
             );
 
       _pendingPromptSubmittedAt = DateTime.now();
+      _debugLog(
+        'thread_detail_submit_composer_result '
+        'threadId=${state.threadId} '
+        'operation=${mutationResult.operation} '
+        'outcome=${mutationResult.outcome} '
+        'threadStatus=${mutationResult.threadStatus.wireValue} '
+        'turnId=${mutationResult.turnId ?? ''}',
+      );
       _applyTurnMutationResult(mutationResult);
       state = state.copyWith(
         isComposerMutationInFlight: false,
@@ -1861,6 +1893,55 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
             'Couldn’t update the turn right now. Please try again.',
       );
       return false;
+    }
+  }
+
+  Future<bool> _shouldRouteComposerInputToActiveTurnSteer() async {
+    if (!state.isTurnActive) {
+      return false;
+    }
+
+    final requestedThreadId = state.threadId;
+    try {
+      final detail = await _bridgeApi.fetchThreadDetail(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: requestedThreadId,
+      );
+      if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
+        return state.isTurnActive;
+      }
+
+      final scopedDetail = _ensureScopedThreadDetail(
+        detail: detail,
+        expectedThreadId: requestedThreadId,
+        context: 'verifying active turn state before submitting composer input',
+      );
+      _debugLog(
+        'thread_detail_verify_turn_state_before_submit '
+        'threadId=$requestedThreadId '
+        'localStatus=${state.thread?.status.wireValue} '
+        'bridgeStatus=${scopedDetail.status.wireValue}',
+      );
+      if (scopedDetail.status == ThreadStatus.running) {
+        return true;
+      }
+
+      _updateThreadStatus(
+        status: scopedDetail.status,
+        updatedAt: scopedDetail.updatedAt,
+        lastTurnSummary: scopedDetail.lastTurnSummary,
+        title: scopedDetail.title,
+      );
+      _threadListController.applyThreadStatusUpdate(
+        threadId: scopedDetail.threadId,
+        status: scopedDetail.status,
+        updatedAt: scopedDetail.updatedAt,
+        title: scopedDetail.title,
+      );
+      _finishTrackingActiveTurn();
+      return false;
+    } catch (_) {
+      return true;
     }
   }
 
@@ -2430,6 +2511,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
   void _recordActiveTurnSignal() {
     _lastActiveTurnSignalAt = DateTime.now();
+    _syncSilentTurnWatchdog();
   }
 
   void _startTrackingActiveTurn() {
@@ -2439,6 +2521,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   }
 
   void _finishTrackingActiveTurn() {
+    _cancelSilentTurnWatchdog();
     _pendingPromptSubmittedAt = null;
     _lastActiveTurnSignalAt = null;
     _activeTurnSawMeaningfulLiveActivity = false;
@@ -2551,6 +2634,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   void _recordMeaningfulLiveActivity(ThreadActivityItem item) {
     if (_isMeaningfulTurnLiveActivity(item)) {
       _activeTurnSawMeaningfulLiveActivity = true;
+      _cancelSilentTurnWatchdog();
     }
   }
 
@@ -2566,6 +2650,52 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       ThreadActivityItemType.planUpdate => true,
       _ => false,
     };
+  }
+
+  void _syncSilentTurnWatchdog() {
+    if (!_shouldWatchForSilentTurn()) {
+      _cancelSilentTurnWatchdog();
+      return;
+    }
+
+    _silentTurnWatchdogTimer?.cancel();
+    _silentTurnWatchdogTimer = Timer(
+      _silentTurnSnapshotWatchdogDelay,
+      _handleSilentTurnWatchdogFired,
+    );
+  }
+
+  bool _shouldWatchForSilentTurn() {
+    if (_isDisposed) {
+      return false;
+    }
+
+    final thread = state.thread;
+    if (thread == null || thread.status != ThreadStatus.running) {
+      return false;
+    }
+
+    return !_activeTurnSawMeaningfulLiveActivity;
+  }
+
+  void _cancelSilentTurnWatchdog() {
+    _silentTurnWatchdogTimer?.cancel();
+    _silentTurnWatchdogTimer = null;
+  }
+
+  void _handleSilentTurnWatchdogFired() {
+    if (!_shouldWatchForSilentTurn()) {
+      return;
+    }
+
+    _activeTurnNeedsSnapshotCatchUp = true;
+    _debugLog(
+      'thread_detail_silent_turn_watchdog '
+      'threadId=${state.threadId} '
+      'pendingPrompt=${_pendingPromptSubmittedAt != null}',
+    );
+    _scheduleThreadSnapshotRefresh(delay: const Duration(milliseconds: 100));
+    _syncSilentTurnWatchdog();
   }
 
   void _logPromptResponseIfNeeded({
@@ -2728,6 +2858,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     _reconnectScheduler.dispose();
     _detailRefreshTimer?.cancel();
     _snapshotRefreshTimer?.cancel();
+    _silentTurnWatchdogTimer?.cancel();
     unawaited(_closeLiveSubscription());
     super.dispose();
   }

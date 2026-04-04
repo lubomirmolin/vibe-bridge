@@ -9,14 +9,18 @@ use super::mapping::{
     derive_repository_name_from_cwd, extract_generated_thread_title, map_thread_snapshot,
     map_thread_summary, normalize_codex_item_payload, parse_model_options,
     parse_repository_name_from_origin, prefer_archive_timeline_when_rpc_lacks_tool_events,
+    timeline_annotations_for_event,
 };
 use super::{
-    CodexGateway, CodexGitInfo, CodexThread, CodexThreadStatus, CodexTurn, TurnStartRequest,
+    CodexGateway, CodexGitInfo, CodexThread, CodexThreadStatus, CodexTurn,
+    GatewayTurnControlRequest, TurnStartRequest,
 };
 use crate::codex_runtime::CodexRuntimeMode;
 use crate::server::config::BridgeCodexConfig;
 use serde_json::{Value, json};
-use shared_contracts::{BridgeEventKind, ProviderKind, ThreadTimelineEntryDto};
+use shared_contracts::{
+    BridgeEventKind, ProviderKind, ThreadTimelineEntryDto, ThreadTimelineExplorationKind,
+};
 use std::fs;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -91,6 +95,190 @@ fn web_search_item_normalizes_to_command_delta() {
     assert_eq!(payload["command"], "web_search");
     assert_eq!(payload["action"], "search");
     assert_eq!(payload["output"], "search: GitHub R2Explorer README");
+}
+
+#[test]
+fn file_change_tool_output_extracts_path_from_updated_files_summary() {
+    let item = json!({
+        "id": "tool-edit-result",
+        "type": "functionCallOutput",
+        "name": "apply_patch",
+        "output": "Success. Updated the following files:\nA tmp/live_codex_regular_flow/probe.txt\n",
+    });
+
+    let (kind, payload) =
+        normalize_codex_item_payload(&item).expect("file change output should normalize");
+    assert_eq!(kind, BridgeEventKind::FileChange);
+    assert_eq!(payload["path"], "tmp/live_codex_regular_flow/probe.txt");
+}
+
+#[test]
+fn thread_snapshot_preserves_regular_codex_search_read_and_edit_flow() {
+    let snapshot = map_thread_snapshot(CodexThread {
+        id: "thread-regular-flow".to_string(),
+        name: Some("Regular flow".to_string()),
+        preview: Some("search read edit".to_string()),
+        status: CodexThreadStatus {
+            kind: "idle".to_string(),
+        },
+        cwd: "/Users/test/codex-mobile-companion".to_string(),
+        path: None,
+        git_info: Some(CodexGitInfo {
+            branch: Some("main".to_string()),
+            origin_url: Some("git@github.com:openai/codex-mobile-companion.git".to_string()),
+        }),
+        created_at: 1_710_000_000,
+        updated_at: 1_710_000_300,
+        source: Value::String("cli".to_string()),
+        turns: vec![CodexTurn {
+            id: "turn-regular-flow".to_string(),
+            items: vec![
+                json!({
+                    "id": "tool-search",
+                    "type": "functionCall",
+                    "name": "exec_command",
+                    "arguments": "{\"cmd\":\"rg -n LIVE_CODEX_REGULAR_FLOW_NEEDLE apps/mobile/integration_test/support/live_codex_regular_flow_probe.txt\"}",
+                }),
+                json!({
+                    "id": "tool-read",
+                    "type": "functionCall",
+                    "name": "exec_command",
+                    "arguments": "{\"cmd\":\"sed -n '1,3p' apps/mobile/integration_test/support/live_codex_regular_flow_probe.txt\"}",
+                }),
+                json!({
+                    "id": "tool-edit",
+                    "type": "functionCall",
+                    "name": "apply_patch",
+                    "arguments": "*** Begin Patch\n*** Add File: tmp/live_codex_regular_flow/probe.txt\n+Needle: LIVE_CODEX_REGULAR_FLOW_NEEDLE\n+Status: ready\n*** End Patch",
+                }),
+                json!({
+                    "id": "tool-edit-result",
+                    "type": "functionCallOutput",
+                    "name": "apply_patch",
+                    "output": "Success. Updated the following files:\nA tmp/live_codex_regular_flow/probe.txt\n",
+                }),
+                json!({
+                    "id": "msg-assistant",
+                    "type": "agentMessage",
+                    "text": "done",
+                }),
+            ],
+        }],
+    });
+
+    let search_entry = snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.event_id.ends_with("tool-search"))
+        .expect("search entry should exist");
+    assert_eq!(search_entry.kind, BridgeEventKind::CommandDelta);
+    assert_eq!(
+        search_entry
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.exploration_kind),
+        Some(ThreadTimelineExplorationKind::Search)
+    );
+    assert_eq!(
+        search_entry
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.entry_label.as_deref()),
+        Some("Search")
+    );
+
+    let read_entry = snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.event_id.ends_with("tool-read"))
+        .expect("read entry should exist");
+    assert_eq!(read_entry.kind, BridgeEventKind::CommandDelta);
+    assert_eq!(
+        read_entry
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.exploration_kind),
+        Some(ThreadTimelineExplorationKind::Read)
+    );
+    assert_eq!(
+        read_entry
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.entry_label.as_deref()),
+        Some("Read live_codex_regular_flow_probe.txt")
+    );
+
+    let edit_entry = snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.event_id.ends_with("tool-edit"))
+        .expect("edit entry should exist");
+    assert_eq!(edit_entry.kind, BridgeEventKind::FileChange);
+    assert_eq!(
+        edit_entry.payload["path"],
+        "tmp/live_codex_regular_flow/probe.txt"
+    );
+
+    let edit_result_entry = snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.event_id.ends_with("tool-edit-result"))
+        .expect("edit result entry should exist");
+    assert_eq!(edit_result_entry.kind, BridgeEventKind::FileChange);
+    assert_eq!(
+        edit_result_entry.payload["path"],
+        "tmp/live_codex_regular_flow/probe.txt"
+    );
+}
+
+#[test]
+fn scalar_command_output_does_not_recurse_during_annotation_detection() {
+    let payload = json!({
+        "command": "/bin/zsh -lc 'adb -s RFCW70FTAVB reverse tcp:3310 tcp:3310'",
+        "aggregatedOutput": "3310\n",
+    });
+
+    let annotations =
+        timeline_annotations_for_event("turn-1-call-1", BridgeEventKind::CommandDelta, &payload);
+    assert!(annotations.is_none());
+}
+
+#[test]
+fn command_execution_annotations_use_command_even_when_output_is_scalar_json() {
+    let snapshot = map_thread_snapshot(CodexThread {
+        id: "thread-command-output-scalar".to_string(),
+        name: Some("Scalar output".to_string()),
+        preview: Some("scalar output".to_string()),
+        status: CodexThreadStatus {
+            kind: "idle".to_string(),
+        },
+        cwd: "/Users/test/codex-mobile-companion".to_string(),
+        path: None,
+        git_info: Some(CodexGitInfo {
+            branch: Some("main".to_string()),
+            origin_url: Some("git@github.com:openai/codex-mobile-companion.git".to_string()),
+        }),
+        created_at: 1_710_000_000,
+        updated_at: 1_710_000_300,
+        source: Value::String("cli".to_string()),
+        turns: vec![CodexTurn {
+            id: "turn-command-output-scalar".to_string(),
+            items: vec![json!({
+                "id": "call-adb-reverse",
+                "type": "commandExecution",
+                "command": "/bin/zsh -lc 'adb -s RFCW70FTAVB reverse tcp:3310 tcp:3310'",
+                "cwd": "/Users/test/codex-mobile-companion",
+                "status": "completed",
+                "aggregatedOutput": "3310\n",
+                "exitCode": 0,
+                "durationMs": 0
+            })],
+        }],
+    });
+
+    assert_eq!(snapshot.entries.len(), 1);
+    assert_eq!(snapshot.entries[0].kind, BridgeEventKind::CommandDelta);
+    assert!(snapshot.entries[0].annotations.is_none());
 }
 
 #[test]
@@ -550,5 +738,171 @@ fn live_create_thread_and_stream_turn_response() {
             saw_token,
             "did not observe assistant stream payload containing {token}"
         );
+    });
+}
+
+#[test]
+#[ignore = "requires a live local Codex app-server"]
+fn live_regular_codex_flow_surfaces_search_read_and_edit_events() {
+    let runtime = tokio::runtime::Runtime::new().expect("runtime should build");
+    runtime.block_on(async {
+        let workspace = std::env::temp_dir().join(format!(
+            "bridge-live-regular-flow-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos()
+        ));
+        fs::create_dir_all(workspace.join("docs")).expect("workspace should exist");
+        let needle = format!("LIVE_BRIDGE_FLOW_NEEDLE_{}", std::process::id());
+        fs::write(
+            workspace.join("README.md"),
+            "# Regular bridge flow probe\n\nNeedle file lives somewhere under docs/.\n"
+                .to_string(),
+        )
+        .expect("readme should be writable");
+        fs::write(
+            workspace.join("docs/probe.txt"),
+            format!("{needle}\nREGULAR_FLOW_CONFIRMATION=bridge flow working\n"),
+        )
+        .expect("probe file should be writable");
+
+        let codex_bin = std::env::var("CODEX_LIVE_TEST_CODEX_BIN")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "codex".to_string());
+        let gateway = CodexGateway::new(BridgeCodexConfig {
+            mode: CodexRuntimeMode::Spawn,
+            endpoint: None,
+            command: codex_bin,
+            args: vec!["app-server".to_string()],
+            desktop_ipc_socket_path: None,
+        });
+
+        let snapshot = tokio::time::timeout(
+            Duration::from_secs(10),
+            gateway.create_thread(
+                ProviderKind::Codex,
+                &workspace.display().to_string(),
+                None,
+            ),
+        )
+        .await
+        .expect("create_thread should not hang")
+        .expect("create_thread should succeed");
+        let thread_id = snapshot.thread.thread_id.clone();
+
+        let done_token = format!("BRIDGE_FLOW_DONE_{}", std::process::id());
+        let output_relative_path = "output/result.txt";
+        let output_path = workspace.join(output_relative_path);
+        let prompt = format!(
+            "Use workspace tools to do these steps in order: \
+1. Search the workspace for the exact string {needle}. \
+2. Read the file that contains that exact string. \
+3. Create the file {output_relative_path} with exactly these two lines:\\nNeedle: {needle}\\nStatus: bridge flow working\\n\
+After completing those steps, reply with exactly {done_token}."
+        );
+
+        let (event_tx, event_rx) = mpsc::channel();
+        let (completed_tx, completed_rx) = mpsc::channel();
+        gateway
+            .start_turn_streaming(
+                &thread_id,
+                TurnStartRequest {
+                    prompt,
+                    images: Vec::new(),
+                    model: None,
+                    effort: None,
+                    permission_mode: None,
+                },
+                move |event| {
+                    let _ = event_tx.send(event);
+                },
+                move |control| match control {
+                    GatewayTurnControlRequest::CodexApproval { method, params, .. } => {
+                        let response = match method.as_str() {
+                            "item/commandExecution/requestApproval"
+                            | "item/fileChange/requestApproval" => {
+                                json!({"decision":"acceptForSession"})
+                            }
+                            "item/permissions/requestApproval" => json!({
+                                "permissions": params
+                                    .get("permissions")
+                                    .cloned()
+                                    .unwrap_or_else(|| json!({})),
+                                "scope": "session",
+                            }),
+                            _ => return Ok(None),
+                        };
+                        Ok(Some(response))
+                    }
+                    _ => Ok(None),
+                },
+                move |_| {
+                    let _ = completed_tx.send(());
+                },
+                |_| {},
+            )
+            .expect("turn should start");
+
+        completed_rx
+            .recv_timeout(Duration::from_secs(120))
+            .expect("turn should complete");
+
+        let mut events = Vec::new();
+        while let Ok(event) = event_rx.recv_timeout(Duration::from_millis(100)) {
+            events.push(event);
+        }
+
+        assert!(
+            events.iter().any(|event| {
+                event.kind == BridgeEventKind::CommandDelta && {
+                    let payload = serde_json::to_string(&event.payload).unwrap_or_default();
+                    payload.contains("rg -n")
+                        || payload.contains("\"rg ")
+                        || payload.contains("grep ")
+                        || payload.contains("find ")
+                }
+            }),
+            "expected a search command event in the live turn"
+        );
+        assert!(
+            events.iter().any(|event| {
+                event.kind == BridgeEventKind::CommandDelta && {
+                    let payload = serde_json::to_string(&event.payload).unwrap_or_default();
+                    payload.contains("docs/probe.txt")
+                        && (payload.contains("sed -n")
+                            || payload.contains("cat ")
+                            || payload.contains("head ")
+                            || payload.contains("tail "))
+                }
+            }),
+            "expected a read command event in the live turn"
+        );
+        assert!(
+            events.iter().any(|event| {
+                event.kind == BridgeEventKind::FileChange
+                    && serde_json::to_string(&event.payload)
+                        .map(|payload| payload.contains(output_relative_path))
+                        .unwrap_or(false)
+            }),
+            "expected a file change event in the live turn"
+        );
+        assert!(
+            events.iter().any(|event| {
+                event.kind == BridgeEventKind::MessageDelta
+                    && serde_json::to_string(&event.payload)
+                        .map(|payload| payload.contains(&done_token))
+                        .unwrap_or(false)
+            }),
+            "expected the final assistant token in the live turn"
+        );
+        assert_eq!(
+            fs::read_to_string(&output_path).expect("output file should exist"),
+            format!("Needle: {needle}\nStatus: bridge flow working\n")
+        );
+
+        let _ = fs::remove_dir_all(&workspace);
     });
 }

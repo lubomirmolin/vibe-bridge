@@ -26,6 +26,7 @@ void main() {
   testWidgets(
     'real bridge Codex diagnostics probe captures duplicate user messages and missing tool items after a second turn',
     (tester) async {
+      addTearDown(() => _tearDownLiveTestApp(tester));
       final bridgeApiBaseUrl = _resolveBridgeApiBaseUrl();
       await _requireAndroidLoopbackDevice(bridgeApiBaseUrl);
 
@@ -103,7 +104,9 @@ void main() {
       final container = ProviderScope.containerOf(
         tester.element(find.byType(MaterialApp)),
       );
-      final baselineState = container.read(threadDetailControllerProvider(args));
+      final baselineState = container.read(
+        threadDetailControllerProvider(args),
+      );
       final baselineControllerIds = baselineState.items
           .map((item) => item.eventId)
           .toSet();
@@ -125,7 +128,9 @@ void main() {
         threadId: createdThreadId,
       );
       final rawEvents = <BridgeEventEnvelope<Map<String, dynamic>>>[];
-      final rawEventSubscription = liveSubscription.events.listen(rawEvents.add);
+      final rawEventSubscription = liveSubscription.events.listen(
+        rawEvents.add,
+      );
 
       try {
         await _submitPrompt(tester, prompt: secondPrompt);
@@ -178,9 +183,9 @@ void main() {
         controllerStatus: finalState.thread?.status.wireValue ?? 'unknown',
         snapshotStatus:
             ((finalSnapshot['thread'] as Map<String, dynamic>?)?['status']
-                        as String?)
-                    ?.trim() ??
-                'unknown',
+                    as String?)
+                ?.trim() ??
+            'unknown',
         rawSecondTurnEvents: rawEvents
             .map(_RawEventDiagnostic.fromEvent)
             .toList(growable: false),
@@ -191,10 +196,14 @@ void main() {
             .map(_ControllerItemDiagnostic.fromItem)
             .toList(growable: false),
         snapshotUserPrompts: _extractSnapshotUserPrompts(snapshotEntries),
-        timelineUserPrompts: _extractTimelineUserPrompts(finalTimelinePage.entries),
+        timelineUserPrompts: _extractTimelineUserPrompts(
+          finalTimelinePage.entries,
+        ),
         controllerUserPrompts: _extractControllerUserPrompts(finalState.items),
         snapshotToolEntries: _countSnapshotToolEntries(snapshotEntries),
-        timelineToolEntries: _countTimelineToolEntries(finalTimelinePage.entries),
+        timelineToolEntries: _countTimelineToolEntries(
+          finalTimelinePage.entries,
+        ),
         controllerToolItems: _countControllerToolItems(finalState.items),
       );
 
@@ -230,6 +239,276 @@ void main() {
     },
     timeout: const Timeout(Duration(minutes: 10)),
   );
+
+  testWidgets(
+    'real bridge Codex regular flow keeps search read and file-edit activity visible in Flutter',
+    (tester) async {
+      addTearDown(() => _tearDownLiveTestApp(tester));
+      final bridgeApiBaseUrl = _resolveBridgeApiBaseUrl();
+      await _requireAndroidLoopbackDevice(bridgeApiBaseUrl);
+
+      final workspacePath = _resolveWorkspacePath();
+      final threadApi = HttpThreadDetailBridgeApi();
+      final threadListApi = HttpThreadListBridgeApi();
+
+      await _ensureWorkspaceAvailable(
+        threadApi: threadApi,
+        threadListApi: threadListApi,
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        workspacePath: workspacePath,
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appSecureStoreProvider.overrideWithValue(InMemorySecureStore()),
+          ],
+          child: MaterialApp(
+            home: ThreadListPage(
+              bridgeApiBaseUrl: bridgeApiBaseUrl,
+              autoOpenPreviouslySelectedThread: false,
+            ),
+          ),
+        ),
+      );
+
+      await _pumpUntilFound(
+        tester,
+        find.byKey(const Key('thread-list-create-button')),
+        timeout: const Duration(seconds: 20),
+      );
+      await tester.tap(find.byKey(const Key('thread-list-create-button')));
+      await tester.pumpAndSettle();
+
+      await _selectWorkspaceForDraft(tester, workspacePath: workspacePath);
+      await _pumpUntilFound(
+        tester,
+        find.byKey(const Key('thread-draft-title')),
+        timeout: const Duration(seconds: 12),
+      );
+
+      final searchPrompt = _buildRegularFlowSearchPrompt();
+      debugPrint('LIVE_CODEX_REGULAR_FLOW_STAGE search_prompt_submit');
+      await _submitPrompt(tester, prompt: searchPrompt);
+
+      final createdThreadId = await _waitForSelectedThreadId(
+        tester,
+        bridgeApiBaseUrl,
+        expectedPrefix: 'codex:',
+        timeout: const Duration(seconds: 25),
+      );
+
+      await waitForCodexTurnCompletion(
+        tester,
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: createdThreadId,
+        promptLabel: 'regular-flow-search',
+        expectedPrompt: searchPrompt,
+        expectedUserPromptCount: 1,
+      );
+      debugPrint('LIVE_CODEX_REGULAR_FLOW_STAGE search_turn_completed');
+      await _waitForThreadControllerToSettle(
+        tester,
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: createdThreadId,
+      );
+      debugPrint('LIVE_CODEX_REGULAR_FLOW_STAGE search_controller_settled');
+
+      final args = ThreadDetailControllerArgs(
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: createdThreadId,
+      );
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(MaterialApp)),
+      );
+
+      final firstTurnTimeline = await _waitForTimelinePage(
+        tester,
+        threadApi: threadApi,
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: createdThreadId,
+        predicate: _firstRegularFlowTurnHasExpectedToolCoverage,
+      );
+      final firstTurnControllerState = container.read(
+        threadDetailControllerProvider(args),
+      );
+
+      expect(firstTurnTimeline.entries.any(_isSearchExplorationEntry), isTrue);
+      expect(
+        firstTurnTimeline.entries.any(_isRegularFlowReadCoverageEntry),
+        isTrue,
+      );
+      expect(
+        firstTurnControllerState.items.any(
+          (item) => item.type == ThreadActivityItemType.terminalOutput,
+        ),
+        isTrue,
+      );
+
+      final baselineTimelineIds = firstTurnTimeline.entries
+          .map((entry) => entry.eventId)
+          .toSet();
+      final baselineControllerIds = firstTurnControllerState.items
+          .map((item) => item.eventId)
+          .toSet();
+
+      final probeFileName =
+          'live_codex_probe_${DateTime.now().millisecondsSinceEpoch}.txt';
+      final probeRelativePath = 'tmp/live_codex_regular_flow/$probeFileName';
+      const probeLineOne = 'REGULAR_FLOW_WRITE_RESULT';
+      const probeLineTwo = 'bridge and flutter e2e';
+      final writePrompt = _buildRegularFlowWritePrompt(
+        probeRelativePath: probeRelativePath,
+        firstLine: probeLineOne,
+        secondLine: probeLineTwo,
+      );
+
+      debugPrint('LIVE_CODEX_REGULAR_FLOW_STAGE write_prompt_submit');
+      await _submitPrompt(
+        tester,
+        prompt: writePrompt,
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: createdThreadId,
+        expectedUserPromptCount: 2,
+      );
+      await waitForCodexTurnCompletion(
+        tester,
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: createdThreadId,
+        promptLabel: 'regular-flow-write',
+        expectedPrompt: writePrompt,
+        expectedUserPromptCount: 2,
+        onPendingUserInput: () => _approvePendingProviderPromptIfVisible(
+          tester,
+          bridgeApiBaseUrl: bridgeApiBaseUrl,
+          threadId: createdThreadId,
+        ),
+      );
+      debugPrint('LIVE_CODEX_REGULAR_FLOW_STAGE write_turn_completed');
+      await _waitForThreadControllerToSettle(
+        tester,
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: createdThreadId,
+      );
+      debugPrint('LIVE_CODEX_REGULAR_FLOW_STAGE write_controller_settled');
+
+      final secondTurnTimeline = await _waitForTimelinePage(
+        tester,
+        threadApi: threadApi,
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: createdThreadId,
+        predicate: (page) => page.entries.any(
+          (entry) =>
+              entry.kind == BridgeEventKind.fileChange &&
+              jsonEncode(entry.payload).contains(probeRelativePath),
+        ),
+      );
+      final secondTurnControllerState = container.read(
+        threadDetailControllerProvider(args),
+      );
+      final newWriteEntries = secondTurnTimeline.entries
+          .where((entry) => !baselineTimelineIds.contains(entry.eventId))
+          .toList(growable: false);
+      final newWriteControllerItems = secondTurnControllerState.items
+          .where((item) => !baselineControllerIds.contains(item.eventId))
+          .toList(growable: false);
+
+      expect(
+        newWriteEntries.any(
+          (entry) => entry.kind == BridgeEventKind.fileChange,
+        ),
+        isTrue,
+      );
+      expect(
+        newWriteControllerItems.any(
+          (item) => item.type == ThreadActivityItemType.fileChange,
+        ),
+        isTrue,
+      );
+      expect(
+        secondTurnTimeline.entries.any(
+          (entry) =>
+              entry.kind == BridgeEventKind.fileChange &&
+              jsonEncode(entry.payload).contains(probeRelativePath),
+        ),
+        isTrue,
+      );
+
+      final readBackPrompt = _buildRegularFlowReadBackPrompt(
+        probeRelativePath: probeRelativePath,
+        secondLine: probeLineTwo,
+      );
+      debugPrint('LIVE_CODEX_REGULAR_FLOW_STAGE readback_prompt_submit');
+      await _submitPrompt(
+        tester,
+        prompt: readBackPrompt,
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: createdThreadId,
+        expectedUserPromptCount: 3,
+      );
+      await waitForCodexTurnCompletion(
+        tester,
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: createdThreadId,
+        promptLabel: 'regular-flow-readback',
+        expectedPrompt: readBackPrompt,
+        expectedUserPromptCount: 3,
+      );
+      debugPrint('LIVE_CODEX_REGULAR_FLOW_STAGE readback_turn_completed');
+      await _waitForThreadControllerToSettle(
+        tester,
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: createdThreadId,
+      );
+      debugPrint('LIVE_CODEX_REGULAR_FLOW_STAGE readback_controller_settled');
+
+      final finalTimeline = await _waitForTimelinePage(
+        tester,
+        threadApi: threadApi,
+        bridgeApiBaseUrl: bridgeApiBaseUrl,
+        threadId: createdThreadId,
+        predicate: (page) => page.entries.any((entry) {
+          final annotations = entry.annotations;
+          return entry.kind == BridgeEventKind.commandDelta &&
+              annotations?.explorationKind ==
+                  ThreadTimelineExplorationKind.read &&
+              (annotations?.entryLabel?.contains(probeFileName) ?? false);
+        }),
+      );
+      final finalControllerState = container.read(
+        threadDetailControllerProvider(args),
+      );
+      final expectedAssistantReply = 'READ_OK:$probeLineTwo';
+
+      expect(
+        finalTimeline.entries.any((entry) {
+          final annotations = entry.annotations;
+          return entry.kind == BridgeEventKind.commandDelta &&
+              annotations?.explorationKind ==
+                  ThreadTimelineExplorationKind.read &&
+              (annotations?.entryLabel?.contains(probeFileName) ?? false);
+        }),
+        isTrue,
+      );
+      expect(
+        finalControllerState.items.any(
+          (item) =>
+              item.type == ThreadActivityItemType.assistantOutput &&
+              _normalizeText(item.body) == expectedAssistantReply,
+        ),
+        isTrue,
+      );
+
+      debugPrint(
+        'LIVE_CODEX_REGULAR_FLOW_RESULT '
+        'thread_id=$createdThreadId '
+        'probe_path=$probeRelativePath '
+        'timeline_entries=${finalTimeline.entries.length} '
+        'controller_items=${finalControllerState.items.length}',
+      );
+    },
+    timeout: const Timeout(Duration(minutes: 12)),
+  );
 }
 
 const String _defaultFirstProbePrompt =
@@ -240,6 +519,11 @@ const String _defaultFirstProbePrompt =
 
 const String _defaultSecondProbePrompt =
     'I was thinking like R2 explorer ... the github repo has nice readme';
+const String _regularFlowNeedle =
+    'LIVE_CODEX_REGULAR_'
+    'FLOW_NEEDLE';
+const String _regularFlowConfirmationLine = 'stream mobile tool coverage';
+const String _regularFlowFixtureFileName = 'live_codex_regular_flow_probe.txt';
 
 String _buildFirstProbePrompt() {
   const configured = String.fromEnvironment(
@@ -259,6 +543,31 @@ String _buildSecondProbePrompt() {
     return configured;
   }
   return _defaultSecondProbePrompt;
+}
+
+String _buildRegularFlowSearchPrompt() {
+  return 'Use workspace tools for this task. '
+      'Search the workspace for the exact text $_regularFlowNeedle and read the matching file. '
+      'Then reply with exactly SEARCH_OK:$_regularFlowConfirmationLine. '
+      'Do not edit files.';
+}
+
+String _buildRegularFlowWritePrompt({
+  required String probeRelativePath,
+  required String firstLine,
+  required String secondLine,
+}) {
+  return 'Use workspace tools to create the file $probeRelativePath with exactly these two lines:\n'
+      '$firstLine\n'
+      '$secondLine\n'
+      'After creating the file, reply with exactly WRITE_OK.';
+}
+
+String _buildRegularFlowReadBackPrompt({
+  required String probeRelativePath,
+  required String secondLine,
+}) {
+  return 'Read the file $probeRelativePath and reply with exactly READ_OK:$secondLine.';
 }
 
 String _resolveBridgeApiBaseUrl() {
@@ -372,24 +681,198 @@ Future<void> _selectWorkspaceForDraft(
 Future<void> _submitPrompt(
   WidgetTester tester, {
   required String prompt,
+  String? bridgeApiBaseUrl,
+  String? threadId,
+  int? expectedUserPromptCount,
 }) async {
+  final inputFinder = find.byKey(const Key('turn-composer-input'));
+  final submitFinder = find.byKey(const Key('turn-composer-submit'));
+  final activeSubmitButtonFinder = find.byKey(
+    const ValueKey('composer-primary-act'),
+  );
+
   await _pumpUntilFound(
     tester,
-    find.byKey(const Key('turn-composer-input')),
+    inputFinder,
     timeout: const Duration(seconds: 20),
   );
   await _pumpUntilFound(
     tester,
-    find.byKey(const Key('turn-composer-submit')),
+    submitFinder,
     timeout: const Duration(seconds: 20),
   );
 
-  await tester.enterText(find.byKey(const Key('turn-composer-input')), prompt);
+  await tester.ensureVisible(inputFinder);
+  await tester.enterText(inputFinder, prompt);
   await tester.pump();
-  await tester.tap(find.byKey(const Key('turn-composer-submit')));
-  await tester.pump();
-  _tryHideTestKeyboard(tester);
-  await tester.pumpAndSettle();
+  await tester.ensureVisible(submitFinder);
+  if (activeSubmitButtonFinder.evaluate().isNotEmpty) {
+    await tester.ensureVisible(activeSubmitButtonFinder);
+  }
+  final inputWidget = tester.widget(inputFinder);
+  if (inputWidget is TextField) {
+    debugPrint(
+      'LIVE_CODEX_SUBMIT_HELPER_STATE '
+      'enabled=${inputWidget.enabled} '
+      'hasOnSubmitted=${inputWidget.onSubmitted != null} '
+      'submitKeyPresent=${submitFinder.evaluate().isNotEmpty} '
+      'activeButtonPresent=${activeSubmitButtonFinder.evaluate().isNotEmpty}',
+    );
+  }
+  if (bridgeApiBaseUrl != null &&
+      threadId != null &&
+      expectedUserPromptCount != null) {
+    final textField = tester.widget<TextField>(inputFinder);
+    final onSubmitted = textField.onSubmitted;
+    if (onSubmitted != null) {
+      onSubmitted(prompt);
+    }
+    await tester.pump(const Duration(milliseconds: 150));
+    _tryHideTestKeyboard(tester);
+    await tester.pump(const Duration(milliseconds: 350));
+    final promptReachedViaSubmittedCallback = await _didPromptReachSnapshot(
+      tester,
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+      expectedPrompt: prompt,
+      expectedUserPromptCount: expectedUserPromptCount,
+      timeout: const Duration(seconds: 2),
+    );
+    if (promptReachedViaSubmittedCallback) {
+      await tester.pumpAndSettle();
+      return;
+    }
+    if (_readComposerText(tester).isEmpty) {
+      await tester.enterText(inputFinder, prompt);
+      await tester.pump();
+    }
+    await tester.tap(submitFinder, warnIfMissed: false);
+    await tester.pump(const Duration(milliseconds: 150));
+    _tryHideTestKeyboard(tester);
+    await tester.pump(const Duration(milliseconds: 350));
+    final promptReachedViaSubmitRail = await _didPromptReachSnapshot(
+      tester,
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+      expectedPrompt: prompt,
+      expectedUserPromptCount: expectedUserPromptCount,
+      timeout: const Duration(seconds: 2),
+    );
+    if (promptReachedViaSubmitRail) {
+      await tester.pumpAndSettle();
+      return;
+    }
+    if (_readComposerText(tester).isEmpty) {
+      await tester.enterText(inputFinder, prompt);
+      await tester.pump();
+    }
+  }
+
+  final deadline = DateTime.now().add(const Duration(seconds: 8));
+  var attemptedSubmitTap = false;
+  while (DateTime.now().isBefore(deadline)) {
+    if (attemptedSubmitTap && _readComposerText(tester).isEmpty) {
+      if (bridgeApiBaseUrl != null &&
+          threadId != null &&
+          expectedUserPromptCount != null) {
+        await _waitForPromptToReachSnapshot(
+          tester,
+          bridgeApiBaseUrl: bridgeApiBaseUrl,
+          threadId: threadId,
+          expectedPrompt: prompt,
+          expectedUserPromptCount: expectedUserPromptCount,
+        );
+      }
+      _tryHideTestKeyboard(tester);
+      await tester.pumpAndSettle();
+      return;
+    }
+
+    await tester.tap(submitFinder, warnIfMissed: false);
+    attemptedSubmitTap = true;
+    await tester.pump(const Duration(milliseconds: 150));
+    _tryHideTestKeyboard(tester);
+    await tester.pump(const Duration(milliseconds: 350));
+  }
+
+  fail(
+    'Prompt submission did not clear the composer. '
+    'remaining_text="${_previewText(_readComposerText(tester), maxChars: 80)}"',
+  );
+}
+
+Future<void> _waitForPromptToReachSnapshot(
+  WidgetTester tester, {
+  required String bridgeApiBaseUrl,
+  required String threadId,
+  required String expectedPrompt,
+  required int expectedUserPromptCount,
+  Duration timeout = const Duration(seconds: 15),
+}) async {
+  final normalizedExpectedPrompt = _normalizeText(expectedPrompt);
+  final deadline = DateTime.now().add(timeout);
+  List<String> lastUserPrompts = const <String>[];
+  String? lastStatus;
+
+  while (DateTime.now().isBefore(deadline)) {
+    final snapshot = await fetchThreadSnapshotJson(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+    );
+    final thread = snapshot['thread'] as Map<String, dynamic>?;
+    lastStatus = (thread?['status'] as String?)?.trim();
+    lastUserPrompts = _extractSnapshotUserPrompts(
+      (snapshot['entries'] as List<dynamic>? ?? const <dynamic>[])
+          .whereType<Map<String, dynamic>>()
+          .toList(growable: false),
+    );
+
+    if (lastUserPrompts.length >= expectedUserPromptCount &&
+        lastUserPrompts[expectedUserPromptCount - 1] ==
+            normalizedExpectedPrompt) {
+      return;
+    }
+
+    await tester.pump(const Duration(milliseconds: 350));
+  }
+
+  fail(
+    'Prompt submit cleared locally but never reached snapshot for $threadId. '
+    'expected_user_prompt_count=$expectedUserPromptCount '
+    'last_status=$lastStatus '
+    'observed_user_prompts="${lastUserPrompts.join(' || ')}"',
+  );
+}
+
+Future<bool> _didPromptReachSnapshot(
+  WidgetTester tester, {
+  required String bridgeApiBaseUrl,
+  required String threadId,
+  required String expectedPrompt,
+  required int expectedUserPromptCount,
+  Duration timeout = const Duration(seconds: 3),
+}) async {
+  final normalizedExpectedPrompt = _normalizeText(expectedPrompt);
+  final deadline = DateTime.now().add(timeout);
+
+  while (DateTime.now().isBefore(deadline)) {
+    final snapshot = await fetchThreadSnapshotJson(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+    );
+    final userPrompts = _extractSnapshotUserPrompts(
+      (snapshot['entries'] as List<dynamic>? ?? const <dynamic>[])
+          .whereType<Map<String, dynamic>>()
+          .toList(growable: false),
+    );
+    if (userPrompts.length >= expectedUserPromptCount &&
+        userPrompts[expectedUserPromptCount - 1] == normalizedExpectedPrompt) {
+      return true;
+    }
+    await tester.pump(const Duration(milliseconds: 250));
+  }
+
+  return false;
 }
 
 Future<String> _waitForSelectedThreadId(
@@ -456,6 +939,69 @@ Future<void> _waitForThreadControllerToSettle(
     'isComposerMutationInFlight=${state.isComposerMutationInFlight} '
     'status=${state.thread?.status.wireValue}',
   );
+}
+
+Future<ThreadTimelinePageDto> _waitForTimelinePage(
+  WidgetTester tester, {
+  required HttpThreadDetailBridgeApi threadApi,
+  required String bridgeApiBaseUrl,
+  required String threadId,
+  required bool Function(ThreadTimelinePageDto page) predicate,
+  Duration timeout = const Duration(seconds: 20),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  ThreadTimelinePageDto? lastPage;
+
+  while (DateTime.now().isBefore(deadline)) {
+    lastPage = await threadApi.fetchThreadTimelinePage(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+      limit: 300,
+    );
+    if (predicate(lastPage)) {
+      return lastPage;
+    }
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+
+  fail(
+    'Timed out waiting for thread history condition for $threadId. '
+    'last_entry_count=${lastPage?.entries.length ?? 0}',
+  );
+}
+
+bool _firstRegularFlowTurnHasExpectedToolCoverage(ThreadTimelinePageDto page) {
+  final hasSearch = page.entries.any(_isSearchExplorationEntry);
+  final hasReadCoverage = page.entries.any(_isRegularFlowReadCoverageEntry);
+  return hasSearch && hasReadCoverage;
+}
+
+bool _isSearchExplorationEntry(ThreadTimelineEntryDto entry) {
+  final annotations = entry.annotations;
+  return entry.kind == BridgeEventKind.commandDelta &&
+      annotations?.explorationKind == ThreadTimelineExplorationKind.search;
+}
+
+bool _isRegularFlowReadCoverageEntry(ThreadTimelineEntryDto entry) {
+  if (entry.kind != BridgeEventKind.commandDelta) {
+    return false;
+  }
+
+  final annotations = entry.annotations;
+  if (annotations?.explorationKind == ThreadTimelineExplorationKind.read &&
+      (annotations?.entryLabel?.contains(_regularFlowFixtureFileName) ??
+          false)) {
+    return true;
+  }
+
+  if (annotations?.explorationKind != ThreadTimelineExplorationKind.search) {
+    return false;
+  }
+
+  final payloadJson = jsonEncode(entry.payload);
+  return payloadJson.contains(_regularFlowFixtureFileName) &&
+      payloadJson.contains(_regularFlowNeedle) &&
+      payloadJson.contains(_regularFlowConfirmationLine);
 }
 
 List<String> _extractSnapshotUserPrompts(List<Map<String, dynamic>> entries) {
@@ -569,6 +1115,63 @@ void _tryHideTestKeyboard(WidgetTester tester) {
   } catch (_) {
     // Ignore keyboard teardown failures on device runs.
   }
+}
+
+String _readComposerText(WidgetTester tester) {
+  final inputFinder = find.byKey(const Key('turn-composer-input'));
+  if (inputFinder.evaluate().isEmpty) {
+    return '';
+  }
+
+  final widget = tester.widget(inputFinder);
+  if (widget is TextField) {
+    return widget.controller?.text ?? '';
+  }
+  if (widget is TextFormField) {
+    return widget.controller?.text ?? widget.initialValue ?? '';
+  }
+  return '';
+}
+
+Future<void> _approvePendingProviderPromptIfVisible(
+  WidgetTester tester, {
+  required String bridgeApiBaseUrl,
+  required String threadId,
+  Duration timeout = const Duration(seconds: 20),
+}) async {
+  final optionFinder = find.byKey(
+    const Key('turn-composer-approval-option-allow_for_session'),
+  );
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    if (optionFinder.evaluate().isEmpty) {
+      await tester.pump(const Duration(milliseconds: 200));
+      if (optionFinder.evaluate().isEmpty) {
+        continue;
+      }
+    }
+
+    _tryHideTestKeyboard(tester);
+    await tester.tap(optionFinder, warnIfMissed: false);
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final snapshot = await fetchThreadSnapshotJson(
+      bridgeApiBaseUrl: bridgeApiBaseUrl,
+      threadId: threadId,
+    );
+    if (snapshot['pending_user_input'] == null) {
+      return;
+    }
+  }
+
+  fail('Timed out waiting for provider approval to resolve for $threadId.');
+}
+
+Future<void> _tearDownLiveTestApp(WidgetTester tester) async {
+  _tryHideTestKeyboard(tester);
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
 }
 
 class _TwoTurnDiagnosticsReport {

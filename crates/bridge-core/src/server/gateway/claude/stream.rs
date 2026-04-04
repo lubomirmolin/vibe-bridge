@@ -122,6 +122,150 @@ pub(super) fn build_claude_partial_assistant_event(
     )
 }
 
+pub(super) fn build_claude_tool_call_event_from_control_request(
+    thread_id: &str,
+    request: &Value,
+    tool_name_by_id: &mut HashMap<String, String>,
+    file_change_tool_ids: &mut HashSet<String>,
+    emitted_tool_use_ids: &mut HashSet<String>,
+) -> Option<BridgeEventEnvelope<Value>> {
+    if request.get("subtype").and_then(Value::as_str) != Some("can_use_tool") {
+        return None;
+    }
+
+    let tool_name = request
+        .get("display_name")
+        .or_else(|| request.get("tool_name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("tool");
+    let tool_use_id = request
+        .get("tool_use_id")
+        .or_else(|| request.get("toolUseID"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let input = request.get("input").cloned().unwrap_or(Value::Null);
+
+    build_claude_tool_call_event(
+        thread_id,
+        tool_use_id,
+        tool_name,
+        input,
+        tool_name_by_id,
+        file_change_tool_ids,
+        emitted_tool_use_ids,
+    )
+}
+
+pub(super) fn build_claude_tool_events_from_message(
+    thread_id: &str,
+    value: &Value,
+    tool_name_by_id: &mut HashMap<String, String>,
+    file_change_tool_ids: &mut HashSet<String>,
+    emitted_tool_use_ids: &mut HashSet<String>,
+    emitted_tool_result_ids: &mut HashSet<String>,
+) -> Vec<BridgeEventEnvelope<Value>> {
+    let Some(message) = value.get("message") else {
+        return Vec::new();
+    };
+    let Some(content) = message.get("content").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+
+    let mut events = Vec::new();
+    for item in content {
+        match item.get("type").and_then(Value::as_str).unwrap_or_default() {
+            "tool_use" => {
+                let Some(tool_use_id) = item
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    continue;
+                };
+                let tool_name = item
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or("tool");
+                let input = item.get("input").cloned().unwrap_or(Value::Null);
+                if let Some(event) = build_claude_tool_call_event(
+                    thread_id,
+                    tool_use_id,
+                    tool_name,
+                    input,
+                    tool_name_by_id,
+                    file_change_tool_ids,
+                    emitted_tool_use_ids,
+                ) {
+                    events.push(event);
+                }
+            }
+            "tool_result" => {
+                let Some(tool_use_id) = item
+                    .get("tool_use_id")
+                    .or_else(|| item.get("toolUseID"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                else {
+                    continue;
+                };
+                if !emitted_tool_result_ids.insert(tool_use_id.clone()) {
+                    continue;
+                }
+
+                let tool_name = tool_name_by_id
+                    .get(&tool_use_id)
+                    .cloned()
+                    .unwrap_or_else(|| "tool".to_string());
+                let is_file_change = file_change_tool_ids.contains(&tool_use_id);
+                let output = normalize_claude_tool_result_output(item);
+
+                let payload = if is_file_change {
+                    json!({
+                        "id": tool_use_id,
+                        "type": "file_change",
+                        "command": tool_name,
+                        "tool_use_id": item.get("tool_use_id").or_else(|| item.get("toolUseID")).cloned().unwrap_or(Value::String(tool_use_id.clone())),
+                        "resolved_unified_diff": output,
+                        "output": output,
+                        "path": "",
+                    })
+                } else {
+                    json!({
+                        "id": tool_use_id,
+                        "type": "command",
+                        "command": tool_name,
+                        "tool_use_id": item.get("tool_use_id").or_else(|| item.get("toolUseID")).cloned().unwrap_or(Value::String(tool_use_id.clone())),
+                        "output": output,
+                    })
+                };
+
+                events.push(BridgeEventEnvelope::new(
+                    format!("{thread_id}-claude-tool-result-{tool_use_id}"),
+                    thread_id.to_string(),
+                    if is_file_change {
+                        BridgeEventKind::FileChange
+                    } else {
+                        BridgeEventKind::CommandDelta
+                    },
+                    Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+                    payload,
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    events
+}
+
 pub(super) fn parse_claude_message_start(value: &Value) -> Option<String> {
     if value.get("type").and_then(Value::as_str) != Some("stream_event") {
         return None;
@@ -135,6 +279,125 @@ pub(super) fn parse_claude_message_start(value: &Value) -> Option<String> {
         .get("id")?
         .as_str()
         .map(ToString::to_string)
+}
+
+fn build_claude_tool_call_event(
+    thread_id: &str,
+    tool_use_id: &str,
+    tool_name: &str,
+    input: Value,
+    tool_name_by_id: &mut HashMap<String, String>,
+    file_change_tool_ids: &mut HashSet<String>,
+    emitted_tool_use_ids: &mut HashSet<String>,
+) -> Option<BridgeEventEnvelope<Value>> {
+    if !emitted_tool_use_ids.insert(tool_use_id.to_string()) {
+        return None;
+    }
+
+    let input_text = value_to_text(&input).unwrap_or_default();
+    let is_file_change = is_claude_file_change_tool(tool_name) || is_file_change_text(&input_text);
+    tool_name_by_id.insert(tool_use_id.to_string(), tool_name.to_string());
+    if is_file_change {
+        file_change_tool_ids.insert(tool_use_id.to_string());
+    }
+
+    let payload = if is_file_change {
+        json!({
+            "id": tool_use_id,
+            "type": "file_change",
+            "command": tool_name,
+            "tool_use_id": tool_use_id,
+            "change": input_text,
+            "resolved_unified_diff": input_text,
+            "output": input_text,
+            "input": input,
+            "path": "",
+        })
+    } else {
+        json!({
+            "id": tool_use_id,
+            "type": "command",
+            "command": tool_name,
+            "tool_use_id": tool_use_id,
+            "arguments": input,
+            "output": format!("Called {tool_name}"),
+        })
+    };
+
+    Some(BridgeEventEnvelope::new(
+        format!("{thread_id}-claude-tool-call-{tool_use_id}"),
+        thread_id.to_string(),
+        if is_file_change {
+            BridgeEventKind::FileChange
+        } else {
+            BridgeEventKind::CommandDelta
+        },
+        Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+        payload,
+    ))
+}
+
+fn normalize_claude_tool_result_output(item: &Value) -> String {
+    if let Some(tool_use_result) = item.get("toolUseResult") {
+        if let Some(stdout) = tool_use_result.get("stdout").and_then(Value::as_str) {
+            let stderr = tool_use_result
+                .get("stderr")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let combined = [stdout.trim_end(), stderr.trim_end()]
+                .into_iter()
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !combined.is_empty() {
+                return combined;
+            }
+        }
+        if let Some(content) = tool_use_result.get("content") {
+            let text = value_to_text(content).unwrap_or_default();
+            if !text.trim().is_empty() {
+                return text;
+            }
+        }
+    }
+
+    match item.get("content") {
+        Some(Value::String(text)) => text.to_string(),
+        Some(Value::Array(values)) => values
+            .iter()
+            .filter_map(|value| {
+                value.as_str().map(ToString::to_string).or_else(|| {
+                    value
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                })
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Some(value) => value_to_text(value).unwrap_or_default(),
+        None => String::new(),
+    }
+}
+
+fn is_claude_file_change_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name.trim().to_ascii_lowercase().as_str(),
+        "edit" | "write" | "multiedit" | "notebookedit"
+    )
+}
+
+fn is_file_change_text(text: &str) -> bool {
+    if text.is_empty() {
+        return false;
+    }
+
+    text.contains("Updated the following files:")
+        || text.contains("*** Begin Patch")
+        || text.contains("*** Update File:")
+        || text.contains("*** Add File:")
+        || text.contains("[diff_block_start]")
+        || text.contains("diff --git ")
 }
 
 pub(super) fn parse_claude_text_delta(value: &Value) -> Option<String> {
@@ -471,4 +734,125 @@ pub(super) fn remove_claude_process(
         .lock()
         .expect("active claude process lock should not be poisoned")
         .remove(thread_id);
+}
+
+fn value_to_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.clone()),
+        Value::Null => None,
+        other => serde_json::to_string(other).ok(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn claude_control_request_emits_command_event() {
+        let mut tool_name_by_id = HashMap::new();
+        let mut file_change_tool_ids = HashSet::new();
+        let mut emitted_tool_use_ids = HashSet::new();
+        let request = json!({
+            "subtype": "can_use_tool",
+            "display_name": "Bash",
+            "tool_use_id": "tool-1",
+            "input": { "cmd": "ls -la" },
+        });
+
+        let event = build_claude_tool_call_event_from_control_request(
+            "claude:thread-1",
+            &request,
+            &mut tool_name_by_id,
+            &mut file_change_tool_ids,
+            &mut emitted_tool_use_ids,
+        )
+        .expect("tool call event should be emitted");
+
+        assert_eq!(event.kind, BridgeEventKind::CommandDelta);
+        assert_eq!(event.payload["command"], "Bash");
+        assert_eq!(event.payload["arguments"], json!({"cmd":"ls -la"}));
+        assert_eq!(event.payload["output"], "Called Bash");
+    }
+
+    #[test]
+    fn claude_message_tool_result_emits_command_output_event() {
+        let mut tool_name_by_id = HashMap::new();
+        let mut file_change_tool_ids = HashSet::new();
+        let mut emitted_tool_use_ids = HashSet::new();
+        let mut emitted_tool_result_ids = HashSet::new();
+
+        let _ = build_claude_tool_call_event_from_control_request(
+            "claude:thread-1",
+            &json!({
+                "subtype": "can_use_tool",
+                "display_name": "Bash",
+                "tool_use_id": "tool-1",
+                "input": { "cmd": "pwd" },
+            }),
+            &mut tool_name_by_id,
+            &mut file_change_tool_ids,
+            &mut emitted_tool_use_ids,
+        );
+
+        let events = build_claude_tool_events_from_message(
+            "claude:thread-1",
+            &json!({
+                "type": "user",
+                "message": {
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "tool-1",
+                        "content": "/workspace\n",
+                    }]
+                }
+            }),
+            &mut tool_name_by_id,
+            &mut file_change_tool_ids,
+            &mut emitted_tool_use_ids,
+            &mut emitted_tool_result_ids,
+        );
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, BridgeEventKind::CommandDelta);
+        assert_eq!(events[0].payload["command"], "Bash");
+        assert_eq!(events[0].payload["output"], "/workspace\n");
+    }
+
+    #[test]
+    fn claude_assistant_tool_use_emits_file_change_event_without_control_request() {
+        let mut tool_name_by_id = HashMap::new();
+        let mut file_change_tool_ids = HashSet::new();
+        let mut emitted_tool_use_ids = HashSet::new();
+        let mut emitted_tool_result_ids = HashSet::new();
+
+        let events = build_claude_tool_events_from_message(
+            "claude:thread-1",
+            &json!({
+                "type": "assistant",
+                "message": {
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "tool-edit-1",
+                        "name": "Edit",
+                        "input": { "patch": "*** Begin Patch\n*** Update File: src/main.rs\n*** End Patch" }
+                    }]
+                }
+            }),
+            &mut tool_name_by_id,
+            &mut file_change_tool_ids,
+            &mut emitted_tool_use_ids,
+            &mut emitted_tool_result_ids,
+        );
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, BridgeEventKind::FileChange);
+        assert_eq!(events[0].payload["command"], "Edit");
+        assert!(
+            events[0].payload["resolved_unified_diff"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("*** Update File: src/main.rs")
+        );
+    }
 }

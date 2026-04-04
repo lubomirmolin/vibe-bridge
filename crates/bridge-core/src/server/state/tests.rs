@@ -14,6 +14,7 @@ use crate::pairing::PairingSessionService;
 use crate::server::config::{BridgeCodexConfig, BridgeConfig};
 use crate::server::pairing_route::PairingRouteState;
 use crate::server::speech::SpeechService;
+use crate::server::state::snapshots::should_refresh_terminal_timeline_snapshot;
 
 use super::{
     BridgeAppState, LiveDeltaCompactor, NotificationControlMessage, PendingProviderApprovalSession,
@@ -160,6 +161,141 @@ fn visible_user_message_event_uses_user_message_payload() {
     assert_eq!(event.payload["role"], "user");
     assert_eq!(event.payload["text"], "Commit");
     assert_eq!(event.payload["content"][0]["text"], "Commit");
+}
+
+#[test]
+fn terminal_timeline_refreshes_when_cached_exploration_command_lacks_annotations() {
+    let snapshot = ThreadSnapshotDto {
+        contract_version: CONTRACT_VERSION.to_string(),
+        thread: ThreadDetailDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread_id: "codex:thread-1".to_string(),
+            native_thread_id: "thread-1".to_string(),
+            provider: ProviderKind::Codex,
+            client: ThreadClientKind::Cli,
+            title: "Thread".to_string(),
+            status: ThreadStatus::Completed,
+            workspace: "/repo".to_string(),
+            repository: "repo".to_string(),
+            branch: "main".to_string(),
+            created_at: "2026-04-03T08:00:00Z".to_string(),
+            updated_at: "2026-04-03T08:00:02Z".to_string(),
+            source: "cli".to_string(),
+            access_mode: AccessMode::ControlWithApprovals,
+            last_turn_summary: "done".to_string(),
+            active_turn_id: None,
+        },
+        entries: vec![ThreadTimelineEntryDto {
+            event_id: "evt-search".to_string(),
+            kind: BridgeEventKind::CommandDelta,
+            occurred_at: "2026-04-03T08:00:01Z".to_string(),
+            summary: "Called exec_command".to_string(),
+            payload: json!({
+                "command": "exec_command",
+                "arguments": "{\"cmd\":\"rg -n LIVE_CODEX_REGULAR_FLOW_NEEDLE apps/mobile/integration_test/support/live_codex_regular_flow_probe.txt\"}",
+            }),
+            annotations: None,
+        }],
+        approvals: vec![],
+        git_status: None,
+        pending_user_input: None,
+    };
+
+    assert!(should_refresh_terminal_timeline_snapshot(
+        None, &snapshot, None,
+    ));
+    assert!(!should_refresh_terminal_timeline_snapshot(
+        Some("cursor"),
+        &snapshot,
+        None,
+    ));
+}
+
+#[test]
+fn terminal_timeline_refresh_skips_running_and_freshly_annotated_snapshots() {
+    let running_snapshot = ThreadSnapshotDto {
+        contract_version: CONTRACT_VERSION.to_string(),
+        thread: ThreadDetailDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread_id: "codex:thread-1".to_string(),
+            native_thread_id: "thread-1".to_string(),
+            provider: ProviderKind::Codex,
+            client: ThreadClientKind::Cli,
+            title: "Thread".to_string(),
+            status: ThreadStatus::Running,
+            workspace: "/repo".to_string(),
+            repository: "repo".to_string(),
+            branch: "main".to_string(),
+            created_at: "2026-04-03T08:00:00Z".to_string(),
+            updated_at: "2026-04-03T08:00:02Z".to_string(),
+            source: "cli".to_string(),
+            access_mode: AccessMode::ControlWithApprovals,
+            last_turn_summary: "working".to_string(),
+            active_turn_id: Some("turn-1".to_string()),
+        },
+        entries: vec![],
+        approvals: vec![],
+        git_status: None,
+        pending_user_input: None,
+    };
+    assert!(!should_refresh_terminal_timeline_snapshot(
+        None,
+        &running_snapshot,
+        None,
+    ));
+
+    let summary = ThreadSummaryDto {
+        contract_version: CONTRACT_VERSION.to_string(),
+        thread_id: "codex:thread-1".to_string(),
+        native_thread_id: "thread-1".to_string(),
+        provider: ProviderKind::Codex,
+        client: ThreadClientKind::Cli,
+        title: "Thread".to_string(),
+        status: ThreadStatus::Completed,
+        workspace: "/repo".to_string(),
+        repository: "repo".to_string(),
+        branch: "main".to_string(),
+        updated_at: "2026-04-03T08:00:02Z".to_string(),
+    };
+    let annotated_snapshot = ThreadSnapshotDto {
+        contract_version: CONTRACT_VERSION.to_string(),
+        thread: ThreadDetailDto {
+            status: ThreadStatus::Completed,
+            active_turn_id: None,
+            last_turn_summary: "done".to_string(),
+            ..running_snapshot.thread.clone()
+        },
+        entries: vec![ThreadTimelineEntryDto {
+            event_id: "evt-search".to_string(),
+            kind: BridgeEventKind::CommandDelta,
+            occurred_at: "2026-04-03T08:00:01Z".to_string(),
+            summary: "Search".to_string(),
+            payload: json!({
+                "command": "exec_command",
+                "arguments": "{\"cmd\":\"rg -n LIVE_CODEX_REGULAR_FLOW_NEEDLE apps/mobile/integration_test/support/live_codex_regular_flow_probe.txt\"}",
+            }),
+            annotations: crate::thread_api::build_timeline_event_envelope(
+                "evt-search",
+                "codex:thread-1",
+                BridgeEventKind::CommandDelta,
+                "2026-04-03T08:00:01Z",
+                json!({
+                    "command": "exec_command",
+                    "arguments": "{\"cmd\":\"rg -n LIVE_CODEX_REGULAR_FLOW_NEEDLE apps/mobile/integration_test/support/live_codex_regular_flow_probe.txt\"}",
+                }),
+            )
+            .annotations,
+        }],
+        approvals: vec![],
+        git_status: None,
+        pending_user_input: None,
+    };
+
+    assert!(!should_refresh_terminal_timeline_snapshot(
+        None,
+        &annotated_snapshot,
+        Some(&summary),
+    ));
 }
 
 #[tokio::test]

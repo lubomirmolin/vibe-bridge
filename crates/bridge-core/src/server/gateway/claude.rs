@@ -16,12 +16,14 @@ pub(crate) use snapshot::claude_session_archive_path;
 pub(crate) use stream::summarize_claude_stderr;
 use stream::{
     accept_claude_sdk_connection, bind_claude_sdk_listener, build_claude_assistant_event,
-    build_claude_partial_assistant_event, build_claude_status_event, build_thread_status_event,
-    parse_claude_control_cancel_request_id, parse_claude_control_request_id,
-    parse_claude_message_start, parse_claude_text_delta, read_claude_sdk_message,
-    remove_claude_process, summarize_claude_process_failure, summarize_claude_stdout,
-    write_claude_sdk_control_request, write_claude_stdin_control_error_response,
-    write_claude_stdin_control_response, write_claude_turn_input,
+    build_claude_partial_assistant_event, build_claude_status_event,
+    build_claude_tool_call_event_from_control_request, build_claude_tool_events_from_message,
+    build_thread_status_event, parse_claude_control_cancel_request_id,
+    parse_claude_control_request_id, parse_claude_message_start, parse_claude_text_delta,
+    read_claude_sdk_message, remove_claude_process, summarize_claude_process_failure,
+    summarize_claude_stdout, write_claude_sdk_control_request,
+    write_claude_stdin_control_error_response, write_claude_stdin_control_response,
+    write_claude_turn_input,
 };
 
 impl CodexGateway {
@@ -267,6 +269,10 @@ impl CodexGateway {
             let mut did_send_input = false;
             let mut current_assistant_message_id: Option<String> = None;
             let mut current_assistant_text = String::new();
+            let mut tool_name_by_id = HashMap::new();
+            let mut file_change_tool_ids = HashSet::new();
+            let mut emitted_tool_use_ids = HashSet::new();
+            let mut emitted_tool_result_ids = HashSet::new();
 
             loop {
                 let value = match read_claude_sdk_message(&mut sdk_socket) {
@@ -284,6 +290,15 @@ impl CodexGateway {
                         .unwrap_or(Value::Object(serde_json::Map::new()));
                     match request.get("subtype").and_then(Value::as_str) {
                         Some("can_use_tool") => {
+                            if let Some(event) = build_claude_tool_call_event_from_control_request(
+                                &thread_id,
+                                &request,
+                                &mut tool_name_by_id,
+                                &mut file_change_tool_ids,
+                                &mut emitted_tool_use_ids,
+                            ) {
+                                on_event(event);
+                            }
                             match on_control_request(GatewayTurnControlRequest::ClaudeCanUseTool {
                                 request_id: request_id.clone(),
                                 request,
@@ -392,6 +407,17 @@ impl CodexGateway {
                         did_ack = true;
                     }
                     continue;
+                }
+
+                for event in build_claude_tool_events_from_message(
+                    &thread_id,
+                    &value,
+                    &mut tool_name_by_id,
+                    &mut file_change_tool_ids,
+                    &mut emitted_tool_use_ids,
+                    &mut emitted_tool_result_ids,
+                ) {
+                    on_event(event);
                 }
 
                 if let Some(event) = build_claude_assistant_event(&thread_id, &value) {

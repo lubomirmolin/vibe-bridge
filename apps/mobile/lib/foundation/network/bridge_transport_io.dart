@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
+
 import 'bridge_transport.dart';
 
 BridgeTransport createBridgeTransport() {
@@ -51,14 +53,35 @@ class IoBridgeTransport implements BridgeTransport {
     final client = HttpClient()..connectionTimeout = timeout;
 
     try {
+      final shouldLogTurnMutation =
+          uri.path.contains('/threads/') &&
+          (uri.path.endsWith('/turns') ||
+              uri.path.endsWith('/interrupt') ||
+              uri.path.endsWith('/user-input/respond'));
+      if (shouldLogTurnMutation) {
+        debugPrint(
+          'bridge_transport_post_start '
+          'uri=$uri '
+          'body=${_previewBridgeBody(body)}',
+        );
+      }
       final request = await client.postUrl(uri);
       _setHeaders(request, headers);
       _writeBody(request, body);
       final response = await request.close();
-      return BridgeTransportResponse(
+      final transportResponse = BridgeTransportResponse(
         statusCode: response.statusCode,
         bodyBytes: await _readResponseBytes(response),
       );
+      if (shouldLogTurnMutation) {
+        debugPrint(
+          'bridge_transport_post_result '
+          'uri=$uri '
+          'status=${transportResponse.statusCode} '
+          'body=${_previewBridgeBody(transportResponse.bodyText)}',
+        );
+      }
+      return transportResponse;
     } on SocketException {
       throw const BridgeTransportConnectionException();
     } on HandshakeException {
@@ -221,6 +244,18 @@ class IoBridgeTransport implements BridgeTransport {
     }
     request.write(jsonEncode(body));
   }
+}
+
+String _previewBridgeBody(Object? body, {int maxChars = 240}) {
+  if (body == null) {
+    return '<empty>';
+  }
+  final text = body is String ? body : jsonEncode(body);
+  final normalized = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return '${normalized.substring(0, maxChars)}...';
 }
 
 Future<Uint8List> _readResponseBytes(HttpClientResponse response) async {
