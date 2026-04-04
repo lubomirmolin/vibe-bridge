@@ -106,3 +106,29 @@ services:
       tailscale serve status | grep 3110
     port: 3110
     depends_on: [bridge]
+
+  mission-bridge:
+    start: >-
+      ROOT="/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion";
+      lsof -ti tcp:3110 | xargs kill 2>/dev/null || true;
+      lsof -ti tcp:3111 | xargs kill 2>/dev/null || true;
+      cargo run --manifest-path "$ROOT/Cargo.toml" -p bridge-core --bin bridge-server -- --host 127.0.0.1 --port 3140 --admin-port 3141
+    stop: >-
+      lsof -ti tcp:3140 | xargs kill 2>/dev/null || true; lsof -ti tcp:3141 | xargs kill 2>/dev/null || true
+    healthcheck: >-
+      curl -sf http://127.0.0.1:3140/health
+    port: 3140
+    depends_on: [codex-app-server]
+
+  mission-bridge:
+    start: >-
+      ROOT="/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion";
+      lsof -ti tcp:3110 | xargs kill 2>/dev/null || true;
+      lsof -ti tcp:3111 | xargs kill 2>/dev/null || true;
+      cargo run --manifest-path "$ROOT/Cargo.toml" -p bridge-core --bin bridge-server -- --host 127.0.0.1 --port 3140 --admin-port 3141
+    stop: >-
+      lsof -ti tcp:3140 | xargs kill 2>/dev/null || true; lsof -ti tcp:3141 | xargs kill 2>/dev/null || true
+    healthcheck: >-
+      curl -sf http://127.0.0.1:3140/health
+    port: 3140
+    depends_on: []

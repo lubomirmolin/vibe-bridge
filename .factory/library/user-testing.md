@@ -187,3 +187,36 @@ When sections in this file conflict, prefer the most recent mission-specific sec
 - Restart the shared bridge before collecting cold-start timing evidence for a new implementation round.
 - Capture timings for detail-first then timeline, followed by an immediate repeated pair on unchanged data.
 - If another thread is used to test interleaving, revisit the canonical target thread immediately afterward to prove the warm fast path survives the interleaved read.
+
+## Validation Surface: bridge-stability-hardening
+
+- Mission bridge runs on `127.0.0.1:3140` (admin `3141`). Stop the old bridge on 3110 first.
+- Codex app-server must be running on `127.0.0.1:4222`.
+- Primary validation surfaces:
+  - Bridge runtime probes: `/health`, `/bootstrap`, `/threads`, `/threads/:id/snapshot`, `/threads/:id/history`, `/events`
+  - Targeted Rust bridge tests for notification, stream, turn-state, reconnect, and dedup logic
+  - Targeted Flutter thread/controller tests for pending prompt, reconnect, duplicate frame, and canonical reconciliation behavior
+  - Optional live smoke against local bridge + Codex runtime
+
+## Validation Concurrency: bridge-stability-hardening
+
+- `rust-bridge-tests`: max concurrent validators `1`.
+  - Reason: Rust test runs share the same build cache and target directory; overlapping runs create contention.
+- `flutter-mobile-tests`: max concurrent validators `1`.
+  - Reason: Flutter tests share the same build cache and test fixture workspace; overlapping runs are flaky.
+- Combined ceiling for this mission: at most `2` validators at once (one Rust, one Flutter).
+  - Reason: dry run showed peak ~1 GB for Rust, ~600 MB for Flutter, on a machine with 10 cores / 32 GB RAM but only ~0.85 GB free at baseline. Two non-overlapping validator lanes fit within 70% of available headroom.
+
+## Flow Validator Guidance: bridge-stability-hardening
+
+- Use the **mission bridge** at `http://127.0.0.1:3140` for all live validation. Do not use the old 3110 instance.
+- For bridge assertions, capture:
+  - `raw-response(POST turn submission)` for accepted/rejected outcomes
+  - `raw-events` via websocket for live stream fidelity
+  - `raw-response(GET /bootstrap)` for health truth transitions, including `codex.status` and `codex.message`
+  - `thread-snapshot` and `thread-history` for canonical state convergence
+- For mobile assertions, use widget/integration tests with fixtures that simulate bridge responses.
+- For live smoke, use existing live thread create test with `--dart-define=LIVE_THREAD_CREATE_BRIDGE_BASE_URL=http://127.0.0.1:3140`.
+- `/healthz` is unconditional liveness only. Use `/bootstrap` for Codex connectivity truth.
+- When testing interrupt flows, capture delayed final state (not just immediate response) since bridge may rewrite upstream status.
+- When testing reconnect/catch-up, verify before/during/after state transitions, not just final state.

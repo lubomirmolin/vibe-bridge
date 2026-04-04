@@ -26,3 +26,14 @@ Architecture decisions, module boundaries, and patterns discovered during planni
 - Tailscale is transport only. Pairing, trust, permissions, and auditability are product responsibilities.
 - One phone pairs to one Mac at a time; fail closed on revoked trust or identity mismatch.
 - Debug-only pairing helpers are acceptable for validation builds, but they must remain confined to the scan/pairing flow and must not alter release trust semantics.
+
+## Stabilization Mission Architecture
+
+- Bridge-owned turn lifecycle: the bridge must be authoritative for turn start, streaming, completion, and interrupt. Mobile must not be able to start a turn that the bridge cannot track.
+- Single-source live publication: during a bridge-owned turn, only the bridge-owned turn stream path may publish live assistant text. Background notification forwarding, desktop IPC snapshot events, and other secondary paths must not emit competing live frames for the same turn.
+- Lossy event transport + snapshot repair: the bridge `/events` websocket uses a broadcast channel that drops lagged messages. Correctness depends on reconnect/snapshot catch-up to repair gaps. Reconnect/catch-up behavior is core correctness, not fallback.
+- Mobile reconciliation uses event-id merges plus fallback reconciliation by body/time/images. This means identical prompts or clock skew can still be tricky; workers must add tests for boundary conditions.
+- Silent-turn watchdog: if a turn starts but no meaningful live output arrives, mobile must recover by loading canonical bridge state rather than staying in indefinite limbo.
+- Codex protocol correctness is critical: initialize + initialized on every connection, same-connection live notifications, correct notification opt-out handling, thread/start auto-subscribe.
+- `/bootstrap` is the authoritative health surface. `/healthz` is unconditional process liveness only and must not be used for Codex connectivity truth.
+- Mission bridge runs on ports 3140/3141. The old production bridge on 3110/3111 must be stopped before starting the mission instance.
