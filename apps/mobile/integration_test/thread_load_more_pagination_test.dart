@@ -400,6 +400,7 @@ class _IdleThreadLiveStream implements ThreadLiveStream {
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
     String? threadId,
+    String? afterEventId,
   }) async {
     final controller =
         StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();

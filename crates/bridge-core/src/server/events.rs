@@ -1,7 +1,7 @@
 use axum::extract::ws::{Message, WebSocket};
 use serde::Deserialize;
 use serde_json::Value;
-use shared_contracts::{BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION};
+use shared_contracts::{BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ThreadSnapshotDto};
 use tokio::sync::broadcast;
 
 #[derive(Debug, Clone)]
@@ -15,6 +15,8 @@ pub struct EventSubscriptionQuery {
     pub scope: Option<String>,
     #[serde(default)]
     pub thread_id: Option<String>,
+    #[serde(default)]
+    pub after_event_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +62,7 @@ pub async fn stream_events(
     mut socket: WebSocket,
     mut receiver: broadcast::Receiver<BridgeEventEnvelope<Value>>,
     scope: EventSubscriptionScope,
+    replay_events: Vec<BridgeEventEnvelope<Value>>,
 ) {
     let subscribed = serde_json::json!({
         "event": "subscribed",
@@ -78,6 +81,18 @@ pub async fn stream_events(
         return;
     }
 
+    for event in replay_events {
+        let Some(filtered) = filter_event_for_scope(event, &scope) else {
+            continue;
+        };
+        let Ok(frame) = serde_json::to_string(&filtered) else {
+            continue;
+        };
+        if socket.send(Message::Text(frame)).await.is_err() {
+            return;
+        }
+    }
+
     loop {
         let event = match receiver.recv().await {
             Ok(event) => event,
@@ -94,6 +109,49 @@ pub async fn stream_events(
             break;
         }
     }
+}
+
+pub fn replay_events_for_scope(
+    snapshot: Option<&ThreadSnapshotDto>,
+    scope: &EventSubscriptionScope,
+    after_event_id: Option<&str>,
+) -> Vec<BridgeEventEnvelope<Value>> {
+    let Some(after_event_id) = after_event_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Vec::new();
+    };
+
+    let EventSubscriptionScope::Thread(thread_id) = scope else {
+        return Vec::new();
+    };
+
+    let Some(snapshot) = snapshot.filter(|snapshot| snapshot.thread.thread_id == *thread_id) else {
+        return Vec::new();
+    };
+
+    let Some(start_index) = snapshot
+        .entries
+        .iter()
+        .position(|entry| entry.event_id == after_event_id)
+        .map(|index| index + 1)
+    else {
+        return Vec::new();
+    };
+
+    snapshot.entries[start_index..]
+        .iter()
+        .map(|entry| BridgeEventEnvelope {
+            contract_version: CONTRACT_VERSION.to_string(),
+            event_id: entry.event_id.clone(),
+            thread_id: snapshot.thread.thread_id.clone(),
+            kind: entry.kind,
+            occurred_at: entry.occurred_at.clone(),
+            payload: entry.payload.clone(),
+            annotations: entry.annotations.clone(),
+        })
+        .collect()
 }
 
 fn filter_event_for_scope(
@@ -121,15 +179,20 @@ fn compact_list_event(mut event: BridgeEventEnvelope<Value>) -> BridgeEventEnvel
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use shared_contracts::{BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION};
+    use shared_contracts::{
+        BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ThreadClientKind, ThreadSnapshotDto,
+    };
 
-    use super::{EventSubscriptionQuery, EventSubscriptionScope, compact_list_event};
+    use super::{
+        EventSubscriptionQuery, EventSubscriptionScope, compact_list_event, replay_events_for_scope,
+    };
 
     #[test]
     fn defaults_to_list_scope() {
         let query = EventSubscriptionQuery {
             scope: None,
             thread_id: None,
+            after_event_id: None,
         };
         assert_eq!(query.into_scope(), EventSubscriptionScope::List);
     }
@@ -163,5 +226,60 @@ mod tests {
         };
 
         assert!(super::filter_event_for_scope(event, &EventSubscriptionScope::List).is_none());
+    }
+
+    #[test]
+    fn thread_scope_replay_returns_events_after_cursor() {
+        let snapshot = ThreadSnapshotDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: shared_contracts::ThreadDetailDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "thread-1".to_string(),
+                title: "Replay".to_string(),
+                status: shared_contracts::ThreadStatus::Running,
+                workspace: "/workspace".to_string(),
+                repository: "repo".to_string(),
+                branch: "main".to_string(),
+                created_at: "2026-03-21T12:00:00Z".to_string(),
+                updated_at: "2026-03-21T12:00:02Z".to_string(),
+                source: "cli".to_string(),
+                access_mode: shared_contracts::AccessMode::ControlWithApprovals,
+                last_turn_summary: "second".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: ThreadClientKind::Cli,
+                active_turn_id: None,
+            },
+            entries: vec![
+                shared_contracts::ThreadTimelineEntryDto {
+                    event_id: "evt-1".to_string(),
+                    kind: BridgeEventKind::MessageDelta,
+                    occurred_at: "2026-03-21T12:00:00Z".to_string(),
+                    summary: "first".to_string(),
+                    payload: json!({"text":"first"}),
+                    annotations: None,
+                },
+                shared_contracts::ThreadTimelineEntryDto {
+                    event_id: "evt-2".to_string(),
+                    kind: BridgeEventKind::MessageDelta,
+                    occurred_at: "2026-03-21T12:00:01Z".to_string(),
+                    summary: "second".to_string(),
+                    payload: json!({"text":"second"}),
+                    annotations: None,
+                },
+            ],
+            approvals: Vec::new(),
+            git_status: None,
+            pending_user_input: None,
+        };
+
+        let replayed = replay_events_for_scope(
+            Some(&snapshot),
+            &EventSubscriptionScope::Thread("thread-1".to_string()),
+            Some("evt-1"),
+        );
+
+        assert_eq!(replayed.len(), 1);
+        assert_eq!(replayed[0].event_id, "evt-2");
     }
 }

@@ -493,6 +493,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   static const Duration _silentTurnSnapshotWatchdogDelay = Duration(seconds: 4);
   static const int _silentTurnWatchdogReconnectThreshold = 3;
   static const Duration _pendingPromptMatchLeadSkew = Duration(seconds: 2);
+  static const Duration _pendingPromptSettlementGraceWindow = Duration(
+    seconds: 8,
+  );
 
   ThreadDetailController({
     required String bridgeApiBaseUrl,
@@ -546,6 +549,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   bool _shouldRefreshSnapshotAfterCurrentRequest = false;
   bool _isDisposed = false;
   DateTime? _pendingPromptSubmittedAt;
+  DateTime? _pendingPromptSettledAt;
   DateTime? _lastActiveTurnSignalAt;
   bool _activeTurnSawMeaningfulLiveActivity = false;
   bool _activeTurnNeedsSnapshotCatchUp = false;
@@ -777,11 +781,12 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     await _runReconnectCatchUp();
   }
 
-  Future<void> _startLiveSubscription() async {
+  Future<void> _startLiveSubscription({String? afterEventId}) async {
     try {
       final subscription = await _liveStream.subscribe(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
         threadId: state.threadId,
+        afterEventId: afterEventId,
       );
       if (_isDisposed) {
         await subscription.close();
@@ -844,6 +849,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     }
 
     try {
+      final lastSeenEventId = state.items.isEmpty
+          ? null
+          : state.items.last.eventId;
       if (state.liveConnectionState == LiveConnectionState.disconnected) {
         state = state.copyWith(
           liveConnectionState: LiveConnectionState.reconnecting,
@@ -913,10 +921,12 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         isConnectivityUnavailable: false,
         git: ThreadGitState.initial,
       );
-      _markUnconfirmedPendingPromptsAsFailedIfThreadSettled();
+      _markUnconfirmedPendingPromptsAsFailedIfThreadSettled(
+        source: 'reconnect_catchup',
+      );
 
       await refreshGitStatus(showLoading: false);
-      await _startLiveSubscription();
+      await _startLiveSubscription(afterEventId: lastSeenEventId);
     } on ThreadDetailBridgeException catch (error) {
       if (_isDisposed) {
         return;
@@ -1651,10 +1661,8 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
           state.items.isNotEmpty;
       final items = shouldPreserveLiveItems
           ? state.items
-          : _replaceTimelineItems(scopedPage.entries);
-      if (!shouldPreserveLiveItems) {
-        _replaceKnownEventIds(items);
-      } else {
+          : _mergeTimeline(scopedPage.entries);
+      if (shouldPreserveLiveItems) {
         _debugLog(
           'thread_detail_snapshot_refresh_preserve_live_items '
           'threadId=${state.threadId}',
@@ -1672,7 +1680,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearStreamErrorMessage: true,
         clearStaleMessage: true,
       );
-      _markUnconfirmedPendingPromptsAsFailedIfThreadSettled();
+      _markUnconfirmedPendingPromptsAsFailedIfThreadSettled(
+        source: 'snapshot_refresh',
+      );
       _threadListController.syncThreadDetail(nextThread);
       if (nextThread.status != ThreadStatus.running) {
         _finishTrackingActiveTurn();
@@ -1831,10 +1841,22 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       updatedAt: event.occurredAt,
       title: _liveEventTitle(event),
     );
+    _debugLog(
+      'thread_detail_lifecycle_status_update '
+      'threadId=${state.threadId} '
+      'previousStatus=${thread.status.wireValue} '
+      'nextStatus=${status.wireValue} '
+      'reason=${(event.payload['reason'] as String?)?.trim() ?? ''} '
+      'pendingPromptCount=${state.pendingLocalUserPrompts.length} '
+      'pendingSubmitted=${_pendingPromptSubmittedAt != null}',
+    );
 
     if (status != ThreadStatus.running) {
-      _markUnconfirmedPendingPromptsAsFailedIfThreadSettled();
-      _finishTrackingActiveTurn();
+      _recordPendingPromptSettlement();
+      _markUnconfirmedPendingPromptsAsFailedIfThreadSettled(
+        source: 'lifecycle_status_update',
+      );
+      _finishTrackingActiveTurn(clearPendingPromptState: false);
     }
   }
 
@@ -2462,6 +2484,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       ),
     );
     if (mutationResult.threadStatus != ThreadStatus.running) {
+      _recordPendingPromptSettlement();
       _finishTrackingActiveTurn();
     }
     if (mutationResult.threadStatus == ThreadStatus.running) {
@@ -2521,7 +2544,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         clearStreamErrorMessage: true,
         clearStaleMessage: true,
       );
-      _markUnconfirmedPendingPromptsAsFailedIfThreadSettled();
+      _markUnconfirmedPendingPromptsAsFailedIfThreadSettled(
+        source: 'post_mutation_snapshot',
+      );
       _threadListController.syncThreadDetail(scopedDetail);
     } catch (_) {
       // Avoid disrupting the active thread when the follow-up refresh fails.
@@ -2571,9 +2596,11 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     _recordActiveTurnSignal();
   }
 
-  void _finishTrackingActiveTurn() {
+  void _finishTrackingActiveTurn({bool clearPendingPromptState = true}) {
     _cancelSilentTurnWatchdog();
-    _pendingPromptSubmittedAt = null;
+    if (clearPendingPromptState) {
+      _clearPendingPromptConfirmationTracking();
+    }
     _lastActiveTurnSignalAt = null;
     _activeTurnNeedsSnapshotCatchUp = false;
     _activeTurnSawLiveUserPrompt = false;
@@ -2602,6 +2629,14 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       pendingLocalUserPrompts: List<ThreadActivityItem>.unmodifiable(
         <ThreadActivityItem>[...state.pendingLocalUserPrompts, pendingItem],
       ),
+    );
+    _debugLog(
+      'thread_detail_pending_prompt_appended '
+      'threadId=${state.threadId} '
+      'eventId=$localEventId '
+      'pendingPromptCount=${state.pendingLocalUserPrompts.length} '
+      'bodyChars=${input.length} '
+      'imageCount=${images.length}',
     );
     return localEventId;
   }
@@ -2632,6 +2667,12 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         .where((item) => item.type == ThreadActivityItemType.userPrompt)
         .toList(growable: false);
     if (canonicalUserPrompts.isEmpty) {
+      _debugLog(
+        'thread_detail_pending_prompt_reconcile_deferred '
+        'threadId=${state.threadId} '
+        'pendingPromptCount=${pendingItems.length} '
+        'canonicalPromptCount=0',
+      );
       return pendingItems;
     }
 
@@ -2653,7 +2694,19 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         searchStart = matchIndex + 1;
         continue;
       }
+      _debugLog(
+        'thread_detail_pending_prompt_unmatched '
+        'threadId=${state.threadId} '
+        'pendingEventId=${pendingItem.eventId} '
+        'pendingOccurredAt=${pendingItem.occurredAt} '
+        'canonicalPromptCount=${canonicalUserPrompts.length} '
+        'lastCanonicalPromptAt=${canonicalUserPrompts.last.occurredAt}',
+      );
       remaining.add(pendingItem);
+    }
+
+    if (remaining.isEmpty) {
+      _clearPendingPromptConfirmationTracking();
     }
 
     return List<ThreadActivityItem>.unmodifiable(remaining);
@@ -2711,18 +2764,70 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     );
   }
 
-  void _markUnconfirmedPendingPromptsAsFailedIfThreadSettled() {
+  void _clearPendingPromptConfirmationTracking() {
+    _pendingPromptSubmittedAt = null;
+    _pendingPromptSettledAt = null;
+  }
+
+  void _markUnconfirmedPendingPromptsAsFailedIfThreadSettled({
+    required String source,
+  }) {
     final threadStatus = state.thread?.status;
     if (threadStatus == null || threadStatus == ThreadStatus.running) {
+      _debugLog(
+        'thread_detail_pending_prompt_failure_skipped '
+        'threadId=${state.threadId} '
+        'source=$source '
+        'threadStatus=${threadStatus?.wireValue ?? 'null'} '
+        'reason=thread_running_or_missing',
+      );
       return;
     }
     if (_pendingPromptSubmittedAt == null) {
+      _debugLog(
+        'thread_detail_pending_prompt_failure_skipped '
+        'threadId=${state.threadId} '
+        'source=$source '
+        'threadStatus=${threadStatus.wireValue} '
+        'reason=no_pending_submission_timestamp',
+      );
       return;
     }
 
     final pendingItems = state.pendingLocalUserPrompts;
     if (pendingItems.isEmpty) {
+      _clearPendingPromptConfirmationTracking();
+      _debugLog(
+        'thread_detail_pending_prompt_failure_skipped '
+        'threadId=${state.threadId} '
+        'source=$source '
+        'threadStatus=${threadStatus.wireValue} '
+        'reason=no_pending_items',
+      );
       return;
+    }
+
+    final graceDeadline = _pendingPromptFailureGraceDeadline();
+    if (graceDeadline != null) {
+      final remaining = graceDeadline.difference(DateTime.now());
+      if (remaining > Duration.zero) {
+        _debugLog(
+          'thread_detail_pending_prompt_failure_skipped '
+          'threadId=${state.threadId} '
+          'source=$source '
+          'threadStatus=${threadStatus.wireValue} '
+          'reason=within_settlement_grace_window '
+          'remainingMs=${remaining.inMilliseconds}',
+        );
+        if (source != 'lifecycle_status_update') {
+          _scheduleThreadSnapshotRefresh(
+            delay: remaining > const Duration(milliseconds: 200)
+                ? remaining
+                : const Duration(milliseconds: 200),
+          );
+        }
+        return;
+      }
     }
 
     var changed = false;
@@ -2748,14 +2853,46 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     _debugLog(
       'thread_detail_pending_prompt_failed '
       'threadId=${state.threadId} '
+      'source=$source '
       'count=${updatedPendingItems.length} '
-      'threadStatus=${threadStatus.wireValue}',
+      'threadStatus=${threadStatus.wireValue} '
+      'pendingSubmittedAt=${_pendingPromptSubmittedAt?.toIso8601String() ?? ''} '
+      'pendingEventIds=${updatedPendingItems.map((item) => item.eventId).join(',')}',
     );
     state = state.copyWith(
       pendingLocalUserPrompts: List<ThreadActivityItem>.unmodifiable(
         updatedPendingItems,
       ),
     );
+    _clearPendingPromptConfirmationTracking();
+  }
+
+  void _recordPendingPromptSettlement() {
+    if (_pendingPromptSubmittedAt == null ||
+        state.pendingLocalUserPrompts.isEmpty ||
+        _pendingPromptSettledAt != null) {
+      return;
+    }
+
+    _pendingPromptSettledAt = DateTime.now();
+  }
+
+  DateTime? _pendingPromptFailureGraceDeadline() {
+    final submittedAt = _pendingPromptSubmittedAt;
+    if (submittedAt == null) {
+      return null;
+    }
+
+    final settlementAnchor = _pendingPromptSettledAt ?? submittedAt;
+    final submittedDeadline = submittedAt.add(
+      _pendingPromptSettlementGraceWindow,
+    );
+    final settlementDeadline = settlementAnchor.add(
+      _pendingPromptSettlementGraceWindow,
+    );
+    return submittedDeadline.isAfter(settlementDeadline)
+        ? submittedDeadline
+        : settlementDeadline;
   }
 
   void _recordMeaningfulLiveActivity(ThreadActivityItem item) {
@@ -2900,7 +3037,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       'elapsedMs=$elapsedMs '
       'chars=${visibleText.length}',
     );
-    _pendingPromptSubmittedAt = null;
+    _clearPendingPromptConfirmationTracking();
   }
 
   String? _liveEventTitle(BridgeEventEnvelope<Map<String, dynamic>> event) {

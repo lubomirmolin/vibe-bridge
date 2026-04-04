@@ -23,7 +23,7 @@ use crate::pairing::{
 use crate::policy::{PolicyAction, PolicyDecision};
 use crate::server::codex_usage::CodexUsageError;
 use crate::server::controls::{ApprovalRecordDto, ApprovalResolutionResponse};
-use crate::server::events::{EventSubscriptionQuery, stream_events};
+use crate::server::events::{EventSubscriptionQuery, replay_events_for_scope, stream_events};
 use crate::server::state::BridgeAppState;
 
 pub fn router(state: BridgeAppState) -> Router {
@@ -985,8 +985,17 @@ async fn events(
     Query(query): Query<EventSubscriptionQuery>,
 ) -> Response {
     let receiver = state.event_hub().subscribe();
+    let after_event_id = query.after_event_id.clone();
     let scope = query.into_scope();
-    ws.on_upgrade(move |socket| stream_events(socket, receiver, scope))
+    let replay_snapshot = match &scope {
+        crate::server::events::EventSubscriptionScope::Thread(thread_id) => {
+            state.projections().snapshot(thread_id).await
+        }
+        crate::server::events::EventSubscriptionScope::List => None,
+    };
+    let replay_events =
+        replay_events_for_scope(replay_snapshot.as_ref(), &scope, after_event_id.as_deref());
+    ws.on_upgrade(move |socket| stream_events(socket, receiver, scope, replay_events))
 }
 
 #[derive(Debug, Serialize)]

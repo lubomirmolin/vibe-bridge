@@ -13,6 +13,7 @@ abstract class ThreadLiveStream {
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
     String? threadId,
+    String? afterEventId,
   });
 }
 
@@ -38,8 +39,13 @@ class HttpThreadLiveStream implements ThreadLiveStream {
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
     String? threadId,
+    String? afterEventId,
   }) async {
-    final uri = _buildStreamUri(bridgeApiBaseUrl, threadId);
+    final uri = _buildStreamUri(
+      bridgeApiBaseUrl,
+      threadId,
+      afterEventId: afterEventId,
+    );
     final connection = await _transport.openEventStream(uri);
     final controller =
         StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();
@@ -110,7 +116,7 @@ class HttpThreadLiveStream implements ThreadLiveStream {
   }
 }
 
-Uri _buildStreamUri(String baseUrl, String? threadId) {
+Uri _buildStreamUri(String baseUrl, String? threadId, {String? afterEventId}) {
   final baseUri = Uri.parse(baseUrl);
   final normalizedBasePath = baseUri.path.endsWith('/')
       ? baseUri.path.substring(0, baseUri.path.length - 1)
@@ -120,12 +126,19 @@ Uri _buildStreamUri(String baseUrl, String? threadId) {
       '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/events';
 
   final normalizedThreadId = threadId?.trim();
+  final normalizedAfterEventId = afterEventId?.trim();
 
   return baseUri.replace(
     scheme: wsScheme,
     path: fullPath,
     queryParameters: normalizedThreadId == null || normalizedThreadId.isEmpty
         ? <String, String>{'scope': 'list'}
-        : <String, String>{'scope': 'thread', 'thread_id': normalizedThreadId},
+        : <String, String>{
+            'scope': 'thread',
+            'thread_id': normalizedThreadId,
+            if (normalizedAfterEventId != null &&
+                normalizedAfterEventId.isNotEmpty)
+              'after_event_id': normalizedAfterEventId,
+          },
   );
 }

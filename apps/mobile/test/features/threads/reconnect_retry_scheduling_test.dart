@@ -296,6 +296,7 @@ void main() {
       expect(promptBodies, ['Ship the fix']);
       expect(assistantBodies, ['Patched tests']);
       expect(detailController.state.items, hasLength(2));
+      expect(liveStream.subscribedAfterEventIds, [null, 'evt-assistant-live']);
     },
   );
 
@@ -414,7 +415,7 @@ void main() {
   );
 
   test(
-    'thread-detail does not reconcile a new pending prompt against an older identical prompt',
+    'thread-detail does not reconcile a new pending prompt against an older identical prompt or fail it immediately on terminal status',
     () async {
       final listController = ThreadListController(
         bridgeApi: ScriptedThreadListBridgeApi(
@@ -528,24 +529,31 @@ void main() {
         ),
       );
 
-      await _waitUntil(
-        () =>
-            detailController.state.pendingLocalUserPrompts.length == 1 &&
-            detailController
-                    .state
-                    .pendingLocalUserPrompts
-                    .first
-                    .localMessageState ==
-                ThreadActivityLocalMessageState.failed,
-      );
+      await _waitUntil(() => detailApi.timelineFetchCount >= 2);
 
       expect(
         detailController.state.pendingLocalUserPrompts.first.body,
         'Retry this prompt',
       );
       expect(
+        detailController.state.pendingLocalUserPrompts.first.localMessageState,
+        ThreadActivityLocalMessageState.sending,
+      );
+      expect(
         logs.any(
-          (entry) => entry.contains('thread_detail_pending_prompt_failed'),
+          (entry) =>
+              entry.contains('thread_detail_pending_prompt_failure_skipped') &&
+              entry.contains('source=lifecycle_status_update') &&
+              entry.contains('within_settlement_grace_window'),
+        ),
+        isTrue,
+      );
+      expect(
+        logs.any(
+          (entry) =>
+              entry.contains('thread_detail_lifecycle_status_update') &&
+              entry.contains('previousStatus=running') &&
+              entry.contains('nextStatus=completed'),
         ),
         isTrue,
       );
@@ -2502,13 +2510,16 @@ class ScriptedThreadLiveStream implements ThreadLiveStream {
       <StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>[];
 
   int totalSubscriptions = 0;
+  final List<String?> subscribedAfterEventIds = <String?>[];
 
   @override
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
     String? threadId,
+    String? afterEventId,
   }) async {
     totalSubscriptions += 1;
+    subscribedAfterEventIds.add(afterEventId);
     final controller =
         StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();
     _controllers.add(controller);
