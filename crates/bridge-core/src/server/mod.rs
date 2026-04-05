@@ -1,13 +1,15 @@
 mod api;
 mod codex_usage;
 mod config;
+pub(crate) mod contracts;
 mod controls;
 mod events;
-mod gateway;
+pub(crate) mod gateway;
 mod pairing_route;
 mod projection;
 mod speech;
 mod state;
+pub(crate) mod timeline_events;
 
 use std::fs;
 use std::net::SocketAddr;
@@ -67,7 +69,6 @@ pub async fn run_from_env() -> Result<(), String> {
     wait_for_codex_runtime(&config).await;
 
     let state = BridgeAppState::from_config(config.clone()).await;
-    state.start_notification_forwarder();
     state.start_desktop_ipc_forwarder();
     state.start_summary_reconciler();
     let app = api::router(state.clone());

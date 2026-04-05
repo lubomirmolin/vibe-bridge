@@ -52,13 +52,13 @@ impl CodexGateway {
         on_event: F,
         on_control_request: H,
         on_turn_completed: G,
-        _on_stream_finished: I,
+        on_stream_finished: I,
     ) -> Result<GatewayTurnMutation, String>
     where
         F: Fn(BridgeEventEnvelope<Value>) + Send + 'static,
         H: Fn(GatewayTurnControlRequest) -> Result<Option<Value>, String> + Send + Sync + 'static,
         G: Fn(String) + Send + 'static,
-        I: Fn(String) + Send + Sync + 'static,
+        I: Fn(String, GatewayTurnStreamActivity) + Send + Sync + 'static,
     {
         if !is_provider_thread_id(thread_id, ProviderKind::ClaudeCode) {
             return Err(format!("thread {thread_id} is not a Claude Code thread"));
@@ -83,9 +83,11 @@ impl CodexGateway {
         let active_claude_processes = Arc::clone(&self.active_claude_processes);
         let interrupted_claude_threads = Arc::clone(&self.interrupted_claude_threads);
         let on_control_request = Arc::new(on_control_request);
+        let on_stream_finished = Arc::new(on_stream_finished);
         let (result_tx, result_rx) = mpsc::sync_channel(1);
 
         std::thread::spawn(move || {
+            let mut stream_activity = GatewayTurnStreamActivity::default();
             let session_exists = claude_session_archive_path(&workspace, &native_thread_id)
                 .is_some_and(|path| path.is_file());
             let (sdk_listener, sdk_url) = match bind_claude_sdk_listener() {
@@ -259,6 +261,8 @@ impl CodexGateway {
                     thread_status: ThreadStatus::Running,
                     message: format!("turn {turn_id} started"),
                     turn_id: Some(turn_id.clone()),
+                    client_message_id: None,
+                    client_turn_intent_id: request.client_turn_intent_id.clone(),
                 },
                 turn_id: Some(turn_id),
             };
@@ -297,6 +301,7 @@ impl CodexGateway {
                                 &mut file_change_tool_ids,
                                 &mut emitted_tool_use_ids,
                             ) {
+                                stream_activity.saw_workflow_event = true;
                                 on_event(event);
                             }
                             match on_control_request(GatewayTurnControlRequest::ClaudeCanUseTool {
@@ -417,11 +422,13 @@ impl CodexGateway {
                     &mut emitted_tool_use_ids,
                     &mut emitted_tool_result_ids,
                 ) {
+                    stream_activity.saw_workflow_event = true;
                     on_event(event);
                 }
 
                 if let Some(event) = build_claude_assistant_event(&thread_id, &value) {
                     did_emit_assistant_output = true;
+                    stream_activity.saw_assistant_message = true;
                     on_event(event);
                 }
 
@@ -435,6 +442,7 @@ impl CodexGateway {
                 {
                     current_assistant_text.push_str(&delta);
                     did_emit_assistant_output = true;
+                    stream_activity.saw_assistant_message = true;
                     on_event(build_claude_partial_assistant_event(
                         &thread_id,
                         message_id,
@@ -449,6 +457,7 @@ impl CodexGateway {
                     }
                     on_event(status_event);
                     did_emit_completion = true;
+                    stream_activity.saw_turn_completed = true;
                     on_turn_completed(thread_id.clone());
                     break;
                 }
@@ -484,8 +493,11 @@ impl CodexGateway {
                     "claude_process_exited"
                 };
                 on_event(build_thread_status_event(&thread_id, status, reason));
+                stream_activity.saw_turn_completed = true;
                 on_turn_completed(thread_id.clone());
             }
+
+            on_stream_finished(thread_id.clone(), stream_activity);
 
             if !did_report_turn_start {
                 let exit_message = match exit_status {

@@ -66,8 +66,9 @@ pub(super) fn start_turn_with_resume(
     images: &[String],
     model: Option<&str>,
     effort: Option<&str>,
+    mode: TurnMode,
 ) -> Result<CodexTurnStartResult, String> {
-    match start_turn(transport, thread_id, prompt, images, model, effort) {
+    match start_turn(transport, thread_id, prompt, images, model, effort, mode) {
         Ok(response) => Ok(response),
         Err(error) if should_resume_thread(&error) => {
             if let Err(resume_error) = resume_thread(transport, thread_id)
@@ -75,7 +76,7 @@ pub(super) fn start_turn_with_resume(
             {
                 return Err(resume_error);
             }
-            start_turn(transport, thread_id, prompt, images, model, effort)
+            start_turn(transport, thread_id, prompt, images, model, effort, mode)
         }
         Err(error) => Err(error),
     }
@@ -123,6 +124,7 @@ pub(super) fn start_turn(
     images: &[String],
     model: Option<&str>,
     effort: Option<&str>,
+    mode: TurnMode,
 ) -> Result<CodexTurnStartResult, String> {
     let native_thread_id = native_thread_id_for_provider(thread_id, ProviderKind::Codex)
         .ok_or_else(|| format!("thread {thread_id} is not a codex thread"))?;
@@ -138,10 +140,42 @@ pub(super) fn start_turn(
     if let Some(effort) = effort {
         params.insert("effort".to_string(), Value::String(effort.to_string()));
     }
+    if let Some(collaboration_mode) = build_turn_start_collaboration_mode(mode, model, effort) {
+        params.insert("collaborationMode".to_string(), collaboration_mode);
+    }
 
     let response = transport.request("turn/start", Value::Object(params))?;
     serde_json::from_value(response)
         .map_err(|error| format!("invalid turn/start response from codex: {error}"))
+}
+
+fn build_turn_start_collaboration_mode(
+    mode: TurnMode,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> Option<Value> {
+    if mode != TurnMode::Plan {
+        return None;
+    }
+
+    let mode_model = model
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("gpt-5");
+    let mut settings = serde_json::Map::new();
+    settings.insert("model".to_string(), Value::String(mode_model.to_string()));
+    if let Some(effort) = effort.map(str::trim).filter(|value| !value.is_empty()) {
+        settings.insert(
+            "reasoningEffort".to_string(),
+            Value::String(effort.to_string()),
+        );
+    }
+    settings.insert("developerInstructions".to_string(), Value::Null);
+
+    Some(json!({
+        "mode": "plan",
+        "settings": Value::Object(settings),
+    }))
 }
 
 pub(super) fn start_structured_turn(

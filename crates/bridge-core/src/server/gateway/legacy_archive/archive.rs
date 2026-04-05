@@ -31,7 +31,7 @@ struct SessionIndexEntry {
     updated_at: String,
 }
 
-pub(super) fn resolve_codex_home_dir() -> Result<PathBuf, String> {
+pub(crate) fn resolve_codex_home_dir() -> Result<PathBuf, String> {
     if let Some(codex_home) = env::var_os("CODEX_HOME") {
         let path = PathBuf::from(codex_home);
         if !path.as_os_str().is_empty() {
@@ -59,7 +59,7 @@ pub(super) fn resolve_claude_home_dir() -> Result<PathBuf, String> {
     Ok(home.join(".claude"))
 }
 
-pub(super) fn load_thread_snapshot(
+pub(crate) fn load_thread_snapshot(
     command: &str,
     args: &[String],
     endpoint: Option<&str>,
@@ -98,7 +98,7 @@ pub(super) fn load_thread_snapshot(
     }
 }
 
-pub(super) fn load_thread_snapshot_for_id(
+pub(crate) fn load_thread_snapshot_for_id(
     command: &str,
     args: &[String],
     endpoint: Option<&str>,
@@ -238,26 +238,6 @@ fn merge_rpc_timeline_with_archive(
         {
             entry.insert(merged_events.len());
             merged_events.push(rpc_event);
-        }
-    }
-
-    sort_timeline_events(merged_events)
-}
-
-pub(super) fn merge_snapshot_timeline(
-    previous_events: &[UpstreamTimelineEvent],
-    next_events: &[UpstreamTimelineEvent],
-) -> Vec<UpstreamTimelineEvent> {
-    let mut merged_events = previous_events.to_vec();
-
-    for next_event in next_events {
-        if let Some(existing_index) = merged_events
-            .iter()
-            .position(|event| event.id == next_event.id)
-        {
-            merged_events[existing_index] = next_event.clone();
-        } else {
-            merged_events.push(next_event.clone());
         }
     }
 

@@ -8,7 +8,8 @@ use super::codex::{
 use super::mapping::{
     derive_repository_name_from_cwd, extract_generated_thread_title, map_thread_snapshot,
     map_thread_summary, merge_rpc_and_archive_timeline_entries, normalize_codex_item_payload,
-    parse_model_options, parse_repository_name_from_origin, timeline_annotations_for_event,
+    parse_model_options, parse_repository_name_from_origin, select_codex_timeline_entries,
+    timeline_annotations_for_event,
 };
 use super::{
     CodexGateway, CodexGitInfo, CodexThread, CodexThreadStatus, CodexTurn,
@@ -18,7 +19,8 @@ use crate::codex_runtime::CodexRuntimeMode;
 use crate::server::config::BridgeCodexConfig;
 use serde_json::{Value, json};
 use shared_contracts::{
-    BridgeEventKind, ProviderKind, ThreadTimelineEntryDto, ThreadTimelineExplorationKind,
+    BridgeEventKind, ProviderKind, ThreadStatus, ThreadTimelineEntryDto,
+    ThreadTimelineExplorationKind,
 };
 use std::fs;
 use std::sync::mpsc;
@@ -441,7 +443,7 @@ fn normalize_message_item_preserves_image_urls_from_codex_content() {
 }
 
 #[test]
-fn map_thread_snapshot_surfaces_pending_plan_questions_without_protocol_messages() {
+fn map_thread_snapshot_keeps_legacy_hidden_plan_protocol_messages_out_of_ui() {
     let snapshot = map_thread_snapshot(CodexThread {
         id: "thread-plan".to_string(),
         name: Some("Plan mode".to_string()),
@@ -476,12 +478,7 @@ fn map_thread_snapshot_surfaces_pending_plan_questions_without_protocol_messages
     });
 
     assert!(snapshot.entries.is_empty());
-    let pending_user_input = snapshot
-        .pending_user_input
-        .expect("pending user input should be reconstructed");
-    assert_eq!(pending_user_input.title, "Clarify the implementation");
-    assert_eq!(pending_user_input.questions.len(), 1);
-    assert_eq!(pending_user_input.questions[0].question_id, "scope");
+    assert!(snapshot.pending_user_input.is_none());
 }
 
 #[test]
@@ -584,9 +581,74 @@ fn rpc_and_archive_timelines_are_merged_without_losing_archive_freshness() {
 
     let selected = merge_rpc_and_archive_timeline_entries(rpc_entries, archive_entries);
 
-    assert_eq!(selected.len(), 2);
+    assert_eq!(selected.len(), 3);
     assert_eq!(selected[0].event_id, "evt-msg");
-    assert_eq!(selected[1].kind, BridgeEventKind::CommandDelta);
+    assert_eq!(selected[1].event_id, "evt-msg-archive");
+    assert_eq!(selected[2].kind, BridgeEventKind::CommandDelta);
+}
+
+#[test]
+fn settled_codex_threads_prefer_archive_timeline_entries() {
+    let rpc_entries = vec![ThreadTimelineEntryDto {
+        event_id: "evt-rpc-only".to_string(),
+        kind: BridgeEventKind::MessageDelta,
+        occurred_at: "2026-03-21T10:00:00.000Z".to_string(),
+        summary: "stale rpc".to_string(),
+        payload: json!({"type":"agentMessage","text":"stale rpc"}),
+        annotations: None,
+    }];
+    let archive_entries = vec![ThreadTimelineEntryDto {
+        event_id: "evt-archive".to_string(),
+        kind: BridgeEventKind::MessageDelta,
+        occurred_at: "2026-03-21T10:00:01.000Z".to_string(),
+        summary: "archive wins".to_string(),
+        payload: json!({"type":"agentMessage","text":"archive wins"}),
+        annotations: None,
+    }];
+
+    let selected = select_codex_timeline_entries(ThreadStatus::Idle, rpc_entries, archive_entries);
+
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].event_id, "evt-archive");
+}
+
+#[test]
+fn running_codex_threads_merge_archive_with_rpc_only_entries() {
+    let rpc_entries = vec![
+        ThreadTimelineEntryDto {
+            event_id: "evt-archive-shared".to_string(),
+            kind: BridgeEventKind::MessageDelta,
+            occurred_at: "2026-03-21T10:00:00.000Z".to_string(),
+            summary: String::new(),
+            payload: json!({"type":"agentMessage","text":"rpc text","client_message_id":"client-1"}),
+            annotations: None,
+        },
+        ThreadTimelineEntryDto {
+            event_id: "evt-rpc-only".to_string(),
+            kind: BridgeEventKind::PlanDelta,
+            occurred_at: "2026-03-21T10:00:02.000Z".to_string(),
+            summary: "working plan".to_string(),
+            payload: json!({"type":"plan","text":"working plan"}),
+            annotations: None,
+        },
+    ];
+    let archive_entries = vec![ThreadTimelineEntryDto {
+        event_id: "evt-archive-shared".to_string(),
+        kind: BridgeEventKind::MessageDelta,
+        occurred_at: "2026-03-21T10:00:01.000Z".to_string(),
+        summary: "archive text".to_string(),
+        payload: json!({"type":"agentMessage","text":"archive text"}),
+        annotations: None,
+    }];
+
+    let selected =
+        select_codex_timeline_entries(ThreadStatus::Running, rpc_entries, archive_entries);
+
+    assert_eq!(selected.len(), 2);
+    assert_eq!(selected[0].event_id, "evt-archive-shared");
+    assert_eq!(selected[0].payload["text"], "archive text");
+    assert_eq!(selected[0].payload["client_message_id"], "client-1");
+    assert_eq!(selected[1].event_id, "evt-rpc-only");
 }
 
 #[test]
@@ -768,14 +830,16 @@ fn live_create_thread_and_stream_turn_response() {
                     images: Vec::new(),
                     model: None,
                     effort: None,
+                    mode: shared_contracts::TurnMode::Act,
                     permission_mode: None,
+                    client_turn_intent_id: None,
                 },
                 move |event| {
                     let _ = event_tx.send(event);
                 },
                 |_| Ok(None),
                 |_| {},
-                |_| {},
+                |_, _| {},
             )
             .expect("turn should start");
 
@@ -878,7 +942,9 @@ After completing those steps, reply with exactly {done_token}."
                     images: Vec::new(),
                     model: None,
                     effort: None,
+                    mode: shared_contracts::TurnMode::Act,
                     permission_mode: None,
+                    client_turn_intent_id: None,
                 },
                 move |event| {
                     let _ = event_tx.send(event);
@@ -901,12 +967,13 @@ After completing those steps, reply with exactly {done_token}."
                         };
                         Ok(Some(response))
                     }
+                    GatewayTurnControlRequest::CodexRequestUserInput { .. } => Ok(None),
                     _ => Ok(None),
                 },
                 move |_| {
                     let _ = completed_tx.send(());
                 },
-                |_| {},
+                |_, _| {},
             )
             .expect("turn should start");
 

@@ -15,9 +15,9 @@ use shared_contracts::{
     ModelCatalogDto, ModelOptionDto, NetworkSettingsDto, PairingRouteInventoryDto,
     PendingUserInputDto, ProviderKind, SecurityAuditEventDto, ServiceHealthDto,
     ServiceHealthStatus, ThreadGitDiffDto, ThreadGitDiffMode, ThreadSnapshotDto, ThreadStatus,
-    ThreadSummaryDto, ThreadTimelineEntryDto, ThreadTimelinePageDto, ThreadUsageDto, TrustStateDto,
-    TurnMode, TurnMutationAcceptedDto, UserInputAnswerDto, UserInputOptionDto,
-    UserInputQuestionDto,
+    ThreadSummaryDto, ThreadTimelineEntryDto, ThreadTimelinePageDto, ThreadUsageDto,
+    ThreadWorkflowStateDto, TrustStateDto, TurnMode, TurnMutationAcceptedDto, UserInputAnswerDto,
+    UserInputOptionDto, UserInputQuestionDto,
 };
 use tokio::sync::RwLock;
 use tokio::sync::oneshot;
@@ -36,6 +36,9 @@ use crate::pairing::{
 use crate::policy::{PolicyAction, PolicyDecision, PolicyEngine};
 use crate::server::codex_usage::{CodexUsageClient, CodexUsageError};
 use crate::server::config::{BridgeCodexConfig, BridgeConfig};
+use crate::server::contracts::{
+    GitMutationStatusDto, GitStatusResponse, MutationResultResponse, RepositoryContextDto,
+};
 use crate::server::controls::{
     ApprovalGateResponse, ApprovalRecordDto, ApprovalResolutionResponse, ApprovalStatus,
     ExecutedGitMutation, PendingApprovalAction, execute_branch_switch, execute_pull, execute_push,
@@ -46,10 +49,7 @@ use crate::server::gateway::{CodexGateway, GatewayTurnControlRequest, TurnStartR
 use crate::server::pairing_route::PairingRouteState;
 use crate::server::projection::ProjectionStore;
 use crate::server::speech::{SpeechError, SpeechService};
-use crate::thread_api::{
-    GitStatusResponse, MutationResultResponse, RepositoryContextDto, is_provider_thread_id,
-    provider_from_thread_id,
-};
+use crate::thread_identity::{is_provider_thread_id, provider_from_thread_id};
 
 mod approvals;
 mod desktop_ipc;
@@ -58,14 +58,17 @@ mod lifecycle;
 mod live;
 mod snapshots;
 mod streams;
+mod thread_runtime;
 mod titles;
 mod turns;
 pub(in crate::server) mod user_input;
+mod workflow;
 
 use self::git_diff::*;
 use self::live::*;
 use self::titles::*;
 use self::user_input::*;
+use self::workflow::*;
 
 #[derive(Debug, Clone)]
 pub struct BridgeAppState {
@@ -78,21 +81,13 @@ struct BridgeAppStateInner {
     codex_health: RwLock<ServiceHealthDto>,
     available_models: RwLock<Vec<ModelOptionDto>>,
     bridge_turn_metadata: RwLock<HashMap<String, Vec<ThreadTimelineEntryDto>>>,
-    active_turn_ids: RwLock<HashMap<String, String>>,
-    active_turn_stream_threads: RwLock<HashSet<String>>,
-    interrupted_threads: RwLock<HashSet<String>>,
-    pending_bridge_owned_turns: RwLock<HashSet<String>>,
-    awaiting_plan_question_prompts: RwLock<HashMap<String, String>>,
-    pending_user_inputs: RwLock<HashMap<String, PendingUserInputSession>>,
-    resumed_notification_threads: RwLock<HashSet<String>>,
+    thread_runtimes: RwLock<HashMap<String, CodexThreadRuntime>>,
     inflight_thread_title_generations: RwLock<HashSet<String>>,
-    pending_user_message_images: RwLock<HashMap<String, Vec<String>>>,
     access_mode: RwLock<AccessMode>,
     security_events: RwLock<Vec<SecurityEventRecordDto>>,
     codex_usage_client: RwLock<CodexUsageClient>,
     gateway: CodexGateway,
     event_hub: EventHub,
-    notification_control_tx: Mutex<Option<mpsc::Sender<NotificationControlMessage>>>,
     desktop_ipc_control_tx: Mutex<Option<mpsc::Sender<NotificationControlMessage>>>,
     pairing_sessions: Mutex<PairingSessionService>,
     pairing_route: PairingRouteState,
@@ -130,11 +125,14 @@ const USER_INPUT_OPTION_DENY: &str = "deny";
 
 #[derive(Debug)]
 enum PendingUserInputSession {
-    PlanQuestionnaire {
-        questionnaire: PendingUserInputDto,
-        original_prompt: String,
-    },
+    NativeCodexRequestUserInput(PendingNativeUserInputSession),
     ProviderApproval(PendingProviderApprovalSession),
+}
+
+#[derive(Debug)]
+struct PendingNativeUserInputSession {
+    questionnaire: PendingUserInputDto,
+    resolution_tx: oneshot::Sender<Value>,
 }
 
 #[derive(Debug)]
@@ -143,6 +141,34 @@ struct PendingProviderApprovalSession {
     provider_request_id: String,
     context: ProviderApprovalContext,
     resolution_tx: oneshot::Sender<ProviderApprovalSelection>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingTurnClientMessage {
+    client_message_id: String,
+    turn_id: Option<String>,
+    prompt_text: String,
+}
+
+#[derive(Debug, Default)]
+struct CodexThreadRuntime {
+    active_turn_id: Option<String>,
+    interrupted: bool,
+    pending_client_message: Option<PendingTurnClientMessage>,
+    pending_user_input: Option<PendingUserInputSession>,
+    resumable_notifications: bool,
+    pending_user_message_images: Vec<String>,
+}
+
+impl CodexThreadRuntime {
+    fn is_empty(&self) -> bool {
+        self.active_turn_id.is_none()
+            && !self.interrupted
+            && self.pending_client_message.is_none()
+            && self.pending_user_input.is_none()
+            && !self.resumable_notifications
+            && self.pending_user_message_images.is_empty()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -180,7 +206,7 @@ impl GitControlState {
         action: PendingApprovalAction,
         reason: &str,
         repository: RepositoryContextDto,
-        git_status: crate::thread_api::GitStatusDto,
+        git_status: GitMutationStatusDto,
         occurred_at: &str,
     ) -> ApprovalRecordDto {
         self.next_approval_sequence = self.next_approval_sequence.saturating_add(1);

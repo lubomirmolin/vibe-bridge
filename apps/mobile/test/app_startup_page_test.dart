@@ -198,7 +198,7 @@ class _FakeThreadLiveStream implements ThreadLiveStream {
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
     String? threadId,
-    String? afterEventId,
+    int? afterSeq,
   }) async {
     return ThreadLiveSubscription(
       events: const Stream<BridgeEventEnvelope<Map<String, dynamic>>>.empty(),

@@ -14,9 +14,12 @@ use shared_contracts::{
     ThreadStatus, ThreadTimelineEntryDto,
 };
 
-use crate::thread_api::{
-    build_timeline_event_envelope, current_timestamp_string, derive_repository_name_from_cwd,
-    normalize_codex_item_payload, should_publish_live_payload, summarize_live_payload,
+use crate::server::gateway::mapping::{
+    derive_repository_name_from_cwd, map_thread_client_kind_from_source,
+    normalize_codex_item_payload, should_publish_live_payload,
+};
+use crate::server::timeline_events::{
+    build_timeline_event_envelope, current_timestamp_string, summarize_live_payload,
     unix_timestamp_to_iso8601,
 };
 
@@ -388,7 +391,7 @@ pub fn snapshot_from_conversation_state(
         .filter(|value| !value.trim().is_empty())
         .or_else(|| first_turn_workspace(turns))
         .unwrap_or_default();
-    let entries = map_conversation_entries(&thread_id, turns, &workspace)?;
+    let entries = map_conversation_entries(&thread_id, turns)?;
     let created_at = previous_snapshot
         .map(|snapshot| snapshot.thread.created_at.clone())
         .filter(|value| !value.trim().is_empty())
@@ -444,7 +447,7 @@ pub fn snapshot_from_conversation_state(
             thread_id,
             native_thread_id: native_thread_id.clone(),
             provider: shared_contracts::ProviderKind::Codex,
-            client: crate::thread_api::map_thread_client_kind_from_source(&source),
+            client: map_thread_client_kind_from_source(&source),
             title,
             status,
             workspace,
@@ -457,11 +460,13 @@ pub fn snapshot_from_conversation_state(
             last_turn_summary,
             active_turn_id: None,
         },
+        latest_bridge_seq: previous_snapshot.and_then(|snapshot| snapshot.latest_bridge_seq),
         entries,
         approvals: previous_snapshot
             .map(|snapshot| snapshot.approvals.clone())
             .unwrap_or_default(),
         git_status: previous_snapshot.and_then(|snapshot| snapshot.git_status.clone()),
+        workflow_state: previous_snapshot.and_then(|snapshot| snapshot.workflow_state.clone()),
         pending_user_input: None,
     })
 }
@@ -489,6 +494,7 @@ pub fn diff_thread_snapshots(
         events.push(BridgeEventEnvelope {
             contract_version: CONTRACT_VERSION.to_string(),
             event_id: entry.event_id.clone(),
+            bridge_seq: None,
             thread_id: next_snapshot.thread.thread_id.clone(),
             kind: entry.kind,
             occurred_at: entry.occurred_at.clone(),
@@ -505,6 +511,7 @@ pub fn diff_thread_snapshots(
                 "{}-desktop-status-{}",
                 next_snapshot.thread.thread_id, next_snapshot.thread.updated_at
             ),
+            bridge_seq: None,
             thread_id: next_snapshot.thread.thread_id.clone(),
             kind: BridgeEventKind::ThreadStatusChanged,
             occurred_at: next_snapshot.thread.updated_at.clone(),
@@ -627,7 +634,6 @@ fn locate_value_mut<'a>(
 fn map_conversation_entries(
     thread_id: &str,
     turns: &[Value],
-    workspace_path: &str,
 ) -> Result<Vec<ThreadTimelineEntryDto>, String> {
     let mut entries = Vec::new();
     for turn in turns {
@@ -641,8 +647,7 @@ fn map_conversation_entries(
             .and_then(Value::as_array)
             .ok_or_else(|| format!("desktop IPC turn {turn_id} was missing items"))?;
         for (index, item) in items.iter().enumerate() {
-            let Some((kind, payload)) = normalize_codex_item_payload(item, Some(workspace_path))
-            else {
+            let Some((kind, payload)) = normalize_codex_item_payload(item) else {
                 continue;
             };
             if !should_publish_live_payload(kind, &payload) {

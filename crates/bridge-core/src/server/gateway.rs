@@ -1,6 +1,7 @@
 mod claude;
 mod codex;
-mod mapping;
+mod legacy_archive;
+pub(crate) mod mapping;
 #[cfg(test)]
 mod tests;
 
@@ -12,8 +13,7 @@ use shared_contracts::{
     AccessMode, ApprovalSummaryDto, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION,
     GitStatusDto, ModelOptionDto, PendingUserInputDto, ProviderKind, ReasoningEffortOptionDto,
     ThreadDetailDto, ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto,
-    ThreadTimelineAnnotationsDto, ThreadTimelineEntryDto, ThreadTimelineExplorationKind,
-    ThreadTimelineGroupKind, TurnMutationAcceptedDto,
+    ThreadTimelineAnnotationsDto, ThreadTimelineEntryDto, TurnMode, TurnMutationAcceptedDto,
 };
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -28,26 +28,17 @@ use uuid::Uuid;
 use crate::codex_runtime::CodexRuntimeMode;
 use crate::codex_transport::CodexJsonTransport;
 use crate::server::config::BridgeCodexConfig;
-use crate::server::state::user_input::parse_pending_user_input_payload;
-use crate::thread_api::{
-    CodexNotificationNormalizer, CodexNotificationStream, ThreadApiService, is_provider_thread_id,
-    load_archive_timeline_entries_for_session_path, load_archive_timeline_entries_for_thread,
-    map_thread_client_kind_from_source, native_thread_id_for_provider, provider_thread_id,
+use crate::thread_identity::{
+    is_provider_thread_id, native_thread_id_for_provider, provider_thread_id,
 };
 
 #[derive(Debug, Clone)]
 pub struct CodexGateway {
     config: BridgeCodexConfig,
-    reserved_transports: Arc<Mutex<HashMap<String, ReservedTransport>>>,
+    codex_thread_actors: Arc<codex::actor::CodexThreadActors>,
     claude_thread_workspaces: Arc<Mutex<HashMap<String, String>>>,
     active_claude_processes: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
     interrupted_claude_threads: Arc<Mutex<HashSet<String>>>,
-}
-
-#[derive(Debug)]
-struct ReservedTransport {
-    reserved_at: Instant,
-    transport: CodexJsonTransport,
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +54,26 @@ pub struct GatewayTurnMutation {
     pub turn_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GatewayThreadLifecycleState {
+    pub active_turn_id: Option<String>,
+    pub stream_active: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GatewayTurnStreamActivity {
+    pub saw_user_message: bool,
+    pub saw_assistant_message: bool,
+    pub saw_workflow_event: bool,
+    pub saw_turn_completed: bool,
+}
+
+impl GatewayTurnStreamActivity {
+    pub fn requires_completion_snapshot_refresh(&self) -> bool {
+        !(self.saw_user_message && (self.saw_assistant_message || self.saw_workflow_event))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TurnStartRequest {
     pub request_id: Option<String>,
@@ -70,7 +81,9 @@ pub struct TurnStartRequest {
     pub images: Vec<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
+    pub mode: TurnMode,
     pub permission_mode: Option<String>,
+    pub client_turn_intent_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -78,6 +91,10 @@ pub enum GatewayTurnControlRequest {
     CodexApproval {
         request_id: Value,
         method: String,
+        params: Value,
+    },
+    CodexRequestUserInput {
+        request_id: Value,
         params: Value,
     },
     ClaudeCanUseTool {
@@ -122,7 +139,7 @@ struct CodexTurnHandle {
 }
 
 #[derive(Debug, Deserialize)]
-struct CodexThread {
+pub(crate) struct CodexThread {
     id: String,
     #[serde(default)]
     name: Option<String>,
@@ -166,13 +183,12 @@ struct CodexTurn {
 
 impl CodexGateway {
     const MAX_THREADS_TO_FETCH: usize = 100;
-    const RESERVED_TRANSPORT_TTL: Duration = Duration::from_secs(120);
     const THREAD_TITLE_MAX_CHARS: usize = 80;
 
     pub fn new(config: BridgeCodexConfig) -> Self {
         Self {
             config,
-            reserved_transports: Arc::new(Mutex::new(HashMap::new())),
+            codex_thread_actors: Arc::new(codex::actor::CodexThreadActors::default()),
             claude_thread_workspaces: Arc::new(Mutex::new(HashMap::new())),
             active_claude_processes: Arc::new(Mutex::new(HashMap::new())),
             interrupted_claude_threads: Arc::new(Mutex::new(HashSet::new())),
@@ -186,15 +202,26 @@ impl CodexGateway {
         }
     }
 
-    pub fn notification_stream(&self) -> Result<CodexNotificationStream, String> {
-        let endpoint = match self.config.mode {
-            CodexRuntimeMode::Spawn => None,
-            _ => self.config.endpoint.as_deref(),
-        };
-        CodexNotificationStream::start(&self.config.command, &self.config.args, endpoint)
-    }
-
     pub fn desktop_ipc_socket_path(&self) -> Option<PathBuf> {
         self.config.desktop_ipc_socket_path.clone()
+    }
+
+    pub fn ensure_notification_stream<F, G>(
+        &self,
+        thread_id: &str,
+        on_event: F,
+        on_stale_rollout: G,
+    ) -> Result<(), String>
+    where
+        F: Fn(BridgeEventEnvelope<Value>) + Send + Sync + 'static,
+        G: Fn(String) + Send + Sync + 'static,
+    {
+        if !is_provider_thread_id(thread_id, ProviderKind::Codex) {
+            return Ok(());
+        }
+
+        let config = self.config.clone();
+        let actor = self.codex_thread_actors.actor(thread_id, &config);
+        actor.ensure_notification_stream(Arc::new(on_event), Arc::new(on_stale_rollout))
     }
 }

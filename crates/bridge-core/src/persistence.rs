@@ -43,6 +43,10 @@ impl PersistenceBoundary {
         self.state_directory().join(scope.file_name())
     }
 
+    pub fn event_log_path(&self) -> PathBuf {
+        self.state_directory().join("thread-events.jsonl")
+    }
+
     pub fn base_directory(&self) -> &Path {
         &self.base_directory
     }
@@ -85,5 +89,15 @@ mod tests {
         assert!(!PersistenceBoundary::requires_secure_store(
             PersistenceScope::SecurityAudit
         ));
+    }
+
+    #[test]
+    fn event_log_is_routed_under_state_directory() {
+        let boundary = PersistenceBoundary::new("/tmp/bridge-core");
+
+        assert_eq!(
+            boundary.event_log_path(),
+            std::path::PathBuf::from("/tmp/bridge-core/state/thread-events.jsonl")
+        );
     }
 }

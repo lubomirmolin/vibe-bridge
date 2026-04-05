@@ -255,6 +255,16 @@ impl BridgeAppState {
                             .projections()
                             .replace_summaries(preserved_summaries)
                             .await;
+                        let persisted_events = state.event_hub().history_snapshot();
+                        if !persisted_events.is_empty() {
+                            state
+                                .projections()
+                                .hydrate_from_events(
+                                    &persisted_events,
+                                    AccessMode::ControlWithApprovals,
+                                )
+                                .await;
+                        }
                         state.set_available_models(bootstrap.models).await;
                         state
                             .set_codex_health(ServiceHealthDto {

@@ -1,11 +1,12 @@
+pub(super) mod actor;
 mod archive;
 mod models;
+pub(super) mod notifications;
 mod rpc;
 mod titles;
 mod transport;
 
 use std::fmt::Write as _;
-use std::time::Instant;
 
 use super::mapping::{extract_generated_thread_title, map_thread_snapshot};
 use super::*;
@@ -18,14 +19,11 @@ pub(crate) use models::fallback_model_options;
 pub(crate) use rpc::build_turn_start_input;
 use rpc::{
     read_structured_agent_message, read_thread_with_resume, should_read_without_turns,
-    should_resume_thread, start_ephemeral_read_only_thread, start_structured_turn, start_turn,
-    start_turn_with_resume,
+    should_resume_thread, start_ephemeral_read_only_thread, start_structured_turn,
 };
 pub(crate) use titles::normalize_generated_thread_title;
 use titles::{build_thread_title_output_schema, build_thread_title_prompt};
-use transport::{
-    connect_read_transport, connect_transport, reserve_transport, take_reserved_transport,
-};
+use transport::{connect_read_transport, connect_transport};
 
 impl CodexGateway {
     pub async fn bootstrap(&self) -> Result<GatewayBootstrap, String> {
@@ -50,37 +48,42 @@ impl CodexGateway {
     ) -> Result<ThreadSnapshotDto, String> {
         let config = self.config.clone();
         let thread_id = thread_id.to_string();
-        let reserved_transports = Arc::clone(&self.reserved_transports);
+        let actors = Arc::clone(&self.codex_thread_actors);
         tokio::task::spawn_blocking(move || {
             if !is_provider_thread_id(&thread_id, ProviderKind::Codex) {
                 return fetch_thread_snapshot_from_archive(&config, &thread_id);
             }
-            let mut transport = take_reserved_transport(&reserved_transports, &thread_id)
-                .unwrap_or(connect_read_transport(&config)?);
-            let snapshot = match read_thread_with_resume(&mut transport, &thread_id, true) {
-                Ok(payload) => {
-                    let rpc_snapshot = map_thread_snapshot(payload.thread);
-                    let archive_snapshot = fetch_thread_snapshot_from_archive(&config, &thread_id).ok();
-                    eprintln!(
-                        "bridge codex snapshot compare thread_id={thread_id} rpc={} archive={}",
-                        summarize_snapshot_for_debug(&rpc_snapshot),
-                        archive_snapshot
-                            .as_ref()
-                            .map(summarize_snapshot_for_debug)
-                            .unwrap_or_else(|| "<unavailable>".to_string())
-                    );
-                    rpc_snapshot
-                }
-                Err(error) if error.contains("not found") => {
-                    return fetch_thread_snapshot_from_archive(&config, &thread_id);
-                }
-                Err(error) => return Err(error),
-            };
-            reserve_transport(&reserved_transports, thread_id, transport);
-            Ok(snapshot)
+            actors.actor(&thread_id, &config).fetch_snapshot()
         })
         .await
         .map_err(|error| format!("codex thread snapshot task failed: {error}"))?
+    }
+
+    pub async fn thread_lifecycle_state(
+        &self,
+        thread_id: &str,
+    ) -> Result<GatewayThreadLifecycleState, String> {
+        if is_provider_thread_id(thread_id, ProviderKind::ClaudeCode) {
+            let thread_id = thread_id.to_string();
+            let is_active = self
+                .active_claude_processes
+                .lock()
+                .expect("active claude process lock should not be poisoned")
+                .contains_key(&thread_id);
+            return Ok(GatewayThreadLifecycleState {
+                active_turn_id: is_active.then_some(thread_id),
+                stream_active: is_active,
+            });
+        }
+        if !is_provider_thread_id(thread_id, ProviderKind::Codex) {
+            return Ok(GatewayThreadLifecycleState::default());
+        }
+        let config = self.config.clone();
+        let thread_id = thread_id.to_string();
+        let actor = self.codex_thread_actors.actor(&thread_id, &config);
+        tokio::task::spawn_blocking(move || actor.lifecycle_state())
+            .await
+            .map_err(|error| format!("codex thread lifecycle task failed: {error}"))?
     }
 
     pub async fn create_thread(
@@ -95,7 +98,7 @@ impl CodexGateway {
         let config = self.config.clone();
         let workspace = workspace.to_string();
         let model = model.map(str::to_string);
-        let reserved_transports = Arc::clone(&self.reserved_transports);
+        let actors = Arc::clone(&self.codex_thread_actors);
         tokio::task::spawn_blocking(move || -> Result<ThreadSnapshotDto, String> {
             let mut transport = connect_transport(&config)?;
             let mut params = serde_json::Map::new();
@@ -115,13 +118,13 @@ impl CodexGateway {
                 }
                 Err(error) if should_resume_thread(&error) => {
                     let snapshot = map_thread_snapshot(payload.thread);
-                    reserve_transport(&reserved_transports, reserved_thread_id, transport);
+                    let _ = actors.prime_actor(&reserved_thread_id, &config, transport)?;
                     return Ok(snapshot);
                 }
                 Err(error) => return Err(error),
             };
             let snapshot = map_thread_snapshot(thread.thread);
-            reserve_transport(&reserved_transports, reserved_thread_id, transport);
+            let _ = actors.prime_actor(&reserved_thread_id, &config, transport)?;
             Ok(snapshot)
         })
         .await
@@ -141,7 +144,7 @@ impl CodexGateway {
         F: Fn(BridgeEventEnvelope<Value>) + Send + 'static,
         H: Fn(GatewayTurnControlRequest) -> Result<Option<Value>, String> + Send + Sync + 'static,
         G: Fn(String) + Send + 'static,
-        I: Fn(String) + Send + Sync + 'static,
+        I: Fn(String, GatewayTurnStreamActivity) + Send + Sync + 'static,
     {
         if is_provider_thread_id(thread_id, ProviderKind::ClaudeCode) {
             return self.start_claude_turn_streaming(
@@ -156,212 +159,16 @@ impl CodexGateway {
 
         let config = self.config.clone();
         let thread_id = thread_id.to_string();
-        let TurnStartRequest {
-            request_id,
-            prompt,
-            images,
-            model,
-            effort,
-            permission_mode: _,
-        } = request;
-        let reserved_transports = Arc::clone(&self.reserved_transports);
+        let actor = self.codex_thread_actors.actor(&thread_id, &config);
         let on_control_request = Arc::new(on_control_request);
         let on_stream_finished = Arc::new(on_stream_finished);
-        let (result_tx, result_rx) = mpsc::sync_channel(1);
-
-        std::thread::spawn(move || {
-            let stream_started_at = Instant::now();
-            let reserved_transport = take_reserved_transport(&reserved_transports, &thread_id);
-            let had_reserved_transport = reserved_transport.is_some();
-            eprintln!(
-                "bridge codex turn stream init request_id={} thread_id={thread_id} had_reserved_transport={had_reserved_transport}",
-                request_id.as_deref().unwrap_or("<none>")
-            );
-            let mut transport = match reserved_transport {
-                Some(transport) => transport,
-                None => match connect_transport(&config) {
-                    Ok(transport) => transport,
-                    Err(error) => {
-                        eprintln!(
-                            "bridge codex turn stream connect failed thread_id={thread_id}: {error}"
-                        );
-                        let _ = result_tx.send(Err(error));
-                        return;
-                    }
-                },
-            };
-
-            let payload = if had_reserved_transport {
-                match start_turn(
-                    &mut transport,
-                    &thread_id,
-                    &prompt,
-                    &images,
-                    model.as_deref(),
-                    effort.as_deref(),
-                ) {
-                    Ok(payload) => payload,
-                    Err(error) if should_resume_thread(&error) => {
-                        eprintln!(
-                            "bridge codex turn stream retrying start with resume thread_id={thread_id}: {error}"
-                        );
-                        match start_turn_with_resume(
-                            &mut transport,
-                            &thread_id,
-                            &prompt,
-                            &images,
-                            model.as_deref(),
-                            effort.as_deref(),
-                        ) {
-                            Ok(payload) => payload,
-                            Err(error) => {
-                                eprintln!(
-                                    "bridge codex turn stream start_turn_with_resume failed thread_id={thread_id}: {error}"
-                                );
-                                reserve_transport(
-                                    &reserved_transports,
-                                    thread_id.clone(),
-                                    transport,
-                                );
-                                let _ = result_tx.send(Err(error));
-                                return;
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        eprintln!(
-                            "bridge codex turn stream start_turn failed thread_id={thread_id}: {error}"
-                        );
-                        reserve_transport(&reserved_transports, thread_id.clone(), transport);
-                        let _ = result_tx.send(Err(error));
-                        return;
-                    }
-                }
-            } else {
-                match start_turn_with_resume(
-                    &mut transport,
-                    &thread_id,
-                    &prompt,
-                    &images,
-                    model.as_deref(),
-                    effort.as_deref(),
-                ) {
-                    Ok(payload) => payload,
-                    Err(error) => {
-                        eprintln!(
-                            "bridge codex turn stream start_turn_with_resume failed request_id={} thread_id={thread_id}: {error}",
-                            request_id.as_deref().unwrap_or("<none>")
-                        );
-                        let _ = result_tx.send(Err(error));
-                        return;
-                    }
-                }
-            };
-            eprintln!(
-                "bridge codex turn stream accepted request_id={} thread_id={thread_id} turn_id={}",
-                request_id.as_deref().unwrap_or("<none>"),
-                payload.turn.id
-            );
-
-            let result = GatewayTurnMutation {
-                response: TurnMutationAcceptedDto {
-                    contract_version: CONTRACT_VERSION.to_string(),
-                    thread_id: thread_id.clone(),
-                    thread_status: ThreadStatus::Running,
-                    message: format!("turn {} started", payload.turn.id),
-                    turn_id: Some(payload.turn.id.clone()),
-                },
-                turn_id: Some(payload.turn.id),
-            };
-            if result_tx.send(Ok(result.clone())).is_err() {
-                eprintln!("bridge codex turn stream result receiver dropped thread_id={thread_id}");
-                on_stream_finished(thread_id.clone());
-                return;
-            }
-
-            let mut normalizer = CodexNotificationNormalizer::default();
-            let mut observed_notification_count: u64 = 0;
-            let mut last_method = "<none>".to_string();
-            loop {
-                let message = match transport.next_message("turn stream") {
-                    Ok(Some(message)) => message,
-                    Ok(None) => {
-                        eprintln!(
-                            "bridge codex turn stream ended unexpectedly (EOF) request_id={} thread_id={thread_id} notifications={observed_notification_count} elapsed_ms={}",
-                            request_id.as_deref().unwrap_or("<none>"),
-                            stream_started_at.elapsed().as_millis()
-                        );
-                        break;
-                    }
-                    Err(error) => {
-                        eprintln!(
-                            "bridge codex turn stream next_message failed request_id={} thread_id={thread_id} notifications={observed_notification_count} last_method={last_method} elapsed_ms={} error={error}",
-                            request_id.as_deref().unwrap_or("<none>"),
-                            stream_started_at.elapsed().as_millis()
-                        );
-                        break;
-                    }
-                };
-                if let Some(request_id) = message.get("id").cloned() {
-                    let Some(method) = message.get("method").and_then(Value::as_str) else {
-                        continue;
-                    };
-                    let params = message.get("params").cloned().unwrap_or(Value::Null);
-                    match on_control_request(GatewayTurnControlRequest::CodexApproval {
-                        request_id: request_id.clone(),
-                        method: method.to_string(),
-                        params,
-                    }) {
-                        Ok(Some(response_payload)) => {
-                            if let Err(error) = transport.respond(&request_id, response_payload) {
-                                eprintln!(
-                                    "failed to send codex control response for {thread_id}: {error}"
-                                );
-                                break;
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            let _ = transport.respond_error(&request_id, -32000, &error);
-                        }
-                    }
-                    continue;
-                }
-
-                let Some(method) = message.get("method").and_then(Value::as_str) else {
-                    continue;
-                };
-                observed_notification_count = observed_notification_count.saturating_add(1);
-                last_method = method.to_string();
-                let params = message.get("params").cloned().unwrap_or(Value::Null);
-
-                if let Some(event) = normalizer.normalize(method, &params)
-                    && event.thread_id == thread_id
-                {
-                    on_event(event);
-                }
-
-                if method == "turn/completed" {
-                    eprintln!(
-                        "bridge codex turn stream completed request_id={} thread_id={thread_id} notifications={observed_notification_count} elapsed_ms={}",
-                        request_id.as_deref().unwrap_or("<none>"),
-                        stream_started_at.elapsed().as_millis()
-                    );
-                    on_turn_completed(thread_id.clone());
-                    break;
-                }
-            }
-            eprintln!(
-                "bridge codex turn stream finished callback request_id={} thread_id={thread_id} notifications={observed_notification_count} last_method={last_method} elapsed_ms={}",
-                request_id.as_deref().unwrap_or("<none>"),
-                stream_started_at.elapsed().as_millis()
-            );
-            on_stream_finished(thread_id.clone());
-        });
-
-        result_rx
-            .recv()
-            .map_err(|error| format!("failed to receive codex turn-start result: {error}"))?
+        actor.start_turn_streaming(
+            request,
+            Box::new(on_event),
+            on_control_request,
+            Box::new(on_turn_completed),
+            on_stream_finished,
+        )
     }
 
     pub async fn interrupt_turn(
@@ -394,6 +201,8 @@ impl CodexGateway {
                     thread_status: ThreadStatus::Interrupted,
                     message: "interrupt requested".to_string(),
                     turn_id: None,
+                    client_message_id: None,
+                    client_turn_intent_id: None,
                 },
                 turn_id: None,
             });
@@ -401,31 +210,10 @@ impl CodexGateway {
         let config = self.config.clone();
         let thread_id = thread_id.to_string();
         let turn_id = turn_id.to_string();
-        tokio::task::spawn_blocking(move || -> Result<GatewayTurnMutation, String> {
-            let native_thread_id =
-                native_thread_id_for_provider(&thread_id, ProviderKind::Codex)
-                    .ok_or_else(|| format!("thread {thread_id} is not a codex thread"))?;
-            let mut transport = connect_transport(&config)?;
-            transport.request(
-                "turn/interrupt",
-                serde_json::json!({
-                    "threadId": native_thread_id,
-                    "turnId": turn_id,
-                }),
-            )?;
-            Ok(GatewayTurnMutation {
-                response: TurnMutationAcceptedDto {
-                    contract_version: CONTRACT_VERSION.to_string(),
-                    thread_id,
-                    thread_status: ThreadStatus::Interrupted,
-                    message: "interrupt requested".to_string(),
-                    turn_id: None,
-                },
-                turn_id: None,
-            })
-        })
-        .await
-        .map_err(|error| format!("codex interrupt_turn task failed: {error}"))?
+        let actor = self.codex_thread_actors.actor(&thread_id, &config);
+        tokio::task::spawn_blocking(move || actor.interrupt_turn(turn_id))
+            .await
+            .map_err(|error| format!("codex interrupt_turn task failed: {error}"))?
     }
 
     pub async fn resolve_active_turn_id(&self, thread_id: &str) -> Result<String, String> {
@@ -441,22 +229,10 @@ impl CodexGateway {
         }
         let config = self.config.clone();
         let thread_id = thread_id.to_string();
-        let reserved_transports = Arc::clone(&self.reserved_transports);
-        tokio::task::spawn_blocking(move || -> Result<String, String> {
-            let mut transport = take_reserved_transport(&reserved_transports, &thread_id)
-                .unwrap_or(connect_read_transport(&config)?);
-            let payload = read_thread_with_resume(&mut transport, &thread_id, true)?;
-            let active_turn_id = payload
-                .thread
-                .turns
-                .last()
-                .map(|turn| turn.id.clone())
-                .ok_or_else(|| format!("no active turn found for thread {thread_id}"))?;
-            reserve_transport(&reserved_transports, thread_id, transport);
-            Ok(active_turn_id)
-        })
-        .await
-        .map_err(|error| format!("codex resolve_active_turn_id task failed: {error}"))?
+        let actor = self.codex_thread_actors.actor(&thread_id, &config);
+        tokio::task::spawn_blocking(move || actor.resolve_active_turn_id())
+            .await
+            .map_err(|error| format!("codex resolve_active_turn_id task failed: {error}"))?
     }
 
     pub async fn set_thread_name(&self, thread_id: &str, name: &str) -> Result<(), String> {
@@ -468,26 +244,10 @@ impl CodexGateway {
         let config = self.config.clone();
         let thread_id = thread_id.to_string();
         let name = name.trim().to_string();
-        tokio::task::spawn_blocking(move || -> Result<(), String> {
-            if name.is_empty() {
-                return Ok(());
-            }
-
-            let native_thread_id =
-                native_thread_id_for_provider(&thread_id, ProviderKind::Codex)
-                    .ok_or_else(|| format!("thread {thread_id} is not a codex thread"))?;
-            let mut transport = connect_transport(&config)?;
-            transport.request(
-                "thread/name/set",
-                json!({
-                    "threadId": native_thread_id,
-                    "name": name,
-                }),
-            )?;
-            Ok(())
-        })
-        .await
-        .map_err(|error| format!("codex set_thread_name task failed: {error}"))?
+        let actor = self.codex_thread_actors.actor(&thread_id, &config);
+        tokio::task::spawn_blocking(move || actor.set_thread_name(name))
+            .await
+            .map_err(|error| format!("codex set_thread_name task failed: {error}"))?
     }
 
     pub async fn generate_thread_title_candidate(
@@ -555,7 +315,8 @@ fn summarize_snapshot_for_debug(snapshot: &ThreadSnapshotDto) -> String {
                 "{}:{:?}:{}",
                 entry.event_id,
                 entry.kind,
-                entry.payload
+                entry
+                    .payload
                     .get("type")
                     .and_then(Value::as_str)
                     .or_else(|| entry.payload.get("status").and_then(Value::as_str))
@@ -570,7 +331,8 @@ fn summarize_snapshot_for_debug(snapshot: &ThreadSnapshotDto) -> String {
         .rev()
         .find(|entry| entry.kind == BridgeEventKind::MessageDelta)
         .and_then(|entry| {
-            entry.payload
+            entry
+                .payload
                 .get("text")
                 .and_then(Value::as_str)
                 .or_else(|| entry.payload.get("delta").and_then(Value::as_str))

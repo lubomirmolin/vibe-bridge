@@ -1,0 +1,7 @@
+{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-act","turn":{"id":"turn-act-1","status":"inProgress"}}}
+{"jsonrpc":"2.0","method":"thread/status/changed","params":{"threadId":"thread-act","status":{"type":"active"}}}
+{"jsonrpc":"2.0","method":"item/userMessage/delta","params":{"threadId":"thread-act","turnId":"turn-act-1","itemId":"item-user-1","delta":"Why can't "}}
+{"jsonrpc":"2.0","method":"item/userMessage/delta","params":{"threadId":"thread-act","turnId":"turn-act-1","itemId":"item-user-1","delta":"you run dart formatter?"}}
+{"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"threadId":"thread-act","turnId":"turn-act-1","itemId":"item-assistant-1","delta":"Because the "}}
+{"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"threadId":"thread-act","turnId":"turn-act-1","itemId":"item-assistant-1","delta":"formatter is unavailable."}}
+{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-act","turn":{"id":"turn-act-1","status":"completed"}}}

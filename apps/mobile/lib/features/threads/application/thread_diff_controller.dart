@@ -296,6 +296,7 @@ class ThreadDiffController extends StateNotifier<ThreadDiffState> {
     switch (event.kind) {
       case BridgeEventKind.fileChange:
       case BridgeEventKind.commandDelta:
+      case BridgeEventKind.threadMetadataChanged:
       case BridgeEventKind.threadStatusChanged:
         return true;
       case BridgeEventKind.messageDelta:

@@ -80,8 +80,11 @@ void main() {
       final railRect = tester.getRect(
         find.byKey(const Key('turn-composer-primary-rail')),
       );
-      await tester.tapAt(Offset(railRect.right - 5, railRect.center.dy));
-      await tester.pumpAndSettle();
+      await tester.tapAt(Offset(railRect.left + 5, railRect.center.dy));
+      await _pumpUntilFound(
+        tester,
+        find.byKey(const Key('turn-composer-plan-submit')),
+      );
 
       expect(
         find.byKey(const Key('turn-composer-plan-submit')),
@@ -94,7 +97,11 @@ void main() {
       );
       await tester.pump();
       await tester.tap(find.byKey(const Key('turn-composer-plan-submit')));
-      await tester.pumpAndSettle();
+      await _pumpUntil(
+        tester,
+        () => detailApi.startTurnCalls.isNotEmpty,
+        description: 'plan-mode turn start',
+      );
 
       expect(detailApi.createThreadCallCount, 1);
       expect(detailApi.createdThreadWorkspaces, equals(<String>[_workspace]));
@@ -120,11 +127,11 @@ void main() {
       expect(find.byKey(const Key('turn-composer-model-button')), findsNothing);
 
       await tester.tap(find.text('Bridge'));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 200));
       await tester.tap(find.text('Detailed'));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 200));
       await tester.tap(find.text('Integration'));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 200));
 
       await tester.enterText(
         find.byKey(const Key('turn-composer-input')),
@@ -132,7 +139,11 @@ void main() {
       );
       await tester.pump();
       await tester.tap(find.byKey(const Key('turn-composer-plan-submit')));
-      await tester.pumpAndSettle();
+      await _pumpUntil(
+        tester,
+        () => detailApi.respondCalls.isNotEmpty,
+        description: 'plan questionnaire response submission',
+      );
 
       expect(detailApi.respondCalls.length, 1);
       final response = detailApi.respondCalls.single;
@@ -349,6 +360,8 @@ class _PlanModeThreadDetailBridgeApi extends ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    String? clientMessageId,
+    String? clientTurnIntentId,
     TurnMode mode = TurnMode.act,
     List<String> images = const <String>[],
     String? model,
@@ -505,7 +518,7 @@ class _FakeThreadLiveStream implements ThreadLiveStream {
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
     String? threadId,
-    String? afterEventId,
+    int? afterSeq,
   }) async {
     final controller =
         StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();

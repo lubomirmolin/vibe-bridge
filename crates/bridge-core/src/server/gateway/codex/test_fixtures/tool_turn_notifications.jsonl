@@ -1,0 +1,8 @@
+{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-tools","turn":{"id":"turn-tools-1","status":"inProgress"}}}
+{"jsonrpc":"2.0","method":"thread/status/changed","params":{"threadId":"thread-tools","status":{"type":"active"}}}
+{"jsonrpc":"2.0","method":"item/started","params":{"threadId":"thread-tools","turnId":"turn-tools-1","item":{"id":"tool-search","type":"functionCall","name":"exec_command","arguments":"{\"cmd\":\"rg -n NEEDLE README.md\"}"}}}
+{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"thread-tools","turnId":"turn-tools-1","item":{"id":"tool-search","type":"functionCallOutput","name":"exec_command","output":"README.md:1: NEEDLE"}}}
+{"jsonrpc":"2.0","method":"item/started","params":{"threadId":"thread-tools","turnId":"turn-tools-1","item":{"id":"tool-edit","type":"functionCall","name":"apply_patch","arguments":"*** Begin Patch\n*** Add File: tmp/probe.txt\n+Needle: NEEDLE\n*** End Patch"}}}
+{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"thread-tools","turnId":"turn-tools-1","item":{"id":"tool-edit","type":"functionCallOutput","name":"apply_patch","output":"Success. Updated the following files:\nA tmp/probe.txt\n"}}}
+{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"thread-tools","turnId":"turn-tools-1","item":{"id":"item-assistant-1","type":"agentMessage","text":"Needle applied."}}}
+{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-tools","turn":{"id":"turn-tools-1","status":"completed"}}}

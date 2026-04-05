@@ -160,6 +160,8 @@ abstract class ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    String? clientMessageId,
+    String? clientTurnIntentId,
     TurnMode mode = TurnMode.act,
     List<String> images = const <String>[],
     String? model,
@@ -421,6 +423,8 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    String? clientMessageId,
+    String? clientTurnIntentId,
     TurnMode mode = TurnMode.act,
     List<String> images = const <String>[],
     String? model,
@@ -437,6 +441,10 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       routeSegment: 'turns',
       body: <String, dynamic>{
         'prompt': prompt,
+        if (clientMessageId != null && clientMessageId.trim().isNotEmpty)
+          'client_message_id': clientMessageId.trim(),
+        if (clientTurnIntentId != null && clientTurnIntentId.trim().isNotEmpty)
+          'client_turn_intent_id': clientTurnIntentId.trim(),
         'mode': mode.wireValue,
         if (normalizedImages.isNotEmpty) 'images': normalizedImages,
         if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
@@ -778,6 +786,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
                 'statusCode': response.statusCode,
                 'threadStatus': accepted.threadStatus.wireValue,
                 'turnId': accepted.turnId,
+                'clientMessageId': accepted.clientMessageId,
                 'message': accepted.message,
               },
             ),
@@ -790,6 +799,7 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
             message: accepted.message,
             threadStatus: accepted.threadStatus,
             turnId: accepted.turnId,
+            clientMessageId: accepted.clientMessageId,
           );
         } on FormatException {
           unawaited(
@@ -1184,6 +1194,8 @@ class TurnMutationResult {
     required this.message,
     required this.threadStatus,
     this.turnId,
+    this.clientMessageId,
+    this.clientTurnIntentId,
   });
 
   final String contractVersion;
@@ -1193,6 +1205,8 @@ class TurnMutationResult {
   final String message;
   final ThreadStatus threadStatus;
   final String? turnId;
+  final String? clientMessageId;
+  final String? clientTurnIntentId;
 
   factory TurnMutationResult.fromJson(Map<String, dynamic> json) {
     final threadStatusWire = json['thread_status'];
@@ -1208,6 +1222,8 @@ class TurnMutationResult {
       message: json['message'] as String,
       threadStatus: threadStatusFromWire(threadStatusWire),
       turnId: json['turn_id'] as String?,
+      clientMessageId: json['client_message_id'] as String?,
+      clientTurnIntentId: json['client_turn_intent_id'] as String?,
     );
   }
 }

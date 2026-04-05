@@ -34,16 +34,27 @@ impl LiveDeltaCompactor {
                     current_text,
                 );
 
-                BridgeEventEnvelope {
-                    payload: json!({
-                        "id": event.payload.get("id").and_then(Value::as_str).unwrap_or_default(),
-                        "type": "message",
-                        "role": role,
-                        "delta": delta,
-                        "replace": replace,
-                    }),
-                    ..event
+                let mut payload = json!({
+                    "id": event.payload.get("id").and_then(Value::as_str).unwrap_or_default(),
+                    "type": "message",
+                    "role": role,
+                    "delta": delta,
+                    "replace": replace,
+                });
+                if let Some(client_message_id) = event
+                    .payload
+                    .get("client_message_id")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    && let Some(object) = payload.as_object_mut()
+                {
+                    object.insert(
+                        "client_message_id".to_string(),
+                        Value::String(client_message_id.to_string()),
+                    );
                 }
+
+                BridgeEventEnvelope { payload, ..event }
             }
             BridgeEventKind::PlanDelta => {
                 if event.payload.get("text").is_none()
@@ -190,6 +201,7 @@ pub(super) fn build_turn_started_history_event(
     BridgeEventEnvelope {
         contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
         event_id: format!("{thread_id}-status-turn-started-{occurred_at}"),
+        bridge_seq: None,
         thread_id: thread_id.to_string(),
         kind: BridgeEventKind::ThreadStatusChanged,
         occurred_at: occurred_at.to_string(),
@@ -210,9 +222,10 @@ pub(super) fn build_visible_user_message_event(
     occurred_at: &str,
     turn_id: Option<&str>,
     visible_prompt: &str,
+    client_message_id: Option<&str>,
 ) -> BridgeEventEnvelope<Value> {
     let prompt = visible_prompt.trim();
-    let payload = json!({
+    let mut payload = json!({
         "type": "userMessage",
         "role": "user",
         "text": prompt,
@@ -220,6 +233,14 @@ pub(super) fn build_visible_user_message_event(
             "text": prompt,
         }],
     });
+    if let Some(client_message_id) = client_message_id.filter(|value| !value.trim().is_empty())
+        && let Some(object) = payload.as_object_mut()
+    {
+        object.insert(
+            "client_message_id".to_string(),
+            Value::String(client_message_id.to_string()),
+        );
+    }
 
     let event_id = match turn_id.filter(|value| !value.trim().is_empty()) {
         Some(turn_id) => format!("{turn_id}-visible-user-prompt"),
@@ -229,6 +250,7 @@ pub(super) fn build_visible_user_message_event(
     BridgeEventEnvelope {
         contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
         event_id,
+        bridge_seq: None,
         thread_id: thread_id.to_string(),
         kind: BridgeEventKind::MessageDelta,
         occurred_at: occurred_at.to_string(),

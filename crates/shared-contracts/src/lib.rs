@@ -82,6 +82,7 @@ pub enum BridgeEventKind {
     MessageDelta,
     PlanDelta,
     UserInputRequested,
+    ThreadMetadataChanged,
     CommandDelta,
     FileChange,
     ApprovalRequested,
@@ -193,6 +194,10 @@ pub struct ThreadTimelinePageDto {
     pub contract_version: String,
     pub thread: ThreadDetailDto,
     pub entries: Vec<ThreadTimelineEntryDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_bridge_seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_state: Option<ThreadWorkflowStateDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_user_input: Option<PendingUserInputDto>,
     pub next_before: Option<String>,
@@ -387,6 +392,8 @@ pub struct ThreadGitDiffDto {
 pub struct ThreadSnapshotDto {
     pub contract_version: String,
     pub thread: ThreadDetailDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_bridge_seq: Option<u64>,
     #[serde(default)]
     pub entries: Vec<ThreadTimelineEntryDto>,
     #[serde(default)]
@@ -394,7 +401,21 @@ pub struct ThreadSnapshotDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_status: Option<GitStatusDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_state: Option<ThreadWorkflowStateDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_user_input: Option<PendingUserInputDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadWorkflowStateDto {
+    pub workflow_kind: String,
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_request_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -420,6 +441,12 @@ pub struct PendingUserInputDto {
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_request_id: Option<String>,
     #[serde(default)]
     pub questions: Vec<UserInputQuestionDto>,
 }
@@ -438,6 +465,10 @@ pub struct TurnMutationAcceptedDto {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_message_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_turn_intent_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -453,6 +484,8 @@ pub struct SecurityAuditEventDto {
 pub struct BridgeEventEnvelope<TPayload> {
     pub contract_version: String,
     pub event_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bridge_seq: Option<u64>,
     pub thread_id: String,
     pub kind: BridgeEventKind,
     pub occurred_at: String,
@@ -472,6 +505,7 @@ impl<TPayload> BridgeEventEnvelope<TPayload> {
         Self {
             contract_version: CONTRACT_VERSION.to_string(),
             event_id: event_id.into(),
+            bridge_seq: None,
             thread_id: thread_id.into(),
             kind,
             occurred_at: occurred_at.into(),
@@ -516,6 +550,7 @@ mod tests {
 
         assert_eq!(event.contract_version, CONTRACT_VERSION);
         assert_eq!(event.kind, BridgeEventKind::MessageDelta);
+        assert_eq!(event.bridge_seq, None);
         assert_eq!(event.payload["delta"], "Working on foundation contracts");
         assert!(event.annotations.is_none());
     }
@@ -608,6 +643,8 @@ mod tests {
             thread_status: ThreadStatus::Running,
             message: "turn accepted".to_string(),
             turn_id: Some("turn-123".to_string()),
+            client_message_id: Some("client-msg-123".to_string()),
+            client_turn_intent_id: Some("turn-intent-123".to_string()),
         };
 
         let value = serde_json::to_value(accepted).expect("turn mutation should serialize");
@@ -615,6 +652,8 @@ mod tests {
         assert_eq!(value["thread_id"], "thread-123");
         assert_eq!(value["thread_status"], "running");
         assert_eq!(value["message"], "turn accepted");
+        assert_eq!(value["client_message_id"], "client-msg-123");
+        assert_eq!(value["client_turn_intent_id"], "turn-intent-123");
     }
 
     #[test]

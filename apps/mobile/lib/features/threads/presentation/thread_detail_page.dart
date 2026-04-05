@@ -2236,6 +2236,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                           attachedImages: _attachedImages,
                           threadUsage: _threadUsage,
                           composerMode: _composerMode,
+                          workflowState: null,
                           pendingUserInput: null,
                           selectedPlanOptionByQuestionId:
                               _selectedPlanOptionByQuestionId,
@@ -2347,6 +2348,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
 
     final threadApprovals = approvalsState.forThread(_effectiveThreadId!);
     final pendingUserInput = state.pendingUserInput;
+    final workflowState = state.workflowState;
     final pendingUserInputRequestId = pendingUserInput?.requestId;
     if (_lastPendingUserInputRequestId != pendingUserInputRequestId) {
       _lastPendingUserInputRequestId = pendingUserInputRequestId;
@@ -2682,6 +2684,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                               attachedImages: _attachedImages,
                               threadUsage: _threadUsage,
                               composerMode: _composerMode,
+                              workflowState: workflowState,
                               pendingUserInput: pendingUserInput,
                               selectedPlanOptionByQuestionId:
                                   _selectedPlanOptionByQuestionId,

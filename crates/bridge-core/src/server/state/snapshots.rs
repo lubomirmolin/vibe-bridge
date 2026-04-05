@@ -1,4 +1,5 @@
 use super::*;
+use crate::server::timeline_events::build_timeline_event_envelope;
 
 impl BridgeAppState {
     pub async fn ensure_snapshot(&self, thread_id: &str) -> Result<ThreadSnapshotDto, String> {
@@ -240,11 +241,15 @@ impl BridgeAppState {
         events: Vec<BridgeEventEnvelope<Value>>,
     ) {
         self.merge_bridge_turn_metadata(&mut snapshot).await;
+        self.inject_pending_turn_client_message_id_into_snapshot(&mut snapshot)
+            .await;
         if let Some(previous_snapshot) = self
             .projections()
             .snapshot(&snapshot.thread.thread_id)
             .await
         {
+            snapshot.entries =
+                merge_external_snapshot_entries(&previous_snapshot.entries, &snapshot.entries);
             preserve_generated_thread_title(&previous_snapshot, &mut snapshot);
         }
         let next_summary = thread_summary_from_snapshot(&snapshot);
@@ -267,6 +272,32 @@ impl BridgeAppState {
             }
             self.event_hub().publish(event);
         }
+    }
+
+    async fn inject_pending_turn_client_message_id_into_snapshot(
+        &self,
+        snapshot: &mut ThreadSnapshotDto,
+    ) {
+        let pending = self
+            .pending_turn_client_message(&snapshot.thread.thread_id)
+            .await;
+        let Some(pending) = pending else {
+            return;
+        };
+
+        let Some(index) = find_pending_client_message_snapshot_entry(&snapshot.entries, &pending)
+        else {
+            return;
+        };
+
+        if let Some(object) = snapshot.entries[index].payload.as_object_mut() {
+            object.insert(
+                "client_message_id".to_string(),
+                Value::String(pending.client_message_id),
+            );
+        }
+        self.clear_pending_turn_client_message(&snapshot.thread.thread_id)
+            .await;
     }
 
     pub(super) async fn schedule_recent_placeholder_title_backfill(&self, limit: usize) {
@@ -459,6 +490,7 @@ impl BridgeAppState {
         self.event_hub().publish(BridgeEventEnvelope {
             contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
             event_id: format!("{thread_id}-title-{occurred_at}"),
+            bridge_seq: None,
             thread_id: thread_id.to_string(),
             kind: BridgeEventKind::ThreadStatusChanged,
             occurred_at,
@@ -470,6 +502,72 @@ impl BridgeAppState {
             annotations: None,
         });
         Ok(())
+    }
+}
+
+fn merge_external_snapshot_entries(
+    previous_entries: &[ThreadTimelineEntryDto],
+    next_entries: &[ThreadTimelineEntryDto],
+) -> Vec<ThreadTimelineEntryDto> {
+    let mut merged_by_id = previous_entries
+        .iter()
+        .cloned()
+        .map(|entry| (entry.event_id.clone(), entry))
+        .collect::<HashMap<_, _>>();
+
+    for next_entry in next_entries {
+        merged_by_id
+            .entry(next_entry.event_id.clone())
+            .and_modify(|previous_entry| {
+                *previous_entry = merge_timeline_entry(previous_entry, next_entry);
+            })
+            .or_insert_with(|| next_entry.clone());
+    }
+
+    let mut merged_entries = merged_by_id.into_values().collect::<Vec<_>>();
+    merged_entries.sort_by(|left, right| {
+        left.occurred_at
+            .cmp(&right.occurred_at)
+            .then_with(|| left.event_id.cmp(&right.event_id))
+    });
+    merged_entries
+}
+
+fn merge_timeline_entry(
+    previous_entry: &ThreadTimelineEntryDto,
+    next_entry: &ThreadTimelineEntryDto,
+) -> ThreadTimelineEntryDto {
+    ThreadTimelineEntryDto {
+        event_id: next_entry.event_id.clone(),
+        kind: next_entry.kind,
+        occurred_at: if next_entry.occurred_at >= previous_entry.occurred_at {
+            next_entry.occurred_at.clone()
+        } else {
+            previous_entry.occurred_at.clone()
+        },
+        summary: if !next_entry.summary.trim().is_empty() {
+            next_entry.summary.clone()
+        } else {
+            previous_entry.summary.clone()
+        },
+        payload: merge_timeline_payload(&previous_entry.payload, &next_entry.payload),
+        annotations: next_entry
+            .annotations
+            .clone()
+            .or_else(|| previous_entry.annotations.clone()),
+    }
+}
+
+fn merge_timeline_payload(previous_payload: &Value, next_payload: &Value) -> Value {
+    match (previous_payload, next_payload) {
+        (Value::Object(previous_object), Value::Object(next_object)) => {
+            let mut merged = previous_object.clone();
+            for (key, value) in next_object {
+                merged.insert(key.clone(), value.clone());
+            }
+            Value::Object(merged)
+        }
+        _ => next_payload.clone(),
     }
 }
 
@@ -500,7 +598,7 @@ fn entry_needs_exploration_annotation_refresh(entry: &ThreadTimelineEntryDto) ->
         return false;
     }
 
-    crate::thread_api::build_timeline_event_envelope(
+    build_timeline_event_envelope(
         format!("refresh-check-{}", entry.event_id),
         "refresh-check-thread",
         entry.kind,
@@ -510,4 +608,95 @@ fn entry_needs_exploration_annotation_refresh(entry: &ThreadTimelineEntryDto) ->
     .annotations
     .and_then(|annotations| annotations.exploration_kind)
     .is_some()
+}
+
+fn find_pending_client_message_snapshot_entry(
+    entries: &[ThreadTimelineEntryDto],
+    pending: &PendingTurnClientMessage,
+) -> Option<usize> {
+    entries
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, entry)| {
+            timeline_entry_matches_pending_turn(entry, pending)
+                && timeline_entry_lacks_client_message_id(entry)
+        })
+        .map(|(index, _)| index)
+        .or_else(|| {
+            let normalized_prompt = normalize_pending_prompt_text(&pending.prompt_text);
+            (!normalized_prompt.is_empty()).then_some(())?;
+            entries
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, entry)| {
+                    timeline_entry_is_user_message(entry)
+                        && timeline_entry_lacks_client_message_id(entry)
+                        && normalize_pending_prompt_text(
+                            timeline_entry_primary_text(entry).unwrap_or_default(),
+                        ) == normalized_prompt
+                })
+                .map(|(index, _)| index)
+        })
+        .or_else(|| {
+            entries
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, entry)| {
+                    timeline_entry_is_user_message(entry)
+                        && timeline_entry_lacks_client_message_id(entry)
+                })
+                .map(|(index, _)| index)
+        })
+}
+
+fn timeline_entry_matches_pending_turn(
+    entry: &ThreadTimelineEntryDto,
+    pending: &PendingTurnClientMessage,
+) -> bool {
+    let Some(turn_id) = pending.turn_id.as_deref() else {
+        return false;
+    };
+    entry
+        .event_id
+        .split_once('-')
+        .map(|(event_turn_id, _)| event_turn_id == turn_id)
+        .unwrap_or(false)
+}
+
+fn timeline_entry_is_user_message(entry: &ThreadTimelineEntryDto) -> bool {
+    entry.payload.get("role").and_then(Value::as_str) == Some("user")
+        || entry.payload.get("type").and_then(Value::as_str) == Some("userMessage")
+}
+
+fn timeline_entry_lacks_client_message_id(entry: &ThreadTimelineEntryDto) -> bool {
+    entry.payload.get("client_message_id").is_none()
+}
+
+fn timeline_entry_primary_text(entry: &ThreadTimelineEntryDto) -> Option<&str> {
+    entry
+        .payload
+        .get("text")
+        .and_then(Value::as_str)
+        .or_else(|| entry.payload.get("delta").and_then(Value::as_str))
+        .or_else(|| {
+            entry
+                .payload
+                .get("content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|item| item.get("text").and_then(Value::as_str))
+                .find(|text| !text.trim().is_empty())
+        })
+}
+
+fn normalize_pending_prompt_text(value: &str) -> String {
+    value
+        .trim()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }

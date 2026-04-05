@@ -6,24 +6,27 @@ use serde_json::{Value, json};
 use shared_contracts::{
     AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, PendingUserInputDto,
     ProviderKind, ThreadClientKind, ThreadDetailDto, ThreadSnapshotDto, ThreadStatus,
-    ThreadSummaryDto, ThreadTimelineEntryDto, UserInputAnswerDto, UserInputOptionDto,
-    UserInputQuestionDto,
+    ThreadSummaryDto, ThreadTimelineEntryDto, ThreadWorkflowStateDto, UserInputAnswerDto,
+    UserInputOptionDto, UserInputQuestionDto,
 };
 
 use crate::pairing::PairingSessionService;
 use crate::server::config::{BridgeCodexConfig, BridgeConfig};
+use crate::server::gateway::GatewayTurnStreamActivity;
 use crate::server::pairing_route::PairingRouteState;
 use crate::server::speech::SpeechService;
 use crate::server::state::snapshots::should_refresh_terminal_timeline_snapshot;
+use crate::server::timeline_events::build_timeline_event_envelope;
 
 use super::{
-    BridgeAppState, LiveDeltaCompactor, NotificationControlMessage, PendingProviderApprovalSession,
-    PendingUserInputSession, ProviderApprovalContext, ProviderApprovalSelection,
-    build_claude_tool_approval_response, build_codex_approval_response,
-    build_desktop_ipc_snapshot_update, build_pending_provider_approval_from_codex,
-    build_provider_approval_questionnaire, drain_notification_control_messages,
-    ensure_running_status_for_desktop_patch_update, parse_provider_approval_selection,
-    payload_contains_hidden_message, preserve_bootstrap_status_for_cached_desktop_snapshot,
+    BridgeAppState, GatewayTurnControlRequest, LiveDeltaCompactor, NotificationControlMessage,
+    PendingProviderApprovalSession, PendingTurnClientMessage, PendingUserInputSession,
+    ProviderApprovalContext, ProviderApprovalSelection, build_claude_tool_approval_response,
+    build_codex_approval_response, build_desktop_ipc_snapshot_update,
+    build_pending_provider_approval_from_codex, build_provider_approval_questionnaire,
+    drain_notification_control_messages, ensure_running_status_for_desktop_patch_update,
+    parse_provider_approval_selection, payload_contains_hidden_message,
+    preserve_bootstrap_status_for_cached_desktop_snapshot,
     preserve_running_status_for_bridge_owned_desktop_update,
     resume_notification_thread_until_rollout_exists, resume_notification_threads,
     should_clear_transient_thread_state, should_defer_bridge_owned_turn_finalization,
@@ -59,26 +62,28 @@ async fn test_bridge_app_state() -> BridgeAppState {
         codex: BridgeCodexConfig::default(),
     };
     let speech = SpeechService::from_config(&config).await;
+    let state_directory = config.state_directory.clone();
     BridgeAppState::new(
         config.codex,
         PairingSessionService::new(
             &config.host,
             config.port,
             pairing_route.pairing_base_url(),
-            state_directory,
+            state_directory.clone(),
         ),
         pairing_route,
         speech,
+        state_directory,
     )
 }
 
 #[test]
-fn hidden_payload_detection_marks_mobile_plan_protocol_messages() {
+fn hidden_payload_detection_marks_only_active_bridge_protocol_messages() {
     assert!(payload_contains_hidden_message(&json!({
-        "text": "You are running in mobile plan intake mode.\nReturn only one XML-like block."
+        "text": "# AGENTS.md instructions for /tmp/workspace"
     })));
     assert!(payload_contains_hidden_message(&json!({
-        "text": "<codex-plan-questions>{\"title\":\"Plan\",\"questions\":[]}</codex-plan-questions>"
+        "text": "<app-context>\nMobile quick action: the user tapped Commit.\n</app-context>"
     })));
     assert!(!payload_contains_hidden_message(&json!({
         "text": "Plan how to cover the critical mobile flows."
@@ -90,52 +95,6 @@ fn hidden_upstream_prompts_synthesize_visible_user_messages() {
     assert!(super::should_synthesize_visible_user_prompt(
         "Commit",
         &super::build_hidden_commit_prompt(),
-    ));
-    assert!(super::should_synthesize_visible_user_prompt(
-        "Plan quick-action coverage",
-        &super::build_hidden_plan_question_prompt("Plan quick-action coverage"),
-    ));
-    let questionnaire = PendingUserInputDto {
-        request_id: "plan-1".to_string(),
-        title: "Clarify".to_string(),
-        detail: Some("Choose a shape".to_string()),
-        questions: vec![UserInputQuestionDto {
-            question_id: "scope".to_string(),
-            prompt: "Scope?".to_string(),
-            options: vec![
-                UserInputOptionDto {
-                    option_id: "a".to_string(),
-                    label: "A".to_string(),
-                    description: String::new(),
-                    is_recommended: true,
-                },
-                UserInputOptionDto {
-                    option_id: "b".to_string(),
-                    label: "B".to_string(),
-                    description: String::new(),
-                    is_recommended: false,
-                },
-                UserInputOptionDto {
-                    option_id: "c".to_string(),
-                    label: "C".to_string(),
-                    description: String::new(),
-                    is_recommended: false,
-                },
-            ],
-        }],
-    };
-    let answers = vec![UserInputAnswerDto {
-        question_id: "scope".to_string(),
-        option_id: "a".to_string(),
-    }];
-    assert!(super::should_synthesize_visible_user_prompt(
-        "Plan clarification\n- Scope?: A",
-        &super::build_hidden_plan_followup_prompt(
-            "Plan quick-action coverage",
-            &questionnaire,
-            &answers,
-            Some("Keep it short"),
-        ),
     ));
     assert!(!super::should_synthesize_visible_user_prompt(
         "Commit", "Commit",
@@ -153,6 +112,7 @@ fn visible_user_message_event_uses_user_message_payload() {
         "2026-04-03T08:00:00Z",
         Some("turn-1"),
         "Commit",
+        Some("client-1"),
     );
 
     assert_eq!(event.kind, BridgeEventKind::MessageDelta);
@@ -161,6 +121,145 @@ fn visible_user_message_event_uses_user_message_payload() {
     assert_eq!(event.payload["role"], "user");
     assert_eq!(event.payload["text"], "Commit");
     assert_eq!(event.payload["content"][0]["text"], "Commit");
+    assert_eq!(event.payload["client_message_id"], "client-1");
+}
+
+#[tokio::test]
+async fn live_user_message_injection_clears_pending_client_message_state() {
+    let state = test_bridge_app_state().await;
+    state
+        .update_thread_runtime("codex:thread-1", |runtime| {
+            runtime.pending_client_message = Some(PendingTurnClientMessage {
+                client_message_id: "client-1".to_string(),
+                turn_id: Some("turn-1".to_string()),
+                prompt_text: "Commit".to_string(),
+            });
+        })
+        .await;
+    let mut event = BridgeEventEnvelope {
+        contract_version: CONTRACT_VERSION.to_string(),
+        event_id: "turn-1-msg-1".to_string(),
+        bridge_seq: None,
+        thread_id: "codex:thread-1".to_string(),
+        kind: BridgeEventKind::MessageDelta,
+        occurred_at: "2026-04-03T08:00:00Z".to_string(),
+        payload: json!({
+            "type": "userMessage",
+            "role": "user",
+            "text": "Commit",
+        }),
+        annotations: None,
+    };
+
+    state
+        .inject_pending_turn_client_message_id(&mut event)
+        .await;
+
+    assert_eq!(event.payload["client_message_id"], "client-1");
+    assert!(
+        !state
+            .read_thread_runtime("codex:thread-1", |runtime| {
+                runtime
+                    .and_then(|runtime| runtime.pending_client_message.as_ref())
+                    .is_some()
+            })
+            .await
+    );
+}
+
+#[tokio::test]
+async fn completion_snapshot_refresh_is_skipped_when_live_stream_was_self_sufficient() {
+    assert!(GatewayTurnStreamActivity::default().requires_completion_snapshot_refresh());
+    assert!(
+        GatewayTurnStreamActivity {
+            saw_user_message: true,
+            ..GatewayTurnStreamActivity::default()
+        }
+        .requires_completion_snapshot_refresh()
+    );
+    assert!(
+        !GatewayTurnStreamActivity {
+            saw_user_message: true,
+            saw_assistant_message: true,
+            saw_turn_completed: true,
+            ..GatewayTurnStreamActivity::default()
+        }
+        .requires_completion_snapshot_refresh()
+    );
+}
+
+#[tokio::test]
+async fn external_snapshot_update_enriches_latest_user_message_with_pending_client_message_id() {
+    let state = test_bridge_app_state().await;
+    state
+        .update_thread_runtime("codex:thread-1", |runtime| {
+            runtime.pending_client_message = Some(PendingTurnClientMessage {
+                client_message_id: "client-1".to_string(),
+                turn_id: Some("turn-1".to_string()),
+                prompt_text: "Why can't you run dart format?".to_string(),
+            });
+        })
+        .await;
+
+    state
+        .apply_external_snapshot_update(
+            ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "codex:thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: ProviderKind::Codex,
+                    client: ThreadClientKind::Cli,
+                    title: "Thread".to_string(),
+                    status: ThreadStatus::Completed,
+                    workspace: "/repo".to_string(),
+                    repository: "repo".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-04-03T08:00:00Z".to_string(),
+                    updated_at: "2026-04-03T08:00:05Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "done".to_string(),
+                    active_turn_id: None,
+                },
+                latest_bridge_seq: None,
+                entries: vec![ThreadTimelineEntryDto {
+                    event_id: "codex:thread-1-archive-7".to_string(),
+                    kind: BridgeEventKind::MessageDelta,
+                    occurred_at: "2026-04-03T08:00:01Z".to_string(),
+                    summary: "Why can't you run dart format?".to_string(),
+                    payload: json!({
+                        "type": "userMessage",
+                        "role": "user",
+                        "text": "Why can't you run dart format?"
+                    }),
+                    annotations: None,
+                }],
+                approvals: vec![],
+                git_status: None,
+                workflow_state: None,
+                pending_user_input: None,
+            },
+            Vec::new(),
+        )
+        .await;
+
+    let snapshot = state
+        .projections()
+        .snapshot("codex:thread-1")
+        .await
+        .expect("snapshot should exist");
+    assert_eq!(snapshot.entries[0].payload["client_message_id"], "client-1");
+    assert!(
+        !state
+            .read_thread_runtime("codex:thread-1", |runtime| {
+                runtime
+                    .and_then(|runtime| runtime.pending_client_message.as_ref())
+                    .is_some()
+            })
+            .await
+    );
 }
 
 #[test]
@@ -185,6 +284,7 @@ fn terminal_timeline_refreshes_when_cached_exploration_command_lacks_annotations
             last_turn_summary: "done".to_string(),
             active_turn_id: None,
         },
+        latest_bridge_seq: None,
         entries: vec![ThreadTimelineEntryDto {
             event_id: "evt-search".to_string(),
             kind: BridgeEventKind::CommandDelta,
@@ -198,6 +298,7 @@ fn terminal_timeline_refreshes_when_cached_exploration_command_lacks_annotations
         }],
         approvals: vec![],
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
 
@@ -233,9 +334,11 @@ fn terminal_timeline_refresh_skips_running_and_freshly_annotated_snapshots() {
             last_turn_summary: "working".to_string(),
             active_turn_id: Some("turn-1".to_string()),
         },
+        latest_bridge_seq: None,
         entries: vec![],
         approvals: vec![],
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
     assert!(!should_refresh_terminal_timeline_snapshot(
@@ -265,6 +368,7 @@ fn terminal_timeline_refresh_skips_running_and_freshly_annotated_snapshots() {
             last_turn_summary: "done".to_string(),
             ..running_snapshot.thread.clone()
         },
+        latest_bridge_seq: None,
         entries: vec![ThreadTimelineEntryDto {
             event_id: "evt-search".to_string(),
             kind: BridgeEventKind::CommandDelta,
@@ -274,7 +378,7 @@ fn terminal_timeline_refresh_skips_running_and_freshly_annotated_snapshots() {
                 "command": "exec_command",
                 "arguments": "{\"cmd\":\"rg -n LIVE_CODEX_REGULAR_FLOW_NEEDLE apps/mobile/integration_test/support/live_codex_regular_flow_probe.txt\"}",
             }),
-            annotations: crate::thread_api::build_timeline_event_envelope(
+            annotations: build_timeline_event_envelope(
                 "evt-search",
                 "codex:thread-1",
                 BridgeEventKind::CommandDelta,
@@ -288,6 +392,7 @@ fn terminal_timeline_refresh_skips_running_and_freshly_annotated_snapshots() {
         }],
         approvals: vec![],
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
 
@@ -306,6 +411,7 @@ async fn bridge_turn_metadata_merges_synthetic_visible_user_messages() {
         "2026-04-03T08:00:00Z",
         Some("turn-1"),
         "Commit",
+        None,
     );
 
     state.record_bridge_turn_metadata(&event).await;
@@ -330,9 +436,11 @@ async fn bridge_turn_metadata_merges_synthetic_visible_user_messages() {
             last_turn_summary: String::new(),
             active_turn_id: None,
         },
+        latest_bridge_seq: None,
         entries: Vec::new(),
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
 
@@ -351,6 +459,7 @@ async fn bridge_turn_metadata_does_not_duplicate_existing_synthetic_visible_user
         "2026-04-03T08:00:00Z",
         Some("turn-1"),
         "Commit",
+        None,
     );
 
     state.record_bridge_turn_metadata(&event).await;
@@ -375,6 +484,7 @@ async fn bridge_turn_metadata_does_not_duplicate_existing_synthetic_visible_user
             last_turn_summary: String::new(),
             active_turn_id: None,
         },
+        latest_bridge_seq: None,
         entries: vec![ThreadTimelineEntryDto {
             event_id: "turn-1-visible-user-prompt".to_string(),
             kind: BridgeEventKind::MessageDelta,
@@ -389,6 +499,7 @@ async fn bridge_turn_metadata_does_not_duplicate_existing_synthetic_visible_user
         }],
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
 
@@ -401,22 +512,19 @@ async fn bridge_turn_metadata_does_not_duplicate_existing_synthetic_visible_user
 async fn pending_images_attach_to_synthetic_visible_user_message() {
     let state = test_bridge_app_state().await;
     state
-        .inner
-        .pending_user_message_images
-        .write()
-        .await
-        .insert(
-            "codex:thread-1".to_string(),
-            vec![
+        .update_thread_runtime("codex:thread-1", |runtime| {
+            runtime.pending_user_message_images = vec![
                 "https://example.test/a.png".to_string(),
                 "https://example.test/b.png".to_string(),
-            ],
-        );
+            ];
+        })
+        .await;
     let mut event = super::build_visible_user_message_event(
         "codex:thread-1",
         "2026-04-03T08:00:00Z",
         Some("turn-1"),
         "Commit",
+        None,
     );
 
     state.merge_pending_user_message_images(&mut event).await;
@@ -427,11 +535,10 @@ async fn pending_images_attach_to_synthetic_visible_user_message() {
     );
     assert!(
         !state
-            .inner
-            .pending_user_message_images
-            .read()
+            .read_thread_runtime("codex:thread-1", |runtime| {
+                runtime.is_some_and(|runtime| !runtime.pending_user_message_images.is_empty())
+            })
             .await
-            .contains_key("codex:thread-1")
     );
 }
 
@@ -441,6 +548,9 @@ fn provider_approval_questionnaires_are_not_reconstructed_as_plan_sessions() {
         request_id: "approval-1".to_string(),
         title: "Approve command execution?".to_string(),
         detail: None,
+        workflow_kind: Some("provider_approval".to_string()),
+        original_prompt: None,
+        provider_request_id: Some("req-approval-1".to_string()),
         questions: vec![UserInputQuestionDto {
             question_id: "approval_decision".to_string(),
             prompt: "Choose an action".to_string(),
@@ -473,15 +583,18 @@ fn provider_approval_questionnaires_are_not_reconstructed_as_plan_sessions() {
 }
 
 #[tokio::test]
-async fn plan_questionnaire_can_be_reconstructed_from_snapshot() {
+async fn startup_expires_native_plan_questionnaire_sessions_from_projection_state() {
     let state = test_bridge_app_state().await;
     let questionnaire = PendingUserInputDto {
-        request_id: "plan-request-1".to_string(),
+        request_id: "native-plan-request".to_string(),
         title: "Clarify the implementation".to_string(),
-        detail: Some("Choose a shape".to_string()),
+        detail: Some("Answer the plan questions below.".to_string()),
+        workflow_kind: Some("plan_questionnaire".to_string()),
+        original_prompt: Some("Plan the reconnect rewrite".to_string()),
+        provider_request_id: Some("call-plan-native".to_string()),
         questions: vec![UserInputQuestionDto {
             question_id: "scope".to_string(),
-            prompt: "Scope?".to_string(),
+            prompt: "What should this plan prioritize?".to_string(),
             options: vec![
                 UserInputOptionDto {
                     option_id: "bridge".to_string(),
@@ -495,9 +608,103 @@ async fn plan_questionnaire_can_be_reconstructed_from_snapshot() {
                     description: String::new(),
                     is_recommended: false,
                 },
+            ],
+        }],
+    };
+    state
+        .projections()
+        .put_snapshot(ThreadSnapshotDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: ThreadDetailDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "codex:thread-native-plan-restart".to_string(),
+                native_thread_id: "thread-native-plan-restart".to_string(),
+                provider: ProviderKind::Codex,
+                client: ThreadClientKind::Cli,
+                title: "Thread".to_string(),
+                status: ThreadStatus::Running,
+                workspace: "/repo".to_string(),
+                repository: "repo".to_string(),
+                branch: "main".to_string(),
+                created_at: "2026-04-03T08:00:00Z".to_string(),
+                updated_at: "2026-04-03T08:00:00Z".to_string(),
+                source: "cli".to_string(),
+                access_mode: AccessMode::ControlWithApprovals,
+                last_turn_summary: String::new(),
+                active_turn_id: Some("turn-native-plan-restart".to_string()),
+            },
+            latest_bridge_seq: None,
+            entries: vec![],
+            approvals: Vec::new(),
+            git_status: None,
+            workflow_state: None,
+            pending_user_input: Some(questionnaire),
+        })
+        .await;
+
+    state
+        .restore_pending_user_input_sessions_from_projection()
+        .await;
+
+    assert!(
+        state
+            .read_thread_runtime("codex:thread-native-plan-restart", |runtime| {
+                runtime
+                    .and_then(|runtime| runtime.pending_user_input.as_ref())
+                    .is_none()
+            })
+            .await,
+        "native plan questionnaires should not be rehydrated after bridge restart"
+    );
+    assert!(
+        state
+            .projections()
+            .snapshot("codex:thread-native-plan-restart")
+            .await
+            .is_some_and(|snapshot| {
+                snapshot.pending_user_input.is_none()
+                    && snapshot.workflow_state.is_some_and(|workflow| {
+                        workflow.workflow_kind == "plan_questionnaire"
+                            && workflow.state == "expired"
+                            && workflow.request_id.as_deref() == Some("native-plan-request")
+                            && workflow.original_prompt.as_deref()
+                                == Some("Plan the reconnect rewrite")
+                            && workflow.provider_request_id.as_deref() == Some("call-plan-native")
+                    })
+            }),
+        "stale native plan questionnaires should become expired workflow state on restart"
+    );
+}
+
+#[tokio::test]
+async fn startup_clears_stale_provider_approval_sessions_from_projection_state() {
+    let state = test_bridge_app_state().await;
+    let questionnaire = PendingUserInputDto {
+        request_id: "approval-restart".to_string(),
+        title: "Approve command execution?".to_string(),
+        detail: Some("Command: git status".to_string()),
+        workflow_kind: Some("provider_approval".to_string()),
+        original_prompt: None,
+        provider_request_id: Some("req-approval-restart".to_string()),
+        questions: vec![UserInputQuestionDto {
+            question_id: "approval_decision".to_string(),
+            prompt: "Choose an action".to_string(),
+            options: vec![
                 UserInputOptionDto {
-                    option_id: "both".to_string(),
-                    label: "Both".to_string(),
+                    option_id: "allow_once".to_string(),
+                    label: "Allow once".to_string(),
+                    description: String::new(),
+                    is_recommended: true,
+                },
+                UserInputOptionDto {
+                    option_id: "allow_for_session".to_string(),
+                    label: "Allow for session".to_string(),
+                    description: String::new(),
+                    is_recommended: false,
+                },
+                UserInputOptionDto {
+                    option_id: "deny".to_string(),
+                    label: "Deny".to_string(),
                     description: String::new(),
                     is_recommended: false,
                 },
@@ -510,12 +717,12 @@ async fn plan_questionnaire_can_be_reconstructed_from_snapshot() {
             contract_version: CONTRACT_VERSION.to_string(),
             thread: ThreadDetailDto {
                 contract_version: CONTRACT_VERSION.to_string(),
-                thread_id: "codex:thread-1".to_string(),
-                native_thread_id: "thread-1".to_string(),
+                thread_id: "codex:thread-approval".to_string(),
+                native_thread_id: "thread-approval".to_string(),
                 provider: ProviderKind::Codex,
                 client: ThreadClientKind::Cli,
                 title: "Thread".to_string(),
-                status: ThreadStatus::Idle,
+                status: ThreadStatus::Running,
                 workspace: "/repo".to_string(),
                 repository: "repo".to_string(),
                 branch: "main".to_string(),
@@ -524,40 +731,342 @@ async fn plan_questionnaire_can_be_reconstructed_from_snapshot() {
                 source: "cli".to_string(),
                 access_mode: AccessMode::ControlWithApprovals,
                 last_turn_summary: String::new(),
-                active_turn_id: None,
+                active_turn_id: Some("turn-approval".to_string()),
             },
-            entries: vec![ThreadTimelineEntryDto {
-                event_id: "turn-1-visible-user-prompt".to_string(),
-                kind: BridgeEventKind::MessageDelta,
-                occurred_at: "2026-04-03T08:00:00Z".to_string(),
-                summary: "Plan quick-action coverage".to_string(),
-                payload: json!({
-                    "type": "userMessage",
-                    "role": "user",
-                    "text": "Plan quick-action coverage",
-                }),
-                annotations: None,
-            }],
+            latest_bridge_seq: None,
+            entries: vec![],
             approvals: Vec::new(),
             git_status: None,
-            pending_user_input: Some(questionnaire.clone()),
+            workflow_state: None,
+            pending_user_input: Some(questionnaire),
         })
         .await;
 
-    let reconstructed = state
-        .reconstruct_plan_questionnaire_from_snapshot("codex:thread-1", "plan-request-1")
+    state
+        .restore_pending_user_input_sessions_from_projection()
         .await;
 
-    match reconstructed {
-        Some(PendingUserInputSession::PlanQuestionnaire {
-            questionnaire: reconstructed_questionnaire,
-            original_prompt,
-        }) => {
-            assert_eq!(reconstructed_questionnaire, questionnaire);
-            assert_eq!(original_prompt, "Plan quick-action coverage");
+    assert!(
+        state
+            .read_thread_runtime("codex:thread-approval", |runtime| {
+                runtime
+                    .and_then(|runtime| runtime.pending_user_input.as_ref())
+                    .is_none()
+            })
+            .await,
+        "provider approvals should not be rehydrated without live resolution channels"
+    );
+    assert!(
+        state
+            .projections()
+            .snapshot("codex:thread-approval")
+            .await
+            .is_some_and(|snapshot| {
+                snapshot.pending_user_input.is_none()
+                    && snapshot.workflow_state.is_some_and(|workflow| {
+                        workflow.workflow_kind == "provider_approval"
+                            && workflow.state == "expired"
+                            && workflow.request_id.as_deref() == Some("approval-restart")
+                            && workflow.provider_request_id.as_deref()
+                                == Some("req-approval-restart")
+                    })
+            }),
+        "stale provider approvals should become expired workflow state on restart"
+    );
+}
+
+#[tokio::test]
+async fn native_codex_request_user_input_round_trip_updates_projection_and_response_payload() {
+    let state = test_bridge_app_state().await;
+    state
+        .projections()
+        .put_snapshot(ThreadSnapshotDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: ThreadDetailDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "codex:thread-native-plan-live".to_string(),
+                native_thread_id: "thread-native-plan-live".to_string(),
+                provider: ProviderKind::Codex,
+                client: ThreadClientKind::Cli,
+                title: "Thread".to_string(),
+                status: ThreadStatus::Running,
+                workspace: "/repo".to_string(),
+                repository: "repo".to_string(),
+                branch: "main".to_string(),
+                created_at: "2026-04-03T08:00:00Z".to_string(),
+                updated_at: "2026-04-03T08:00:00Z".to_string(),
+                source: "cli".to_string(),
+                access_mode: AccessMode::ControlWithApprovals,
+                last_turn_summary: String::new(),
+                active_turn_id: Some("turn-native-plan-live".to_string()),
+            },
+            latest_bridge_seq: None,
+            entries: vec![],
+            approvals: Vec::new(),
+            git_status: None,
+            workflow_state: Some(ThreadWorkflowStateDto {
+                workflow_kind: "plan_questionnaire".to_string(),
+                state: "awaiting_questions".to_string(),
+                request_id: None,
+                original_prompt: Some("Plan the reconnect rewrite".to_string()),
+                provider_request_id: None,
+            }),
+            pending_user_input: None,
+        })
+        .await;
+    state
+        .update_thread_runtime("codex:thread-native-plan-live", |runtime| {
+            runtime.active_turn_id = Some("turn-native-plan-live".to_string());
+        })
+        .await;
+
+    let state_for_request = state.clone();
+    let request_task: tokio::task::JoinHandle<Result<Option<Value>, String>> =
+        tokio::spawn(async move {
+            state_for_request
+                .handle_turn_control_request(
+                    "codex:thread-native-plan-live",
+                    GatewayTurnControlRequest::CodexRequestUserInput {
+                        request_id: json!("req-plan-live"),
+                        params: json!({
+                            "threadId": "thread-native-plan-live",
+                            "turnId": "turn-native-plan-live",
+                            "itemId": "call-plan-live",
+                            "questions": [{
+                                "id": "scope",
+                                "header": "Clarify the implementation",
+                                "question": "What should this plan prioritize?",
+                                "options": [{
+                                    "label": "Bridge (Recommended)",
+                                    "description": "Focus on bridge internals."
+                                }, {
+                                    "label": "Mobile",
+                                    "description": "Focus on Flutter UX."
+                                }]
+                            }]
+                        }),
+                    },
+                )
+                .await
+        });
+
+    for _ in 0..50 {
+        if state
+            .projections()
+            .snapshot("codex:thread-native-plan-live")
+            .await
+            .is_some_and(|snapshot| snapshot.pending_user_input.is_some())
+        {
+            break;
         }
-        other => panic!("expected reconstructed plan questionnaire, got {other:?}"),
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
+
+    let pending = state
+        .projections()
+        .snapshot("codex:thread-native-plan-live")
+        .await
+        .and_then(|snapshot| snapshot.pending_user_input)
+        .expect("native request_user_input should publish pending state");
+    assert_eq!(pending.request_id, "req-plan-live");
+    assert_eq!(
+        pending.provider_request_id.as_deref(),
+        Some("call-plan-live")
+    );
+    assert_eq!(
+        state
+            .projections()
+            .snapshot("codex:thread-native-plan-live")
+            .await
+            .and_then(|snapshot| snapshot.workflow_state)
+            .as_ref()
+            .map(|workflow| workflow.state.as_str()),
+        Some("awaiting_response")
+    );
+
+    let mutation = state
+        .respond_to_user_input(
+            "codex:thread-native-plan-live",
+            "req-plan-live",
+            &[UserInputAnswerDto {
+                question_id: "scope".to_string(),
+                option_id: "bridge".to_string(),
+            }],
+            Some("Keep reconnect stable."),
+            None,
+            None,
+        )
+        .await
+        .expect("native request_user_input response should succeed");
+    assert_eq!(mutation.thread_status, ThreadStatus::Running);
+    assert_eq!(mutation.turn_id.as_deref(), Some("turn-native-plan-live"));
+
+    let response = request_task
+        .await
+        .expect("request task should join")
+        .expect("control request should succeed")
+        .expect("control request should return a response payload");
+    assert_eq!(
+        response,
+        json!({
+            "answers": {
+                "scope": {
+                    "answers": ["Bridge", "user_note: Keep reconnect stable."]
+                }
+            }
+        })
+    );
+    assert!(
+        state
+            .projections()
+            .snapshot("codex:thread-native-plan-live")
+            .await
+            .is_some_and(|snapshot| {
+                snapshot.pending_user_input.is_none() && snapshot.workflow_state.is_none()
+            }),
+        "native request_user_input resolution should clear pending projection state"
+    );
+}
+
+#[tokio::test]
+async fn provider_approval_sessions_set_and_clear_explicit_workflow_state() {
+    let state = test_bridge_app_state().await;
+    state
+        .projections()
+        .put_snapshot(ThreadSnapshotDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: ThreadDetailDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "codex:thread-approval-live".to_string(),
+                native_thread_id: "thread-approval-live".to_string(),
+                provider: ProviderKind::Codex,
+                client: ThreadClientKind::Cli,
+                title: "Thread".to_string(),
+                status: ThreadStatus::Running,
+                workspace: "/repo".to_string(),
+                repository: "repo".to_string(),
+                branch: "main".to_string(),
+                created_at: "2026-04-03T08:00:00Z".to_string(),
+                updated_at: "2026-04-03T08:00:00Z".to_string(),
+                source: "cli".to_string(),
+                access_mode: AccessMode::ControlWithApprovals,
+                last_turn_summary: String::new(),
+                active_turn_id: Some("turn-approval-live".to_string()),
+            },
+            latest_bridge_seq: None,
+            entries: vec![],
+            approvals: Vec::new(),
+            git_status: None,
+            workflow_state: None,
+            pending_user_input: None,
+        })
+        .await;
+
+    let prompt = build_pending_provider_approval_from_codex(
+        "codex:thread-approval-live",
+        &json!("req-live-1"),
+        "item/commandExecution/requestApproval",
+        &json!({
+            "reason": "Need approval to inspect git state",
+            "command": "git status",
+            "cwd": "/repo",
+        }),
+    )
+    .expect("approval prompt should parse")
+    .expect("approval prompt should be recognized");
+    let request_id = prompt.questionnaire.request_id.clone();
+    let provider_request_id = prompt.provider_request_id.clone();
+
+    let state_for_registration = state.clone();
+    let registration = tokio::spawn(async move {
+        state_for_registration
+            .register_provider_approval_session("codex:thread-approval-live", prompt)
+            .await
+    });
+
+    for _ in 0..5 {
+        if state
+            .projections()
+            .snapshot("codex:thread-approval-live")
+            .await
+            .is_some_and(|snapshot| snapshot.pending_user_input.is_some())
+        {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+
+    let snapshot = state
+        .projections()
+        .snapshot("codex:thread-approval-live")
+        .await
+        .expect("snapshot should exist");
+    assert_eq!(
+        snapshot
+            .workflow_state
+            .as_ref()
+            .map(|workflow| workflow.workflow_kind.as_str()),
+        Some("provider_approval")
+    );
+    assert_eq!(
+        snapshot
+            .workflow_state
+            .as_ref()
+            .map(|workflow| workflow.state.as_str()),
+        Some("pending")
+    );
+    assert_eq!(
+        snapshot
+            .workflow_state
+            .as_ref()
+            .and_then(|workflow| workflow.request_id.as_deref()),
+        Some(request_id.as_str())
+    );
+    assert_eq!(
+        snapshot
+            .workflow_state
+            .as_ref()
+            .and_then(|workflow| workflow.provider_request_id.as_deref()),
+        Some(provider_request_id.as_str())
+    );
+    assert_eq!(
+        snapshot
+            .pending_user_input
+            .as_ref()
+            .map(|pending| pending.request_id.as_str()),
+        Some(request_id.as_str())
+    );
+
+    state
+        .respond_to_user_input(
+            "codex:thread-approval-live",
+            &request_id,
+            &[UserInputAnswerDto {
+                question_id: "approval_decision".to_string(),
+                option_id: "allow_once".to_string(),
+            }],
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("provider approval response should succeed");
+
+    assert_eq!(
+        registration
+            .await
+            .expect("registration task should finish")
+            .expect("provider approval should resolve"),
+        ProviderApprovalSelection::AllowOnce
+    );
+
+    let snapshot = state
+        .projections()
+        .snapshot("codex:thread-approval-live")
+        .await
+        .expect("snapshot should exist after resolution");
+    assert!(snapshot.pending_user_input.is_none());
+    assert!(snapshot.workflow_state.is_none());
 }
 
 #[test]
@@ -577,6 +1086,14 @@ fn codex_command_approval_prompts_map_to_pending_user_input_shape() {
 
     assert_eq!(prompt.provider_request_id, "req-1");
     assert_eq!(prompt.questionnaire.title, "Approve command execution?");
+    assert_eq!(
+        prompt.questionnaire.workflow_kind.as_deref(),
+        Some("provider_approval")
+    );
+    assert_eq!(
+        prompt.questionnaire.provider_request_id.as_deref(),
+        Some("req-1")
+    );
     assert_eq!(prompt.questionnaire.questions.len(), 1);
     assert_eq!(
         prompt.questionnaire.questions[0]
@@ -689,21 +1206,19 @@ async fn respond_to_provider_approval_returns_mutation_and_resolves_pending_requ
     );
     let request_id = questionnaire.request_id.clone();
     let (resolution_tx, resolution_rx) = tokio::sync::oneshot::channel();
-    state.inner.pending_user_inputs.write().await.insert(
-        thread_id.to_string(),
-        PendingUserInputSession::ProviderApproval(PendingProviderApprovalSession {
-            questionnaire,
-            provider_request_id: "upstream-approval-1".to_string(),
-            context: ProviderApprovalContext::CodexCommandOrFile,
-            resolution_tx,
-        }),
-    );
     state
-        .inner
-        .active_turn_ids
-        .write()
-        .await
-        .insert(thread_id.to_string(), "turn-approval-1".to_string());
+        .update_thread_runtime(thread_id, |runtime| {
+            runtime.pending_user_input = Some(PendingUserInputSession::ProviderApproval(
+                PendingProviderApprovalSession {
+                    questionnaire,
+                    provider_request_id: "upstream-approval-1".to_string(),
+                    context: ProviderApprovalContext::CodexCommandOrFile,
+                    resolution_tx,
+                },
+            ));
+            runtime.active_turn_id = Some("turn-approval-1".to_string());
+        })
+        .await;
 
     let result = state
         .respond_to_user_input(
@@ -816,13 +1331,6 @@ fn request_notification_thread_resume_dispatches_once_per_thread() {
         .expect("runtime should build");
     runtime.block_on(async {
         let state = test_bridge_app_state().await;
-        let (tx, rx) = mpsc::channel();
-        *state
-            .inner
-            .notification_control_tx
-            .lock()
-            .expect("notification control lock should not be poisoned") = Some(tx);
-
         state
             .request_notification_thread_resume("codex:thread-123")
             .await;
@@ -831,10 +1339,9 @@ fn request_notification_thread_resume_dispatches_once_per_thread() {
             .await;
 
         assert_eq!(
-            rx.recv().expect("resume message should be sent"),
-            NotificationControlMessage::ResumeThread("codex:thread-123".to_string())
+            state.resumable_notification_threads().await,
+            std::collections::HashSet::from(["codex:thread-123".to_string()])
         );
-        assert!(rx.try_recv().is_err());
     });
 }
 
@@ -846,18 +1353,11 @@ fn request_notification_thread_resume_ignores_non_codex_threads() {
         .expect("runtime should build");
     runtime.block_on(async {
         let state = test_bridge_app_state().await;
-        let (tx, rx) = mpsc::channel();
-        *state
-            .inner
-            .notification_control_tx
-            .lock()
-            .expect("notification control lock should not be poisoned") = Some(tx);
-
         state
             .request_notification_thread_resume("claude:thread-123")
             .await;
 
-        assert!(rx.try_recv().is_err());
+        assert!(state.resumable_notification_threads().await.is_empty());
     });
 }
 
@@ -935,9 +1435,11 @@ async fn in_flight_title_generation_still_recognizes_placeholder_titles() {
             last_turn_summary: String::new(),
             active_turn_id: None,
         },
+        latest_bridge_seq: None,
         entries: Vec::new(),
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
     state.projections().put_snapshot(placeholder_snapshot).await;
@@ -992,9 +1494,11 @@ async fn claude_placeholder_titles_still_generate_and_persist_locally() {
             last_turn_summary: String::new(),
             active_turn_id: None,
         },
+        latest_bridge_seq: None,
         entries: Vec::new(),
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
     state.projections().put_snapshot(placeholder_snapshot).await;
@@ -1095,9 +1599,11 @@ fn external_snapshot_refresh_preserves_non_placeholder_generated_title() {
             last_turn_summary: String::new(),
             active_turn_id: None,
         },
+        latest_bridge_seq: None,
         entries: Vec::new(),
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
     let mut refreshed_snapshot = ThreadSnapshotDto {
@@ -1120,9 +1626,11 @@ fn external_snapshot_refresh_preserves_non_placeholder_generated_title() {
             last_turn_summary: String::new(),
             active_turn_id: None,
         },
+        latest_bridge_seq: None,
         entries: Vec::new(),
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
 
@@ -1194,9 +1702,11 @@ fn desktop_patch_updates_mark_thread_running_until_explicit_completion_arrives()
             last_turn_summary: String::new(),
             active_turn_id: None,
         },
+        latest_bridge_seq: None,
         entries: Vec::new(),
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
     let mut next_snapshot = ThreadSnapshotDto {
@@ -1206,6 +1716,7 @@ fn desktop_patch_updates_mark_thread_running_until_explicit_completion_arrives()
             updated_at: "2026-03-27T20:00:10Z".to_string(),
             ..previous_snapshot.thread.clone()
         },
+        latest_bridge_seq: previous_snapshot.latest_bridge_seq,
         entries: vec![ThreadTimelineEntryDto {
             event_id: "evt-1".to_string(),
             kind: BridgeEventKind::CommandDelta,
@@ -1216,6 +1727,7 @@ fn desktop_patch_updates_mark_thread_running_until_explicit_completion_arrives()
         }],
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
 
@@ -1251,9 +1763,11 @@ fn desktop_patch_updates_do_not_override_explicit_terminal_status() {
             last_turn_summary: String::new(),
             active_turn_id: None,
         },
+        latest_bridge_seq: None,
         entries: Vec::new(),
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
     let mut next_snapshot = ThreadSnapshotDto {
@@ -1263,6 +1777,7 @@ fn desktop_patch_updates_do_not_override_explicit_terminal_status() {
             updated_at: "2026-03-27T20:00:10Z".to_string(),
             ..previous_snapshot.thread.clone()
         },
+        latest_bridge_seq: previous_snapshot.latest_bridge_seq,
         entries: vec![ThreadTimelineEntryDto {
             event_id: "evt-1".to_string(),
             kind: BridgeEventKind::MessageDelta,
@@ -1273,6 +1788,7 @@ fn desktop_patch_updates_do_not_override_explicit_terminal_status() {
         }],
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
 
@@ -1308,6 +1824,7 @@ fn desktop_patch_updates_with_fresh_activity_override_idle_raw_turn_status() {
             last_turn_summary: "thinking".to_string(),
             active_turn_id: None,
         },
+        latest_bridge_seq: None,
         entries: vec![ThreadTimelineEntryDto {
             event_id: "evt-1".to_string(),
             kind: BridgeEventKind::MessageDelta,
@@ -1318,6 +1835,7 @@ fn desktop_patch_updates_with_fresh_activity_override_idle_raw_turn_status() {
         }],
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
     let mut next_snapshot = ThreadSnapshotDto {
@@ -1327,6 +1845,7 @@ fn desktop_patch_updates_with_fresh_activity_override_idle_raw_turn_status() {
             updated_at: "2026-03-27T20:00:10Z".to_string(),
             ..previous_snapshot.thread.clone()
         },
+        latest_bridge_seq: previous_snapshot.latest_bridge_seq,
         entries: vec![ThreadTimelineEntryDto {
             event_id: "evt-1".to_string(),
             kind: BridgeEventKind::MessageDelta,
@@ -1337,6 +1856,7 @@ fn desktop_patch_updates_with_fresh_activity_override_idle_raw_turn_status() {
         }],
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
 
@@ -1372,6 +1892,7 @@ fn desktop_patch_updates_without_fresh_activity_preserve_idle_raw_turn_status() 
             last_turn_summary: "thinking".to_string(),
             active_turn_id: None,
         },
+        latest_bridge_seq: None,
         entries: vec![ThreadTimelineEntryDto {
             event_id: "evt-1".to_string(),
             kind: BridgeEventKind::MessageDelta,
@@ -1382,6 +1903,7 @@ fn desktop_patch_updates_without_fresh_activity_preserve_idle_raw_turn_status() 
         }],
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
     let mut next_snapshot = previous_snapshot.clone();
@@ -1526,6 +2048,7 @@ fn cached_desktop_snapshot_preserves_bootstrap_non_running_status() {
             last_turn_summary: "working".to_string(),
             active_turn_id: None,
         },
+        latest_bridge_seq: None,
         entries: vec![ThreadTimelineEntryDto {
             event_id: "evt-1".to_string(),
             kind: BridgeEventKind::MessageDelta,
@@ -1536,6 +2059,7 @@ fn cached_desktop_snapshot_preserves_bootstrap_non_running_status() {
         }],
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
 
@@ -1554,6 +2078,7 @@ fn terminal_thread_status_events_clear_transient_thread_state() {
     let event = BridgeEventEnvelope {
         contract_version: CONTRACT_VERSION.to_string(),
         event_id: "evt-status".to_string(),
+        bridge_seq: None,
         thread_id: "thread-1".to_string(),
         kind: BridgeEventKind::ThreadStatusChanged,
         occurred_at: "2026-03-27T20:00:10Z".to_string(),
@@ -1573,6 +2098,7 @@ fn live_delta_compactor_keeps_plan_steps_on_compacted_events() {
     let compacted = compactor.compact(BridgeEventEnvelope {
         contract_version: CONTRACT_VERSION.to_string(),
         event_id: "evt-plan".to_string(),
+        bridge_seq: None,
         thread_id: "thread-1".to_string(),
         kind: BridgeEventKind::PlanDelta,
         occurred_at: "2026-03-27T20:00:10Z".to_string(),
@@ -1608,6 +2134,7 @@ fn live_delta_compactor_preserves_raw_codex_message_deltas() {
     let compacted = compactor.compact(BridgeEventEnvelope {
         contract_version: CONTRACT_VERSION.to_string(),
         event_id: "evt-message".to_string(),
+        bridge_seq: None,
         thread_id: "thread-1".to_string(),
         kind: BridgeEventKind::MessageDelta,
         occurred_at: "2026-03-27T20:00:10Z".to_string(),
@@ -1630,6 +2157,7 @@ fn message_events_with_text_but_no_delta_still_publish() {
     let event = BridgeEventEnvelope {
         contract_version: CONTRACT_VERSION.to_string(),
         event_id: "evt-message".to_string(),
+        bridge_seq: None,
         thread_id: "thread-1".to_string(),
         kind: BridgeEventKind::MessageDelta,
         occurred_at: "2026-03-27T20:00:10Z".to_string(),
@@ -1649,6 +2177,7 @@ fn whitespace_only_message_deltas_still_publish() {
     let initial = compactor.compact(BridgeEventEnvelope {
         contract_version: CONTRACT_VERSION.to_string(),
         event_id: "evt-message".to_string(),
+        bridge_seq: None,
         thread_id: "thread-1".to_string(),
         kind: BridgeEventKind::MessageDelta,
         occurred_at: "2026-03-27T20:00:10Z".to_string(),
@@ -1663,6 +2192,7 @@ fn whitespace_only_message_deltas_still_publish() {
     let whitespace = compactor.compact(BridgeEventEnvelope {
         contract_version: CONTRACT_VERSION.to_string(),
         event_id: "evt-message".to_string(),
+        bridge_seq: None,
         thread_id: "thread-1".to_string(),
         kind: BridgeEventKind::MessageDelta,
         occurred_at: "2026-03-27T20:00:11Z".to_string(),
@@ -1685,6 +2215,7 @@ fn running_thread_status_events_do_not_clear_transient_thread_state() {
     let event = BridgeEventEnvelope {
         contract_version: CONTRACT_VERSION.to_string(),
         event_id: "evt-status".to_string(),
+        bridge_seq: None,
         thread_id: "thread-1".to_string(),
         kind: BridgeEventKind::ThreadStatusChanged,
         occurred_at: "2026-03-27T20:00:10Z".to_string(),
@@ -1720,6 +2251,7 @@ fn bridge_owned_desktop_updates_preserve_running_until_terminal_raw_status() {
             last_turn_summary: "working".to_string(),
             active_turn_id: None,
         },
+        latest_bridge_seq: None,
         entries: vec![ThreadTimelineEntryDto {
             event_id: "evt-1".to_string(),
             kind: BridgeEventKind::MessageDelta,
@@ -1730,6 +2262,7 @@ fn bridge_owned_desktop_updates_preserve_running_until_terminal_raw_status() {
         }],
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
     let mut next_snapshot = ThreadSnapshotDto {
@@ -1739,6 +2272,7 @@ fn bridge_owned_desktop_updates_preserve_running_until_terminal_raw_status() {
             updated_at: "2026-03-27T20:00:10Z".to_string(),
             ..previous_snapshot.thread.clone()
         },
+        latest_bridge_seq: previous_snapshot.latest_bridge_seq,
         entries: vec![ThreadTimelineEntryDto {
             event_id: "evt-2".to_string(),
             kind: BridgeEventKind::MessageDelta,
@@ -1749,6 +2283,7 @@ fn bridge_owned_desktop_updates_preserve_running_until_terminal_raw_status() {
         }],
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
 
@@ -1784,9 +2319,11 @@ fn bridge_owned_desktop_updates_allow_terminal_raw_status() {
             last_turn_summary: "working".to_string(),
             active_turn_id: None,
         },
+        latest_bridge_seq: None,
         entries: vec![],
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
     let mut next_snapshot = ThreadSnapshotDto {
@@ -1796,9 +2333,11 @@ fn bridge_owned_desktop_updates_allow_terminal_raw_status() {
             updated_at: "2026-03-27T20:00:10Z".to_string(),
             ..previous_snapshot.thread.clone()
         },
+        latest_bridge_seq: previous_snapshot.latest_bridge_seq,
         entries: vec![],
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
 
@@ -1817,6 +2356,7 @@ fn notification_events_continue_streaming_for_bridge_active_turns() {
     let message = BridgeEventEnvelope {
         contract_version: CONTRACT_VERSION.to_string(),
         event_id: "evt-message".to_string(),
+        bridge_seq: None,
         thread_id: "thread-1".to_string(),
         kind: BridgeEventKind::MessageDelta,
         occurred_at: "2026-03-29T09:00:00Z".to_string(),
@@ -1826,6 +2366,7 @@ fn notification_events_continue_streaming_for_bridge_active_turns() {
     let status = BridgeEventEnvelope {
         contract_version: CONTRACT_VERSION.to_string(),
         event_id: "evt-status".to_string(),
+        bridge_seq: None,
         thread_id: "thread-1".to_string(),
         kind: BridgeEventKind::ThreadStatusChanged,
         occurred_at: "2026-03-29T09:00:01Z".to_string(),
@@ -1849,6 +2390,7 @@ fn non_running_thread_status_events_are_suppressed_for_bridge_active_turns() {
     let idle_status = BridgeEventEnvelope {
         contract_version: CONTRACT_VERSION.to_string(),
         event_id: "evt-status".to_string(),
+        bridge_seq: None,
         thread_id: "thread-1".to_string(),
         kind: BridgeEventKind::ThreadStatusChanged,
         occurred_at: "2026-03-29T09:00:01Z".to_string(),
@@ -1881,6 +2423,7 @@ async fn interrupt_requested_threads_rewrite_upstream_idle_status_to_interrupted
     let mut idle_status = BridgeEventEnvelope {
         contract_version: CONTRACT_VERSION.to_string(),
         event_id: "evt-status".to_string(),
+        bridge_seq: None,
         thread_id: "codex:thread-1".to_string(),
         kind: BridgeEventKind::ThreadStatusChanged,
         occurred_at: "2026-03-29T09:00:01Z".to_string(),
@@ -1925,9 +2468,11 @@ async fn interrupt_requested_threads_preserve_interrupted_status_in_completion_s
             last_turn_summary: "idle".to_string(),
             active_turn_id: None,
         },
+        latest_bridge_seq: None,
         entries: vec![],
         approvals: Vec::new(),
         git_status: None,
+        workflow_state: None,
         pending_user_input: None,
     };
 

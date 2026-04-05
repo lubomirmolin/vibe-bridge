@@ -144,6 +144,7 @@ class ThreadActivityItem {
     this.startsNewVisualGroup = false,
     this.localMessageState = ThreadActivityLocalMessageState.none,
     this.localErrorMessage,
+    this.clientMessageId,
   });
 
   final String eventId;
@@ -160,6 +161,7 @@ class ThreadActivityItem {
   final bool startsNewVisualGroup;
   final ThreadActivityLocalMessageState localMessageState;
   final String? localErrorMessage;
+  final String? clientMessageId;
 
   factory ThreadActivityItem.fromTimelineEntry(ThreadTimelineEntryDto entry) {
     return ThreadActivityItem._fromEvent(
@@ -220,6 +222,7 @@ class ThreadActivityItem {
       presentation: presentation,
       parsedCommandOutput: parsedCommandOutput,
       plan: plan,
+      clientMessageId: _optionalString(payload, 'client_message_id'),
     );
   }
 
@@ -227,6 +230,7 @@ class ThreadActivityItem {
     required String eventId,
     required String occurredAt,
     required String body,
+    required String clientMessageId,
     List<String> messageImageUrls = const <String>[],
     ThreadActivityLocalMessageState localMessageState =
         ThreadActivityLocalMessageState.sending,
@@ -244,10 +248,12 @@ class ThreadActivityItem {
         'role': 'user',
         'text': body,
         'images': messageImageUrls,
+        'client_message_id': clientMessageId,
       },
       messageImageUrls: messageImageUrls,
       localMessageState: localMessageState,
       localErrorMessage: localErrorMessage,
+      clientMessageId: clientMessageId,
     );
   }
 
@@ -256,6 +262,7 @@ class ThreadActivityItem {
     ThreadActivityLocalMessageState? localMessageState,
     String? localErrorMessage,
     bool clearLocalErrorMessage = false,
+    String? clientMessageId,
   }) {
     return ThreadActivityItem(
       eventId: eventId,
@@ -274,6 +281,7 @@ class ThreadActivityItem {
       localErrorMessage: clearLocalErrorMessage
           ? null
           : (localErrorMessage ?? this.localErrorMessage),
+      clientMessageId: clientMessageId ?? this.clientMessageId,
     );
   }
 }
@@ -300,6 +308,7 @@ ThreadActivityItemType _mapType(
     case BridgeEventKind.planDelta:
       return ThreadActivityItemType.planUpdate;
     case BridgeEventKind.userInputRequested:
+    case BridgeEventKind.threadMetadataChanged:
       return ThreadActivityItemType.generic;
     case BridgeEventKind.commandDelta:
       if (_isCommandPayloadLikelyFileChange(payload)) {

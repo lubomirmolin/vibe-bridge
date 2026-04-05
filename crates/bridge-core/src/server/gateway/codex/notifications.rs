@@ -2,22 +2,14 @@ use std::collections::{HashMap, HashSet};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use shared_contracts::{BridgeEventEnvelope, BridgeEventKind, ProviderKind, ThreadStatus};
+use shared_contracts::{BridgeEventEnvelope, BridgeEventKind, ProviderKind};
 
 use crate::codex_transport::CodexJsonTransport;
 use crate::incremental_text::merge_incremental_text;
+use crate::server::timeline_events::{build_timeline_event_envelope, current_timestamp_string};
+use crate::thread_identity::{native_thread_id_for_provider, provider_thread_id};
 
-use super::patch_diff::resolve_apply_patch_to_unified_diff;
-use super::rpc::CodexThreadStatus;
-use super::timeline::{
-    build_timeline_event_envelope, current_timestamp_string, map_codex_status_to_lifecycle_state,
-    map_thread_status, normalize_custom_tool_output, payload_contains_hidden_message,
-    value_to_text,
-};
-use super::{
-    is_file_change_custom_tool, is_file_change_text, native_thread_id_for_provider,
-    provider_thread_id,
-};
+use super::super::mapping::{normalize_codex_item_payload, payload_contains_hidden_message};
 
 #[derive(Debug)]
 pub struct CodexNotificationStream {
@@ -79,6 +71,12 @@ struct CodexTurnHandle {
     status: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CodexThreadStatus {
+    #[serde(rename = "type")]
+    kind: String,
+}
+
 impl CodexNotificationStream {
     pub fn start(command: &str, args: &[String], endpoint: Option<&str>) -> Result<Self, String> {
         Ok(Self {
@@ -100,6 +98,7 @@ impl CodexNotificationStream {
             .map(|_| ())
     }
 
+    #[allow(dead_code)]
     pub fn unsubscribe_thread(&mut self, thread_id: &str) -> Result<(), String> {
         let native_thread_id =
             native_thread_id_for_provider(thread_id, ProviderKind::Codex).unwrap_or(thread_id);
@@ -184,13 +183,7 @@ impl CodexNotificationNormalizer {
                     BridgeEventKind::ThreadStatusChanged,
                     occurred_at,
                     json!({
-                        "status": match map_thread_status(&map_codex_status_to_lifecycle_state(&notification.status.kind)) {
-                            ThreadStatus::Idle => "idle",
-                            ThreadStatus::Running => "running",
-                            ThreadStatus::Completed => "completed",
-                            ThreadStatus::Interrupted => "interrupted",
-                            ThreadStatus::Failed => "failed",
-                        },
+                        "status": map_codex_status_to_thread_status_wire(&notification.status.kind),
                         "reason": "upstream_notification",
                     }),
                 ))
@@ -262,7 +255,7 @@ impl CodexNotificationNormalizer {
             }
         }
 
-        let (kind, payload) = normalize_realtime_item_payload(&item)?;
+        let (kind, payload) = normalize_codex_item_payload(&item)?;
         if !should_publish_live_payload(kind, &payload) {
             return None;
         }
@@ -327,7 +320,7 @@ impl CodexNotificationNormalizer {
                     "replace": false,
                 }),
             ),
-            _ => normalize_realtime_item_payload(payload)?,
+            _ => normalize_codex_item_payload(payload)?,
         };
         if !should_publish_live_payload(kind, &normalized_payload) {
             return None;
@@ -358,6 +351,14 @@ fn map_codex_turn_status_to_wire_status(status: Option<&str>) -> &'static str {
     }
 }
 
+fn map_codex_status_to_thread_status_wire(status_kind: &str) -> &'static str {
+    match status_kind {
+        "active" => "running",
+        "systemError" => "failed",
+        _ => "idle",
+    }
+}
+
 fn normalize_codex_notification_thread_id(thread_id: &str) -> String {
     let native_thread_id =
         native_thread_id_for_provider(thread_id, ProviderKind::Codex).unwrap_or(thread_id);
@@ -376,10 +377,6 @@ enum ItemLifecyclePhase {
     Added,
     Started,
     Completed,
-}
-
-pub(super) fn normalize_realtime_item_payload(item: &Value) -> Option<(BridgeEventKind, Value)> {
-    normalize_codex_item_payload(item, None)
 }
 
 pub(crate) fn should_publish_live_payload(kind: BridgeEventKind, payload: &Value) -> bool {
@@ -423,368 +420,6 @@ pub(crate) fn should_publish_live_payload(kind: BridgeEventKind, payload: &Value
     }
 }
 
-pub(crate) fn normalize_codex_item_payload(
-    item: &Value,
-    workspace_path: Option<&str>,
-) -> Option<(BridgeEventKind, Value)> {
-    let item_type = canonicalize_codex_item_type(item.get("type").and_then(Value::as_str)?);
-    match item_type {
-        "userMessage" => Some((
-            BridgeEventKind::MessageDelta,
-            normalize_message_item(item, "user"),
-        )),
-        "agentMessage" => Some((
-            BridgeEventKind::MessageDelta,
-            normalize_message_item(item, "assistant"),
-        )),
-        "plan" => Some((
-            BridgeEventKind::PlanDelta,
-            json!({
-                "id": item.get("id").and_then(Value::as_str).unwrap_or_default(),
-                "type": "plan",
-                "text": item.get("text").and_then(Value::as_str).unwrap_or_default(),
-            }),
-        )),
-        "commandExecution" => {
-            let mut payload = item.clone();
-            if let Some(output) = item.get("aggregatedOutput").and_then(Value::as_str)
-                && let Some(object) = payload.as_object_mut()
-            {
-                object.insert("output".to_string(), Value::String(output.to_string()));
-            }
-            Some((BridgeEventKind::CommandDelta, payload))
-        }
-        "fileChange" => Some((BridgeEventKind::FileChange, item.clone())),
-        "webSearch" => Some((
-            BridgeEventKind::CommandDelta,
-            normalize_web_search_item(item),
-        )),
-        "functionCall" | "customToolCall" => {
-            normalize_codex_tool_invocation_item(item, workspace_path)
-        }
-        "functionCallOutput" | "customToolCallOutput" => normalize_codex_tool_output_item(item),
-        _ => None,
-    }
-}
-
-fn normalize_message_item(item: &Value, role: &str) -> Value {
-    let mut payload = json!({
-        "id": item.get("id").and_then(Value::as_str).unwrap_or_default(),
-        "type": if role == "user" {
-            "userMessage"
-        } else {
-            "agentMessage"
-        },
-        "role": role,
-        "text": extract_codex_message_text(item),
-    });
-
-    let images = extract_message_images(item);
-    if !images.is_empty()
-        && let Some(object) = payload.as_object_mut()
-    {
-        object.insert(
-            "images".to_string(),
-            Value::Array(images.into_iter().map(Value::String).collect()),
-        );
-    }
-
-    payload
-}
-
-fn extract_message_images(item: &Value) -> Vec<String> {
-    item.get("content")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            entry
-                .get("image_url")
-                .or_else(|| entry.get("url"))
-                .or_else(|| entry.get("path"))
-                .and_then(Value::as_str)
-        })
-        .filter(|image| !image.trim().is_empty())
-        .map(ToString::to_string)
-        .collect()
-}
-
-fn extract_codex_message_text(item: &Value) -> String {
-    if let Some(text) = item.get("text").and_then(Value::as_str) {
-        return text.to_string();
-    }
-
-    item.get("content")
-        .and_then(Value::as_array)
-        .map(|content| {
-            content
-                .iter()
-                .filter_map(|entry| entry.get("text").and_then(Value::as_str))
-                .map(str::trim)
-                .filter(|text| !text.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .unwrap_or_default()
-}
-
-fn canonicalize_codex_item_type(item_type: &str) -> &str {
-    match item_type {
-        "function_call" => "functionCall",
-        "function_call_output" => "functionCallOutput",
-        "custom_tool_call" => "customToolCall",
-        "custom_tool_call_output" => "customToolCallOutput",
-        "web_search_call" => "webSearch",
-        other => other,
-    }
-}
-
-fn normalize_codex_tool_invocation_item(
-    item: &Value,
-    workspace_path: Option<&str>,
-) -> Option<(BridgeEventKind, Value)> {
-    let tool_name = item
-        .get("name")
-        .and_then(Value::as_str)
-        .or_else(|| item.get("command").and_then(Value::as_str))
-        .unwrap_or("command");
-    if tool_name == "update_plan"
-        && let Some(payload) = normalize_update_plan_tool_item(item)
-    {
-        return Some((BridgeEventKind::PlanDelta, payload));
-    }
-    let input = item
-        .get("input")
-        .cloned()
-        .or_else(|| item.get("arguments").cloned())
-        .unwrap_or(Value::Null);
-    let input_text = value_to_text(&input).unwrap_or_default();
-    let is_file_change = is_file_change_custom_tool(tool_name) || is_file_change_text(&input_text);
-
-    let mut payload = item.clone();
-    if let Some(object) = payload.as_object_mut() {
-        object.insert("command".to_string(), Value::String(tool_name.to_string()));
-        if is_file_change {
-            if !input_text.trim().is_empty() {
-                object.insert("change".to_string(), Value::String(input_text.clone()));
-            }
-            if !object.contains_key("resolved_unified_diff")
-                && let Some(resolved_diff) =
-                    resolve_apply_patch_to_unified_diff(&input_text, workspace_path)
-            {
-                object.insert(
-                    "resolved_unified_diff".to_string(),
-                    Value::String(resolved_diff),
-                );
-            }
-        } else if !object.contains_key("arguments") {
-            object.insert("arguments".to_string(), input);
-        }
-    }
-
-    Some((
-        if is_file_change {
-            BridgeEventKind::FileChange
-        } else {
-            BridgeEventKind::CommandDelta
-        },
-        payload,
-    ))
-}
-
-fn normalize_update_plan_tool_item(item: &Value) -> Option<Value> {
-    let plan_input = parse_update_plan_input(
-        item.get("input")
-            .or_else(|| item.get("arguments"))
-            .unwrap_or(&Value::Null),
-    )?;
-    let steps = normalize_update_plan_steps(&plan_input);
-    let explanation = plan_input
-        .get("explanation")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
-    if steps.is_empty() && explanation.is_none() {
-        return None;
-    }
-
-    let total_count = steps.len();
-    let completed_count = steps
-        .iter()
-        .filter(|step| step.get("status").and_then(Value::as_str) == Some("completed"))
-        .count();
-    let text =
-        render_update_plan_text(explanation.as_deref(), &steps, completed_count, total_count);
-
-    let mut payload = json!({
-        "id": item.get("id").and_then(Value::as_str).unwrap_or_default(),
-        "type": "plan",
-        "text": text,
-    });
-    if let Some(object) = payload.as_object_mut() {
-        if let Some(explanation) = explanation {
-            object.insert("explanation".to_string(), Value::String(explanation));
-        }
-        if !steps.is_empty() {
-            object.insert("steps".to_string(), Value::Array(steps));
-            object.insert("completed_count".to_string(), json!(completed_count));
-            object.insert("total_count".to_string(), json!(total_count));
-        }
-    }
-
-    Some(payload)
-}
-
-fn parse_update_plan_input(input: &Value) -> Option<Value> {
-    match input {
-        Value::String(text) => serde_json::from_str::<Value>(text).ok(),
-        Value::Object(_) => Some(input.clone()),
-        _ => None,
-    }
-}
-
-fn normalize_update_plan_steps(plan_input: &Value) -> Vec<Value> {
-    plan_input
-        .get("plan")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            let step = entry
-                .get("step")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())?;
-            let status = entry
-                .get("status")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("pending");
-            Some(json!({
-                "step": step,
-                "status": status,
-            }))
-        })
-        .collect()
-}
-
-fn render_update_plan_text(
-    explanation: Option<&str>,
-    steps: &[Value],
-    completed_count: usize,
-    total_count: usize,
-) -> String {
-    if total_count == 0 {
-        return explanation.unwrap_or_default().to_string();
-    }
-
-    let task_label = if total_count == 1 { "task" } else { "tasks" };
-    let mut lines = vec![format!(
-        "{completed_count} out of {total_count} {task_label} completed"
-    )];
-    lines.extend(steps.iter().enumerate().filter_map(|(index, step)| {
-        step.get("step")
-            .and_then(Value::as_str)
-            .map(|value| format!("{}. {value}", index + 1))
-    }));
-    lines.join("\n")
-}
-
-fn normalize_codex_tool_output_item(item: &Value) -> Option<(BridgeEventKind, Value)> {
-    let output = item
-        .get("output")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let normalized_output = normalize_custom_tool_output(output);
-    let is_file_change = is_file_change_text(&normalized_output);
-
-    let mut payload = item.clone();
-    if let Some(object) = payload.as_object_mut() {
-        object.insert("output".to_string(), Value::String(normalized_output));
-    }
-
-    Some((
-        if is_file_change {
-            BridgeEventKind::FileChange
-        } else {
-            BridgeEventKind::CommandDelta
-        },
-        payload,
-    ))
-}
-
-fn normalize_web_search_item(item: &Value) -> Value {
-    let action = item.get("action").cloned().unwrap_or(Value::Null);
-
-    json!({
-        "id": item.get("id").and_then(Value::as_str).unwrap_or_default(),
-        "type": "command",
-        "command": "web_search",
-        "action": item
-            .get("action")
-            .and_then(Value::as_object)
-            .and_then(|value| value.get("type"))
-            .and_then(Value::as_str)
-            .unwrap_or_default(),
-        "arguments": if action.is_null() {
-            item.get("query").cloned().unwrap_or(Value::Null)
-        } else {
-            action
-        },
-        "output": summarize_web_search_action(item),
-    })
-}
-
-fn summarize_web_search_action(item: &Value) -> String {
-    let Some(action) = item.get("action").and_then(Value::as_object) else {
-        return item
-            .get("query")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-    };
-
-    match action
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-    {
-        "search" => action
-            .get("query")
-            .and_then(Value::as_str)
-            .map(|query| format!("search: {query}"))
-            .unwrap_or_else(|| "search".to_string()),
-        "open_page" => action
-            .get("url")
-            .and_then(Value::as_str)
-            .map(|url| format!("open_page: {url}"))
-            .unwrap_or_else(|| "open_page".to_string()),
-        "find_in_page" => {
-            let query = action
-                .get("query")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let url = action
-                .get("url")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            match (query.is_empty(), url.is_empty()) {
-                (false, false) => format!("find_in_page: {query} @ {url}"),
-                (false, true) => format!("find_in_page: {query}"),
-                (true, false) => format!("find_in_page: {url}"),
-                (true, true) => "find_in_page".to_string(),
-            }
-        }
-        _ => item
-            .get("query")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-    }
-}
-
 fn parse_item_delta_method(method: &str) -> Option<(&str, DeltaTarget)> {
     let mut parts = method.split('/');
     match (parts.next(), parts.next(), parts.next(), parts.next()) {
@@ -804,6 +439,17 @@ fn parse_item_delta_method(method: &str) -> Option<(&str, DeltaTarget)> {
             },
         )),
         _ => None,
+    }
+}
+
+fn canonicalize_codex_item_type(item_type: &str) -> &str {
+    match item_type {
+        "function_call" => "functionCall",
+        "function_call_output" => "functionCallOutput",
+        "custom_tool_call" => "customToolCall",
+        "custom_tool_call_output" => "customToolCallOutput",
+        "web_search_call" => "webSearch",
+        other => other,
     }
 }
 
@@ -895,132 +541,187 @@ fn is_message_item(item: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-    use shared_contracts::{BridgeEventKind, ProviderKind};
+    use super::*;
+    use crate::server::projection::ProjectionStore;
+    use shared_contracts::{ProviderKind, ThreadClientKind, ThreadStatus, ThreadSummaryDto};
 
-    use super::{
-        CodexNotificationNormalizer, normalize_codex_item_payload,
-        normalize_codex_notification_thread_id, should_publish_live_payload,
-    };
-    use crate::thread_api::provider_thread_id;
-
-    #[test]
-    fn codex_notification_thread_ids_normalize_to_provider_thread_ids() {
-        assert_eq!(
-            normalize_codex_notification_thread_id("thread-123"),
-            provider_thread_id(ProviderKind::Codex, "thread-123")
-        );
-        assert_eq!(
-            normalize_codex_notification_thread_id("codex:thread-123"),
-            provider_thread_id(ProviderKind::Codex, "thread-123")
-        );
+    #[derive(Debug, Deserialize)]
+    struct RawNotificationFixture {
+        method: String,
+        params: Value,
     }
 
     #[test]
-    fn custom_tool_apply_patch_is_classified_as_file_change() {
-        let (kind, payload) = normalize_codex_item_payload(
-            &json!({
-                "id": "item-1",
-                "type": "custom_tool_call",
-                "name": "apply_patch",
-                "input": "*** Begin Patch\n*** Add File: note.txt\n@@\n+hello\n*** End Patch\n"
-            }),
-            Some("/tmp"),
-        )
-        .expect("payload should normalize");
+    fn act_turn_fixture_replays_raw_notifications_into_stable_event_order() {
+        let events = replay_fixture("act_turn_notifications.jsonl");
 
-        assert_eq!(kind, BridgeEventKind::FileChange);
-        assert!(payload.get("change").is_some());
+        assert_eq!(events.len(), 6);
+        assert_eq!(events[0].kind, BridgeEventKind::ThreadStatusChanged);
+        assert_eq!(events[1].kind, BridgeEventKind::MessageDelta);
+        assert_eq!(events[2].kind, BridgeEventKind::MessageDelta);
+        assert_eq!(events[3].kind, BridgeEventKind::MessageDelta);
+        assert_eq!(events[4].kind, BridgeEventKind::MessageDelta);
+        assert_eq!(events[5].kind, BridgeEventKind::ThreadStatusChanged);
+
+        assert_eq!(events[1].event_id, "turn-act-1-item-user-1");
+        assert_eq!(events[2].event_id, "turn-act-1-item-user-1");
+        assert_eq!(events[3].event_id, "turn-act-1-item-assistant-1");
+        assert_eq!(events[4].event_id, "turn-act-1-item-assistant-1");
+        assert!(
+            events
+                .iter()
+                .all(|event| event.thread_id == "codex:thread-act")
+        );
     }
 
-    #[test]
-    fn delta_notifications_publish_raw_text_deltas_and_skip_hidden_messages() {
+    #[tokio::test]
+    async fn act_turn_fixture_materializes_user_and_assistant_history_without_loss() {
+        let events = replay_fixture("act_turn_notifications.jsonl");
+        let store = store_for_thread("codex:thread-act").await;
+        for event in &events {
+            store.apply_live_event(event).await;
+        }
+
+        let snapshot = store
+            .snapshot("codex:thread-act")
+            .await
+            .expect("fixture should materialize a snapshot");
+        assert_eq!(snapshot.thread.status, ThreadStatus::Completed);
+
+        let message_entries: Vec<_> = snapshot
+            .entries
+            .iter()
+            .filter(|entry| entry.kind == BridgeEventKind::MessageDelta)
+            .collect();
+        assert_eq!(message_entries.len(), 2);
+        assert_eq!(message_entries[0].payload["role"], "user");
+        assert_eq!(
+            message_entries[0].payload["text"],
+            "Why can't you run dart formatter?"
+        );
+        assert_eq!(message_entries[1].payload["role"], "assistant");
+        assert_eq!(
+            message_entries[1].payload["text"],
+            "Because the formatter is unavailable."
+        );
+    }
+
+    #[tokio::test]
+    async fn plan_turn_fixture_materializes_plan_snapshot_from_raw_notifications() {
+        let events = replay_fixture("plan_turn_notifications.jsonl");
+        let store = store_for_thread("codex:thread-plan").await;
+        for event in &events {
+            store.apply_live_event(event).await;
+        }
+
+        let snapshot = store
+            .snapshot("codex:thread-plan")
+            .await
+            .expect("fixture should materialize a snapshot");
+        assert_eq!(snapshot.thread.status, ThreadStatus::Completed);
+
+        let plan_entry = snapshot
+            .entries
+            .iter()
+            .find(|entry| entry.kind == BridgeEventKind::PlanDelta)
+            .expect("plan entry should exist");
+        assert_eq!(
+            plan_entry.payload["text"],
+            "1 out of 2 tasks completed\n1. Inspect bridge payload\n2. Add Flutter card"
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_turn_fixture_materializes_command_and_file_change_history() {
+        let events = replay_fixture("tool_turn_notifications.jsonl");
+        let store = store_for_thread("codex:thread-tools").await;
+        for event in &events {
+            store.apply_live_event(event).await;
+        }
+
+        let snapshot = store
+            .snapshot("codex:thread-tools")
+            .await
+            .expect("fixture should materialize a snapshot");
+        assert_eq!(snapshot.thread.status, ThreadStatus::Completed);
+
+        let command_entry = snapshot
+            .entries
+            .iter()
+            .find(|entry| entry.event_id == "turn-tools-1-tool-search")
+            .expect("command entry should exist");
+        assert_eq!(command_entry.kind, BridgeEventKind::CommandDelta);
+        assert_eq!(command_entry.payload["command"], "exec_command");
+        assert_eq!(command_entry.payload["output"], "README.md:1: NEEDLE");
+
+        let file_change_entry = snapshot
+            .entries
+            .iter()
+            .find(|entry| entry.event_id == "turn-tools-1-tool-edit")
+            .expect("file change entry should exist");
+        assert_eq!(file_change_entry.kind, BridgeEventKind::FileChange);
+        assert_eq!(file_change_entry.payload["path"], "tmp/probe.txt");
+
+        let assistant_entry = snapshot
+            .entries
+            .iter()
+            .find(|entry| entry.event_id == "turn-tools-1-item-assistant-1")
+            .expect("assistant entry should exist");
+        assert_eq!(assistant_entry.kind, BridgeEventKind::MessageDelta);
+        assert_eq!(assistant_entry.payload["text"], "Needle applied.");
+    }
+
+    fn replay_fixture(path: &str) -> Vec<BridgeEventEnvelope<Value>> {
+        let raw = match path {
+            "act_turn_notifications.jsonl" => {
+                include_str!("test_fixtures/act_turn_notifications.jsonl")
+            }
+            "plan_turn_notifications.jsonl" => {
+                include_str!("test_fixtures/plan_turn_notifications.jsonl")
+            }
+            "tool_turn_notifications.jsonl" => {
+                include_str!("test_fixtures/tool_turn_notifications.jsonl")
+            }
+            _ => panic!("unknown codex notification fixture: {path}"),
+        };
+        let notifications: Vec<RawNotificationFixture> = raw
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                serde_json::from_str::<RawNotificationFixture>(line)
+                    .expect("fixture notification should decode")
+            })
+            .collect();
         let mut normalizer = CodexNotificationNormalizer::default();
-        let _ = normalizer.normalize(
-            "turn/started",
-            &json!({
-                "threadId": "thread-123",
-                "turn": {"id": "turn-1", "items": []}
-            }),
-        );
 
-        let first = normalizer
-            .normalize(
-                "item/agentMessage/delta",
-                &json!({
-                    "threadId": "thread-123",
-                    "turnId": "turn-1",
-                    "itemId": "item-1",
-                    "delta": "Hello"
-                }),
-            )
-            .expect("first delta should publish");
-        assert_eq!(first.thread_id, "codex:thread-123");
-        assert_eq!(
-            first.payload.get("delta").and_then(|v| v.as_str()),
-            Some("Hello")
-        );
-        assert_eq!(
-            first.payload.get("replace").and_then(|v| v.as_bool()),
-            Some(false)
-        );
-        assert!(should_publish_live_payload(first.kind, &first.payload));
-
-        let hidden = normalize_codex_item_payload(
-            &json!({
-                "id": "item-2",
-                "type": "agentMessage",
-                "text": "# AGENTS.md instructions for /repo"
-            }),
-            None,
-        )
-        .expect("hidden payload still normalizes");
-        assert!(!should_publish_live_payload(hidden.0, &hidden.1));
+        notifications
+            .into_iter()
+            .filter_map(|notification| {
+                normalizer.normalize(&notification.method, &notification.params)
+            })
+            .collect()
     }
 
-    #[test]
-    fn thread_status_notifications_publish_provider_thread_ids() {
-        let mut normalizer = CodexNotificationNormalizer::default();
-
-        let event = normalizer
-            .normalize(
-                "thread/status/changed",
-                &json!({
-                    "threadId": "thread-456",
-                    "status": {"type": "active"}
-                }),
-            )
-            .expect("status notification should publish");
-
-        assert_eq!(event.thread_id, "codex:thread-456");
-        assert_eq!(event.kind, BridgeEventKind::ThreadStatusChanged);
-        assert_eq!(event.payload["status"], "running");
-    }
-
-    #[test]
-    fn turn_completed_notifications_publish_terminal_thread_status() {
-        let mut normalizer = CodexNotificationNormalizer::default();
-        let _ = normalizer.normalize(
-            "turn/started",
-            &json!({
-                "threadId": "thread-789",
-                "turn": {"id": "turn-1", "status": "inProgress"}
-            }),
-        );
-
-        let event = normalizer
-            .normalize(
-                "turn/completed",
-                &json!({
-                    "threadId": "thread-789",
-                    "turn": {"id": "turn-1", "status": "completed"}
-                }),
-            )
-            .expect("turn/completed should publish");
-
-        assert_eq!(event.thread_id, "codex:thread-789");
-        assert_eq!(event.kind, BridgeEventKind::ThreadStatusChanged);
-        assert_eq!(event.payload["status"], "completed");
-        assert_eq!(event.payload["reason"], "turn_completed");
+    async fn store_for_thread(thread_id: &str) -> ProjectionStore {
+        let store = ProjectionStore::new();
+        store
+            .replace_summaries(vec![ThreadSummaryDto {
+                contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+                thread_id: thread_id.to_string(),
+                native_thread_id: thread_id
+                    .strip_prefix("codex:")
+                    .unwrap_or(thread_id)
+                    .to_string(),
+                provider: ProviderKind::Codex,
+                client: ThreadClientKind::Cli,
+                title: "Fixture thread".to_string(),
+                status: ThreadStatus::Idle,
+                workspace: "/tmp/codex-fixture".to_string(),
+                repository: "codex-mobile-companion".to_string(),
+                branch: "main".to_string(),
+                updated_at: "2026-04-05T00:00:00Z".to_string(),
+            }])
+            .await;
+        store
     }
 }

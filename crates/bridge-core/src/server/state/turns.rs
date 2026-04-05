@@ -1,6 +1,77 @@
 use super::*;
 
 impl BridgeAppState {
+    async fn set_workflow_state(&self, thread_id: &str, workflow_state: Option<ThreadWorkflow>) {
+        let workflow_state = workflow_state.map(ThreadWorkflow::into_dto);
+        let event = BridgeEventEnvelope {
+            contract_version: CONTRACT_VERSION.to_string(),
+            event_id: format!("{thread_id}-workflow-{}", Utc::now().timestamp_millis()),
+            bridge_seq: None,
+            thread_id: thread_id.to_string(),
+            kind: BridgeEventKind::ThreadMetadataChanged,
+            occurred_at: Utc::now().to_rfc3339(),
+            payload: json!({
+                "workflow_state": workflow_state,
+            }),
+            annotations: None,
+        };
+        self.projections().apply_live_event(&event).await;
+        self.event_hub().publish(event);
+    }
+
+    async fn current_plan_workflow_prompt(&self, thread_id: &str) -> Option<String> {
+        ThreadWorkflow::current_plan_prompt(
+            self.projections()
+                .snapshot(thread_id)
+                .await
+                .and_then(|snapshot| snapshot.workflow_state),
+        )
+    }
+
+    pub(super) async fn restore_pending_user_input_sessions_from_projection(&self) {
+        let pending_inputs = self.projections().list_pending_user_inputs().await;
+
+        for (thread_id, pending_user_input) in pending_inputs {
+            match pending_user_input.workflow_kind.as_deref() {
+                Some("plan_questionnaire") => {
+                    self.publish_user_input_resolution_event(
+                        &thread_id,
+                        &pending_user_input.request_id,
+                    )
+                    .await;
+                    self.set_workflow_state(
+                        &thread_id,
+                        Some(ThreadWorkflow::expired_plan_questionnaire(
+                            pending_user_input
+                                .original_prompt
+                                .as_deref()
+                                .unwrap_or_default(),
+                            Some(pending_user_input.request_id.as_str()),
+                            pending_user_input.provider_request_id.as_deref(),
+                        )),
+                    )
+                    .await;
+                }
+                Some("provider_approval") => {
+                    self.publish_user_input_resolution_event(
+                        &thread_id,
+                        &pending_user_input.request_id,
+                    )
+                    .await;
+                    self.set_workflow_state(
+                        &thread_id,
+                        Some(ThreadWorkflow::expired_provider_approval(
+                            &pending_user_input.request_id,
+                            pending_user_input.provider_request_id.as_deref(),
+                        )),
+                    )
+                    .await;
+                }
+                _ => {}
+            }
+        }
+    }
+
     pub async fn start_turn(
         &self,
         request_id: &str,
@@ -10,6 +81,8 @@ impl BridgeAppState {
         model: Option<&str>,
         effort: Option<&str>,
         mode: TurnMode,
+        client_message_id: Option<&str>,
+        client_turn_intent_id: Option<&str>,
     ) -> Result<TurnMutationAcceptedDto, String> {
         let provider = provider_from_thread_id(thread_id).unwrap_or(ProviderKind::Codex);
         if provider == ProviderKind::ClaudeCode && mode == TurnMode::Plan {
@@ -19,13 +92,30 @@ impl BridgeAppState {
             TurnMode::Act => {
                 self.clear_pending_user_input(thread_id).await;
                 self.start_turn_with_visible_prompt(
-                    request_id, thread_id, prompt, prompt, images, model, effort,
+                    request_id,
+                    thread_id,
+                    prompt,
+                    prompt,
+                    images,
+                    model,
+                    effort,
+                    TurnMode::Act,
+                    client_message_id,
+                    client_turn_intent_id,
                 )
                 .await
             }
             TurnMode::Plan => {
-                self.start_plan_turn(thread_id, prompt, images, model, effort)
-                    .await
+                self.start_plan_turn(
+                    thread_id,
+                    prompt,
+                    images,
+                    model,
+                    effort,
+                    client_message_id,
+                    client_turn_intent_id,
+                )
+                .await
             }
         }
     }
@@ -49,6 +139,9 @@ impl BridgeAppState {
             &[],
             model,
             effort,
+            TurnMode::Act,
+            None,
+            None,
         )
         .await
     }
@@ -62,6 +155,9 @@ impl BridgeAppState {
         images: &[String],
         model: Option<&str>,
         effort: Option<&str>,
+        mode: TurnMode,
+        client_message_id: Option<&str>,
+        client_turn_intent_id: Option<&str>,
     ) -> Result<TurnMutationAcceptedDto, String> {
         let normalized_images = images
             .iter()
@@ -79,13 +175,22 @@ impl BridgeAppState {
         );
         self.clear_interrupted_thread_state(thread_id).await;
         if !normalized_images.is_empty() {
-            self.inner
-                .pending_user_message_images
-                .write()
-                .await
-                .insert(thread_id.to_string(), normalized_images.clone());
+            self.update_thread_runtime(thread_id, |runtime| {
+                runtime.pending_user_message_images = normalized_images.clone();
+            })
+            .await;
         }
         let visible_prompt = visible_prompt.trim();
+        let synthesizes_visible_prompt =
+            should_synthesize_visible_user_prompt(visible_prompt, upstream_prompt);
+        let normalized_client_message_id = client_message_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+        let normalized_client_turn_intent_id = client_turn_intent_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
         let state = self.clone();
         let handle = tokio::runtime::Handle::current();
         let completion_handle = handle.clone();
@@ -96,13 +201,7 @@ impl BridgeAppState {
         let control_state = self.clone();
         let control_handle = handle.clone();
         let control_thread_id = thread_id.to_string();
-        self.inner
-            .pending_bridge_owned_turns
-            .write()
-            .await
-            .insert(thread_id.to_string());
-        self.mark_bridge_turn_stream_started(thread_id).await;
-        let result = match self.inner.gateway.start_turn_streaming(
+        let mut result = match self.inner.gateway.start_turn_streaming(
             thread_id,
             TurnStartRequest {
                 request_id: Some(request_id.to_string()),
@@ -110,27 +209,13 @@ impl BridgeAppState {
                 images: images.to_vec(),
                 model: model.map(str::to_string),
                 effort: effort.map(str::to_string),
+                mode,
                 permission_mode: Some(claude_permission_mode_for_access_mode(
                     self.access_mode().await,
                 )),
+                client_turn_intent_id: normalized_client_turn_intent_id.clone(),
             },
             move |event| {
-                let state = state.clone();
-                if let Some(user_input_event) = handle.block_on(async {
-                    state
-                        .build_pending_user_input_event_from_live_message(&event)
-                        .await
-                }) {
-                    let state = state.clone();
-                    handle.block_on(async move {
-                        state
-                            .projections()
-                            .apply_live_event(&user_input_event)
-                            .await;
-                        state.event_hub().publish(user_input_event);
-                    });
-                    return;
-                }
                 let mut normalized = compactor
                     .lock()
                     .expect("turn stream compactor lock should not be poisoned")
@@ -148,11 +233,9 @@ impl BridgeAppState {
                         .await;
                 });
                 handle.block_on(async move {
-                    if should_clear_transient_thread_state(&normalized) {
-                        state
-                            .clear_transient_thread_state(&normalized.thread_id)
-                            .await;
-                    }
+                    state
+                        .inject_pending_turn_client_message_id(&mut normalized)
+                        .await;
                     if normalized.kind != BridgeEventKind::ThreadStatusChanged {
                         state
                             .merge_pending_user_message_images(&mut normalized)
@@ -177,14 +260,14 @@ impl BridgeAppState {
                     state.finalize_bridge_owned_turn(&completed_thread_id).await;
                 });
             },
-            move |finished_thread_id| {
+            move |finished_thread_id, activity| {
                 let state = stream_finish_state.clone();
                 stream_finish_handle.block_on(async move {
                     state
-                        .mark_bridge_turn_stream_finished(&finished_thread_id)
-                        .await;
-                    state
-                        .refresh_snapshot_after_bridge_turn_completion(&finished_thread_id)
+                        .refresh_snapshot_after_bridge_turn_completion(
+                            &finished_thread_id,
+                            activity,
+                        )
                         .await;
                 });
             },
@@ -194,35 +277,41 @@ impl BridgeAppState {
                 eprintln!(
                     "bridge turn start stream failed request_id={request_id} thread_id={thread_id}: {error}"
                 );
-                self.mark_bridge_turn_stream_finished(thread_id).await;
                 self.clear_transient_thread_state(thread_id).await;
                 return Err(error);
             }
         };
+        result.response.client_message_id = normalized_client_message_id.clone();
+        result.response.client_turn_intent_id = normalized_client_turn_intent_id;
         eprintln!(
             "bridge turn start accepted request_id={request_id} thread_id={thread_id} turn_id={} thread_status={:?}",
             result.response.turn_id.as_deref().unwrap_or("<none>"),
             result.response.thread_status
         );
-        self.inner
-            .pending_bridge_owned_turns
-            .write()
-            .await
-            .remove(thread_id);
         if result.turn_id.is_none() {
-            self.inner
-                .pending_user_message_images
-                .write()
-                .await
-                .remove(thread_id);
+            self.update_thread_runtime(thread_id, |runtime| {
+                runtime.pending_user_message_images.clear();
+            })
+            .await;
         }
         if let Some(turn_id) = result.turn_id {
-            self.inner
-                .active_turn_ids
-                .write()
-                .await
-                .insert(thread_id.to_string(), turn_id);
+            self.update_thread_runtime(thread_id, |runtime| {
+                runtime.active_turn_id = Some(turn_id);
+            })
+            .await;
             self.schedule_bridge_owned_turn_watchdog(thread_id);
+        }
+        if !synthesizes_visible_prompt
+            && let Some(client_message_id) = normalized_client_message_id.as_ref()
+        {
+            self.update_thread_runtime(thread_id, |runtime| {
+                runtime.pending_client_message = Some(PendingTurnClientMessage {
+                    client_message_id: client_message_id.clone(),
+                    turn_id: result.response.turn_id.clone(),
+                    prompt_text: visible_prompt.to_string(),
+                });
+            })
+            .await;
         }
         let occurred_at = Utc::now().to_rfc3339();
         self.projections()
@@ -240,12 +329,13 @@ impl BridgeAppState {
             .apply_live_event(&turn_started_event)
             .await;
         self.event_hub().publish(turn_started_event);
-        if should_synthesize_visible_user_prompt(visible_prompt, upstream_prompt) {
+        if synthesizes_visible_prompt {
             let mut visible_prompt_event = build_visible_user_message_event(
                 thread_id,
                 &occurred_at,
                 result.response.turn_id.as_deref(),
                 visible_prompt,
+                normalized_client_message_id.as_deref(),
             );
             self.merge_pending_user_message_images(&mut visible_prompt_event)
                 .await;
@@ -281,23 +371,34 @@ impl BridgeAppState {
         images: &[String],
         model: Option<&str>,
         effort: Option<&str>,
+        client_message_id: Option<&str>,
+        client_turn_intent_id: Option<&str>,
     ) -> Result<TurnMutationAcceptedDto, String> {
         self.clear_pending_user_input(thread_id).await;
-        self.inner
-            .awaiting_plan_question_prompts
-            .write()
-            .await
-            .insert(thread_id.to_string(), prompt.trim().to_string());
-        self.start_turn_with_visible_prompt(
-            "plan-turn",
+        self.ensure_snapshot(thread_id).await?;
+        self.set_workflow_state(
             thread_id,
-            prompt,
-            &build_hidden_plan_question_prompt(prompt),
-            images,
-            model,
-            effort,
+            Some(ThreadWorkflow::plan_awaiting_questions(prompt)),
         )
-        .await
+        .await;
+        let result = self
+            .start_turn_with_visible_prompt(
+                "plan-turn",
+                thread_id,
+                prompt,
+                prompt,
+                images,
+                model,
+                effort,
+                TurnMode::Plan,
+                client_message_id,
+                client_turn_intent_id,
+            )
+            .await;
+        if result.is_err() {
+            self.set_workflow_state(thread_id, None).await;
+        }
+        result
     }
 
     pub async fn respond_to_user_input(
@@ -306,37 +407,62 @@ impl BridgeAppState {
         request_id: &str,
         answers: &[UserInputAnswerDto],
         free_text: Option<&str>,
-        model: Option<&str>,
-        effort: Option<&str>,
+        _model: Option<&str>,
+        _effort: Option<&str>,
     ) -> Result<TurnMutationAcceptedDto, String> {
         let free_text = free_text.map(str::trim).filter(|value| !value.is_empty());
         if self
-            .inner
-            .pending_user_inputs
-            .read()
+            .read_thread_runtime(thread_id, |runtime| {
+                runtime.is_some_and(|runtime| runtime.pending_user_input.is_some())
+            })
             .await
-            .get(thread_id)
-            .is_none()
-            && let Some(reconstructed) = self
-                .reconstruct_plan_questionnaire_from_snapshot(thread_id, request_id)
-                .await
+            == false
         {
-            self.inner
-                .pending_user_inputs
-                .write()
+            if self
+                .projections()
+                .snapshot(thread_id)
                 .await
-                .insert(thread_id.to_string(), reconstructed);
+                .and_then(|snapshot| snapshot.pending_user_input)
+                .is_some_and(|pending| {
+                    pending.request_id == request_id
+                        && pending.workflow_kind.as_deref() == Some("provider_approval")
+                })
+            {
+                return Err(
+                    "This approval request expired when the bridge restarted. Re-run the action if you still want to approve it."
+                        .to_string(),
+                );
+            } else if self
+                .projections()
+                .snapshot(thread_id)
+                .await
+                .map(|snapshot| {
+                    ThreadWorkflow::is_expired_plan_request(snapshot.workflow_state, request_id)
+                })
+                .unwrap_or(false)
+            {
+                return Err(
+                    "This plan questionnaire expired when the bridge restarted. Re-run plan mode if you still want Codex to continue with the clarification flow."
+                        .to_string(),
+                );
+            }
         }
         let session = {
-            let mut pending = self.inner.pending_user_inputs.write().await;
-            let Some(existing_request_id) = pending.get(thread_id).map(|session| match session {
-                PendingUserInputSession::PlanQuestionnaire { questionnaire, .. } => {
-                    questionnaire.request_id.as_str()
-                }
-                PendingUserInputSession::ProviderApproval(session) => {
-                    session.questionnaire.request_id.as_str()
-                }
-            }) else {
+            let Some(existing_request_id) = self
+                .read_thread_runtime(thread_id, |runtime| {
+                    runtime
+                        .and_then(|runtime| runtime.pending_user_input.as_ref())
+                        .map(|session| match session {
+                            PendingUserInputSession::NativeCodexRequestUserInput(session) => {
+                                session.questionnaire.request_id.clone()
+                            }
+                            PendingUserInputSession::ProviderApproval(session) => {
+                                session.questionnaire.request_id.clone()
+                            }
+                        })
+                })
+                .await
+            else {
                 return Err("There is no pending user input for this thread.".to_string());
             };
             if existing_request_id != request_id {
@@ -345,24 +471,20 @@ impl BridgeAppState {
                         .to_string(),
                 );
             }
-            pending
-                .remove(thread_id)
+            self.take_pending_user_input(thread_id)
+                .await
                 .expect("pending user input should exist after id check")
         };
 
         match session {
-            PendingUserInputSession::PlanQuestionnaire {
-                questionnaire,
-                original_prompt,
-            } => {
+            PendingUserInputSession::NativeCodexRequestUserInput(session) => {
                 if answers.is_empty() && free_text.is_none() {
-                    self.inner.pending_user_inputs.write().await.insert(
-                        thread_id.to_string(),
-                        PendingUserInputSession::PlanQuestionnaire {
-                            questionnaire,
-                            original_prompt,
-                        },
-                    );
+                    self.update_thread_runtime(thread_id, |runtime| {
+                        runtime.pending_user_input = Some(
+                            PendingUserInputSession::NativeCodexRequestUserInput(session),
+                        );
+                    })
+                    .await;
                     return Err(
                         "Pick at least one answer or write your own clarification.".to_string()
                     );
@@ -371,37 +493,44 @@ impl BridgeAppState {
                 self.projections()
                     .set_pending_user_input(thread_id, None)
                     .await;
+                self.set_workflow_state(thread_id, None).await;
                 self.publish_user_input_resolution_event(thread_id, request_id)
                     .await;
 
-                self.start_turn_with_visible_prompt(
-                    request_id,
-                    thread_id,
-                    &render_user_input_response_summary(&questionnaire, answers, free_text),
-                    &build_hidden_plan_followup_prompt(
-                        &original_prompt,
-                        &questionnaire,
-                        answers,
-                        free_text,
-                    ),
-                    &[],
-                    model,
-                    effort,
-                )
-                .await
+                let response = build_codex_request_user_input_response(
+                    &session.questionnaire,
+                    answers,
+                    free_text,
+                );
+                if session.resolution_tx.send(response).is_err() {
+                    return Err("The user-input request is no longer active.".to_string());
+                }
+
+                let active_turn_id = self.active_turn_id(thread_id).await;
+                Ok(TurnMutationAcceptedDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: thread_id.to_string(),
+                    thread_status: ThreadStatus::Running,
+                    message: "user input submitted".to_string(),
+                    turn_id: active_turn_id,
+                    client_message_id: None,
+                    client_turn_intent_id: None,
+                })
             }
             PendingUserInputSession::ProviderApproval(provider_session) => {
                 let Some(selection) = parse_provider_approval_selection(answers) else {
-                    self.inner.pending_user_inputs.write().await.insert(
-                        thread_id.to_string(),
-                        PendingUserInputSession::ProviderApproval(provider_session),
-                    );
+                    self.update_thread_runtime(thread_id, |runtime| {
+                        runtime.pending_user_input =
+                            Some(PendingUserInputSession::ProviderApproval(provider_session));
+                    })
+                    .await;
                     return Err("Choose Allow once, Allow for session, or Deny.".to_string());
                 };
 
                 self.projections()
                     .set_pending_user_input(thread_id, None)
                     .await;
+                self.set_workflow_state(thread_id, None).await;
                 self.publish_user_input_resolution_event(thread_id, request_id)
                     .await;
 
@@ -423,56 +552,21 @@ impl BridgeAppState {
                     let _ = self.inner.gateway.interrupt_turn(thread_id, turn_id).await;
                 }
 
-                let active_turn_id = self
-                    .inner
-                    .active_turn_ids
-                    .read()
-                    .await
-                    .get(thread_id)
-                    .cloned();
+                let active_turn_id = self.active_turn_id(thread_id).await;
                 Ok(TurnMutationAcceptedDto {
                     contract_version: CONTRACT_VERSION.to_string(),
                     thread_id: thread_id.to_string(),
                     thread_status: ThreadStatus::Running,
                     message: "approval response submitted".to_string(),
                     turn_id: active_turn_id,
+                    client_message_id: None,
+                    client_turn_intent_id: None,
                 })
             }
         }
     }
 
-    pub(super) async fn reconstruct_plan_questionnaire_from_snapshot(
-        &self,
-        thread_id: &str,
-        request_id: &str,
-    ) -> Option<PendingUserInputSession> {
-        let snapshot = match self.projections().snapshot(thread_id).await {
-            Some(snapshot) => snapshot,
-            None => self.ensure_snapshot(thread_id).await.ok()?,
-        };
-        let questionnaire = snapshot.pending_user_input?;
-        if questionnaire.request_id != request_id
-            || looks_like_provider_approval_questionnaire(&questionnaire)
-        {
-            return None;
-        }
-
-        let original_prompt = snapshot
-            .entries
-            .iter()
-            .rev()
-            .filter(|entry| entry.kind == BridgeEventKind::MessageDelta)
-            .filter(|entry| entry.payload.get("role").and_then(Value::as_str) == Some("user"))
-            .filter_map(|entry| extract_text_from_payload(&entry.payload))
-            .find(|text| !is_hidden_message(text))?;
-
-        Some(PendingUserInputSession::PlanQuestionnaire {
-            questionnaire,
-            original_prompt,
-        })
-    }
-
-    async fn handle_turn_control_request(
+    pub(super) async fn handle_turn_control_request(
         &self,
         thread_id: &str,
         control_request: GatewayTurnControlRequest,
@@ -499,6 +593,27 @@ impl BridgeAppState {
                     &method, &params, selection,
                 )?))
             }
+            GatewayTurnControlRequest::CodexRequestUserInput { request_id, params } => {
+                let Some(original_prompt) = self.current_plan_workflow_prompt(thread_id).await
+                else {
+                    return Ok(None);
+                };
+                let Some(questionnaire) = build_pending_plan_questionnaire_from_codex_request(
+                    &request_id,
+                    &params,
+                    &original_prompt,
+                ) else {
+                    return Ok(None);
+                };
+                let response = self
+                    .register_native_codex_user_input_session(
+                        thread_id,
+                        questionnaire,
+                        &original_prompt,
+                    )
+                    .await?;
+                Ok(Some(response))
+            }
             GatewayTurnControlRequest::ClaudeCanUseTool {
                 request_id,
                 request,
@@ -522,28 +637,40 @@ impl BridgeAppState {
         }
     }
 
-    async fn register_provider_approval_session(
+    pub(super) async fn register_provider_approval_session(
         &self,
         thread_id: &str,
         prompt: ProviderApprovalPrompt,
     ) -> Result<ProviderApprovalSelection, String> {
         let questionnaire = prompt.questionnaire.clone();
         let request_id = questionnaire.request_id.clone();
+        let provider_request_id = prompt.provider_request_id.clone();
         let (resolution_tx, resolution_rx) = oneshot::channel();
-        {
-            let mut pending = self.inner.pending_user_inputs.write().await;
-            if let Some(replaced) = pending.insert(
-                thread_id.to_string(),
-                PendingUserInputSession::ProviderApproval(PendingProviderApprovalSession {
-                    questionnaire: questionnaire.clone(),
-                    provider_request_id: prompt.provider_request_id,
-                    context: prompt.context,
-                    resolution_tx,
-                }),
-            ) {
-                self.try_abort_pending_provider_approval(replaced);
-            }
+        let replaced = self
+            .update_thread_runtime(thread_id, |runtime| {
+                runtime
+                    .pending_user_input
+                    .replace(PendingUserInputSession::ProviderApproval(
+                        PendingProviderApprovalSession {
+                            questionnaire: questionnaire.clone(),
+                            provider_request_id: prompt.provider_request_id,
+                            context: prompt.context,
+                            resolution_tx,
+                        },
+                    ))
+            })
+            .await;
+        if let Some(replaced) = replaced {
+            self.try_abort_pending_provider_approval(replaced);
         }
+        self.set_workflow_state(
+            thread_id,
+            Some(ThreadWorkflow::pending_provider_approval(
+                &request_id,
+                &provider_request_id,
+            )),
+        )
+        .await;
         self.publish_user_input_pending_event(thread_id, &questionnaire)
             .await;
         resolution_rx
@@ -551,121 +678,118 @@ impl BridgeAppState {
             .map_err(|_| format!("provider approval {request_id} was cancelled before completion"))
     }
 
-    async fn cancel_provider_approval_request(&self, thread_id: &str, request_id: &str) {
-        let removed = {
-            let mut pending = self.inner.pending_user_inputs.write().await;
-            let should_remove = pending.get(thread_id).is_some_and(|session| {
-                matches!(
-                    session,
-                    PendingUserInputSession::ProviderApproval(provider_session)
-                        if provider_session.provider_request_id == request_id
+    async fn register_native_codex_user_input_session(
+        &self,
+        thread_id: &str,
+        questionnaire: PendingUserInputDto,
+        original_prompt: &str,
+    ) -> Result<Value, String> {
+        let request_id = questionnaire.request_id.clone();
+        let provider_request_id = questionnaire.provider_request_id.clone();
+        let (resolution_tx, resolution_rx) = oneshot::channel();
+        let replaced = self
+            .update_thread_runtime(thread_id, |runtime| {
+                runtime.pending_user_input.replace(
+                    PendingUserInputSession::NativeCodexRequestUserInput(
+                        PendingNativeUserInputSession {
+                            questionnaire: questionnaire.clone(),
+                            resolution_tx,
+                        },
+                    ),
                 )
-            });
-            if should_remove {
-                pending.remove(thread_id)
-            } else {
-                None
-            }
-        };
+            })
+            .await;
+        if let Some(replaced) = replaced {
+            self.try_abort_pending_provider_approval(replaced);
+        }
+        self.set_workflow_state(
+            thread_id,
+            Some(ThreadWorkflow::plan_awaiting_response(
+                original_prompt,
+                &request_id,
+                provider_request_id.as_deref(),
+            )),
+        )
+        .await;
+        self.publish_user_input_pending_event(thread_id, &questionnaire)
+            .await;
+        resolution_rx
+            .await
+            .map_err(|_| format!("request_user_input {request_id} was cancelled before completion"))
+    }
+
+    async fn cancel_provider_approval_request(&self, thread_id: &str, request_id: &str) {
+        let removed = self
+            .update_thread_runtime(thread_id, |runtime| {
+                let should_remove = runtime.pending_user_input.as_ref().is_some_and(|session| {
+                    matches!(
+                        session,
+                        PendingUserInputSession::ProviderApproval(provider_session)
+                            if provider_session.provider_request_id == request_id
+                    )
+                });
+                if should_remove {
+                    runtime.pending_user_input.take()
+                } else {
+                    None
+                }
+            })
+            .await;
         let Some(removed_session) = removed else {
             return;
         };
         let resolved_request_id = match &removed_session {
+            PendingUserInputSession::NativeCodexRequestUserInput(session) => {
+                session.questionnaire.request_id.clone()
+            }
             PendingUserInputSession::ProviderApproval(provider_session) => {
                 provider_session.questionnaire.request_id.clone()
-            }
-            PendingUserInputSession::PlanQuestionnaire { questionnaire, .. } => {
-                questionnaire.request_id.clone()
             }
         };
         self.try_abort_pending_provider_approval(removed_session);
         self.projections()
             .set_pending_user_input(thread_id, None)
             .await;
+        self.set_workflow_state(thread_id, None).await;
         self.publish_user_input_resolution_event(thread_id, &resolved_request_id)
             .await;
     }
 
     fn try_abort_pending_provider_approval(&self, session: PendingUserInputSession) {
-        if let PendingUserInputSession::ProviderApproval(provider_session) = session {
-            let _ = provider_session
-                .resolution_tx
-                .send(ProviderApprovalSelection::Deny);
+        match session {
+            PendingUserInputSession::ProviderApproval(provider_session) => {
+                let _ = provider_session
+                    .resolution_tx
+                    .send(ProviderApprovalSelection::Deny);
+            }
+            PendingUserInputSession::NativeCodexRequestUserInput(session) => {
+                let _ = session
+                    .resolution_tx
+                    .send(build_codex_request_user_input_response(
+                        &session.questionnaire,
+                        &[],
+                        None,
+                    ));
+            }
         }
     }
 
     async fn clear_pending_user_input(&self, thread_id: &str) {
-        self.inner
-            .awaiting_plan_question_prompts
-            .write()
-            .await
-            .remove(thread_id);
-        let removed = self
-            .inner
-            .pending_user_inputs
-            .write()
-            .await
-            .remove(thread_id);
+        let removed = self.take_pending_user_input(thread_id).await;
         if let Some(session) = removed {
             self.try_abort_pending_provider_approval(session);
         }
         self.projections()
             .set_pending_user_input(thread_id, None)
             .await;
-    }
-
-    async fn build_pending_user_input_event_from_live_message(
-        &self,
-        event: &BridgeEventEnvelope<Value>,
-    ) -> Option<BridgeEventEnvelope<Value>> {
-        if event.kind != BridgeEventKind::MessageDelta {
-            return None;
-        }
-        if event.payload.get("role").and_then(Value::as_str) != Some("assistant") {
-            return None;
-        }
-
-        let original_prompt = self
-            .inner
-            .awaiting_plan_question_prompts
-            .write()
-            .await
-            .remove(&event.thread_id)?;
-        let message_text = extract_text_from_payload(&event.payload)?;
-        let questionnaire = parse_pending_user_input_payload(&message_text, &event.thread_id)?;
-        let request_id = questionnaire.request_id.clone();
-
-        if let Some(replaced) = self.inner.pending_user_inputs.write().await.insert(
-            event.thread_id.clone(),
-            PendingUserInputSession::PlanQuestionnaire {
-                questionnaire: questionnaire.clone(),
-                original_prompt,
-            },
-        ) {
-            self.try_abort_pending_provider_approval(replaced);
-        }
-
-        Some(BridgeEventEnvelope {
-            contract_version: CONTRACT_VERSION.to_string(),
-            event_id: format!("{}-{}", event.thread_id, request_id),
-            thread_id: event.thread_id.clone(),
-            kind: BridgeEventKind::UserInputRequested,
-            occurred_at: event.occurred_at.clone(),
-            payload: json!({
-                "request_id": questionnaire.request_id,
-                "title": questionnaire.title,
-                "detail": questionnaire.detail,
-                "questions": questionnaire.questions,
-                "state": "pending",
-            }),
-            annotations: None,
-        })
+        self.set_workflow_state(thread_id, None).await;
     }
 
     async fn publish_user_input_resolution_event(&self, thread_id: &str, request_id: &str) {
         let event = BridgeEventEnvelope {
             contract_version: CONTRACT_VERSION.to_string(),
             event_id: format!("{thread_id}-{request_id}-resolved"),
+            bridge_seq: None,
             thread_id: thread_id.to_string(),
             kind: BridgeEventKind::UserInputRequested,
             occurred_at: Utc::now().to_rfc3339(),
@@ -687,6 +811,7 @@ impl BridgeAppState {
         let event = BridgeEventEnvelope {
             contract_version: CONTRACT_VERSION.to_string(),
             event_id: format!("{thread_id}-{}", pending_user_input.request_id),
+            bridge_seq: None,
             thread_id: thread_id.to_string(),
             kind: BridgeEventKind::UserInputRequested,
             occurred_at: Utc::now().to_rfc3339(),
@@ -694,6 +819,9 @@ impl BridgeAppState {
                 "request_id": pending_user_input.request_id,
                 "title": pending_user_input.title,
                 "detail": pending_user_input.detail,
+                "workflow_kind": pending_user_input.workflow_kind,
+                "original_prompt": pending_user_input.original_prompt,
+                "provider_request_id": pending_user_input.provider_request_id,
                 "questions": pending_user_input.questions,
                 "state": "pending",
             }),
@@ -714,15 +842,12 @@ impl BridgeAppState {
             return;
         }
 
-        let Some(pending_images) = self
-            .inner
-            .pending_user_message_images
-            .write()
-            .await
-            .remove(&event.thread_id)
-        else {
+        let pending_images = self
+            .take_pending_user_message_images(&event.thread_id)
+            .await;
+        if pending_images.is_empty() {
             return;
-        };
+        }
 
         let has_images = event
             .payload
@@ -741,22 +866,49 @@ impl BridgeAppState {
         }
     }
 
-    pub(super) async fn has_bridge_owned_active_turn(&self, thread_id: &str) -> bool {
-        if self
-            .inner
-            .active_turn_ids
-            .read()
-            .await
-            .contains_key(thread_id)
-        {
-            return true;
+    pub(super) async fn inject_pending_turn_client_message_id(
+        &self,
+        event: &mut BridgeEventEnvelope<Value>,
+    ) {
+        if event.kind != BridgeEventKind::MessageDelta {
+            return;
+        }
+        if event.payload.get("role").and_then(Value::as_str) != Some("user") {
+            return;
+        }
+        if event.payload.get("client_message_id").is_some() {
+            self.clear_pending_turn_client_message(&event.thread_id)
+                .await;
+            return;
         }
 
+        let Some(pending) = self.pending_turn_client_message(&event.thread_id).await else {
+            return;
+        };
+
+        if let Some(expected_turn_id) = pending.turn_id.as_deref()
+            && !event.event_id.starts_with(expected_turn_id)
+        {
+            return;
+        }
+
+        if let Some(object) = event.payload.as_object_mut() {
+            object.insert(
+                "client_message_id".to_string(),
+                Value::String(pending.client_message_id),
+            );
+        }
+        self.clear_pending_turn_client_message(&event.thread_id)
+            .await;
+    }
+
+    pub(super) async fn has_bridge_owned_active_turn(&self, thread_id: &str) -> bool {
         self.inner
-            .pending_bridge_owned_turns
-            .read()
+            .gateway
+            .thread_lifecycle_state(thread_id)
             .await
-            .contains(thread_id)
+            .map(|state| state.stream_active || state.active_turn_id.is_some())
+            .unwrap_or(false)
     }
 
     pub async fn interrupt_turn(
@@ -766,22 +918,14 @@ impl BridgeAppState {
     ) -> Result<TurnMutationAcceptedDto, String> {
         let resolved_turn_id = if let Some(turn_id) = turn_id {
             turn_id.to_string()
-        } else if let Some(turn_id) = self
-            .inner
-            .active_turn_ids
-            .read()
-            .await
-            .get(thread_id)
-            .cloned()
-        {
+        } else if let Some(turn_id) = self.active_turn_id(thread_id).await {
             turn_id
         } else {
             let turn_id = self.inner.gateway.resolve_active_turn_id(thread_id).await?;
-            self.inner
-                .active_turn_ids
-                .write()
-                .await
-                .insert(thread_id.to_string(), turn_id.clone());
+            self.update_thread_runtime(thread_id, |runtime| {
+                runtime.active_turn_id = Some(turn_id.clone());
+            })
+            .await;
             turn_id
         };
         let result = self
@@ -794,10 +938,14 @@ impl BridgeAppState {
         self.projections()
             .mark_thread_status(thread_id, ThreadStatus::Interrupted, &occurred_at)
             .await;
-        self.inner.active_turn_ids.write().await.remove(thread_id);
+        self.update_thread_runtime(thread_id, |runtime| {
+            runtime.active_turn_id = None;
+        })
+        .await;
         self.event_hub().publish(BridgeEventEnvelope {
             contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
             event_id: format!("{thread_id}-status-{occurred_at}"),
+            bridge_seq: None,
             thread_id: thread_id.to_string(),
             kind: BridgeEventKind::ThreadStatusChanged,
             occurred_at,

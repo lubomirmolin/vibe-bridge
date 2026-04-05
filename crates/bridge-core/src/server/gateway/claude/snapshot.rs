@@ -31,6 +31,7 @@ pub(super) fn build_claude_placeholder_snapshot(
             last_turn_summary: String::new(),
             active_turn_id: None,
         },
+        latest_bridge_seq: None,
         entries: Vec::new(),
         approvals: Vec::new(),
         git_status: Some(GitStatusDto {
@@ -42,6 +43,7 @@ pub(super) fn build_claude_placeholder_snapshot(
             ahead_by: 0,
             behind_by: 0,
         }),
+        workflow_state: None,
         pending_user_input: None,
     }
 }

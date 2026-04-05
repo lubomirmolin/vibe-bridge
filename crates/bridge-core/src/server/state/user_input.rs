@@ -1,87 +1,5 @@
 use super::*;
 
-pub(super) fn build_hidden_plan_question_prompt(user_prompt: &str) -> String {
-    format!(
-        concat!(
-            "You are running in mobile plan intake mode.\n",
-            "Do not edit files, do not run commands, and do not produce the plan yet.\n",
-            "Return only one XML-like block with no markdown fences and no extra prose.\n",
-            "Use this exact wrapper: <codex-plan-questions>{{JSON}}</codex-plan-questions>\n",
-            "The JSON must contain:\n",
-            "- title: short string\n",
-            "- detail: short string\n",
-            "- questions: array of 1 to 3 questions\n",
-            "Each question must contain question_id, prompt, and exactly 3 options.\n",
-            "Each option must contain option_id, label, description, and is_recommended.\n",
-            "Keep the choices mutually exclusive and concise.\n",
-            "Original user request:\n{user_prompt}\n"
-        ),
-        user_prompt = user_prompt
-    )
-}
-
-pub(super) fn build_hidden_plan_followup_prompt(
-    original_prompt: &str,
-    questionnaire: &PendingUserInputDto,
-    answers: &[UserInputAnswerDto],
-    free_text: Option<&str>,
-) -> String {
-    format!(
-        concat!(
-            "You are continuing a mobile planning workflow.\n",
-            "Do not edit files or run commands.\n",
-            "Use the user's original request plus their selected answers to produce a concrete execution plan.\n",
-            "If appropriate, emit update_plan with 3 to 7 actionable steps.\n",
-            "After the plan, summarize the main tradeoffs briefly.\n\n",
-            "Original request:\n{original_prompt}\n\n",
-            "Questionnaire:\n{questionnaire_json}\n\n",
-            "Selected answers:\n{answers_json}\n\n",
-            "Additional free text:\n{free_text}\n"
-        ),
-        original_prompt = original_prompt,
-        questionnaire_json =
-            serde_json::to_string_pretty(questionnaire).unwrap_or_else(|_| "{}".to_string()),
-        answers_json = serde_json::to_string_pretty(answers).unwrap_or_else(|_| "[]".to_string()),
-        free_text = free_text.unwrap_or(""),
-    )
-}
-
-pub(super) fn render_user_input_response_summary(
-    questionnaire: &PendingUserInputDto,
-    answers: &[UserInputAnswerDto],
-    free_text: Option<&str>,
-) -> String {
-    let mut lines = vec!["Plan clarification".to_string()];
-
-    for answer in answers {
-        let question_prompt = questionnaire
-            .questions
-            .iter()
-            .find(|question| question.question_id == answer.question_id)
-            .map(|question| question.prompt.as_str())
-            .unwrap_or("Question");
-        let option_label = questionnaire
-            .questions
-            .iter()
-            .find(|question| question.question_id == answer.question_id)
-            .and_then(|question| {
-                question
-                    .options
-                    .iter()
-                    .find(|option| option.option_id == answer.option_id)
-            })
-            .map(|option| option.label.as_str())
-            .unwrap_or("Selected");
-        lines.push(format!("- {question_prompt}: {option_label}"));
-    }
-
-    if let Some(free_text) = free_text {
-        lines.push(format!("- Something else: {free_text}"));
-    }
-
-    lines.join("\n")
-}
-
 pub(super) fn parse_provider_approval_selection(
     answers: &[UserInputAnswerDto],
 ) -> Option<ProviderApprovalSelection> {
@@ -98,6 +16,7 @@ pub(super) fn parse_provider_approval_selection(
     }
 }
 
+#[cfg(test)]
 pub(super) fn looks_like_provider_approval_questionnaire(
     questionnaire: &PendingUserInputDto,
 ) -> bool {
@@ -127,6 +46,9 @@ pub(super) fn build_provider_approval_questionnaire(
         ),
         title,
         detail,
+        workflow_kind: Some(PROVIDER_APPROVAL_WORKFLOW_KIND.to_string()),
+        original_prompt: None,
+        provider_request_id: None,
         questions: vec![UserInputQuestionDto {
             question_id: "approval_decision".to_string(),
             prompt: "Choose an action".to_string(),
@@ -154,7 +76,7 @@ pub(super) fn build_provider_approval_questionnaire(
     }
 }
 
-fn stringify_provider_request_id(raw_request_id: &Value) -> String {
+pub(super) fn stringify_request_id(raw_request_id: &Value) -> String {
     if let Some(text) = raw_request_id.as_str() {
         return text.to_string();
     }
@@ -209,13 +131,17 @@ pub(super) fn build_pending_provider_approval_from_codex(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(|value| format!("Working directory: {value}"));
+            let provider_request_id = stringify_request_id(raw_request_id);
             Some(ProviderApprovalPrompt {
-                questionnaire: build_provider_approval_questionnaire(
-                    thread_id,
-                    "Approve command execution?".to_string(),
-                    join_optional_detail_lines([reason, command, cwd]),
+                questionnaire: with_provider_request_context(
+                    build_provider_approval_questionnaire(
+                        thread_id,
+                        "Approve command execution?".to_string(),
+                        join_optional_detail_lines([reason, command, cwd]),
+                    ),
+                    &provider_request_id,
                 ),
-                provider_request_id: stringify_provider_request_id(raw_request_id),
+                provider_request_id,
                 context: ProviderApprovalContext::CodexCommandOrFile,
             })
         }
@@ -226,13 +152,17 @@ pub(super) fn build_pending_provider_approval_from_codex(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(|value| format!("Requested write root: {value}"));
+            let provider_request_id = stringify_request_id(raw_request_id);
             Some(ProviderApprovalPrompt {
-                questionnaire: build_provider_approval_questionnaire(
-                    thread_id,
-                    "Approve file changes?".to_string(),
-                    join_optional_detail_lines([reason, grant_root]),
+                questionnaire: with_provider_request_context(
+                    build_provider_approval_questionnaire(
+                        thread_id,
+                        "Approve file changes?".to_string(),
+                        join_optional_detail_lines([reason, grant_root]),
+                    ),
+                    &provider_request_id,
                 ),
-                provider_request_id: stringify_provider_request_id(raw_request_id),
+                provider_request_id,
                 context: ProviderApprovalContext::CodexCommandOrFile,
             })
         }
@@ -248,19 +178,143 @@ pub(super) fn build_pending_provider_approval_from_codex(
                 .unwrap_or_else(|| json!({}));
             let permission_summary = summarize_codex_requested_permissions(&requested_permissions)
                 .map(|summary| format!("Requested permissions: {summary}"));
+            let provider_request_id = stringify_request_id(raw_request_id);
             Some(ProviderApprovalPrompt {
-                questionnaire: build_provider_approval_questionnaire(
-                    thread_id,
-                    "Approve additional permissions?".to_string(),
-                    join_optional_detail_lines([reason, permission_summary]),
+                questionnaire: with_provider_request_context(
+                    build_provider_approval_questionnaire(
+                        thread_id,
+                        "Approve additional permissions?".to_string(),
+                        join_optional_detail_lines([reason, permission_summary]),
+                    ),
+                    &provider_request_id,
                 ),
-                provider_request_id: stringify_provider_request_id(raw_request_id),
+                provider_request_id,
                 context: ProviderApprovalContext::CodexPermissions { turn_id },
             })
         }
         _ => None,
     };
     Ok(prompt)
+}
+
+pub(super) fn build_pending_plan_questionnaire_from_codex_request(
+    raw_request_id: &Value,
+    params: &Value,
+    original_prompt: &str,
+) -> Option<PendingUserInputDto> {
+    let questions = params
+        .get("questions")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(|question| {
+            let question_id = question
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)?;
+            let prompt = question
+                .get("question")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .or_else(|| {
+                    question
+                        .get("header")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                })?;
+
+            let mut options = question
+                .get("options")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|option| {
+                    let label = option
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())?;
+                    let (normalized_label, is_recommended) =
+                        parse_codex_request_user_input_option_label(label);
+                    Some(UserInputOptionDto {
+                        option_id: sanitize_user_input_id(&normalized_label),
+                        label: normalized_label,
+                        description: option
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .unwrap_or_default()
+                            .to_string(),
+                        is_recommended,
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            if question
+                .get("isOther")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                options.push(UserInputOptionDto {
+                    option_id: "something_else".to_string(),
+                    label: "Something else".to_string(),
+                    description: "Provide a custom response below.".to_string(),
+                    is_recommended: false,
+                });
+            }
+
+            if options.is_empty() {
+                options.push(UserInputOptionDto {
+                    option_id: "freeform_response".to_string(),
+                    label: "Respond below".to_string(),
+                    description: "Type your response below and submit it.".to_string(),
+                    is_recommended: true,
+                });
+            }
+
+            Some(UserInputQuestionDto {
+                question_id,
+                prompt: prompt.to_string(),
+                options,
+            })
+        })
+        .collect::<Vec<_>>();
+    if questions.is_empty() {
+        return None;
+    }
+
+    let title = params
+        .get("questions")
+        .and_then(Value::as_array)
+        .and_then(|questions| questions.first())
+        .and_then(|question| question.get("header"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Clarify the plan")
+        .to_string();
+    let provider_request_id = params
+        .get("itemId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    Some(PendingUserInputDto {
+        request_id: stringify_request_id(raw_request_id),
+        title,
+        detail: Some(
+            "Answer the plan questions below. Codex will continue the same turn after you submit."
+                .to_string(),
+        ),
+        workflow_kind: Some(PLAN_WORKFLOW_KIND.to_string()),
+        original_prompt: Some(original_prompt.trim().to_string()),
+        provider_request_id,
+        questions,
+    })
 }
 
 fn summarize_codex_requested_permissions(permissions: &Value) -> Option<String> {
@@ -353,12 +407,12 @@ pub(super) fn build_pending_provider_approval_from_claude(
         summarize_claude_tool_input(request.get("input")),
     ]);
     let context = ProviderApprovalContext::ClaudeCanUseTool;
+    let questionnaire = with_provider_request_context(
+        build_provider_approval_questionnaire(thread_id, format!("Approve {tool_name}?"), detail),
+        &request_id,
+    );
     Ok(ProviderApprovalPrompt {
-        questionnaire: build_provider_approval_questionnaire(
-            thread_id,
-            format!("Approve {tool_name}?"),
-            detail,
-        ),
+        questionnaire,
         provider_request_id: request_id,
         context,
     })
@@ -422,108 +476,90 @@ pub(super) fn build_claude_tool_approval_response(
     response
 }
 
-pub(in crate::server) fn parse_pending_user_input_payload(
-    message_text: &str,
-    thread_id: &str,
-) -> Option<PendingUserInputDto> {
-    let start = message_text.find("<codex-plan-questions>")?;
-    let end = message_text.find("</codex-plan-questions>")?;
-    if end <= start {
-        return None;
-    }
-
-    let json_payload = message_text[start + "<codex-plan-questions>".len()..end].trim();
-    let parsed = serde_json::from_str::<Value>(json_payload).ok()?;
-    let title = parsed
-        .get("title")
-        .and_then(Value::as_str)
+pub(super) fn build_codex_request_user_input_response(
+    questionnaire: &PendingUserInputDto,
+    answers: &[UserInputAnswerDto],
+    free_text: Option<&str>,
+) -> Value {
+    let selected_option_by_question_id = answers
+        .iter()
+        .map(|answer| (answer.question_id.as_str(), answer.option_id.as_str()))
+        .collect::<HashMap<_, _>>();
+    let free_text = free_text
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("Clarify the plan")
-        .to_string();
-    let detail = parsed
-        .get("detail")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
-
-    let questions = parsed
-        .get("questions")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            let prompt = entry
-                .get("prompt")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())?;
-            let question_id = entry
-                .get("question_id")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-                .unwrap_or_else(|| sanitize_user_input_id(prompt));
-            let options = entry
-                .get("options")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(|option| {
-                    let label = option
-                        .get("label")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())?;
-                    Some(UserInputOptionDto {
-                        option_id: option
-                            .get("option_id")
-                            .and_then(Value::as_str)
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())
-                            .map(str::to_string)
-                            .unwrap_or_else(|| sanitize_user_input_id(label)),
-                        label: label.to_string(),
-                        description: option
-                            .get("description")
-                            .and_then(Value::as_str)
-                            .map(str::trim)
-                            .unwrap_or_default()
-                            .to_string(),
-                        is_recommended: option
-                            .get("is_recommended")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false),
-                    })
+        .map(ToString::to_string);
+    let free_text_target_question_id = questionnaire
+        .questions
+        .iter()
+        .find(|question| {
+            selected_option_by_question_id
+                .get(question.question_id.as_str())
+                .is_some_and(|option_id| {
+                    matches!(*option_id, "something_else" | "freeform_response")
                 })
-                .take(3)
-                .collect::<Vec<_>>();
-
-            if options.len() != 3 {
-                return None;
-            }
-
-            Some(UserInputQuestionDto {
-                question_id,
-                prompt: prompt.to_string(),
-                options,
-            })
         })
-        .take(3)
-        .collect::<Vec<_>>();
+        .map(|question| question.question_id.as_str())
+        .or_else(|| {
+            questionnaire
+                .questions
+                .iter()
+                .find(|question| {
+                    selected_option_by_question_id.contains_key(question.question_id.as_str())
+                })
+                .map(|question| question.question_id.as_str())
+        })
+        .or_else(|| {
+            questionnaire
+                .questions
+                .first()
+                .map(|question| question.question_id.as_str())
+        });
 
-    if questions.is_empty() {
-        return None;
-    }
+    let answers_by_question_id = questionnaire
+        .questions
+        .iter()
+        .map(|question| {
+            let mut answer_list = Vec::new();
+            if let Some(selected_option_id) =
+                selected_option_by_question_id.get(question.question_id.as_str())
+                && let Some(selected_option) = question
+                    .options
+                    .iter()
+                    .find(|option| option.option_id == *selected_option_id)
+                && !matches!(
+                    selected_option.option_id.as_str(),
+                    "something_else" | "freeform_response"
+                )
+            {
+                answer_list.push(selected_option.label.clone());
+            }
+            if free_text_target_question_id == Some(question.question_id.as_str())
+                && let Some(free_text) = free_text.as_ref()
+            {
+                answer_list.push(format!("user_note: {free_text}"));
+            }
+            (
+                question.question_id.clone(),
+                json!({
+                    "answers": answer_list,
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
 
-    Some(PendingUserInputDto {
-        request_id: format!("user-input-{}-{}", thread_id, Utc::now().timestamp_millis()),
-        title,
-        detail,
-        questions,
+    json!({
+        "answers": answers_by_question_id,
     })
+}
+
+pub(super) fn with_provider_request_context(
+    mut questionnaire: PendingUserInputDto,
+    provider_request_id: &str,
+) -> PendingUserInputDto {
+    questionnaire.workflow_kind = Some(PROVIDER_APPROVAL_WORKFLOW_KIND.to_string());
+    questionnaire.provider_request_id = Some(provider_request_id.to_string());
+    questionnaire
 }
 
 fn sanitize_user_input_id(value: &str) -> String {
@@ -541,6 +577,14 @@ fn sanitize_user_input_id(value: &str) -> String {
         identifier = identifier.replace("--", "-");
     }
     identifier.trim_matches('-').to_string()
+}
+
+fn parse_codex_request_user_input_option_label(label: &str) -> (String, bool) {
+    let trimmed = label.trim();
+    if let Some(normalized) = trimmed.strip_suffix("(Recommended)") {
+        return (normalized.trim().to_string(), true);
+    }
+    (trimmed.to_string(), false)
 }
 
 pub(super) fn build_hidden_commit_prompt() -> String {

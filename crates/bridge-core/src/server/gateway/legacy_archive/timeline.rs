@@ -1,21 +1,16 @@
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde_json::Value;
 use shared_contracts::{
-    AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ProviderKind,
-    ThreadClientKind, ThreadDetailDto, ThreadStatus, ThreadSummaryDto,
-    ThreadTimelineAnnotationsDto, ThreadTimelineEntryDto, ThreadTimelineExplorationKind,
-    ThreadTimelineGroupKind,
+    AccessMode, BridgeEventKind, CONTRACT_VERSION, ProviderKind, ThreadClientKind, ThreadDetailDto,
+    ThreadStatus, ThreadSummaryDto, ThreadTimelineAnnotationsDto, ThreadTimelineEntryDto,
+    ThreadTimelineExplorationKind, ThreadTimelineGroupKind,
 };
 
-use super::notifications::normalize_codex_item_payload;
 use super::rpc::CodexThread;
-use super::{
-    GitStatusDto, RepositoryContextDto, UpstreamThreadRecord, UpstreamTimelineEvent,
-    provider_thread_id,
-};
+use super::{UpstreamThreadRecord, UpstreamTimelineEvent, provider_thread_id};
+use crate::server::gateway::mapping::normalize_codex_item_payload;
 
 pub(super) fn payload_contains_hidden_message(payload: &Value) -> bool {
     payload_primary_text(payload)
@@ -141,9 +136,7 @@ pub(super) fn map_codex_thread_to_timeline_events(
     let mut events = Vec::new();
     for turn in &thread.turns {
         for (index, item) in turn.items.iter().enumerate() {
-            let Some((kind, payload)) =
-                normalize_codex_item_payload(item, Some(thread.cwd.as_str()))
-            else {
+            let Some((kind, payload)) = normalize_codex_item_payload(item) else {
                 continue;
             };
             if kind == BridgeEventKind::MessageDelta && payload_contains_hidden_message(&payload) {
@@ -260,7 +253,7 @@ pub(crate) fn derive_repository_name_from_cwd(cwd: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
-pub(super) fn map_thread_summary(upstream: &UpstreamThreadRecord) -> ThreadSummaryDto {
+pub(crate) fn map_thread_summary(upstream: &UpstreamThreadRecord) -> ThreadSummaryDto {
     ThreadSummaryDto {
         contract_version: CONTRACT_VERSION.to_string(),
         thread_id: upstream.id.clone(),
@@ -276,7 +269,7 @@ pub(super) fn map_thread_summary(upstream: &UpstreamThreadRecord) -> ThreadSumma
     }
 }
 
-pub(super) fn map_thread_detail(upstream: &UpstreamThreadRecord) -> ThreadDetailDto {
+pub(crate) fn map_thread_detail(upstream: &UpstreamThreadRecord) -> ThreadDetailDto {
     ThreadDetailDto {
         contract_version: CONTRACT_VERSION.to_string(),
         thread_id: upstream.id.clone(),
@@ -309,24 +302,7 @@ pub(crate) fn map_thread_client_kind_from_source(source: &str) -> ThreadClientKi
     }
 }
 
-pub(super) fn map_repository_context(upstream: &UpstreamThreadRecord) -> RepositoryContextDto {
-    RepositoryContextDto {
-        workspace: upstream.workspace_path.clone(),
-        repository: upstream.repository_name.clone(),
-        branch: upstream.branch_name.clone(),
-        remote: upstream.remote_name.clone(),
-    }
-}
-
-pub(super) fn map_git_status(upstream: &UpstreamThreadRecord) -> GitStatusDto {
-    GitStatusDto {
-        dirty: upstream.git_dirty,
-        ahead_by: upstream.git_ahead_by,
-        behind_by: upstream.git_behind_by,
-    }
-}
-
-pub(super) fn map_timeline_entry(upstream: &UpstreamTimelineEvent) -> ThreadTimelineEntryDto {
+pub(crate) fn map_timeline_entry(upstream: &UpstreamTimelineEvent) -> ThreadTimelineEntryDto {
     let kind = map_event_kind(&upstream.event_type);
 
     ThreadTimelineEntryDto {
@@ -337,20 +313,6 @@ pub(super) fn map_timeline_entry(upstream: &UpstreamTimelineEvent) -> ThreadTime
         payload: upstream.data.clone(),
         annotations: timeline_annotations_for_event(&upstream.id, kind, &upstream.data),
     }
-}
-
-pub(crate) fn build_timeline_event_envelope(
-    event_id: impl Into<String>,
-    thread_id: impl Into<String>,
-    kind: BridgeEventKind,
-    occurred_at: impl Into<String>,
-    payload: Value,
-) -> BridgeEventEnvelope<Value> {
-    let event_id = event_id.into();
-    let annotations = timeline_annotations_for_event(&event_id, kind, &payload);
-
-    BridgeEventEnvelope::new(event_id, thread_id, kind, occurred_at, payload)
-        .with_annotations(annotations)
 }
 
 fn timeline_annotations_for_event(
@@ -574,6 +536,7 @@ pub(super) fn map_event_kind(raw: &str) -> BridgeEventKind {
         "agent_message_delta" => BridgeEventKind::MessageDelta,
         "plan_delta" => BridgeEventKind::PlanDelta,
         "user_input_requested" => BridgeEventKind::UserInputRequested,
+        "thread_metadata_changed" => BridgeEventKind::ThreadMetadataChanged,
         "command_output_delta" => BridgeEventKind::CommandDelta,
         "file_change_delta" => BridgeEventKind::FileChange,
         "approval_requested" => BridgeEventKind::ApprovalRequested,
@@ -587,6 +550,7 @@ pub(super) fn map_bridge_kind_to_event_type(kind: BridgeEventKind) -> &'static s
         BridgeEventKind::MessageDelta => "agent_message_delta",
         BridgeEventKind::PlanDelta => "plan_delta",
         BridgeEventKind::UserInputRequested => "user_input_requested",
+        BridgeEventKind::ThreadMetadataChanged => "thread_metadata_changed",
         BridgeEventKind::CommandDelta => "command_output_delta",
         BridgeEventKind::FileChange => "file_change_delta",
         BridgeEventKind::ThreadStatusChanged => "thread_status_changed",
@@ -600,6 +564,13 @@ pub(crate) fn summarize_live_payload(kind: BridgeEventKind, payload: &Value) -> 
         BridgeEventKind::MessageDelta | BridgeEventKind::PlanDelta => payload
             .get("text")
             .or_else(|| payload.get("delta"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        BridgeEventKind::ThreadMetadataChanged => payload
+            .get("workflow_state")
+            .and_then(Value::as_object)
+            .and_then(|workflow| workflow.get("state"))
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
@@ -656,18 +627,6 @@ pub(super) fn map_wire_thread_status_to_lifecycle_state(raw: &str) -> String {
     }
 }
 
-pub(crate) fn current_timestamp_string() -> String {
-    let now = current_unix_epoch_millis() as i64;
-    unix_timestamp_to_iso8601(now)
-}
-
-pub(super) fn current_unix_epoch_millis() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-}
-
 pub(crate) fn unix_timestamp_to_iso8601(timestamp: i64) -> String {
     let millis = if timestamp.abs() >= 1_000_000_000_000 {
         timestamp
@@ -696,11 +655,11 @@ mod tests {
     use serde_json::json;
     use shared_contracts::{BridgeEventKind, ThreadTimelineExplorationKind};
 
+    use super::UpstreamThreadRecord;
     use super::{
         extract_shell_like_command, map_thread_summary, payload_contains_hidden_message,
         summarize_live_payload, timeline_annotations_for_event,
     };
-    use crate::thread_api::UpstreamThreadRecord;
 
     #[test]
     fn hidden_payload_detection_stays_consistent() {

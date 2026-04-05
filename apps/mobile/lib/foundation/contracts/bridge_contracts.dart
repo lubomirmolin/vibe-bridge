@@ -35,6 +35,7 @@ enum BridgeEventKind {
   messageDelta,
   planDelta,
   userInputRequested,
+  threadMetadataChanged,
   commandDelta,
   fileChange,
   approvalRequested,
@@ -333,6 +334,8 @@ extension BridgeEventKindWire on BridgeEventKind {
         return 'plan_delta';
       case BridgeEventKind.userInputRequested:
         return 'user_input_requested';
+      case BridgeEventKind.threadMetadataChanged:
+        return 'thread_metadata_changed';
       case BridgeEventKind.commandDelta:
         return 'command_delta';
       case BridgeEventKind.fileChange:
@@ -919,11 +922,17 @@ class PendingUserInputDto {
     required this.title,
     required this.questions,
     this.detail,
+    this.workflowKind,
+    this.originalPrompt,
+    this.providerRequestId,
   });
 
   final String requestId;
   final String title;
   final String? detail;
+  final String? workflowKind;
+  final String? originalPrompt;
+  final String? providerRequestId;
   final List<UserInputQuestionDto> questions;
 
   factory PendingUserInputDto.fromJson(Map<String, dynamic> json) {
@@ -938,6 +947,9 @@ class PendingUserInputDto {
       requestId: json['request_id'] as String,
       title: json['title'] as String,
       detail: json['detail'] as String?,
+      workflowKind: json['workflow_kind'] as String?,
+      originalPrompt: json['original_prompt'] as String?,
+      providerRequestId: json['provider_request_id'] as String?,
       questions: questionsJson
           .map((item) {
             if (item is! Map<String, dynamic>) {
@@ -956,9 +968,48 @@ class PendingUserInputDto {
       'request_id': requestId,
       'title': title,
       if (detail != null) 'detail': detail,
+      if (workflowKind != null) 'workflow_kind': workflowKind,
+      if (originalPrompt != null) 'original_prompt': originalPrompt,
+      if (providerRequestId != null) 'provider_request_id': providerRequestId,
       'questions': questions
           .map((question) => question.toJson())
           .toList(growable: false),
+    };
+  }
+}
+
+class ThreadWorkflowStateDto {
+  const ThreadWorkflowStateDto({
+    required this.workflowKind,
+    required this.state,
+    this.requestId,
+    this.originalPrompt,
+    this.providerRequestId,
+  });
+
+  final String workflowKind;
+  final String state;
+  final String? requestId;
+  final String? originalPrompt;
+  final String? providerRequestId;
+
+  factory ThreadWorkflowStateDto.fromJson(Map<String, dynamic> json) {
+    return ThreadWorkflowStateDto(
+      workflowKind: json['workflow_kind'] as String,
+      state: json['state'] as String,
+      requestId: json['request_id'] as String?,
+      originalPrompt: json['original_prompt'] as String?,
+      providerRequestId: json['provider_request_id'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'workflow_kind': workflowKind,
+      'state': state,
+      if (requestId != null) 'request_id': requestId,
+      if (originalPrompt != null) 'original_prompt': originalPrompt,
+      if (providerRequestId != null) 'provider_request_id': providerRequestId,
     };
   }
 }
@@ -980,7 +1031,9 @@ class ThreadSnapshotDto {
     required this.thread,
     required this.entries,
     required this.approvals,
+    this.latestBridgeSeq,
     this.gitStatus,
+    this.workflowState,
     this.pendingUserInput,
   });
 
@@ -988,7 +1041,9 @@ class ThreadSnapshotDto {
   final ThreadDetailDto thread;
   final List<ThreadTimelineEntryDto> entries;
   final List<ApprovalSummaryDto> approvals;
+  final int? latestBridgeSeq;
   final ThreadGitStatusDto? gitStatus;
+  final ThreadWorkflowStateDto? workflowState;
   final PendingUserInputDto? pendingUserInput;
 
   factory ThreadSnapshotDto.fromJson(Map<String, dynamic> json) {
@@ -1016,6 +1071,7 @@ class ThreadSnapshotDto {
     return ThreadSnapshotDto(
       contractVersion: json['contract_version'] as String,
       thread: ThreadDetailDto.fromJson(threadJson),
+      latestBridgeSeq: (json['latest_bridge_seq'] as num?)?.toInt(),
       entries: entriesJson
           .map((item) {
             if (item is! Map<String, dynamic>) {
@@ -1041,6 +1097,11 @@ class ThreadSnapshotDto {
               json['git_status'] as Map<String, dynamic>,
             )
           : null,
+      workflowState: json['workflow_state'] is Map<String, dynamic>
+          ? ThreadWorkflowStateDto.fromJson(
+              json['workflow_state'] as Map<String, dynamic>,
+            )
+          : null,
       pendingUserInput: json['pending_user_input'] is Map<String, dynamic>
           ? PendingUserInputDto.fromJson(
               json['pending_user_input'] as Map<String, dynamic>,
@@ -1053,11 +1114,13 @@ class ThreadSnapshotDto {
     return <String, dynamic>{
       'contract_version': contractVersion,
       'thread': thread.toJson(),
+      if (latestBridgeSeq != null) 'latest_bridge_seq': latestBridgeSeq,
       'entries': entries.map((entry) => entry.toJson()).toList(growable: false),
       'approvals': approvals
           .map((approval) => approval.toJson())
           .toList(growable: false),
       if (gitStatus != null) 'git_status': gitStatus!.toJson(),
+      if (workflowState != null) 'workflow_state': workflowState!.toJson(),
       if (pendingUserInput != null)
         'pending_user_input': pendingUserInput!.toJson(),
     };
@@ -1071,6 +1134,7 @@ class TurnMutationAcceptedDto {
     required this.threadStatus,
     required this.message,
     this.turnId,
+    this.clientMessageId,
   });
 
   final String contractVersion;
@@ -1078,6 +1142,7 @@ class TurnMutationAcceptedDto {
   final ThreadStatus threadStatus;
   final String message;
   final String? turnId;
+  final String? clientMessageId;
 
   factory TurnMutationAcceptedDto.fromJson(Map<String, dynamic> json) {
     return TurnMutationAcceptedDto(
@@ -1086,6 +1151,7 @@ class TurnMutationAcceptedDto {
       threadStatus: threadStatusFromWire(json['thread_status'] as String),
       message: json['message'] as String,
       turnId: json['turn_id'] as String?,
+      clientMessageId: json['client_message_id'] as String?,
     );
   }
 
@@ -1096,6 +1162,7 @@ class TurnMutationAcceptedDto {
       'thread_status': threadStatus.wireValue,
       'message': message,
       'turn_id': turnId,
+      'client_message_id': clientMessageId,
     };
   }
 }
@@ -2031,6 +2098,8 @@ class ThreadTimelinePageDto {
     required this.contractVersion,
     required this.thread,
     required this.entries,
+    this.latestBridgeSeq,
+    this.workflowState,
     this.pendingUserInput,
     required this.nextBefore,
     required this.hasMoreBefore,
@@ -2039,6 +2108,8 @@ class ThreadTimelinePageDto {
   final String contractVersion;
   final ThreadDetailDto thread;
   final List<ThreadTimelineEntryDto> entries;
+  final int? latestBridgeSeq;
+  final ThreadWorkflowStateDto? workflowState;
   final PendingUserInputDto? pendingUserInput;
   final String? nextBefore;
   final bool hasMoreBefore;
@@ -2072,6 +2143,12 @@ class ThreadTimelinePageDto {
             return ThreadTimelineEntryDto.fromJson(item);
           })
           .toList(growable: false),
+      latestBridgeSeq: (json['latest_bridge_seq'] as num?)?.toInt(),
+      workflowState: json['workflow_state'] is Map<String, dynamic>
+          ? ThreadWorkflowStateDto.fromJson(
+              json['workflow_state'] as Map<String, dynamic>,
+            )
+          : null,
       pendingUserInput: json['pending_user_input'] is Map<String, dynamic>
           ? PendingUserInputDto.fromJson(
               json['pending_user_input'] as Map<String, dynamic>,
@@ -2087,6 +2164,8 @@ class ThreadTimelinePageDto {
       'contract_version': contractVersion,
       'thread': thread.toJson(),
       'entries': entries.map((entry) => entry.toJson()).toList(growable: false),
+      if (latestBridgeSeq != null) 'latest_bridge_seq': latestBridgeSeq,
+      if (workflowState != null) 'workflow_state': workflowState!.toJson(),
       if (pendingUserInput != null)
         'pending_user_input': pendingUserInput!.toJson(),
       'next_before': nextBefore,
@@ -2175,6 +2254,7 @@ class BridgeEventEnvelope<TPayload> {
   const BridgeEventEnvelope({
     required this.contractVersion,
     required this.eventId,
+    this.bridgeSeq,
     required this.threadId,
     required this.kind,
     required this.occurredAt,
@@ -2184,6 +2264,7 @@ class BridgeEventEnvelope<TPayload> {
 
   final String contractVersion;
   final String eventId;
+  final int? bridgeSeq;
   final String threadId;
   final BridgeEventKind kind;
   final String occurredAt;
@@ -2197,6 +2278,7 @@ class BridgeEventEnvelope<TPayload> {
     return BridgeEventEnvelope<TPayload>(
       contractVersion: json['contract_version'] as String,
       eventId: json['event_id'] as String,
+      bridgeSeq: json['bridge_seq'] as int?,
       threadId: json['thread_id'] as String,
       kind: bridgeEventKindFromWire(json['kind'] as String),
       occurredAt: json['occurred_at'] as String,
@@ -2215,6 +2297,7 @@ class BridgeEventEnvelope<TPayload> {
     return <String, dynamic>{
       'contract_version': contractVersion,
       'event_id': eventId,
+      'bridge_seq': bridgeSeq,
       'thread_id': threadId,
       'kind': kind.wireValue,
       'occurred_at': occurredAt,

@@ -1,12 +1,28 @@
 use axum::extract::ws::{Message, WebSocket};
 use serde::Deserialize;
 use serde_json::Value;
-use shared_contracts::{BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ThreadSnapshotDto};
+#[cfg(test)]
+use shared_contracts::ThreadSnapshotDto;
+use shared_contracts::{BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION};
+use std::collections::VecDeque;
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 
 #[derive(Debug, Clone)]
 pub struct EventHub {
     sender: broadcast::Sender<BridgeEventEnvelope<Value>>,
+    history: Arc<Mutex<EventHistory>>,
+    persistence: Option<Arc<PersistedEventLog>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct EventReplayState {
+    pub oldest_seq: Option<u64>,
+    pub latest_seq: Option<u64>,
+    pub replay_gap: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -16,7 +32,7 @@ pub struct EventSubscriptionQuery {
     #[serde(default)]
     pub thread_id: Option<String>,
     #[serde(default)]
-    pub after_event_id: Option<String>,
+    pub after_seq: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,15 +44,106 @@ pub enum EventSubscriptionScope {
 impl EventHub {
     pub fn new(capacity: usize) -> Self {
         let (sender, _) = broadcast::channel(capacity);
-        Self { sender }
+        Self {
+            sender,
+            history: Arc::new(Mutex::new(EventHistory::new(capacity))),
+            persistence: None,
+        }
     }
 
-    pub fn publish(&self, event: BridgeEventEnvelope<Value>) {
-        let _ = self.sender.send(event);
+    pub fn with_persistence(capacity: usize, path: impl Into<PathBuf>) -> std::io::Result<Self> {
+        let (sender, _) = broadcast::channel(capacity);
+        let persistence = Arc::new(PersistedEventLog::new(path.into()));
+        let history = persistence.load_history(capacity)?;
+        Ok(Self {
+            sender,
+            history: Arc::new(Mutex::new(history)),
+            persistence: Some(persistence),
+        })
+    }
+
+    pub fn publish(&self, mut event: BridgeEventEnvelope<Value>) {
+        let (persisted_event, rewrite_snapshot) = {
+            let mut history = self
+                .history
+                .lock()
+                .expect("event hub history lock should not be poisoned");
+            let seq = history.next_seq;
+            history.next_seq = history.next_seq.saturating_add(1);
+            event.bridge_seq = Some(seq);
+            history.events.push_back(event.clone());
+            while history.events.len() > history.capacity {
+                history.events.pop_front();
+            }
+            let rewrite_snapshot = self.persistence.as_ref().and_then(|_| {
+                (history.events.len() == history.capacity
+                    && seq % history.capacity.max(1) as u64 == 0)
+                    .then(|| history.events.iter().cloned().collect::<Vec<_>>())
+            });
+            (event, rewrite_snapshot)
+        };
+
+        if let Some(persistence) = &self.persistence {
+            if let Err(error) = persistence.append(&persisted_event) {
+                eprintln!("bridge event log append failed: {error}");
+            }
+            if let Some(snapshot) = rewrite_snapshot {
+                if let Err(error) = persistence.rewrite_tail(&snapshot) {
+                    eprintln!("bridge event log compaction failed: {error}");
+                }
+            }
+        }
+
+        let _ = self.sender.send(persisted_event);
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<BridgeEventEnvelope<Value>> {
         self.sender.subscribe()
+    }
+
+    pub fn replay_for_scope(
+        &self,
+        scope: &EventSubscriptionScope,
+        after_seq: Option<u64>,
+    ) -> (Vec<BridgeEventEnvelope<Value>>, EventReplayState) {
+        let history = self
+            .history
+            .lock()
+            .expect("event hub history lock should not be poisoned");
+        let oldest_seq = history.events.front().and_then(|event| event.bridge_seq);
+        let latest_seq = history.events.back().and_then(|event| event.bridge_seq);
+        let replay_gap = after_seq.is_some_and(|requested| {
+            latest_seq.is_some_and(|latest| latest > requested)
+                && oldest_seq.is_some_and(|oldest| requested.saturating_add(1) < oldest)
+        });
+        let events = history
+            .events
+            .iter()
+            .filter(|event| {
+                after_seq
+                    .is_none_or(|requested| event.bridge_seq.is_some_and(|seq| seq > requested))
+            })
+            .cloned()
+            .filter_map(|event| filter_event_for_scope(event, scope))
+            .collect();
+        (
+            events,
+            EventReplayState {
+                oldest_seq,
+                latest_seq,
+                replay_gap,
+            },
+        )
+    }
+
+    pub fn history_snapshot(&self) -> Vec<BridgeEventEnvelope<Value>> {
+        self.history
+            .lock()
+            .expect("event hub history lock should not be poisoned")
+            .events
+            .iter()
+            .cloned()
+            .collect()
     }
 }
 
@@ -63,6 +170,7 @@ pub async fn stream_events(
     mut receiver: broadcast::Receiver<BridgeEventEnvelope<Value>>,
     scope: EventSubscriptionScope,
     replay_events: Vec<BridgeEventEnvelope<Value>>,
+    replay_state: EventReplayState,
 ) {
     let subscribed = serde_json::json!({
         "event": "subscribed",
@@ -71,6 +179,9 @@ pub async fn stream_events(
             EventSubscriptionScope::List => "list",
             EventSubscriptionScope::Thread(thread_id) => thread_id,
         },
+        "oldest_seq": replay_state.oldest_seq,
+        "latest_seq": replay_state.latest_seq,
+        "replay_gap": replay_state.replay_gap,
     });
 
     if socket
@@ -111,6 +222,7 @@ pub async fn stream_events(
     }
 }
 
+#[cfg(test)]
 pub fn replay_events_for_scope(
     snapshot: Option<&ThreadSnapshotDto>,
     scope: &EventSubscriptionScope,
@@ -145,6 +257,7 @@ pub fn replay_events_for_scope(
         .map(|entry| BridgeEventEnvelope {
             contract_version: CONTRACT_VERSION.to_string(),
             event_id: entry.event_id.clone(),
+            bridge_seq: None,
             thread_id: snapshot.thread.thread_id.clone(),
             kind: entry.kind,
             occurred_at: entry.occurred_at.clone(),
@@ -152,6 +265,123 @@ pub fn replay_events_for_scope(
             annotations: entry.annotations.clone(),
         })
         .collect()
+}
+
+#[derive(Debug)]
+struct EventHistory {
+    next_seq: u64,
+    capacity: usize,
+    events: VecDeque<BridgeEventEnvelope<Value>>,
+}
+
+impl EventHistory {
+    fn new(capacity: usize) -> Self {
+        Self {
+            next_seq: 1,
+            capacity,
+            events: VecDeque::with_capacity(capacity),
+        }
+    }
+
+    fn from_events(
+        capacity: usize,
+        events: VecDeque<BridgeEventEnvelope<Value>>,
+        next_seq: u64,
+    ) -> Self {
+        Self {
+            next_seq,
+            capacity,
+            events,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct PersistedEventLog {
+    path: PathBuf,
+}
+
+impl PersistedEventLog {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    fn load_history(&self, capacity: usize) -> std::io::Result<EventHistory> {
+        if !self.path.exists() {
+            return Ok(EventHistory::new(capacity));
+        }
+
+        let reader = BufReader::new(File::open(&self.path)?);
+        let mut events = VecDeque::with_capacity(capacity);
+        let mut latest_seq = 0_u64;
+
+        for line in reader.lines() {
+            let line = line?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let Ok(event) = serde_json::from_str::<BridgeEventEnvelope<Value>>(trimmed) else {
+                eprintln!(
+                    "bridge event log contained malformed json and was partially skipped: {}",
+                    self.path.display()
+                );
+                continue;
+            };
+            let Some(seq) = event.bridge_seq else {
+                eprintln!(
+                    "bridge event log contained event without bridge_seq and was skipped: {}",
+                    self.path.display()
+                );
+                continue;
+            };
+            latest_seq = latest_seq.max(seq);
+            events.push_back(event);
+            while events.len() > capacity {
+                events.pop_front();
+            }
+        }
+
+        Ok(EventHistory::from_events(
+            capacity,
+            events,
+            latest_seq.saturating_add(1).max(1),
+        ))
+    }
+
+    fn append(&self, event: &BridgeEventEnvelope<Value>) -> std::io::Result<()> {
+        self.ensure_parent_directory()?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        serde_json::to_writer(&mut file, event)?;
+        file.write_all(b"\n")?;
+        file.flush()?;
+        Ok(())
+    }
+
+    fn rewrite_tail(&self, events: &[BridgeEventEnvelope<Value>]) -> std::io::Result<()> {
+        self.ensure_parent_directory()?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&self.path)?;
+        for event in events {
+            serde_json::to_writer(&mut file, event)?;
+            file.write_all(b"\n")?;
+        }
+        file.flush()?;
+        Ok(())
+    }
+
+    fn ensure_parent_directory(&self) -> std::io::Result<()> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        Ok(())
+    }
 }
 
 fn filter_event_for_scope(
@@ -178,13 +408,17 @@ fn compact_list_event(mut event: BridgeEventEnvelope<Value>) -> BridgeEventEnvel
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use serde_json::json;
     use shared_contracts::{
         BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ThreadClientKind, ThreadSnapshotDto,
     };
 
     use super::{
-        EventSubscriptionQuery, EventSubscriptionScope, compact_list_event, replay_events_for_scope,
+        EventHub, EventSubscriptionQuery, EventSubscriptionScope, compact_list_event,
+        replay_events_for_scope,
     };
 
     #[test]
@@ -192,7 +426,7 @@ mod tests {
         let query = EventSubscriptionQuery {
             scope: None,
             thread_id: None,
-            after_event_id: None,
+            after_seq: None,
         };
         assert_eq!(query.into_scope(), EventSubscriptionScope::List);
     }
@@ -202,6 +436,7 @@ mod tests {
         let event = BridgeEventEnvelope {
             contract_version: CONTRACT_VERSION.to_string(),
             event_id: "evt-1".to_string(),
+            bridge_seq: None,
             thread_id: "thread-1".to_string(),
             kind: BridgeEventKind::ThreadStatusChanged,
             occurred_at: "2026-03-21T12:00:00Z".to_string(),
@@ -218,6 +453,7 @@ mod tests {
         let event = BridgeEventEnvelope {
             contract_version: CONTRACT_VERSION.to_string(),
             event_id: "evt-2".to_string(),
+            bridge_seq: None,
             thread_id: "thread-1".to_string(),
             kind: BridgeEventKind::MessageDelta,
             occurred_at: "2026-03-21T12:00:00Z".to_string(),
@@ -250,6 +486,7 @@ mod tests {
                 client: ThreadClientKind::Cli,
                 active_turn_id: None,
             },
+            latest_bridge_seq: None,
             entries: vec![
                 shared_contracts::ThreadTimelineEntryDto {
                     event_id: "evt-1".to_string(),
@@ -270,6 +507,7 @@ mod tests {
             ],
             approvals: Vec::new(),
             git_status: None,
+            workflow_state: None,
             pending_user_input: None,
         };
 
@@ -281,5 +519,112 @@ mod tests {
 
         assert_eq!(replayed.len(), 1);
         assert_eq!(replayed[0].event_id, "evt-2");
+    }
+
+    #[test]
+    fn event_hub_assigns_bridge_sequence_and_replays_after_seq() {
+        let hub = EventHub::new(8);
+        hub.publish(BridgeEventEnvelope {
+            contract_version: CONTRACT_VERSION.to_string(),
+            event_id: "evt-1".to_string(),
+            bridge_seq: None,
+            thread_id: "thread-1".to_string(),
+            kind: BridgeEventKind::MessageDelta,
+            occurred_at: "2026-03-21T12:00:00Z".to_string(),
+            payload: json!({"text":"first"}),
+            annotations: None,
+        });
+        hub.publish(BridgeEventEnvelope {
+            contract_version: CONTRACT_VERSION.to_string(),
+            event_id: "evt-2".to_string(),
+            bridge_seq: None,
+            thread_id: "thread-1".to_string(),
+            kind: BridgeEventKind::MessageDelta,
+            occurred_at: "2026-03-21T12:00:01Z".to_string(),
+            payload: json!({"text":"second"}),
+            annotations: None,
+        });
+
+        let (replayed, replay_state) = hub.replay_for_scope(
+            &EventSubscriptionScope::Thread("thread-1".to_string()),
+            Some(1),
+        );
+
+        assert_eq!(replayed.len(), 1);
+        assert_eq!(replayed[0].event_id, "evt-2");
+        assert_eq!(replayed[0].bridge_seq, Some(2));
+        assert_eq!(replay_state.latest_seq, Some(2));
+        assert_eq!(replay_state.oldest_seq, Some(1));
+        assert!(!replay_state.replay_gap);
+    }
+
+    #[test]
+    fn persisted_event_hub_restores_replay_history_and_next_sequence() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "bridge-event-log-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time should be after unix epoch")
+                .as_nanos()
+        ));
+        let log_path = temp_root.join("state").join("thread-events.jsonl");
+
+        let hub = EventHub::with_persistence(8, &log_path)
+            .expect("persistent event hub should initialize");
+        hub.publish(BridgeEventEnvelope {
+            contract_version: CONTRACT_VERSION.to_string(),
+            event_id: "evt-1".to_string(),
+            bridge_seq: None,
+            thread_id: "thread-1".to_string(),
+            kind: BridgeEventKind::MessageDelta,
+            occurred_at: "2026-03-21T12:00:00Z".to_string(),
+            payload: json!({"text":"first"}),
+            annotations: None,
+        });
+        hub.publish(BridgeEventEnvelope {
+            contract_version: CONTRACT_VERSION.to_string(),
+            event_id: "evt-2".to_string(),
+            bridge_seq: None,
+            thread_id: "thread-1".to_string(),
+            kind: BridgeEventKind::MessageDelta,
+            occurred_at: "2026-03-21T12:00:01Z".to_string(),
+            payload: json!({"text":"second"}),
+            annotations: None,
+        });
+        drop(hub);
+
+        let reloaded = EventHub::with_persistence(8, &log_path)
+            .expect("persistent event hub should reload existing history");
+        let (replayed, replay_state) = reloaded.replay_for_scope(
+            &EventSubscriptionScope::Thread("thread-1".to_string()),
+            Some(1),
+        );
+
+        assert_eq!(replayed.len(), 1);
+        assert_eq!(replayed[0].event_id, "evt-2");
+        assert_eq!(replayed[0].bridge_seq, Some(2));
+        assert_eq!(replay_state.oldest_seq, Some(1));
+        assert_eq!(replay_state.latest_seq, Some(2));
+
+        reloaded.publish(BridgeEventEnvelope {
+            contract_version: CONTRACT_VERSION.to_string(),
+            event_id: "evt-3".to_string(),
+            bridge_seq: None,
+            thread_id: "thread-1".to_string(),
+            kind: BridgeEventKind::MessageDelta,
+            occurred_at: "2026-03-21T12:00:02Z".to_string(),
+            payload: json!({"text":"third"}),
+            annotations: None,
+        });
+        let (replayed_after_restart, _) = reloaded.replay_for_scope(
+            &EventSubscriptionScope::Thread("thread-1".to_string()),
+            Some(2),
+        );
+
+        assert_eq!(replayed_after_restart.len(), 1);
+        assert_eq!(replayed_after_restart[0].event_id, "evt-3");
+        assert_eq!(replayed_after_restart[0].bridge_seq, Some(3));
+
+        let _ = fs::remove_dir_all(temp_root);
     }
 }

@@ -1,4 +1,9 @@
-use super::super::mapping::{payload_contains_hidden_message, payload_primary_text};
+use super::super::legacy_archive::{
+    load_thread_snapshot, load_thread_snapshot_for_id,
+    map_thread_detail as map_legacy_thread_detail, map_thread_summary as map_legacy_thread_summary,
+    map_timeline_entry, resolve_codex_home_dir,
+};
+use super::super::mapping::payload_contains_hidden_message;
 use super::super::*;
 use super::models::fallback_model_options;
 pub(super) fn fetch_thread_summaries(
@@ -68,11 +73,13 @@ pub(crate) fn fetch_thread_summaries_from_archive(
         CodexRuntimeMode::Spawn => None,
         _ => config.endpoint.as_deref(),
     };
-    Ok(
-        ThreadApiService::from_codex_app_server(&config.command, &config.args, endpoint)?
-            .list_response()
-            .threads,
-    )
+    let codex_home = resolve_codex_home_dir()?;
+    let (thread_records, _) =
+        load_thread_snapshot(&config.command, &config.args, endpoint, &codex_home)?;
+    Ok(thread_records
+        .iter()
+        .map(map_legacy_thread_summary)
+        .collect())
 }
 
 fn merge_thread_summaries(
@@ -100,42 +107,49 @@ pub(crate) fn fetch_thread_snapshot_from_archive(
         CodexRuntimeMode::Spawn => None,
         _ => config.endpoint.as_deref(),
     };
-    let service = ThreadApiService::from_codex_app_server_thread(
+    let codex_home = resolve_codex_home_dir()?;
+    let (thread_records, timeline_by_thread_id) = load_thread_snapshot_for_id(
         &config.command,
         &config.args,
         endpoint,
+        &codex_home,
         thread_id,
     )?;
-    let detail = service
-        .detail_response(thread_id)
+    let thread_record = thread_records
+        .into_iter()
+        .find(|record| record.id == thread_id)
         .ok_or_else(|| format!("thread {thread_id} not found"))?;
-    let timeline = service
-        .timeline_page_response(thread_id, None, 500)
-        .ok_or_else(|| format!("thread {thread_id} not found"))?;
+    let timeline_entries = timeline_by_thread_id
+        .get(thread_id)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
     let (entries, pending_user_input) = filter_hidden_timeline_entries_and_extract_pending_input(
         thread_id,
-        timeline.entries,
-        timeline.pending_user_input,
+        timeline_entries
+            .iter()
+            .map(map_timeline_entry)
+            .collect::<Vec<_>>(),
+        None,
     );
-    let git_status = service
-        .git_status_response(thread_id)
-        .map(|response| GitStatusDto {
-            workspace: response.repository.workspace,
-            repository: response.repository.repository,
-            branch: response.repository.branch,
-            remote: (!response.repository.remote.trim().is_empty())
-                .then_some(response.repository.remote),
-            dirty: response.status.dirty,
-            ahead_by: response.status.ahead_by,
-            behind_by: response.status.behind_by,
-        });
+    let git_status = Some(GitStatusDto {
+        workspace: thread_record.workspace_path.clone(),
+        repository: thread_record.repository_name.clone(),
+        branch: thread_record.branch_name.clone(),
+        remote: (!thread_record.remote_name.trim().is_empty())
+            .then_some(thread_record.remote_name.clone()),
+        dirty: thread_record.git_dirty,
+        ahead_by: thread_record.git_ahead_by,
+        behind_by: thread_record.git_behind_by,
+    });
 
     Ok(ThreadSnapshotDto {
         contract_version: CONTRACT_VERSION.to_string(),
-        thread: detail.thread,
+        thread: map_legacy_thread_detail(&thread_record),
+        latest_bridge_seq: None,
         entries,
         approvals: Vec::new(),
         git_status,
+        workflow_state: None,
         pending_user_input,
     })
 }
@@ -145,26 +159,16 @@ fn filter_hidden_timeline_entries_and_extract_pending_input(
     entries: Vec<ThreadTimelineEntryDto>,
     pending_user_input: Option<PendingUserInputDto>,
 ) -> (Vec<ThreadTimelineEntryDto>, Option<PendingUserInputDto>) {
-    let mut next_pending_user_input = pending_user_input;
     let visible_entries = entries
         .into_iter()
         .filter(|entry| {
-            if entry.kind != BridgeEventKind::MessageDelta
+            entry.kind != BridgeEventKind::MessageDelta
                 || !payload_contains_hidden_message(&entry.payload)
-            {
-                return true;
-            }
-
-            if next_pending_user_input.is_none()
-                && let Some(message_text) = payload_primary_text(&entry.payload)
-            {
-                next_pending_user_input = parse_pending_user_input_payload(message_text, thread_id);
-            }
-            false
         })
         .collect();
 
-    (visible_entries, next_pending_user_input)
+    let _ = thread_id;
+    (visible_entries, pending_user_input)
 }
 
 pub(super) fn fetch_model_catalog(transport: &mut CodexJsonTransport) -> Vec<ModelOptionDto> {

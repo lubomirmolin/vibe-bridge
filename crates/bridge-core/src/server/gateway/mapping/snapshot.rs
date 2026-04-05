@@ -1,10 +1,14 @@
 use super::super::codex::normalize_generated_thread_title;
-use super::super::*;
-use std::collections::HashMap;
-use super::timeline::{
-    normalize_codex_item_payload, payload_contains_hidden_message, payload_primary_text,
-    summarize_live_payload, timeline_annotations_for_event,
+use super::super::legacy_archive::{
+    load_archive_timeline_entries_for_session_path, load_archive_timeline_entries_for_thread,
 };
+use super::super::*;
+use super::timeline::{
+    normalize_codex_item_payload, payload_contains_hidden_message, summarize_live_payload,
+    timeline_annotations_for_event,
+};
+use shared_contracts::ThreadClientKind;
+use std::collections::HashMap;
 
 pub(crate) fn is_placeholder_thread_title(title: &str) -> bool {
     let normalized = title.trim().to_lowercase();
@@ -63,6 +67,18 @@ pub(crate) fn map_thread_summary(thread: CodexThread) -> ThreadSummaryDto {
     }
 }
 
+pub(crate) fn map_thread_client_kind_from_source(source: &str) -> ThreadClientKind {
+    match source.trim().to_ascii_lowercase().as_str() {
+        "cli" => ThreadClientKind::Cli,
+        "vscode" => ThreadClientKind::Vscode,
+        "remote_control" | "remote-control" => ThreadClientKind::RemoteControl,
+        "archive" => ThreadClientKind::Archive,
+        "bridge" => ThreadClientKind::Bridge,
+        "desktop_ipc" | "codex_app_ipc" => ThreadClientKind::DesktopIpc,
+        _ => ThreadClientKind::Unknown,
+    }
+}
+
 pub(crate) fn map_thread_snapshot(thread: CodexThread) -> ThreadSnapshotDto {
     let detail = map_thread_detail(&thread);
     let pending_user_input = pending_user_input_from_thread(&thread);
@@ -75,42 +91,42 @@ pub(crate) fn map_thread_snapshot(thread: CodexThread) -> ThreadSnapshotDto {
             .filter(|path| path.is_absolute() && path.exists())
             .map(|path| load_archive_timeline_entries_for_session_path(&thread.id, path))
             .unwrap_or_else(|| load_archive_timeline_entries_for_thread(&thread.id));
-        merge_rpc_and_archive_timeline_entries(rpc_entries, archive_entries)
+        select_codex_timeline_entries(detail.status, rpc_entries, archive_entries)
     };
     let git_status = Some(map_git_status(&thread));
 
     ThreadSnapshotDto {
         contract_version: CONTRACT_VERSION.to_string(),
         thread: detail,
+        latest_bridge_seq: None,
         entries,
         approvals: Vec::<ApprovalSummaryDto>::new(),
         git_status,
+        workflow_state: None,
         pending_user_input,
     }
 }
 
-fn pending_user_input_from_thread(thread: &CodexThread) -> Option<PendingUserInputDto> {
-    for turn in thread.turns.iter().rev() {
-        for item in turn.items.iter().rev() {
-            let Some((kind, payload)) = normalize_codex_item_payload(item) else {
-                continue;
-            };
-            if kind == BridgeEventKind::MessageDelta && payload_contains_hidden_message(&payload) {
-                let Some(message_text) = payload_primary_text(&payload) else {
-                    continue;
-                };
-                if let Some(questionnaire) =
-                    parse_pending_user_input_payload(message_text, &thread.id)
-                {
-                    return Some(questionnaire);
-                }
-                continue;
-            }
-
-            return None;
-        }
+pub(crate) fn select_codex_timeline_entries(
+    thread_status: ThreadStatus,
+    rpc_entries: Vec<ThreadTimelineEntryDto>,
+    archive_entries: Vec<ThreadTimelineEntryDto>,
+) -> Vec<ThreadTimelineEntryDto> {
+    if archive_entries.is_empty() {
+        return sort_timeline_entries(rpc_entries);
+    }
+    if thread_status != ThreadStatus::Running {
+        return sort_timeline_entries(archive_entries);
+    }
+    if rpc_entries.is_empty() {
+        return sort_timeline_entries(archive_entries);
     }
 
+    merge_rpc_and_archive_timeline_entries(rpc_entries, archive_entries)
+}
+
+fn pending_user_input_from_thread(thread: &CodexThread) -> Option<PendingUserInputDto> {
+    let _ = thread;
     None
 }
 
@@ -134,17 +150,60 @@ pub(crate) fn merge_rpc_and_archive_timeline_entries(
         merged_by_id
             .entry(archive_entry.event_id.clone())
             .and_modify(|rpc_entry| {
-                if archive_entry.occurred_at > rpc_entry.occurred_at
-                    || (archive_entry.occurred_at == rpc_entry.occurred_at
-                        && timeline_entry_score(&archive_entry) >= timeline_entry_score(rpc_entry))
-                {
-                    *rpc_entry = archive_entry.clone();
-                }
+                *rpc_entry = merge_codex_timeline_entries(rpc_entry, &archive_entry);
             })
             .or_insert(archive_entry);
     }
 
     sort_timeline_entries(merged_by_id.into_values().collect())
+}
+
+fn merge_codex_timeline_entries(
+    rpc_entry: &ThreadTimelineEntryDto,
+    archive_entry: &ThreadTimelineEntryDto,
+) -> ThreadTimelineEntryDto {
+    let prefer_archive = archive_entry.occurred_at > rpc_entry.occurred_at
+        || (archive_entry.occurred_at == rpc_entry.occurred_at
+            && timeline_entry_score(archive_entry) >= timeline_entry_score(rpc_entry));
+    let preferred_entry = if prefer_archive {
+        archive_entry
+    } else {
+        rpc_entry
+    };
+    let fallback_summary = if prefer_archive {
+        &rpc_entry.summary
+    } else {
+        &archive_entry.summary
+    };
+
+    ThreadTimelineEntryDto {
+        event_id: preferred_entry.event_id.clone(),
+        kind: preferred_entry.kind,
+        occurred_at: preferred_entry.occurred_at.clone(),
+        summary: if !preferred_entry.summary.trim().is_empty() {
+            preferred_entry.summary.clone()
+        } else {
+            fallback_summary.clone()
+        },
+        payload: merge_codex_timeline_payload(&rpc_entry.payload, &archive_entry.payload),
+        annotations: archive_entry
+            .annotations
+            .clone()
+            .or_else(|| rpc_entry.annotations.clone()),
+    }
+}
+
+fn merge_codex_timeline_payload(rpc_payload: &Value, archive_payload: &Value) -> Value {
+    match (rpc_payload, archive_payload) {
+        (Value::Object(rpc_object), Value::Object(archive_object)) => {
+            let mut merged = rpc_object.clone();
+            for (key, value) in archive_object {
+                merged.insert(key.clone(), value.clone());
+            }
+            Value::Object(merged)
+        }
+        _ => archive_payload.clone(),
+    }
 }
 
 fn sort_timeline_entries(mut entries: Vec<ThreadTimelineEntryDto>) -> Vec<ThreadTimelineEntryDto> {

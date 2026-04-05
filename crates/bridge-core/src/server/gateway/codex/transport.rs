@@ -29,36 +29,3 @@ pub(super) fn connect_read_transport(
         }
     }
 }
-
-pub(super) fn take_reserved_transport(
-    reserved_transports: &Arc<Mutex<HashMap<String, ReservedTransport>>>,
-    thread_id: &str,
-) -> Option<CodexJsonTransport> {
-    let mut reserved = reserved_transports
-        .lock()
-        .expect("reserved transport lock should not be poisoned");
-    prune_reserved_transports(&mut reserved);
-    reserved.remove(thread_id).map(|entry| entry.transport)
-}
-
-pub(super) fn reserve_transport(
-    reserved_transports: &Arc<Mutex<HashMap<String, ReservedTransport>>>,
-    thread_id: String,
-    transport: CodexJsonTransport,
-) {
-    let mut reserved = reserved_transports
-        .lock()
-        .expect("reserved transport lock should not be poisoned");
-    prune_reserved_transports(&mut reserved);
-    reserved.insert(
-        thread_id,
-        ReservedTransport {
-            reserved_at: Instant::now(),
-            transport,
-        },
-    );
-}
-
-fn prune_reserved_transports(reserved: &mut HashMap<String, ReservedTransport>) {
-    reserved.retain(|_, entry| entry.reserved_at.elapsed() <= CodexGateway::RESERVED_TRANSPORT_TTL);
-}

@@ -251,11 +251,14 @@ void main() {
         'Ship the fix',
       );
       expect(submitted, isTrue);
+      final pendingClientMessageId =
+          detailApi.startTurnClientMessageIdsByThreadId['thread-123']?.single;
 
       liveStream.emit(
         const BridgeEventEnvelope<Map<String, dynamic>>(
           contractVersion: contractVersion,
           eventId: 'evt-assistant-live',
+          bridgeSeq: 5,
           threadId: 'thread-123',
           kind: BridgeEventKind.messageDelta,
           occurredAt: '2026-03-18T10:04:01Z',
@@ -272,6 +275,37 @@ void main() {
             detailController.state.liveConnectionState ==
                 LiveConnectionState.connected,
         timeout: const Duration(seconds: 6),
+      );
+      liveStream.emit(
+        BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-user-canonical',
+          bridgeSeq: 6,
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:04:00Z',
+          payload: {
+            'type': 'userMessage',
+            'role': 'user',
+            'text': 'Ship the fix',
+            'client_message_id': pendingClientMessageId,
+          },
+        ),
+      );
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-assistant-canonical',
+          bridgeSeq: 7,
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:04:01Z',
+          payload: {
+            'type': 'agentMessage',
+            'role': 'assistant',
+            'text': 'Patched tests',
+          },
+        ),
       );
       await _waitUntil(
         () =>
@@ -296,7 +330,7 @@ void main() {
       expect(promptBodies, ['Ship the fix']);
       expect(assistantBodies, ['Patched tests']);
       expect(detailController.state.items, hasLength(2));
-      expect(liveStream.subscribedAfterEventIds, [null, 'evt-assistant-live']);
+      expect(liveStream.subscribedAfterSeqs, [null, 5]);
     },
   );
 
@@ -2331,6 +2365,8 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
   int timelineFetchCount = 0;
   final Map<String, List<String>> startTurnPromptsByThreadId =
       <String, List<String>>{};
+  final Map<String, List<String?>> startTurnClientMessageIdsByThreadId =
+      <String, List<String?>>{};
   final Map<String, List<List<String>>> startTurnImagesByThreadId =
       <String, List<List<String>>>{};
 
@@ -2496,6 +2532,8 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    String? clientMessageId,
+    String? clientTurnIntentId,
     TurnMode mode = TurnMode.act,
     List<String> images = const <String>[],
     String? model,
@@ -2504,6 +2542,9 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     startTurnPromptsByThreadId
         .putIfAbsent(threadId, () => <String>[])
         .add(prompt);
+    startTurnClientMessageIdsByThreadId
+        .putIfAbsent(threadId, () => <String?>[])
+        .add(clientMessageId);
     startTurnImagesByThreadId
         .putIfAbsent(threadId, () => <List<String>>[])
         .add(List<String>.unmodifiable(images));
@@ -2616,16 +2657,16 @@ class ScriptedThreadLiveStream implements ThreadLiveStream {
       <StreamController<BridgeEventEnvelope<Map<String, dynamic>>>>[];
 
   int totalSubscriptions = 0;
-  final List<String?> subscribedAfterEventIds = <String?>[];
+  final List<int?> subscribedAfterSeqs = <int?>[];
 
   @override
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
     String? threadId,
-    String? afterEventId,
+    int? afterSeq,
   }) async {
     totalSubscriptions += 1;
-    subscribedAfterEventIds.add(afterEventId);
+    subscribedAfterSeqs.add(afterSeq);
     final controller =
         StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();
     _controllers.add(controller);

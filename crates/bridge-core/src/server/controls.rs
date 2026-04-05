@@ -5,7 +5,9 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use shared_contracts::{BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, GitStatusDto};
 
-use crate::thread_api::{GitStatusResponse, MutationResultResponse, RepositoryContextDto};
+use crate::server::contracts::{
+    GitMutationStatusDto, GitStatusResponse, MutationResultResponse, RepositoryContextDto,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -69,7 +71,7 @@ pub struct ApprovalRecordDto {
     pub requested_at: String,
     pub resolved_at: Option<String>,
     pub repository: RepositoryContextDto,
-    pub git_status: crate::thread_api::GitStatusDto,
+    pub git_status: GitMutationStatusDto,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -124,7 +126,7 @@ pub fn read_git_state(workspace: &str, thread_id: &str) -> Result<ResolvedGitSta
         branch: branch.clone(),
         remote: remote_name.clone().unwrap_or_else(|| "unknown".to_string()),
     };
-    let mutation_status = crate::thread_api::GitStatusDto {
+    let mutation_status = GitMutationStatusDto {
         dirty,
         ahead_by,
         behind_by,
@@ -140,12 +142,7 @@ pub fn read_git_state(workspace: &str, thread_id: &str) -> Result<ResolvedGitSta
             ahead_by,
             behind_by,
         },
-        response: GitStatusResponse {
-            contract_version: CONTRACT_VERSION.to_string(),
-            thread_id: thread_id.to_string(),
-            repository: repository_context,
-            status: mutation_status,
-        },
+        response: GitStatusResponse::new(thread_id, repository_context, mutation_status),
         branch,
         remote_name,
     })
@@ -257,6 +254,7 @@ fn build_executed_mutation(
     let command_event = BridgeEventEnvelope {
         contract_version: CONTRACT_VERSION.to_string(),
         event_id: format!("{thread_id}-{}-{occurred_at}", context.operation),
+        bridge_seq: None,
         thread_id: thread_id.to_string(),
         kind: BridgeEventKind::CommandDelta,
         occurred_at: occurred_at.to_string(),
@@ -274,16 +272,15 @@ fn build_executed_mutation(
 
     Ok(ExecutedGitMutation {
         snapshot_status: state.snapshot_status,
-        mutation: MutationResultResponse {
-            contract_version: CONTRACT_VERSION.to_string(),
-            thread_id: thread_id.to_string(),
-            operation: context.operation.to_string(),
-            outcome: "success".to_string(),
-            message: context.message,
+        mutation: MutationResultResponse::new(
+            thread_id,
+            context.operation,
+            "success",
+            context.message,
             thread_status,
-            repository: state.response.repository,
-            status: state.response.status,
-        },
+            state.response.repository,
+            state.response.status,
+        ),
         command_event,
     })
 }
@@ -423,7 +420,7 @@ fn non_repository_git_state(workspace: &Path, thread_id: &str) -> ResolvedGitSta
         branch: "unknown".to_string(),
         remote: "local".to_string(),
     };
-    let status = crate::thread_api::GitStatusDto {
+    let status = GitMutationStatusDto {
         dirty: false,
         ahead_by: 0,
         behind_by: 0,
@@ -439,12 +436,7 @@ fn non_repository_git_state(workspace: &Path, thread_id: &str) -> ResolvedGitSta
             ahead_by: 0,
             behind_by: 0,
         },
-        response: GitStatusResponse {
-            contract_version: CONTRACT_VERSION.to_string(),
-            thread_id: thread_id.to_string(),
-            repository: repository_context,
-            status,
-        },
+        response: GitStatusResponse::new(thread_id, repository_context, status),
         branch: "unknown".to_string(),
         remote_name: None,
     }

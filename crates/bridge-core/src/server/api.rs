@@ -23,8 +23,9 @@ use crate::pairing::{
 };
 use crate::policy::{PolicyAction, PolicyDecision};
 use crate::server::codex_usage::CodexUsageError;
+use crate::server::contracts::GitStatusResponse;
 use crate::server::controls::{ApprovalRecordDto, ApprovalResolutionResponse};
-use crate::server::events::{EventSubscriptionQuery, replay_events_for_scope, stream_events};
+use crate::server::events::{EventSubscriptionQuery, stream_events};
 use crate::server::state::BridgeAppState;
 
 pub fn router(state: BridgeAppState) -> Router {
@@ -468,6 +469,10 @@ struct StartTurnRequest {
     effort: Option<String>,
     #[serde(default)]
     mode: Option<TurnMode>,
+    #[serde(default)]
+    client_message_id: Option<String>,
+    #[serde(default)]
+    client_turn_intent_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -599,12 +604,14 @@ async fn start_turn(
 ) -> Result<Json<TurnMutationAcceptedDto>, (StatusCode, Json<ErrorEnvelope>)> {
     let request_id = format!("turn-{}", &Uuid::new_v4().simple().to_string()[..12]);
     eprintln!(
-        "bridge api start_turn received request_id={request_id} thread_id={thread_id} mode={:?} prompt_chars={} images={} model={} effort={}",
+        "bridge api start_turn received request_id={request_id} thread_id={thread_id} mode={:?} prompt_chars={} images={} model={} effort={} client_message_id={} client_turn_intent_id={}",
         request.mode.unwrap_or(TurnMode::Act),
         request.prompt.trim().chars().count(),
         request.images.len(),
         request.model.as_deref().unwrap_or("<default>"),
-        request.effort.as_deref().unwrap_or("<default>")
+        request.effort.as_deref().unwrap_or("<default>"),
+        request.client_message_id.as_deref().unwrap_or("<none>"),
+        request.client_turn_intent_id.as_deref().unwrap_or("<none>")
     );
     match state
         .start_turn(
@@ -623,6 +630,16 @@ async fn start_turn(
                 .map(str::trim)
                 .filter(|value| !value.is_empty()),
             request.mode.unwrap_or(TurnMode::Act),
+            request
+                .client_message_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
+            request
+                .client_turn_intent_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
         )
         .await
     {
@@ -747,7 +764,7 @@ async fn start_commit_action(
 async fn thread_git_status(
     State(state): State<BridgeAppState>,
     Path(thread_id): Path<String>,
-) -> Result<Json<crate::thread_api::GitStatusResponse>, (StatusCode, Json<ErrorEnvelope>)> {
+) -> Result<Json<GitStatusResponse>, (StatusCode, Json<ErrorEnvelope>)> {
     state
         .git_status(&thread_id)
         .await
@@ -1016,17 +1033,10 @@ async fn events(
     Query(query): Query<EventSubscriptionQuery>,
 ) -> Response {
     let receiver = state.event_hub().subscribe();
-    let after_event_id = query.after_event_id.clone();
+    let after_seq = query.after_seq;
     let scope = query.into_scope();
-    let replay_snapshot = match &scope {
-        crate::server::events::EventSubscriptionScope::Thread(thread_id) => {
-            state.projections().snapshot(thread_id).await
-        }
-        crate::server::events::EventSubscriptionScope::List => None,
-    };
-    let replay_events =
-        replay_events_for_scope(replay_snapshot.as_ref(), &scope, after_event_id.as_deref());
-    ws.on_upgrade(move |socket| stream_events(socket, receiver, scope, replay_events))
+    let (replay_events, replay_state) = state.event_hub().replay_for_scope(&scope, after_seq);
+    ws.on_upgrade(move |socket| stream_events(socket, receiver, scope, replay_events, replay_state))
 }
 
 #[derive(Debug, Serialize)]
@@ -2438,6 +2448,7 @@ mod tests {
             codex: BridgeCodexConfig::default(),
         };
 
+        let state_directory = config.state_directory.clone();
         BridgeAppState::new(
             config.codex,
             crate::pairing::PairingSessionService::new(
@@ -2448,6 +2459,7 @@ mod tests {
             ),
             config.pairing_route,
             speech,
+            state_directory,
         )
     }
 
@@ -2488,6 +2500,7 @@ mod tests {
             },
         };
 
+        let state_directory = config.state_directory.clone();
         BridgeAppState::new(
             config.codex,
             crate::pairing::PairingSessionService::new(
@@ -2498,6 +2511,7 @@ mod tests {
             ),
             config.pairing_route,
             speech,
+            state_directory,
         )
     }
 
@@ -2534,6 +2548,7 @@ mod tests {
                 last_turn_summary: String::new(),
                 active_turn_id: None,
             },
+            latest_bridge_seq: None,
             entries: vec![],
             approvals: vec![],
             git_status: Some(shared_contracts::GitStatusDto {
@@ -2545,6 +2560,7 @@ mod tests {
                 ahead_by: 0,
                 behind_by: 0,
             }),
+            workflow_state: None,
             pending_user_input: None,
         };
         state.projections().put_snapshot(snapshot.clone()).await;
@@ -2599,7 +2615,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn thread_history_route_hides_plan_protocol_messages_and_surfaces_pending_input() {
+    async fn thread_history_route_hides_legacy_plan_protocol_messages_without_pending_input() {
         let script_path = write_fake_codex_script(
             "plan-history",
             r#"#!/usr/bin/env python3
@@ -2673,14 +2689,7 @@ for line in sys.stdin:
         let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
 
         assert_eq!(decoded["entries"], json!([]));
-        assert_eq!(
-            decoded["pending_user_input"]["title"],
-            "Clarify the implementation"
-        );
-        assert_eq!(
-            decoded["pending_user_input"]["questions"][0]["question_id"],
-            "scope"
-        );
+        assert!(decoded["pending_user_input"].is_null());
         assert_eq!(decoded["thread"]["thread_id"], "codex:thread-plan");
         assert_eq!(decoded["thread"]["native_thread_id"], "thread-plan");
 

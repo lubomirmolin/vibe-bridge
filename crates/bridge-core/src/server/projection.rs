@@ -4,14 +4,14 @@ use std::sync::Arc;
 use serde_json::Value;
 use shared_contracts::{
     AccessMode, ApprovalStatus, ApprovalSummaryDto, BridgeEventEnvelope, BridgeEventKind,
-    PendingUserInputDto, ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto, ThreadTimelineEntryDto,
-    ThreadTimelinePageDto,
+    PendingUserInputDto, ThreadDetailDto, ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto,
+    ThreadTimelineEntryDto, ThreadTimelinePageDto, ThreadWorkflowStateDto,
 };
 use tokio::sync::RwLock;
 
 use crate::incremental_text::merge_incremental_text;
+use crate::server::contracts::{GitMutationStatusDto, RepositoryContextDto};
 use crate::server::controls::ApprovalRecordDto;
-use crate::thread_api::RepositoryContextDto;
 
 #[derive(Debug, Default, Clone)]
 pub struct ProjectionStore {
@@ -82,6 +82,17 @@ impl ProjectionStore {
 
     pub async fn put_snapshot(&self, snapshot: ThreadSnapshotDto) {
         let mut state = self.inner.write().await;
+        let mut snapshot = snapshot;
+        if let Some(previous_snapshot) = state.snapshots.get(&snapshot.thread.thread_id) {
+            snapshot.latest_bridge_seq = combine_latest_bridge_seq(
+                previous_snapshot.latest_bridge_seq,
+                snapshot.latest_bridge_seq,
+            );
+            snapshot.workflow_state = snapshot
+                .workflow_state
+                .clone()
+                .or_else(|| previous_snapshot.workflow_state.clone());
+        }
         for approval in &snapshot.approvals {
             state
                 .approvals
@@ -129,6 +140,8 @@ impl ProjectionStore {
             contract_version: snapshot.contract_version.clone(),
             thread: snapshot.thread.clone(),
             entries: snapshot.entries[start_index..end_index].to_vec(),
+            latest_bridge_seq: snapshot.latest_bridge_seq,
+            workflow_state: snapshot.workflow_state.clone(),
             pending_user_input: snapshot.pending_user_input.clone(),
             next_before,
             has_more_before,
@@ -137,107 +150,42 @@ impl ProjectionStore {
 
     pub async fn apply_live_event(&self, event: &BridgeEventEnvelope<Value>) {
         let mut state = self.inner.write().await;
-        let approval_update = (event.kind == BridgeEventKind::ApprovalRequested)
-            .then(|| approval_summary_from_payload(&event.payload, &event.thread_id))
-            .flatten();
-        if let Some(summary) = state.summaries.get_mut(&event.thread_id) {
-            summary.updated_at = event.occurred_at.clone();
-            if let Some(next_title) = event
-                .payload
-                .get("title")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|title| !title.is_empty())
-            {
-                summary.title = next_title.to_string();
-            }
-            if event.kind == BridgeEventKind::ThreadStatusChanged
-                && let Some(next_status) = event
-                    .payload
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .map(parse_thread_status)
-            {
-                summary.status = next_status;
-            }
-        }
+        ensure_snapshot_for_thread_from_summary_locked(
+            &mut state,
+            &event.thread_id,
+            AccessMode::ControlWithApprovals,
+        );
+        apply_live_event_locked(&mut state, event);
+    }
 
-        if let Some(snapshot) = state.snapshots.get_mut(&event.thread_id) {
-            snapshot.thread.updated_at = event.occurred_at.clone();
-            if let Some(next_title) = event
-                .payload
-                .get("title")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|title| !title.is_empty())
-            {
-                snapshot.thread.title = next_title.to_string();
-            }
-            if event.kind == BridgeEventKind::ThreadStatusChanged
-                && let Some(next_status) = event
-                    .payload
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .map(parse_thread_status)
-            {
-                snapshot.thread.status = next_status;
-                if next_status != ThreadStatus::Running {
-                    snapshot.thread.active_turn_id = None;
-                }
-            }
+    pub async fn hydrate_from_events(
+        &self,
+        events: &[BridgeEventEnvelope<Value>],
+        access_mode: AccessMode,
+    ) {
+        let mut ordered_events = events.to_vec();
+        ordered_events.sort_by(|left, right| {
+            let left_key = (
+                left.bridge_seq.unwrap_or(u64::MAX),
+                &left.occurred_at,
+                &left.event_id,
+            );
+            let right_key = (
+                right.bridge_seq.unwrap_or(u64::MAX),
+                &right.occurred_at,
+                &right.event_id,
+            );
+            left_key.cmp(&right_key)
+        });
 
-            if event.kind == BridgeEventKind::UserInputRequested {
-                snapshot.pending_user_input = pending_user_input_from_payload(&event.payload);
-            } else {
-                let existing_entry_index = snapshot
-                    .entries
-                    .iter()
-                    .position(|entry| entry.event_id == event.event_id);
-                let aggregated_payload = merge_live_payload(
-                    existing_entry_index
-                        .and_then(|index| snapshot.entries.get(index))
-                        .map(|entry| &entry.payload),
-                    event.kind,
-                    &event.payload,
-                );
-                let summary = summarize_live_payload(event.kind, &aggregated_payload);
-                if !summary.trim().is_empty() {
-                    snapshot.thread.last_turn_summary = summary.clone();
-                }
-
-                let next_entry = ThreadTimelineEntryDto {
-                    event_id: event.event_id.clone(),
-                    kind: event.kind,
-                    occurred_at: event.occurred_at.clone(),
-                    summary,
-                    payload: aggregated_payload,
-                    annotations: event.annotations.clone(),
-                };
-
-                if let Some(index) = existing_entry_index {
-                    snapshot.entries[index] = next_entry;
-                } else {
-                    snapshot.entries.push(next_entry);
-                }
-            }
-
-            if let Some(approval) = approval_update.as_ref() {
-                if let Some(index) = snapshot
-                    .approvals
-                    .iter()
-                    .position(|existing| existing.approval_id == approval.approval_id)
-                {
-                    snapshot.approvals[index] = approval.clone();
-                } else {
-                    snapshot.approvals.push(approval.clone());
-                }
-            }
-        }
-
-        if let Some(approval) = approval_update {
-            state
-                .approvals
-                .insert(approval.approval_id.clone(), approval);
+        let mut state = self.inner.write().await;
+        for event in &ordered_events {
+            ensure_snapshot_for_thread_from_summary_locked(
+                &mut state,
+                &event.thread_id,
+                access_mode,
+            );
+            apply_live_event_locked(&mut state, event);
         }
     }
 
@@ -328,11 +276,27 @@ impl ProjectionStore {
         }
     }
 
+    pub async fn list_pending_user_inputs(&self) -> Vec<(String, PendingUserInputDto)> {
+        let state = self.inner.read().await;
+        let mut pending = state
+            .snapshots
+            .iter()
+            .filter_map(|(thread_id, snapshot)| {
+                snapshot
+                    .pending_user_input
+                    .clone()
+                    .map(|pending| (thread_id.clone(), pending))
+            })
+            .collect::<Vec<_>>();
+        pending.sort_by(|left, right| left.0.cmp(&right.0));
+        pending
+    }
+
     pub async fn update_git_state(
         &self,
         thread_id: &str,
         repository: &RepositoryContextDto,
-        status: &crate::thread_api::GitStatusDto,
+        status: &GitMutationStatusDto,
         occurred_at: Option<&str>,
         last_turn_summary: Option<&str>,
     ) {
@@ -383,6 +347,174 @@ fn should_preserve_live_running_snapshot(
     summary: &ThreadSummaryDto,
 ) -> bool {
     snapshot.thread.status == ThreadStatus::Running && summary.status == ThreadStatus::Idle
+}
+
+fn ensure_snapshot_for_thread_from_summary_locked(
+    state: &mut ProjectionState,
+    thread_id: &str,
+    access_mode: AccessMode,
+) {
+    if state.snapshots.contains_key(thread_id) {
+        return;
+    }
+    let Some(summary) = state.summaries.get(thread_id) else {
+        return;
+    };
+    state.snapshots.insert(
+        thread_id.to_string(),
+        empty_snapshot_from_summary(summary, access_mode),
+    );
+}
+
+fn empty_snapshot_from_summary(
+    summary: &ThreadSummaryDto,
+    access_mode: AccessMode,
+) -> ThreadSnapshotDto {
+    ThreadSnapshotDto {
+        contract_version: summary.contract_version.clone(),
+        thread: ThreadDetailDto {
+            contract_version: summary.contract_version.clone(),
+            thread_id: summary.thread_id.clone(),
+            native_thread_id: summary.native_thread_id.clone(),
+            provider: summary.provider,
+            client: summary.client,
+            title: summary.title.clone(),
+            status: summary.status,
+            workspace: summary.workspace.clone(),
+            repository: summary.repository.clone(),
+            branch: summary.branch.clone(),
+            created_at: summary.updated_at.clone(),
+            updated_at: summary.updated_at.clone(),
+            source: "bridge_event_log".to_string(),
+            access_mode,
+            last_turn_summary: String::new(),
+            active_turn_id: None,
+        },
+        latest_bridge_seq: None,
+        entries: Vec::new(),
+        approvals: Vec::new(),
+        git_status: None,
+        workflow_state: None,
+        pending_user_input: None,
+    }
+}
+
+fn apply_live_event_locked(state: &mut ProjectionState, event: &BridgeEventEnvelope<Value>) {
+    let approval_update = (event.kind == BridgeEventKind::ApprovalRequested)
+        .then(|| approval_summary_from_payload(&event.payload, &event.thread_id))
+        .flatten();
+    if let Some(summary) = state.summaries.get_mut(&event.thread_id) {
+        summary.updated_at = event.occurred_at.clone();
+        if let Some(next_title) = event
+            .payload
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+        {
+            summary.title = next_title.to_string();
+        }
+        if event.kind == BridgeEventKind::ThreadStatusChanged
+            && let Some(next_status) = event
+                .payload
+                .get("status")
+                .and_then(Value::as_str)
+                .map(parse_thread_status)
+        {
+            summary.status = next_status;
+        }
+    }
+
+    if let Some(snapshot) = state.snapshots.get_mut(&event.thread_id) {
+        snapshot.latest_bridge_seq =
+            combine_latest_bridge_seq(snapshot.latest_bridge_seq, event.bridge_seq);
+        snapshot.thread.updated_at = event.occurred_at.clone();
+        if let Some(next_title) = event
+            .payload
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+        {
+            snapshot.thread.title = next_title.to_string();
+        }
+        if event.kind == BridgeEventKind::ThreadStatusChanged
+            && let Some(next_status) = event
+                .payload
+                .get("status")
+                .and_then(Value::as_str)
+                .map(parse_thread_status)
+        {
+            snapshot.thread.status = next_status;
+            if next_status != ThreadStatus::Running {
+                snapshot.thread.active_turn_id = None;
+            }
+        }
+
+        if event.kind == BridgeEventKind::UserInputRequested {
+            snapshot.pending_user_input = pending_user_input_from_payload(&event.payload);
+        } else if event.kind == BridgeEventKind::ThreadMetadataChanged {
+            snapshot.workflow_state = workflow_state_from_payload(&event.payload);
+        } else {
+            let existing_entry_index = snapshot
+                .entries
+                .iter()
+                .position(|entry| entry.event_id == event.event_id);
+            let aggregated_payload = merge_live_payload(
+                existing_entry_index
+                    .and_then(|index| snapshot.entries.get(index))
+                    .map(|entry| &entry.payload),
+                event.kind,
+                &event.payload,
+            );
+            let summary = summarize_live_payload(event.kind, &aggregated_payload);
+            if !summary.trim().is_empty() {
+                snapshot.thread.last_turn_summary = summary.clone();
+            }
+
+            let next_entry = ThreadTimelineEntryDto {
+                event_id: event.event_id.clone(),
+                kind: event.kind,
+                occurred_at: event.occurred_at.clone(),
+                summary,
+                payload: aggregated_payload,
+                annotations: event.annotations.clone(),
+            };
+
+            if let Some(index) = existing_entry_index {
+                snapshot.entries[index] = next_entry;
+            } else {
+                snapshot.entries.push(next_entry);
+            }
+        }
+
+        if let Some(approval) = approval_update.as_ref() {
+            if let Some(index) = snapshot
+                .approvals
+                .iter()
+                .position(|existing| existing.approval_id == approval.approval_id)
+            {
+                snapshot.approvals[index] = approval.clone();
+            } else {
+                snapshot.approvals.push(approval.clone());
+            }
+        }
+    }
+
+    if let Some(approval) = approval_update {
+        state
+            .approvals
+            .insert(approval.approval_id.clone(), approval);
+    }
+}
+
+fn combine_latest_bridge_seq(current: Option<u64>, next: Option<u64>) -> Option<u64> {
+    match (current, next) {
+        (Some(current), Some(next)) => Some(current.max(next)),
+        (Some(current), None) => Some(current),
+        (None, Some(next)) => Some(next),
+        (None, None) => None,
+    }
 }
 
 fn approval_summary_from_payload(payload: &Value, thread_id: &str) -> Option<ApprovalSummaryDto> {
@@ -466,11 +598,25 @@ fn pending_user_input_from_payload(payload: &Value) -> Option<PendingUserInputDt
     }
 }
 
+fn workflow_state_from_payload(payload: &Value) -> Option<ThreadWorkflowStateDto> {
+    payload
+        .get("workflow_state")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
+}
+
 fn summarize_live_payload(kind: BridgeEventKind, payload: &Value) -> String {
     match kind {
         BridgeEventKind::MessageDelta | BridgeEventKind::PlanDelta => payload
             .get("text")
             .or_else(|| payload.get("delta"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        BridgeEventKind::ThreadMetadataChanged => payload
+            .get("workflow_state")
+            .and_then(Value::as_object)
+            .and_then(|workflow| workflow.get("state"))
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
@@ -557,6 +703,16 @@ fn merge_live_payload(existing: Option<&Value>, kind: BridgeEventKind, incoming:
             {
                 object.insert("images".to_string(), images);
             }
+            if let Some(client_message_id) =
+                incoming.get("client_message_id").cloned().or_else(|| {
+                    existing
+                        .and_then(|payload| payload.get("client_message_id"))
+                        .cloned()
+                })
+                && let Some(object) = payload.as_object_mut()
+            {
+                object.insert("client_message_id".to_string(), client_message_id);
+            }
             payload
         }
         BridgeEventKind::PlanDelta => {
@@ -612,6 +768,7 @@ fn merge_live_payload(existing: Option<&Value>, kind: BridgeEventKind, incoming:
 
             payload
         }
+        BridgeEventKind::ThreadMetadataChanged => incoming.clone(),
         BridgeEventKind::UserInputRequested => incoming.clone(),
         BridgeEventKind::CommandDelta => {
             let replace = incoming
@@ -760,9 +917,11 @@ mod tests {
                     last_turn_summary: "initial".to_string(),
                     active_turn_id: None,
                 },
+                latest_bridge_seq: None,
                 entries: vec![],
                 approvals: vec![],
                 git_status: None,
+                workflow_state: None,
                 pending_user_input: None,
             })
             .await;
@@ -771,6 +930,7 @@ mod tests {
             .apply_live_event(&BridgeEventEnvelope {
                 contract_version: CONTRACT_VERSION.to_string(),
                 event_id: "evt-1".to_string(),
+                bridge_seq: Some(7),
                 thread_id: "thread-1".to_string(),
                 kind: BridgeEventKind::MessageDelta,
                 occurred_at: "2026-03-21T10:01:00Z".to_string(),
@@ -788,6 +948,7 @@ mod tests {
             .snapshot("thread-1")
             .await
             .expect("snapshot should exist");
+        assert_eq!(snapshot.latest_bridge_seq, Some(7));
         assert_eq!(snapshot.thread.updated_at, "2026-03-21T10:01:00Z");
         assert_eq!(snapshot.thread.last_turn_summary, "streamed text");
         assert_eq!(snapshot.entries.len(), 1);
@@ -800,6 +961,320 @@ mod tests {
         assert_eq!(page.entries.len(), 1);
         assert!(!page.has_more_before);
         assert_eq!(page.entries[0].event_id, "evt-1");
+    }
+
+    #[tokio::test]
+    async fn put_snapshot_preserves_existing_latest_bridge_seq_when_refresh_lacks_cursor() {
+        let store = ProjectionStore::new();
+        store
+            .put_snapshot(ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
+                    title: "Thread".to_string(),
+                    status: ThreadStatus::Running,
+                    workspace: "/tmp/a".to_string(),
+                    repository: "repo-a".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-03-21T09:00:00Z".to_string(),
+                    updated_at: "2026-03-21T10:00:00Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "initial".to_string(),
+                    active_turn_id: Some("turn-1".to_string()),
+                },
+                latest_bridge_seq: Some(12),
+                entries: vec![],
+                approvals: vec![],
+                git_status: None,
+                workflow_state: None,
+                pending_user_input: None,
+            })
+            .await;
+
+        store
+            .put_snapshot(ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
+                    title: "Thread".to_string(),
+                    status: ThreadStatus::Completed,
+                    workspace: "/tmp/a".to_string(),
+                    repository: "repo-a".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-03-21T09:00:00Z".to_string(),
+                    updated_at: "2026-03-21T10:01:00Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "done".to_string(),
+                    active_turn_id: None,
+                },
+                latest_bridge_seq: None,
+                entries: vec![],
+                approvals: vec![],
+                git_status: None,
+                workflow_state: None,
+                pending_user_input: None,
+            })
+            .await;
+
+        let snapshot = store
+            .snapshot("thread-1")
+            .await
+            .expect("snapshot should exist");
+        assert_eq!(snapshot.latest_bridge_seq, Some(12));
+    }
+
+    #[tokio::test]
+    async fn put_snapshot_preserves_existing_workflow_state_when_refresh_lacks_it() {
+        let store = ProjectionStore::new();
+        store
+            .put_snapshot(ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
+                    title: "Thread".to_string(),
+                    status: ThreadStatus::Running,
+                    workspace: "/tmp/a".to_string(),
+                    repository: "repo-a".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-03-21T09:00:00Z".to_string(),
+                    updated_at: "2026-03-21T10:00:00Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "initial".to_string(),
+                    active_turn_id: Some("turn-1".to_string()),
+                },
+                latest_bridge_seq: Some(12),
+                entries: vec![],
+                approvals: vec![],
+                git_status: None,
+                workflow_state: Some(shared_contracts::ThreadWorkflowStateDto {
+                    workflow_kind: "plan_questionnaire".to_string(),
+                    state: "awaiting_questions".to_string(),
+                    request_id: None,
+                    original_prompt: Some("Investigate reconnect replay".to_string()),
+                    provider_request_id: None,
+                }),
+                pending_user_input: None,
+            })
+            .await;
+
+        store
+            .put_snapshot(ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
+                    title: "Thread".to_string(),
+                    status: ThreadStatus::Completed,
+                    workspace: "/tmp/a".to_string(),
+                    repository: "repo-a".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-03-21T09:00:00Z".to_string(),
+                    updated_at: "2026-03-21T10:01:00Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "done".to_string(),
+                    active_turn_id: None,
+                },
+                latest_bridge_seq: None,
+                entries: vec![],
+                approvals: vec![],
+                git_status: None,
+                workflow_state: None,
+                pending_user_input: None,
+            })
+            .await;
+
+        let snapshot = store
+            .snapshot("thread-1")
+            .await
+            .expect("snapshot should exist");
+        assert_eq!(
+            snapshot
+                .workflow_state
+                .as_ref()
+                .map(|workflow| workflow.state.as_str()),
+            Some("awaiting_questions")
+        );
+        let page = store
+            .timeline_page("thread-1", None, 10)
+            .await
+            .expect("timeline page should exist");
+        assert_eq!(
+            page.workflow_state
+                .as_ref()
+                .and_then(|workflow| workflow.original_prompt.as_deref()),
+            Some("Investigate reconnect replay")
+        );
+    }
+
+    #[tokio::test]
+    async fn hydrate_from_events_rebuilds_snapshots_from_bootstrap_summaries() {
+        let store = ProjectionStore::new();
+        store
+            .replace_summaries(vec![ThreadSummaryDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
+                title: "Recovered thread".to_string(),
+                status: ThreadStatus::Idle,
+                workspace: "/tmp/a".to_string(),
+                repository: "repo-a".to_string(),
+                branch: "main".to_string(),
+                updated_at: "2026-03-21T10:00:00Z".to_string(),
+            }])
+            .await;
+
+        store
+            .hydrate_from_events(
+                &[
+                    BridgeEventEnvelope {
+                        contract_version: CONTRACT_VERSION.to_string(),
+                        event_id: "evt-msg".to_string(),
+                        bridge_seq: Some(9),
+                        thread_id: "thread-1".to_string(),
+                        kind: BridgeEventKind::MessageDelta,
+                        occurred_at: "2026-03-21T10:01:00Z".to_string(),
+                        payload: json!({
+                            "id": "msg-1",
+                            "type": "message",
+                            "role": "assistant",
+                            "text": "Recovered output",
+                        }),
+                        annotations: None,
+                    },
+                    BridgeEventEnvelope {
+                        contract_version: CONTRACT_VERSION.to_string(),
+                        event_id: "evt-status".to_string(),
+                        bridge_seq: Some(10),
+                        thread_id: "thread-1".to_string(),
+                        kind: BridgeEventKind::ThreadStatusChanged,
+                        occurred_at: "2026-03-21T10:01:01Z".to_string(),
+                        payload: json!({
+                            "status": "completed",
+                        }),
+                        annotations: None,
+                    },
+                    BridgeEventEnvelope {
+                        contract_version: CONTRACT_VERSION.to_string(),
+                        event_id: "evt-input".to_string(),
+                        bridge_seq: Some(11),
+                        thread_id: "thread-1".to_string(),
+                        kind: BridgeEventKind::UserInputRequested,
+                        occurred_at: "2026-03-21T10:01:02Z".to_string(),
+                        payload: json!({
+                            "request_id": "req-1",
+                            "title": "Clarify",
+                            "questions": [],
+                            "state": "pending",
+                        }),
+                        annotations: None,
+                    },
+                ],
+                AccessMode::ControlWithApprovals,
+            )
+            .await;
+
+        let snapshot = store
+            .snapshot("thread-1")
+            .await
+            .expect("snapshot should be rebuilt from bootstrap summaries and persisted events");
+        assert_eq!(snapshot.latest_bridge_seq, Some(11));
+        assert_eq!(snapshot.thread.status, ThreadStatus::Completed);
+        assert_eq!(snapshot.thread.last_turn_summary, "completed");
+        assert_eq!(snapshot.entries.len(), 2);
+        assert_eq!(snapshot.entries[0].summary, "Recovered output");
+        assert_eq!(
+            snapshot
+                .pending_user_input
+                .as_ref()
+                .map(|value| value.request_id.as_str()),
+            Some("req-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn hydrate_from_events_restores_workflow_state_from_metadata_events() {
+        let store = ProjectionStore::new();
+        store
+            .replace_summaries(vec![ThreadSummaryDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
+                title: "Recovered thread".to_string(),
+                status: ThreadStatus::Running,
+                workspace: "/tmp/a".to_string(),
+                repository: "repo-a".to_string(),
+                branch: "main".to_string(),
+                updated_at: "2026-03-21T10:00:00Z".to_string(),
+            }])
+            .await;
+
+        store
+            .hydrate_from_events(
+                &[BridgeEventEnvelope {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    event_id: "evt-workflow".to_string(),
+                    bridge_seq: Some(12),
+                    thread_id: "thread-1".to_string(),
+                    kind: BridgeEventKind::ThreadMetadataChanged,
+                    occurred_at: "2026-03-21T10:01:03Z".to_string(),
+                    payload: json!({
+                        "workflow_state": {
+                            "workflow_kind": "plan_questionnaire",
+                            "state": "awaiting_questions",
+                            "original_prompt": "Investigate replay resilience",
+                        }
+                    }),
+                    annotations: None,
+                }],
+                AccessMode::ControlWithApprovals,
+            )
+            .await;
+
+        let snapshot = store
+            .snapshot("thread-1")
+            .await
+            .expect("snapshot should be rebuilt from metadata events");
+        assert_eq!(snapshot.latest_bridge_seq, Some(12));
+        assert_eq!(
+            snapshot
+                .workflow_state
+                .as_ref()
+                .map(|workflow| workflow.state.as_str()),
+            Some("awaiting_questions")
+        );
+        let page = store
+            .timeline_page("thread-1", None, 10)
+            .await
+            .expect("timeline page should exist");
+        assert_eq!(
+            page.workflow_state
+                .as_ref()
+                .and_then(|workflow| workflow.original_prompt.as_deref()),
+            Some("Investigate replay resilience")
+        );
     }
 
     #[tokio::test]
@@ -841,9 +1316,11 @@ mod tests {
                     last_turn_summary: "initial".to_string(),
                     active_turn_id: None,
                 },
+                latest_bridge_seq: None,
                 entries: vec![],
                 approvals: vec![],
                 git_status: None,
+                workflow_state: None,
                 pending_user_input: None,
             })
             .await;
@@ -852,6 +1329,7 @@ mod tests {
             .apply_live_event(&BridgeEventEnvelope {
                 contract_version: CONTRACT_VERSION.to_string(),
                 event_id: "evt-1".to_string(),
+                bridge_seq: None,
                 thread_id: "thread-1".to_string(),
                 kind: BridgeEventKind::MessageDelta,
                 occurred_at: "2026-03-21T10:01:00Z".to_string(),
@@ -915,9 +1393,11 @@ mod tests {
                     last_turn_summary: "initial".to_string(),
                     active_turn_id: None,
                 },
+                latest_bridge_seq: None,
                 entries: vec![],
                 approvals: vec![],
                 git_status: None,
+                workflow_state: None,
                 pending_user_input: None,
             })
             .await;
@@ -926,6 +1406,7 @@ mod tests {
             .apply_live_event(&BridgeEventEnvelope {
                 contract_version: CONTRACT_VERSION.to_string(),
                 event_id: "evt-1".to_string(),
+                bridge_seq: None,
                 thread_id: "thread-1".to_string(),
                 kind: BridgeEventKind::MessageDelta,
                 occurred_at: "2026-03-21T10:01:00Z".to_string(),
@@ -944,6 +1425,7 @@ mod tests {
             .apply_live_event(&BridgeEventEnvelope {
                 contract_version: CONTRACT_VERSION.to_string(),
                 event_id: "evt-1".to_string(),
+                bridge_seq: None,
                 thread_id: "thread-1".to_string(),
                 kind: BridgeEventKind::MessageDelta,
                 occurred_at: "2026-03-21T10:01:01Z".to_string(),
@@ -1004,6 +1486,7 @@ mod tests {
                     last_turn_summary: "older summary".to_string(),
                     active_turn_id: None,
                 },
+                latest_bridge_seq: None,
                 entries: vec![ThreadTimelineEntryDto {
                     event_id: "evt-1".to_string(),
                     kind: BridgeEventKind::MessageDelta,
@@ -1019,6 +1502,7 @@ mod tests {
                 }],
                 approvals: vec![],
                 git_status: None,
+                workflow_state: None,
                 pending_user_input: None,
             })
             .await;
@@ -1084,6 +1568,7 @@ mod tests {
                     last_turn_summary: "working".to_string(),
                     active_turn_id: Some("turn-1".to_string()),
                 },
+                latest_bridge_seq: None,
                 entries: vec![ThreadTimelineEntryDto {
                     event_id: "evt-1".to_string(),
                     kind: BridgeEventKind::MessageDelta,
@@ -1099,6 +1584,7 @@ mod tests {
                 }],
                 approvals: vec![],
                 git_status: None,
+                workflow_state: None,
                 pending_user_input: None,
             })
             .await;
@@ -1166,9 +1652,11 @@ mod tests {
                     last_turn_summary: "initial".to_string(),
                     active_turn_id: None,
                 },
+                latest_bridge_seq: None,
                 entries: vec![],
                 approvals: vec![],
                 git_status: None,
+                workflow_state: None,
                 pending_user_input: None,
             })
             .await;
@@ -1177,6 +1665,7 @@ mod tests {
             .apply_live_event(&BridgeEventEnvelope {
                 contract_version: CONTRACT_VERSION.to_string(),
                 event_id: "evt-plan".to_string(),
+                bridge_seq: None,
                 thread_id: "thread-1".to_string(),
                 kind: BridgeEventKind::PlanDelta,
                 occurred_at: "2026-03-21T10:01:00Z".to_string(),
@@ -1246,9 +1735,11 @@ mod tests {
                     last_turn_summary: "initial".to_string(),
                     active_turn_id: Some("turn-1".to_string()),
                 },
+                latest_bridge_seq: None,
                 entries: vec![],
                 approvals: vec![],
                 git_status: None,
+                workflow_state: None,
                 pending_user_input: None,
             })
             .await;
@@ -1257,6 +1748,7 @@ mod tests {
             .apply_live_event(&BridgeEventEnvelope {
                 contract_version: CONTRACT_VERSION.to_string(),
                 event_id: "evt-status".to_string(),
+                bridge_seq: None,
                 thread_id: "thread-1".to_string(),
                 kind: BridgeEventKind::ThreadStatusChanged,
                 occurred_at: "2026-03-21T10:01:00Z".to_string(),
@@ -1315,9 +1807,11 @@ mod tests {
                     last_turn_summary: "previous assistant reply".to_string(),
                     active_turn_id: None,
                 },
+                latest_bridge_seq: None,
                 entries: vec![],
                 approvals: vec![],
                 git_status: None,
+                workflow_state: None,
                 pending_user_input: None,
             })
             .await;
@@ -1326,6 +1820,7 @@ mod tests {
             .apply_live_event(&BridgeEventEnvelope {
                 contract_version: CONTRACT_VERSION.to_string(),
                 event_id: "evt-turn-started".to_string(),
+                bridge_seq: None,
                 thread_id: "thread-1".to_string(),
                 kind: BridgeEventKind::ThreadStatusChanged,
                 occurred_at: "2026-03-21T10:01:00Z".to_string(),

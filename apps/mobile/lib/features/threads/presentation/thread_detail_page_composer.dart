@@ -20,6 +20,18 @@ bool _isProviderApprovalPrompt(PendingUserInputDto? pendingUserInput) {
       pendingUserInput.questions.first.questionId == 'approval_decision';
 }
 
+bool _isExpiredProviderApprovalWorkflow(ThreadWorkflowStateDto? workflowState) {
+  return workflowState?.workflowKind == 'provider_approval' &&
+      workflowState?.state == 'expired';
+}
+
+bool _isExpiredPlanQuestionnaireWorkflow(
+  ThreadWorkflowStateDto? workflowState,
+) {
+  return workflowState?.workflowKind == 'plan_questionnaire' &&
+      workflowState?.state == 'expired';
+}
+
 class _PinnedTurnComposer extends StatelessWidget {
   const _PinnedTurnComposer({
     required this.composerController,
@@ -38,6 +50,7 @@ class _PinnedTurnComposer extends StatelessWidget {
     required this.attachedImages,
     required this.threadUsage,
     required this.composerMode,
+    required this.workflowState,
     required this.selectedPlanOptionByQuestionId,
     required this.selectedProvider,
     required this.supportsPlanMode,
@@ -69,6 +82,7 @@ class _PinnedTurnComposer extends StatelessWidget {
   final List<XFile> attachedImages;
   final ThreadUsageDto? threadUsage;
   final TurnMode composerMode;
+  final ThreadWorkflowStateDto? workflowState;
   final PendingUserInputDto? pendingUserInput;
   final Map<String, String> selectedPlanOptionByQuestionId;
   final ProviderKind selectedProvider;
@@ -89,6 +103,12 @@ class _PinnedTurnComposer extends StatelessWidget {
     final isProviderApprovalPrompt = _isProviderApprovalPrompt(
       pendingUserInput,
     );
+    final hasExpiredProviderApproval =
+        !hasPendingUserInput &&
+        _isExpiredProviderApprovalWorkflow(workflowState);
+    final hasExpiredPlanQuestionnaire =
+        !hasPendingUserInput &&
+        _isExpiredPlanQuestionnaireWorkflow(workflowState);
     final canEditPinnedControls =
         !isComposerMutationInFlight &&
         !isInterruptMutationInFlight &&
@@ -170,6 +190,14 @@ class _PinnedTurnComposer extends StatelessWidget {
                 ),
               ),
             ),
+          ],
+          if (hasExpiredProviderApproval) ...[
+            const SizedBox(height: 8),
+            _ExpiredProviderApprovalNotice(),
+          ],
+          if (hasExpiredPlanQuestionnaire) ...[
+            const SizedBox(height: 8),
+            _ExpiredPlanQuestionnaireNotice(),
           ],
         ],
       );
@@ -1054,6 +1082,90 @@ class _PendingProviderApprovalCard extends StatelessWidget {
   }
 }
 
+class _ExpiredProviderApprovalNotice extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('turn-composer-expired-approval-notice'),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2A2114),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0xFFF59E0B).withValues(alpha: 0.28),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: PhosphorIcon(
+              PhosphorIcons.warningCircle(PhosphorIconsStyle.fill),
+              color: const Color(0xFFF59E0B),
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'The previous approval request expired when the bridge restarted. Re-run the action if you still want to approve it.',
+              style: TextStyle(
+                color: AppTheme.textMuted,
+                fontSize: 12,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ExpiredPlanQuestionnaireNotice extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('turn-composer-expired-plan-questionnaire-notice'),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E2230),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0xFF60A5FA).withValues(alpha: 0.28),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: PhosphorIcon(
+              PhosphorIcons.info(PhosphorIconsStyle.fill),
+              color: const Color(0xFF60A5FA),
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'The previous plan questionnaire expired when the bridge restarted. Re-run plan mode if you still want Codex to continue with the clarification flow.',
+              style: TextStyle(
+                color: AppTheme.textMuted,
+                fontSize: 12,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _PendingProviderApprovalActionButton extends StatelessWidget {
   const _PendingProviderApprovalActionButton({
     required this.option,
@@ -1407,12 +1519,13 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
     if (_dragDx < -_composerModeSwitchThreshold ||
         velocity < -_composerModeSwitchVelocityThreshold) {
       // Snap to next
-      _snapAnimation = Tween<double>(
-        begin: _dragDx,
-        end: -_composerModePeekOffset,
-      ).animate(
-        CurvedAnimation(parent: _snapController, curve: Curves.easeOutCubic),
-      );
+      _snapAnimation =
+          Tween<double>(begin: _dragDx, end: -_composerModePeekOffset).animate(
+            CurvedAnimation(
+              parent: _snapController,
+              curve: Curves.easeOutCubic,
+            ),
+          );
 
       _snapController.forward(from: 0.0).then((_) {
         final secondaryMode = widget.composerMode == TurnMode.act

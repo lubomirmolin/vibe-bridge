@@ -268,6 +268,8 @@ class _PaginatedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    String? clientMessageId,
+    String? clientTurnIntentId,
     TurnMode mode = TurnMode.act,
     List<String> images = const <String>[],
     String? model,
@@ -400,7 +402,7 @@ class _IdleThreadLiveStream implements ThreadLiveStream {
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
     String? threadId,
-    String? afterEventId,
+    int? afterSeq,
   }) async {
     final controller =
         StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();

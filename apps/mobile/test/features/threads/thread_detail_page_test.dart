@@ -1455,7 +1455,7 @@ void main() {
       );
       expect(find.text('Explored 1 file, 1 search'), findsNothing);
 
-      await tester.tap(find.byKey(const Key('thread-work-summary-title')));
+      await _tapWorkSummaryCard(tester);
       await tester.pumpAndSettle();
 
       expect(find.text('Explored 1 file, 1 search'), findsOneWidget);
@@ -1528,7 +1528,7 @@ void main() {
       );
       expect(find.text('Explored 2 files, 4 searches'), findsNothing);
 
-      await tester.tap(find.byKey(const Key('thread-work-summary-title')));
+      await _tapWorkSummaryCard(tester);
       await tester.pumpAndSettle();
 
       expect(find.text('Explored 2 files, 4 searches'), findsOneWidget);
@@ -2734,7 +2734,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
         findsNothing,
       );
 
-      await tester.tap(find.byKey(const Key('thread-work-summary-title')));
+      await _tapWorkSummaryCard(tester);
       await tester.pumpAndSettle();
 
       expect(find.text('Explored 2 files, 1 search'), findsOneWidget);
@@ -2822,7 +2822,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(find.text('Worked for 49s'), findsOneWidget);
     expect(find.text('4 actions'), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('thread-work-summary-title')));
+    await _tapWorkSummaryCard(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('Explored 2 files, 1 search'), findsOneWidget);
@@ -3069,6 +3069,11 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
             .length,
         1,
       );
+      final clientMessageId = container
+          .read(threadDetailControllerProvider(args))
+          .pendingLocalUserPrompts
+          .single
+          .clientMessageId;
       expect(find.text('Sending'), findsOneWidget);
       expect(
         find.byKey(const Key('thread-message-sending-spinner')),
@@ -3087,7 +3092,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       await tester.pump(const Duration(milliseconds: 50));
 
       liveStream.emit(
-        const BridgeEventEnvelope<Map<String, dynamic>>(
+        BridgeEventEnvelope<Map<String, dynamic>>(
           contractVersion: contractVersion,
           eventId: 'evt-canonical-user-prompt',
           threadId: 'thread-456',
@@ -3099,6 +3104,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
             'source': 'user',
             'delta': prompt,
             'replace': true,
+            'client_message_id': clientMessageId,
           },
         ),
       );
@@ -3130,6 +3136,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     'idle composer drops the local sending bubble after snapshot catch-up if the live user event is missed',
     (tester) async {
       final startTurnCompleter = Completer<TurnMutationResult>();
+      final refreshedTimelineEntries = <ThreadTimelineEntryDto>[];
       final refreshedDetail = ThreadDetailDto(
         contractVersion: contractVersion,
         threadId: 'thread-456',
@@ -3150,24 +3157,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
           'thread-456': [_thread456Detail(), refreshedDetail],
         },
         timelineScriptByThreadId: {
-          'thread-456': [
-            <ThreadTimelineEntryDto>[],
-            <ThreadTimelineEntryDto>[
-              _timelineEvent(
-                id: 'evt-canonical-user-prompt',
-                kind: BridgeEventKind.messageDelta,
-                summary: prompt,
-                payload: <String, dynamic>{
-                  'type': 'userMessage',
-                  'role': 'user',
-                  'source': 'user',
-                  'delta': prompt,
-                  'replace': true,
-                },
-                occurredAt: '2026-03-18T09:31:00Z',
-              ),
-            ],
-          ],
+          'thread-456': [<ThreadTimelineEntryDto>[], refreshedTimelineEntries],
         },
         startTurnScriptByThreadId: {
           'thread-456': [startTurnCompleter.future],
@@ -3205,7 +3195,31 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
             .length,
         1,
       );
+      final clientMessageId = container
+          .read(threadDetailControllerProvider(args))
+          .pendingLocalUserPrompts
+          .single
+          .clientMessageId;
       expect(find.text('Sending'), findsOneWidget);
+
+      refreshedTimelineEntries
+        ..clear()
+        ..add(
+          _timelineEvent(
+            id: 'evt-canonical-user-prompt',
+            kind: BridgeEventKind.messageDelta,
+            summary: prompt,
+            payload: <String, dynamic>{
+              'type': 'userMessage',
+              'role': 'user',
+              'source': 'user',
+              'delta': prompt,
+              'replace': true,
+              'client_message_id': clientMessageId,
+            },
+            occurredAt: '2026-03-18T09:31:00Z',
+          ),
+        );
 
       startTurnCompleter.complete(
         _turnMutationResult(
@@ -3256,6 +3270,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     'idle composer drops the local sending bubble after silent-turn watchdog snapshot catch-up',
     (tester) async {
       final startTurnCompleter = Completer<TurnMutationResult>();
+      final refreshedTimelineEntries = <ThreadTimelineEntryDto>[];
       final refreshedDetail = ThreadDetailDto(
         contractVersion: contractVersion,
         threadId: 'thread-456',
@@ -3276,36 +3291,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
           'thread-456': [_thread456Detail(), refreshedDetail],
         },
         timelineScriptByThreadId: {
-          'thread-456': [
-            <ThreadTimelineEntryDto>[],
-            <ThreadTimelineEntryDto>[
-              _timelineEvent(
-                id: 'evt-canonical-user-prompt',
-                kind: BridgeEventKind.messageDelta,
-                summary: prompt,
-                payload: <String, dynamic>{
-                  'type': 'userMessage',
-                  'role': 'user',
-                  'source': 'user',
-                  'delta': prompt,
-                  'replace': true,
-                },
-                occurredAt: '2026-03-18T09:31:00Z',
-              ),
-              _timelineEvent(
-                id: 'evt-canonical-assistant-output',
-                kind: BridgeEventKind.messageDelta,
-                summary: 'WRITE_OK',
-                payload: <String, dynamic>{
-                  'type': 'agentMessage',
-                  'role': 'assistant',
-                  'delta': 'WRITE_OK',
-                  'replace': true,
-                },
-                occurredAt: '2026-03-18T09:31:04Z',
-              ),
-            ],
-          ],
+          'thread-456': [<ThreadTimelineEntryDto>[], refreshedTimelineEntries],
         },
         startTurnScriptByThreadId: {
           'thread-456': [startTurnCompleter.future],
@@ -3343,7 +3329,43 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
             .length,
         1,
       );
+      final clientMessageId = container
+          .read(threadDetailControllerProvider(args))
+          .pendingLocalUserPrompts
+          .single
+          .clientMessageId;
       expect(find.text('Sending'), findsOneWidget);
+
+      refreshedTimelineEntries
+        ..clear()
+        ..addAll(<ThreadTimelineEntryDto>[
+          _timelineEvent(
+            id: 'evt-canonical-user-prompt',
+            kind: BridgeEventKind.messageDelta,
+            summary: prompt,
+            payload: <String, dynamic>{
+              'type': 'userMessage',
+              'role': 'user',
+              'source': 'user',
+              'delta': prompt,
+              'replace': true,
+              'client_message_id': clientMessageId,
+            },
+            occurredAt: '2026-03-18T09:31:00Z',
+          ),
+          _timelineEvent(
+            id: 'evt-canonical-assistant-output',
+            kind: BridgeEventKind.messageDelta,
+            summary: 'WRITE_OK',
+            payload: <String, dynamic>{
+              'type': 'agentMessage',
+              'role': 'assistant',
+              'delta': 'WRITE_OK',
+              'replace': true,
+            },
+            occurredAt: '2026-03-18T09:31:04Z',
+          ),
+        ]);
 
       startTurnCompleter.complete(
         _turnMutationResult(
@@ -5936,6 +5958,18 @@ Future<void> _scrollUntilVisible(WidgetTester tester, Finder finder) async {
   throw StateError('Could not scroll finder into view: $finder');
 }
 
+Future<void> _tapWorkSummaryCard(WidgetTester tester) async {
+  final workSummaryCard = find
+      .ancestor(
+        of: find.byKey(const Key('thread-work-summary-title')),
+        matching: find.byType(InkWell),
+      )
+      .first;
+  final inkWell = tester.widget<InkWell>(workSummaryCard);
+  inkWell.onTap?.call();
+  await tester.pumpAndSettle();
+}
+
 String _timelineBlockKeyForTest(ThreadTimelineBlock block) {
   if (block.item != null) {
     return 'activity:${block.item!.eventId}';
@@ -6278,6 +6312,8 @@ class _ScriptedTimelinePageThreadDetailBridgeApi
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    String? clientMessageId,
+    String? clientTurnIntentId,
     TurnMode mode = TurnMode.act,
     List<String> images = const <String>[],
     String? model,
@@ -6990,6 +7026,8 @@ class FakeThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
+    String? clientMessageId,
+    String? clientTurnIntentId,
     TurnMode mode = TurnMode.act,
     List<String> images = const <String>[],
     String? model,
@@ -7450,7 +7488,7 @@ class FakeThreadLiveStream implements ThreadLiveStream {
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
     String? threadId,
-    String? afterEventId,
+    int? afterSeq,
   }) async {
     final normalizedThreadId = threadId ?? _allThreadsKey;
     final controller =

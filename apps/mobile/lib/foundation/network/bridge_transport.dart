@@ -224,7 +224,7 @@ class LoggingBridgeTransport implements BridgeTransport {
         data: <String, Object?>{
           'uri': uri.toString(),
           'scope': uri.queryParameters['scope'],
-          'afterEventId': uri.queryParameters['after_event_id'],
+          'afterSeq': uri.queryParameters['after_seq'],
         },
       ),
     );
