@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/foundation/logging/thread_diagnostics.dart';
 import 'package:vibe_bridge/foundation/network/bridge_transport.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final threadDetailBridgeApiProvider = Provider<ThreadDetailBridgeApi>((ref) {
   return HttpThreadDetailBridgeApi(
     transport: ref.watch(bridgeTransportProvider),
+    diagnostics: ref.watch(threadDiagnosticsServiceProvider),
   );
 });
 
@@ -254,10 +256,14 @@ abstract class ThreadDetailBridgeApi {
 }
 
 class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
-  HttpThreadDetailBridgeApi({BridgeTransport? transport})
-    : _transport = transport ?? createDefaultBridgeTransport();
+  HttpThreadDetailBridgeApi({
+    BridgeTransport? transport,
+    ThreadDiagnosticsService? diagnostics,
+  }) : _transport = transport ?? createDefaultBridgeTransport(),
+       _diagnostics = diagnostics;
 
   final BridgeTransport _transport;
+  final ThreadDiagnosticsService? _diagnostics;
 
   @override
   Future<ThreadSnapshotDto> createThread({
@@ -763,6 +769,19 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
             throw const FormatException('Expected JSON object response.');
           }
           final accepted = TurnMutationAcceptedDto.fromJson(decoded);
+          unawaited(
+            _diagnostics?.record(
+              kind: 'turn_mutation_parsed',
+              threadId: threadId,
+              data: <String, Object?>{
+                'operation': operation,
+                'statusCode': response.statusCode,
+                'threadStatus': accepted.threadStatus.wireValue,
+                'turnId': accepted.turnId,
+                'message': accepted.message,
+              },
+            ),
+          );
           return TurnMutationResult(
             contractVersion: accepted.contractVersion,
             threadId: accepted.threadId,
@@ -773,6 +792,17 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
             turnId: accepted.turnId,
           );
         } on FormatException {
+          unawaited(
+            _diagnostics?.record(
+              kind: 'turn_mutation_parse_failed',
+              threadId: threadId,
+              data: <String, Object?>{
+                'operation': operation,
+                'statusCode': response.statusCode,
+                'bodyPreview': response.bodyText,
+              },
+            ),
+          );
           throw ThreadTurnBridgeException(
             message: _sanitizeTurnErrorMessage(
               _readOptionalString(
@@ -785,6 +815,25 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
         }
       }
 
+      unawaited(
+        _diagnostics?.record(
+          kind: 'turn_mutation_rejected',
+          threadId: threadId,
+          data: <String, Object?>{
+            'operation': operation,
+            'statusCode': response.statusCode,
+            'code': _readOptionalString(
+              decoded ?? const <String, dynamic>{},
+              'code',
+            ),
+            'message': _readOptionalString(
+              decoded ?? const <String, dynamic>{},
+              'message',
+            ),
+            'bodyPreview': response.bodyText,
+          },
+        ),
+      );
       throw ThreadTurnBridgeException(
         message: _sanitizeTurnErrorMessage(
           _readOptionalString(
@@ -793,13 +842,30 @@ class HttpThreadDetailBridgeApi implements ThreadDetailBridgeApi {
               ) ??
               'Couldn’t update turn state right now (HTTP ${response.statusCode}).',
         ),
+        statusCode: response.statusCode,
+        code: _readOptionalString(decoded ?? const <String, dynamic>{}, 'code'),
+        rawBody: response.bodyText,
       );
     } on BridgeTransportConnectionException {
+      unawaited(
+        _diagnostics?.record(
+          kind: 'turn_mutation_connection_failed',
+          threadId: threadId,
+          data: <String, Object?>{'operation': operation},
+        ),
+      );
       throw const ThreadTurnBridgeException(
         message: 'Cannot reach the bridge. Check your private route.',
         isConnectivityError: true,
       );
     } on FormatException {
+      unawaited(
+        _diagnostics?.record(
+          kind: 'turn_mutation_invalid_response',
+          threadId: threadId,
+          data: <String, Object?>{'operation': operation},
+        ),
+      );
       throw const ThreadTurnBridgeException(
         message: 'Bridge returned an invalid turn control response.',
       );
@@ -994,10 +1060,16 @@ class ThreadCreateBridgeException implements Exception {
 class ThreadTurnBridgeException implements Exception {
   const ThreadTurnBridgeException({
     required this.message,
+    this.statusCode,
+    this.code,
+    this.rawBody,
     this.isConnectivityError = false,
   });
 
   final String message;
+  final int? statusCode;
+  final String? code;
+  final String? rawBody;
   final bool isConnectivityError;
 
   @override

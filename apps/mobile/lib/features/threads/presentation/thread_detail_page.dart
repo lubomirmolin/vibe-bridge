@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:ui';
 
 import 'package:vibe_bridge/features/approvals/application/approvals_queue_controller.dart';
 import 'package:vibe_bridge/features/approvals/presentation/approval_presenter.dart';
@@ -17,6 +18,7 @@ import 'package:vibe_bridge/features/threads/presentation/thread_git_diff_page.d
 import 'package:vibe_bridge/foundation/connectivity/live_connection_state.dart';
 import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
 import 'package:vibe_bridge/foundation/layout/adaptive_layout.dart';
+import 'package:vibe_bridge/foundation/logging/thread_diagnostics.dart';
 import 'package:vibe_bridge/foundation/media/speech_capture.dart';
 import 'package:vibe_bridge/foundation/session/current_bridge_session.dart';
 import 'package:codex_ui/codex_ui.dart';
@@ -28,6 +30,7 @@ import 'package:vibe_bridge/shared/widgets/provider_icon.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
@@ -223,6 +226,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   bool _isWideLayoutExitScheduled = false;
   int _modelCatalogLoadEpoch = 0;
   int _threadUsageLoadEpoch = 0;
+  String? _lastLoggedUiLoadingSignature;
 
   double _lastScrollOffset = 0;
   double _scrollOffsetOnDirectionChange = 0;
@@ -805,6 +809,109 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
         previousObservedMaxScrollExtent: position.maxScrollExtent,
       );
     });
+  }
+
+  void _stabilizeTimelineViewportAfterMutation({
+    _TimelineViewportAnchor? anchor,
+    required double previousOffset,
+    required double previousMaxScrollExtent,
+    int remainingFrames = 12,
+    int stableFrameCount = 0,
+    double? previousObservedMaxScrollExtent,
+  }) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_timelineScrollController.hasClients) {
+        return;
+      }
+
+      final position = _timelineScrollController.position;
+      final anchorDelta = _timelineAnchorDelta(anchor);
+      if (anchorDelta != null && anchorDelta.abs() >= 0.5) {
+        final compensatedOffset = clampDouble(
+          position.pixels + anchorDelta,
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        );
+        if ((position.pixels - compensatedOffset).abs() >= 0.5) {
+          _timelineScrollController.jumpTo(compensatedOffset);
+        }
+      } else {
+        final insertedExtent =
+            position.maxScrollExtent - previousMaxScrollExtent;
+        if (insertedExtent > 0) {
+          final compensatedOffset = clampDouble(
+            previousOffset + insertedExtent,
+            position.minScrollExtent,
+            position.maxScrollExtent,
+          );
+          if ((position.pixels - compensatedOffset).abs() >= 0.5) {
+            _timelineScrollController.jumpTo(compensatedOffset);
+          }
+        }
+      }
+
+      final hasStableExtent =
+          previousObservedMaxScrollExtent != null &&
+          (position.maxScrollExtent - previousObservedMaxScrollExtent).abs() <
+              0.5;
+      final nextStableFrameCount = hasStableExtent ? stableFrameCount + 1 : 0;
+      if (remainingFrames <= 0 || nextStableFrameCount >= 2) {
+        return;
+      }
+
+      _stabilizeTimelineViewportAfterMutation(
+        anchor: anchor,
+        previousOffset: previousOffset,
+        previousMaxScrollExtent: previousMaxScrollExtent,
+        remainingFrames: remainingFrames - 1,
+        stableFrameCount: nextStableFrameCount,
+        previousObservedMaxScrollExtent: position.maxScrollExtent,
+      );
+    });
+  }
+
+  Future<T> _runTimelineMutationWithViewportStabilization<T>(
+    Future<T> Function() operation,
+  ) async {
+    if (!_timelineScrollController.hasClients) {
+      return operation();
+    }
+
+    final shouldPinBottom = _isTimelineNearBottom(tolerance: 120);
+    if (shouldPinBottom) {
+      _isTimelineAutoFollowEnabled = true;
+      _followTimelineBottomUntilSettled();
+      final result = await operation();
+      if (mounted) {
+        _isTimelineAutoFollowEnabled = true;
+        _followTimelineBottomUntilSettled();
+      }
+      return result;
+    }
+
+    final position = _timelineScrollController.position;
+    final previousOffset = clampDouble(
+      _timelineScrollController.offset,
+      position.minScrollExtent,
+      position.maxScrollExtent,
+    );
+    final previousMaxScrollExtent = position.maxScrollExtent;
+    final anchor = _captureLeadingVisibleTimelineAnchor();
+    _stabilizeTimelineViewportAfterMutation(
+      anchor: anchor,
+      previousOffset: previousOffset,
+      previousMaxScrollExtent: previousMaxScrollExtent,
+    );
+
+    final result = await operation();
+    if (mounted) {
+      _stabilizeTimelineViewportAfterMutation(
+        anchor: anchor,
+        previousOffset: previousOffset,
+        previousMaxScrollExtent: previousMaxScrollExtent,
+      );
+    }
+    return result;
   }
 
   @override
@@ -1551,6 +1658,180 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     );
   }
 
+  Future<void> _showDiagnosticsSheet(BuildContext context) {
+    final diagnostics = ref.read(threadDiagnosticsServiceProvider);
+    final threadId = _effectiveThreadId;
+    return showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppTheme.background,
+      isScrollControlled: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) {
+          Future<void> refresh() async {
+            setModalState(() {});
+          }
+
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+              child: FutureBuilder<({String logs, String path})>(
+                future: () async {
+                  final logs = await diagnostics.export(threadId: threadId);
+                  final path = await diagnostics.describeLogLocation();
+                  return (logs: logs, path: path);
+                }(),
+                builder: (context, snapshot) {
+                  final payload = snapshot.data;
+                  final logs = payload?.logs ?? '';
+                  final path = payload?.path ?? '';
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Thread diagnostics',
+                        style: GoogleFonts.jetBrainsMono(
+                          color: AppTheme.textMain,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        threadId == null
+                            ? 'No thread is selected yet.'
+                            : 'Current thread: $threadId',
+                        style: GoogleFonts.jetBrainsMono(
+                          color: AppTheme.textSubtle,
+                          fontSize: 11,
+                        ),
+                      ),
+                      if (path.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          path,
+                          style: GoogleFonts.jetBrainsMono(
+                            color: AppTheme.textMuted,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          TextButton(
+                            onPressed: logs.trim().isEmpty
+                                ? null
+                                : () async {
+                                    await Clipboard.setData(
+                                      ClipboardData(text: logs),
+                                    );
+                                    if (!context.mounted) {
+                                      return;
+                                    }
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Diagnostics copied'),
+                                      ),
+                                    );
+                                  },
+                            child: const Text('Copy'),
+                          ),
+                          const SizedBox(width: 8),
+                          TextButton(
+                            onPressed: () async {
+                              await diagnostics.clear();
+                              await refresh();
+                            },
+                            child: const Text('Clear'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        height: MediaQuery.of(context).size.height * 0.55,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: AppTheme.surfaceZinc900,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.08),
+                            ),
+                          ),
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.all(12),
+                            child: SelectableText(
+                              logs.trim().isEmpty
+                                  ? 'No diagnostics recorded yet.'
+                                  : logs,
+                              style: GoogleFonts.jetBrainsMono(
+                                color: AppTheme.textMain,
+                                fontSize: 11,
+                                height: 1.45,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _logUiLoadingStateIfNeeded(ThreadDetailState state) {
+    final effectiveThreadId = _effectiveThreadId?.trim();
+    if (effectiveThreadId == null || effectiveThreadId.isEmpty) {
+      return;
+    }
+
+    final sendingCount = state.visibleItems
+        .where(
+          (item) =>
+              item.localMessageState == ThreadActivityLocalMessageState.sending,
+        )
+        .length;
+    final failedCount = state.visibleItems
+        .where(
+          (item) =>
+              item.localMessageState == ThreadActivityLocalMessageState.failed,
+        )
+        .length;
+    final signature = jsonEncode(<String, Object?>{
+      'threadId': effectiveThreadId,
+      'threadStatus': state.thread?.status.wireValue,
+      'isTurnActive': state.isTurnActive,
+      'isComposerMutationInFlight': state.isComposerMutationInFlight,
+      'isInterruptMutationInFlight': state.isInterruptMutationInFlight,
+      'visibleSendingCount': sendingCount,
+      'visibleFailedCount': failedCount,
+      'pendingLocalPromptCount': state.pendingLocalUserPrompts.length,
+      'runningOverlayVisible': state.isTurnActive,
+      'composerLoadingVisible': state.isComposerMutationInFlight,
+      'showingAnyLoadingUi':
+          state.isTurnActive ||
+          state.isComposerMutationInFlight ||
+          sendingCount > 0,
+    });
+    if (_lastLoggedUiLoadingSignature == signature) {
+      return;
+    }
+    _lastLoggedUiLoadingSignature = signature;
+    final diagnostics = ref.read(threadDiagnosticsServiceProvider);
+    unawaited(
+      diagnostics.record(
+        kind: 'thread_ui_loading_state',
+        threadId: effectiveThreadId,
+        data: jsonDecode(signature) as Map<String, Object?>,
+      ),
+    );
+  }
+
   Future<bool> _submitDraftComposerInput(String rawInput) async {
     final workspacePath = widget.draftWorkspacePath?.trim() ?? '';
     if (workspacePath.isEmpty) {
@@ -1672,12 +1953,14 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     final imageDataUrls = await _encodeAttachedImages(
       attachedImages ?? _attachedImages,
     );
-    final success = await controller.submitComposerInput(
-      rawInput,
-      mode: mode ?? _composerMode,
-      images: imageDataUrls,
-      model: _selectedModel,
-      reasoningEffort: _selectedReasoningEffortWireValue(),
+    final success = await _runTimelineMutationWithViewportStabilization(
+      () => controller.submitComposerInput(
+        rawInput,
+        mode: mode ?? _composerMode,
+        images: imageDataUrls,
+        model: _selectedModel,
+        reasoningEffort: _selectedReasoningEffortWireValue(),
+      ),
     );
     debugPrint(
       'thread_detail_page_submit_composer_result '
@@ -2079,6 +2362,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     final isReadOnlyMode = effectiveAccessMode == AccessMode.readOnly;
     final controlsEnabled = state.canRunMutatingActions && !isReadOnlyMode;
     final desktopIntegrationControlsEnabled = state.canRunMutatingActions;
+    _logUiLoadingStateIfNeeded(state);
     final gitControls = _ResolvedGitControls.resolve(
       thread: state.thread,
       gitStatus: state.gitStatus,
@@ -2179,7 +2463,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                   state: state,
                   isReadOnlyMode: isReadOnlyMode,
                   controlsEnabled: controlsEnabled,
-                  onInterruptActiveTurn: controller.interruptActiveTurn,
                   desktopIntegrationEnabled: desktopIntegrationState.isEnabled,
                   onRetry: controller.loadThread,
                   onRetryReconnect: controller.retryReconnectCatchUp,
@@ -2223,6 +2506,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                     onOpenGitSyncSheet: openGitSyncSheet,
                     onOpenOnMac: controller.openOnMac,
                     onOpenDiff: _openDiffView,
+                    onOpenDiagnostics: () => _showDiagnosticsSheet(context),
                     onToggleSidebar: widget.onToggleSidebar,
                     onToggleDiff: _toggleDiffView,
                     onOpenSettings: openSettingsSheet,
@@ -2325,6 +2609,55 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                                       : const SizedBox.shrink(),
                                 );
                               },
+                            ),
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 180),
+                              switchInCurve: Curves.easeOutCubic,
+                              switchOutCurve: Curves.easeInCubic,
+                              transitionBuilder: (child, animation) =>
+                                  FadeTransition(
+                                    opacity: animation,
+                                    child: SizeTransition(
+                                      axisAlignment: 1,
+                                      sizeFactor: animation,
+                                      child: child,
+                                    ),
+                                  ),
+                              child: state.isTurnActive
+                                  ? Padding(
+                                      key: const ValueKey(
+                                        'thread-detail-running-overlay',
+                                      ),
+                                      padding: const EdgeInsets.only(
+                                        left: 24,
+                                        right: 24,
+                                        top: 8,
+                                        bottom: 12,
+                                      ),
+                                      child: Align(
+                                        alignment: Alignment.topCenter,
+                                        child: ConstrainedBox(
+                                          constraints: const BoxConstraints(
+                                            maxWidth: _sessionContentMaxWidth,
+                                          ),
+                                          child: _ChatLoadingMessageCard(
+                                            phaseLabel: _runningTurnPhaseLabel(
+                                              state.visibleItems,
+                                            ),
+                                            controlsEnabled: controlsEnabled,
+                                            isInterruptMutationInFlight: state
+                                                .isInterruptMutationInFlight,
+                                            onInterruptActiveTurn:
+                                                controller.interruptActiveTurn,
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                  : const SizedBox.shrink(
+                                      key: ValueKey(
+                                        'thread-detail-running-overlay-empty',
+                                      ),
+                                    ),
                             ),
                             _PinnedTurnComposer(
                               composerController: _composerController,

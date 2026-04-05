@@ -3,6 +3,7 @@ use super::*;
 impl BridgeAppState {
     pub async fn start_turn(
         &self,
+        request_id: &str,
         thread_id: &str,
         prompt: &str,
         images: &[String],
@@ -18,7 +19,7 @@ impl BridgeAppState {
             TurnMode::Act => {
                 self.clear_pending_user_input(thread_id).await;
                 self.start_turn_with_visible_prompt(
-                    thread_id, prompt, prompt, images, model, effort,
+                    request_id, thread_id, prompt, prompt, images, model, effort,
                 )
                 .await
             }
@@ -41,6 +42,7 @@ impl BridgeAppState {
             ));
         }
         self.start_turn_with_visible_prompt(
+            "commit-action",
             thread_id,
             "Commit",
             &build_hidden_commit_prompt(),
@@ -53,6 +55,7 @@ impl BridgeAppState {
 
     async fn start_turn_with_visible_prompt(
         &self,
+        request_id: &str,
         thread_id: &str,
         visible_prompt: &str,
         upstream_prompt: &str,
@@ -67,7 +70,7 @@ impl BridgeAppState {
             .map(ToString::to_string)
             .collect::<Vec<_>>();
         eprintln!(
-            "bridge turn start requested thread_id={thread_id} visible_prompt_chars={} upstream_prompt_chars={} images={} model={} effort={}",
+            "bridge turn start requested request_id={request_id} thread_id={thread_id} visible_prompt_chars={} upstream_prompt_chars={} images={} model={} effort={}",
             visible_prompt.trim().chars().count(),
             upstream_prompt.chars().count(),
             normalized_images.len(),
@@ -102,6 +105,7 @@ impl BridgeAppState {
         let result = match self.inner.gateway.start_turn_streaming(
             thread_id,
             TurnStartRequest {
+                request_id: Some(request_id.to_string()),
                 prompt: upstream_prompt.to_string(),
                 images: images.to_vec(),
                 model: model.map(str::to_string),
@@ -187,14 +191,16 @@ impl BridgeAppState {
         ) {
             Ok(result) => result,
             Err(error) => {
-                eprintln!("bridge turn start stream failed thread_id={thread_id}: {error}");
+                eprintln!(
+                    "bridge turn start stream failed request_id={request_id} thread_id={thread_id}: {error}"
+                );
                 self.mark_bridge_turn_stream_finished(thread_id).await;
                 self.clear_transient_thread_state(thread_id).await;
                 return Err(error);
             }
         };
         eprintln!(
-            "bridge turn start accepted thread_id={thread_id} turn_id={} thread_status={:?}",
+            "bridge turn start accepted request_id={request_id} thread_id={thread_id} turn_id={} thread_status={:?}",
             result.response.turn_id.as_deref().unwrap_or("<none>"),
             result.response.thread_status
         );
@@ -283,6 +289,7 @@ impl BridgeAppState {
             .await
             .insert(thread_id.to_string(), prompt.trim().to_string());
         self.start_turn_with_visible_prompt(
+            "plan-turn",
             thread_id,
             prompt,
             &build_hidden_plan_question_prompt(prompt),
@@ -368,6 +375,7 @@ impl BridgeAppState {
                     .await;
 
                 self.start_turn_with_visible_prompt(
+                    request_id,
                     thread_id,
                     &render_user_input_response_summary(&questionnaire, answers, free_text),
                     &build_hidden_plan_followup_prompt(

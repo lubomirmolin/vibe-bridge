@@ -1,5 +1,6 @@
 use super::super::codex::normalize_generated_thread_title;
 use super::super::*;
+use std::collections::HashMap;
 use super::timeline::{
     normalize_codex_item_payload, payload_contains_hidden_message, payload_primary_text,
     summarize_live_payload, timeline_annotations_for_event,
@@ -74,7 +75,7 @@ pub(crate) fn map_thread_snapshot(thread: CodexThread) -> ThreadSnapshotDto {
             .filter(|path| path.is_absolute() && path.exists())
             .map(|path| load_archive_timeline_entries_for_session_path(&thread.id, path))
             .unwrap_or_else(|| load_archive_timeline_entries_for_thread(&thread.id));
-        prefer_archive_timeline_when_rpc_lacks_tool_events(rpc_entries, archive_entries)
+        merge_rpc_and_archive_timeline_entries(rpc_entries, archive_entries)
     };
     let git_status = Some(map_git_status(&thread));
 
@@ -113,28 +114,56 @@ fn pending_user_input_from_thread(thread: &CodexThread) -> Option<PendingUserInp
     None
 }
 
-pub(crate) fn prefer_archive_timeline_when_rpc_lacks_tool_events(
+pub(crate) fn merge_rpc_and_archive_timeline_entries(
     rpc_entries: Vec<ThreadTimelineEntryDto>,
     archive_entries: Vec<ThreadTimelineEntryDto>,
 ) -> Vec<ThreadTimelineEntryDto> {
-    if has_tool_events(&rpc_entries) {
-        return rpc_entries;
+    if rpc_entries.is_empty() {
+        return sort_timeline_entries(archive_entries);
+    }
+    if archive_entries.is_empty() {
+        return sort_timeline_entries(rpc_entries);
     }
 
-    if has_tool_events(&archive_entries) {
-        return archive_entries;
+    let mut merged_by_id = rpc_entries
+        .into_iter()
+        .map(|entry| (entry.event_id.clone(), entry))
+        .collect::<HashMap<_, _>>();
+
+    for archive_entry in archive_entries {
+        merged_by_id
+            .entry(archive_entry.event_id.clone())
+            .and_modify(|rpc_entry| {
+                if archive_entry.occurred_at > rpc_entry.occurred_at
+                    || (archive_entry.occurred_at == rpc_entry.occurred_at
+                        && timeline_entry_score(&archive_entry) >= timeline_entry_score(rpc_entry))
+                {
+                    *rpc_entry = archive_entry.clone();
+                }
+            })
+            .or_insert(archive_entry);
     }
 
-    rpc_entries
+    sort_timeline_entries(merged_by_id.into_values().collect())
 }
 
-fn has_tool_events(entries: &[ThreadTimelineEntryDto]) -> bool {
-    entries.iter().any(|entry| {
-        matches!(
-            entry.kind,
-            BridgeEventKind::CommandDelta | BridgeEventKind::FileChange
-        )
-    })
+fn sort_timeline_entries(mut entries: Vec<ThreadTimelineEntryDto>) -> Vec<ThreadTimelineEntryDto> {
+    entries.sort_by(|left, right| {
+        left.occurred_at
+            .cmp(&right.occurred_at)
+            .then_with(|| left.event_id.cmp(&right.event_id))
+    });
+    entries
+}
+
+fn timeline_entry_score(entry: &ThreadTimelineEntryDto) -> usize {
+    match entry.kind {
+        BridgeEventKind::MessageDelta => 4,
+        BridgeEventKind::PlanDelta => 3,
+        BridgeEventKind::FileChange | BridgeEventKind::CommandDelta => 2,
+        BridgeEventKind::ThreadStatusChanged => 1,
+        _ => 0,
+    }
 }
 
 fn map_thread_detail(thread: &CodexThread) -> ThreadDetailDto {

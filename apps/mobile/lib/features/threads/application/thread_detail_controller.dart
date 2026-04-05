@@ -9,6 +9,7 @@ import 'package:vibe_bridge/features/threads/data/thread_detail_bridge_api.dart'
 import 'package:vibe_bridge/features/threads/data/thread_live_stream.dart';
 import 'package:vibe_bridge/features/threads/domain/thread_activity_item.dart';
 import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/foundation/logging/thread_diagnostics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -29,6 +30,7 @@ final threadDetailControllerProvider = StateNotifierProvider.autoDispose
         bridgeApi: ref.watch(threadDetailBridgeApiProvider),
         liveStream: ref.watch(threadLiveStreamProvider),
         threadListController: threadListController,
+        diagnostics: ref.watch(threadDiagnosticsServiceProvider),
       );
     });
 
@@ -504,12 +506,14 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     required ThreadDetailBridgeApi bridgeApi,
     required ThreadLiveStream liveStream,
     required ThreadListController threadListController,
+    ThreadDiagnosticsService? diagnostics,
     void Function(String message)? debugLog,
   }) : _bridgeApiBaseUrl = bridgeApiBaseUrl,
        _initialVisibleTimelineEntries = initialVisibleTimelineEntries,
        _bridgeApi = bridgeApi,
        _liveStream = liveStream,
        _threadListController = threadListController,
+       _diagnostics = diagnostics,
        _debugLog = debugLog ?? _defaultDebugLog,
        super(ThreadDetailState(threadId: threadId)) {
     _reconnectScheduler = ReconnectScheduler(
@@ -524,6 +528,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   final ThreadDetailBridgeApi _bridgeApi;
   final ThreadLiveStream _liveStream;
   final ThreadListController _threadListController;
+  final ThreadDiagnosticsService? _diagnostics;
   final void Function(String message) _debugLog;
   final Set<String> _knownEventIds = <String>{};
   final Map<String, String> _lastLiveFrameFingerprintByEventId =
@@ -1821,6 +1826,29 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       return;
     }
 
+    if (_shouldIgnoreTransientLifecycleStatusUpdate(
+      currentStatus: thread.status,
+      nextStatus: status,
+    )) {
+      _recordTurnUiStateSnapshot(
+        'lifecycle_status_ignored',
+        data: <String, Object?>{
+          'incomingStatus': status.wireValue,
+          'previousStatus': thread.status.wireValue,
+          'reason': 'transient_settling_idle',
+          'eventId': event.eventId,
+        },
+      );
+      _debugLog(
+        'thread_detail_lifecycle_status_ignored '
+        'threadId=${state.threadId} '
+        'previousStatus=${thread.status.wireValue} '
+        'nextStatus=${status.wireValue} '
+        'reason=transient_settling_idle',
+      );
+      return;
+    }
+
     if (status == ThreadStatus.running) {
       if (thread.status != ThreadStatus.running) {
         _startTrackingActiveTurn();
@@ -1858,6 +1886,43 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       );
       _finishTrackingActiveTurn(clearPendingPromptState: false);
     }
+    _recordTurnUiStateSnapshot(
+      'lifecycle_status_applied',
+      data: <String, Object?>{
+        'incomingStatus': status.wireValue,
+        'previousStatus': thread.status.wireValue,
+        'reason': (event.payload['reason'] as String?)?.trim(),
+        'eventId': event.eventId,
+      },
+    );
+  }
+
+  bool _shouldIgnoreTransientLifecycleStatusUpdate({
+    required ThreadStatus currentStatus,
+    required ThreadStatus nextStatus,
+  }) {
+    if (currentStatus != ThreadStatus.running ||
+        nextStatus != ThreadStatus.idle) {
+      return false;
+    }
+
+    final lastActiveTurnSignalAt = _lastActiveTurnSignalAt;
+    if (lastActiveTurnSignalAt == null) {
+      return false;
+    }
+
+    final hasActiveTurnEvidence =
+        _pendingPromptSubmittedAt != null ||
+        _activeTurnSawLiveUserPrompt ||
+        _activeTurnSawIncrementalDelta ||
+        _activeTurnSawMeaningfulLiveActivity ||
+        _activeTurnNeedsSnapshotCatchUp;
+    if (!hasActiveTurnEvidence) {
+      return false;
+    }
+
+    return DateTime.now().difference(lastActiveTurnSignalAt) <=
+        _activeTurnRefreshGuardWindow;
   }
 
   Future<bool> submitComposerInput(
@@ -1907,6 +1972,18 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       clearTurnControlError: true,
     );
     final shouldSteer = await _shouldRouteComposerInputToActiveTurnSteer();
+    _recordDiagnostic(
+      'composer_submit_started',
+      data: <String, Object?>{
+        'chars': input.length,
+        'images': normalizedImages.length,
+        'localIsTurnActive': state.isTurnActive,
+        'shouldSteer': shouldSteer,
+        'mode': mode.wireValue,
+        'model': model,
+        'reasoningEffort': reasoningEffort,
+      },
+    );
     _debugLog(
       'thread_detail_submit_composer '
       'threadId=${state.threadId} '
@@ -1938,6 +2015,15 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
             );
 
       _pendingPromptSubmittedAt = DateTime.now();
+      _recordDiagnostic(
+        'composer_submit_result',
+        data: <String, Object?>{
+          'operation': mutationResult.operation,
+          'outcome': mutationResult.outcome,
+          'threadStatus': mutationResult.threadStatus.wireValue,
+          'turnId': mutationResult.turnId,
+        },
+      );
       _debugLog(
         'thread_detail_submit_composer_result '
         'threadId=${state.threadId} '
@@ -1953,6 +2039,16 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       );
       return true;
     } on ThreadTurnBridgeException catch (error) {
+      _recordDiagnostic(
+        'composer_submit_failed',
+        data: <String, Object?>{
+          'message': error.message,
+          'statusCode': error.statusCode,
+          'code': error.code,
+          'rawBody': error.rawBody,
+          'isConnectivityError': error.isConnectivityError,
+        },
+      );
       _removePendingLocalUserPrompt(localPendingPromptId);
       state = state.copyWith(
         isComposerMutationInFlight: false,
@@ -1960,6 +2056,10 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       );
       return false;
     } catch (_) {
+      _recordDiagnostic(
+        'composer_submit_failed',
+        data: <String, Object?>{'message': 'unknown_error'},
+      );
       _removePendingLocalUserPrompt(localPendingPromptId);
       state = state.copyWith(
         isComposerMutationInFlight: false,
@@ -1972,10 +2072,22 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
   Future<bool> _shouldRouteComposerInputToActiveTurnSteer() async {
     if (!state.isTurnActive) {
+      _recordDiagnostic(
+        'composer_route_decision',
+        data: <String, Object?>{
+          'localIsTurnActive': false,
+          'shouldSteer': false,
+          'reason': 'local_state_idle',
+        },
+      );
       return false;
     }
 
     final requestedThreadId = state.threadId;
+    _recordDiagnostic(
+      'thread_detail_verify_before_submit_started',
+      data: <String, Object?>{'localStatus': state.thread?.status.wireValue},
+    );
     try {
       final detail = await _bridgeApi.fetchThreadDetail(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
@@ -1996,6 +2108,14 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         'localStatus=${state.thread?.status.wireValue} '
         'bridgeStatus=${scopedDetail.status.wireValue}',
       );
+      _recordDiagnostic(
+        'thread_detail_verify_before_submit_result',
+        data: <String, Object?>{
+          'localStatus': state.thread?.status.wireValue,
+          'bridgeStatus': scopedDetail.status.wireValue,
+          'shouldSteer': scopedDetail.status == ThreadStatus.running,
+        },
+      );
       if (scopedDetail.status == ThreadStatus.running) {
         return true;
       }
@@ -2014,7 +2134,15 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       );
       _finishTrackingActiveTurn();
       return false;
-    } catch (_) {
+    } catch (error) {
+      _recordDiagnostic(
+        'thread_detail_verify_before_submit_failed',
+        data: <String, Object?>{
+          'error': error.toString(),
+          'errorType': error.runtimeType.toString(),
+          'fallbackShouldSteer': true,
+        },
+      );
       return true;
     }
   }
@@ -2494,6 +2622,15 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       threadId: thread.threadId,
       status: mutationResult.threadStatus,
       updatedAt: updatedAt,
+    );
+    _recordTurnUiStateSnapshot(
+      'turn_mutation_state_applied',
+      data: <String, Object?>{
+        'operation': mutationResult.operation,
+        'outcome': mutationResult.outcome,
+        'threadStatus': mutationResult.threadStatus.wireValue,
+        'turnId': mutationResult.turnId,
+      },
     );
   }
 
@@ -3161,6 +3298,58 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
   static void _defaultDebugLog(String message) {
     debugPrint(message);
+  }
+
+  void _recordDiagnostic(
+    String kind, {
+    Map<String, Object?> data = const <String, Object?>{},
+  }) {
+    final diagnostics = _diagnostics;
+    if (diagnostics == null) {
+      return;
+    }
+    unawaited(
+      diagnostics.record(kind: kind, threadId: state.threadId, data: data),
+    );
+  }
+
+  void _recordTurnUiStateSnapshot(
+    String kind, {
+    Map<String, Object?> data = const <String, Object?>{},
+  }) {
+    final sendingCount = state.visibleItems
+        .where(
+          (item) =>
+              item.localMessageState == ThreadActivityLocalMessageState.sending,
+        )
+        .length;
+    final failedCount = state.visibleItems
+        .where(
+          (item) =>
+              item.localMessageState == ThreadActivityLocalMessageState.failed,
+        )
+        .length;
+    _recordDiagnostic(
+      kind,
+      data: <String, Object?>{
+        ...data,
+        'threadStatus': state.thread?.status.wireValue,
+        'isTurnActive': state.isTurnActive,
+        'isComposerMutationInFlight': state.isComposerMutationInFlight,
+        'isInterruptMutationInFlight': state.isInterruptMutationInFlight,
+        'pendingLocalPromptCount': state.pendingLocalUserPrompts.length,
+        'visibleSendingCount': sendingCount,
+        'visibleFailedCount': failedCount,
+        'activeTurnSawMeaningfulLiveActivity':
+            _activeTurnSawMeaningfulLiveActivity,
+        'activeTurnNeedsSnapshotCatchUp': _activeTurnNeedsSnapshotCatchUp,
+        'activeTurnSawLiveUserPrompt': _activeTurnSawLiveUserPrompt,
+        'activeTurnSawIncrementalDelta': _activeTurnSawIncrementalDelta,
+        'pendingPromptSubmittedAt': _pendingPromptSubmittedAt
+            ?.toIso8601String(),
+        'lastActiveTurnSignalAt': _lastActiveTurnSignalAt?.toIso8601String(),
+      },
+    );
   }
 
   @override

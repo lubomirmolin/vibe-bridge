@@ -12,6 +12,7 @@ class _ThreadDetailHeader extends StatelessWidget {
     required this.onOpenGitSyncSheet,
     required this.onOpenOnMac,
     required this.onOpenDiff,
+    required this.onOpenDiagnostics,
     required this.onToggleSidebar,
     required this.onToggleDiff,
     required this.onOpenSettings,
@@ -31,6 +32,7 @@ class _ThreadDetailHeader extends StatelessWidget {
   final Future<void> Function() onOpenGitSyncSheet;
   final Future<void> Function() onOpenOnMac;
   final Future<void> Function() onOpenDiff;
+  final Future<void> Function() onOpenDiagnostics;
   final VoidCallback? onToggleSidebar;
   final VoidCallback? onToggleDiff;
   final VoidCallback? onOpenSettings;
@@ -51,6 +53,7 @@ class _ThreadDetailHeader extends StatelessWidget {
       onOpenGitSyncSheet: onOpenGitSyncSheet,
       onOpenOnMac: onOpenOnMac,
       onOpenDiff: onOpenDiff,
+      onOpenDiagnostics: onOpenDiagnostics,
       onToggleSidebar: onToggleSidebar,
       onToggleDiff: onToggleDiff,
       onOpenSettings: onOpenSettings,
@@ -75,6 +78,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
     required this.onOpenGitSyncSheet,
     required this.onOpenOnMac,
     required this.onOpenDiff,
+    required this.onOpenDiagnostics,
     required this.onToggleSidebar,
     required this.onToggleDiff,
     required this.onOpenSettings,
@@ -95,6 +99,7 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
   final Future<void> Function() onOpenGitSyncSheet;
   final Future<void> Function() onOpenOnMac;
   final Future<void> Function() onOpenDiff;
+  final Future<void> Function() onOpenDiagnostics;
   final VoidCallback? onToggleSidebar;
   final VoidCallback? onToggleDiff;
   final VoidCallback? onOpenSettings;
@@ -207,6 +212,15 @@ class _LoadedThreadDetailHeader extends StatelessWidget {
                           color: AppTheme.textMuted,
                         ),
                       ),
+                    IconButton(
+                      key: const Key('thread-detail-diagnostics-toggle'),
+                      onPressed: onOpenDiagnostics,
+                      icon: PhosphorIcon(
+                        PhosphorIcons.bug(),
+                        size: 20,
+                        color: AppTheme.textMuted,
+                      ),
+                    ),
                   ],
                 ),
                 Padding(

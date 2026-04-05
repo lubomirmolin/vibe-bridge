@@ -3,6 +3,16 @@ part of 'thread_detail_page.dart';
 const double _composerPrimaryButtonSize = 56;
 const double _composerModePeekOffset = 62;
 const double _composerPrimaryRailWidth = 74;
+const double _composerPrimaryRailTrailingInset =
+    _composerPrimaryRailWidth - _composerPrimaryButtonSize;
+const double _composerModeSwitchThreshold = 30;
+const double _composerModeSwitchVelocityThreshold = 260;
+const double _composerModeForwardDragResistance = 0.52;
+const double _composerModeNearSnapDragResistance = 0.3;
+const double _composerModePastSnapDragResistance = 0.12;
+const double _composerModeReturnDragResistance = 0.72;
+const double _composerModeRightOverscrollLimit = 16;
+const double _composerModePastSnapOverscrollLimit = 8;
 
 bool _isProviderApprovalPrompt(PendingUserInputDto? pendingUserInput) {
   return pendingUserInput != null &&
@@ -1363,9 +1373,30 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
     if (widget.hasPendingUserInput || !widget.supportsPlanMode) return;
     _snapController.stop();
     setState(() {
-      _dragDx += details.delta.dx;
-      // Soft clamp for pulling right (elastic feel)
-      if (_dragDx > 24.0) _dragDx = 24.0;
+      final deltaX = details.delta.dx;
+      if (deltaX < 0) {
+        final pastSnapPoint = _dragDx <= -_composerModePeekOffset;
+        final nearSnapPoint = _dragDx <= -(_composerModePeekOffset * 0.55);
+        final resistance = pastSnapPoint
+            ? _composerModePastSnapDragResistance
+            : nearSnapPoint
+            ? _composerModeNearSnapDragResistance
+            : _composerModeForwardDragResistance;
+        _dragDx += deltaX * resistance;
+        final minDragDx =
+            -(_composerModePeekOffset + _composerModePastSnapOverscrollLimit);
+        if (_dragDx < minDragDx) {
+          _dragDx = minDragDx;
+        }
+      } else {
+        final resistance = _dragDx < 0
+            ? _composerModeReturnDragResistance
+            : 0.35;
+        _dragDx += deltaX * resistance;
+        if (_dragDx > _composerModeRightOverscrollLimit) {
+          _dragDx = _composerModeRightOverscrollLimit;
+        }
+      }
     });
   }
 
@@ -1373,9 +1404,13 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
     if (widget.hasPendingUserInput || !widget.supportsPlanMode) return;
     final velocity = details.primaryVelocity ?? 0;
 
-    if (_dragDx < -20 || velocity < -180) {
+    if (_dragDx < -_composerModeSwitchThreshold ||
+        velocity < -_composerModeSwitchVelocityThreshold) {
       // Snap to next
-      _snapAnimation = Tween<double>(begin: _dragDx, end: -68.0).animate(
+      _snapAnimation = Tween<double>(
+        begin: _dragDx,
+        end: -_composerModePeekOffset,
+      ).animate(
         CurvedAnimation(parent: _snapController, curve: Curves.easeOutCubic),
       );
 
@@ -1575,7 +1610,7 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
               // progress = 1.0 when active is fully centered, 0.0 when active is completely offset
               // secondaryProgress = 1.0 when secondary is fully centered, 0.0 when secondary is completely offset
               final activeOffset = effectiveDrag;
-              final secondaryOffset = spacing + effectiveDrag;
+              final secondaryOffset = -spacing - effectiveDrag;
 
               final activeProgress = math
                   .max(0.0, 1.0 - (activeOffset.abs() / spacing))
@@ -1599,7 +1634,8 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
                 ),
                 behavior: HitTestBehavior.translucent,
                 onTapUp: (details) {
-                  if (details.localPosition.dx >= _composerPrimaryButtonSize) {
+                  if (details.localPosition.dx <=
+                      _composerPrimaryRailTrailingInset) {
                     widget.onComposerModeChanged(secondaryMode);
                   } else {
                     handleSubmit();
@@ -1614,7 +1650,7 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
                     clipBehavior: Clip.none,
                     children: [
                       Positioned(
-                        left: 0,
+                        left: _composerPrimaryRailTrailingInset,
                         child: Transform(
                           transform: Matrix4.identity()
                             ..translate(secondaryOffset, 0.0)
@@ -1628,7 +1664,7 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
                         ),
                       ),
                       Positioned(
-                        left: 0,
+                        left: _composerPrimaryRailTrailingInset,
                         child: Transform(
                           transform: Matrix4.identity()
                             ..translate(activeOffset, 0.0)

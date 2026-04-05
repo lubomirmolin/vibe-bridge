@@ -7,9 +7,8 @@ use super::codex::{
 };
 use super::mapping::{
     derive_repository_name_from_cwd, extract_generated_thread_title, map_thread_snapshot,
-    map_thread_summary, normalize_codex_item_payload, parse_model_options,
-    parse_repository_name_from_origin, prefer_archive_timeline_when_rpc_lacks_tool_events,
-    timeline_annotations_for_event,
+    map_thread_summary, merge_rpc_and_archive_timeline_entries, normalize_codex_item_payload,
+    parse_model_options, parse_repository_name_from_origin, timeline_annotations_for_event,
 };
 use super::{
     CodexGateway, CodexGitInfo, CodexThread, CodexThreadStatus, CodexTurn,
@@ -554,7 +553,7 @@ fn thread_summary_ignores_preview_when_name_is_missing() {
 }
 
 #[test]
-fn archive_timeline_is_preferred_when_rpc_has_only_messages() {
+fn rpc_and_archive_timelines_are_merged_without_losing_archive_freshness() {
     let rpc_entries = vec![ThreadTimelineEntryDto {
         event_id: "evt-msg".to_string(),
         kind: BridgeEventKind::MessageDelta,
@@ -583,10 +582,73 @@ fn archive_timeline_is_preferred_when_rpc_has_only_messages() {
         },
     ];
 
-    let selected = prefer_archive_timeline_when_rpc_lacks_tool_events(rpc_entries, archive_entries);
+    let selected = merge_rpc_and_archive_timeline_entries(rpc_entries, archive_entries);
 
     assert_eq!(selected.len(), 2);
+    assert_eq!(selected[0].event_id, "evt-msg");
     assert_eq!(selected[1].kind, BridgeEventKind::CommandDelta);
+}
+
+#[test]
+fn archive_entries_fill_gaps_when_rpc_snapshot_misses_latest_turn_messages() {
+    let rpc_entries = vec![
+        ThreadTimelineEntryDto {
+            event_id: "status-running".to_string(),
+            kind: BridgeEventKind::ThreadStatusChanged,
+            occurred_at: "2026-03-21T10:00:00.000Z".to_string(),
+            summary: "running".to_string(),
+            payload: json!({"status":"running"}),
+            annotations: None,
+        },
+        ThreadTimelineEntryDto {
+            event_id: "status-completed".to_string(),
+            kind: BridgeEventKind::ThreadStatusChanged,
+            occurred_at: "2026-03-21T10:00:05.000Z".to_string(),
+            summary: "completed".to_string(),
+            payload: json!({"status":"completed"}),
+            annotations: None,
+        },
+    ];
+    let archive_entries = vec![
+        ThreadTimelineEntryDto {
+            event_id: "status-running".to_string(),
+            kind: BridgeEventKind::ThreadStatusChanged,
+            occurred_at: "2026-03-21T10:00:00.000Z".to_string(),
+            summary: "running".to_string(),
+            payload: json!({"status":"running"}),
+            annotations: None,
+        },
+        ThreadTimelineEntryDto {
+            event_id: "evt-user".to_string(),
+            kind: BridgeEventKind::MessageDelta,
+            occurred_at: "2026-03-21T10:00:01.000Z".to_string(),
+            summary: "Why is formatter missing?".to_string(),
+            payload: json!({"type":"userMessage","text":"Why is formatter missing?"}),
+            annotations: None,
+        },
+        ThreadTimelineEntryDto {
+            event_id: "evt-assistant".to_string(),
+            kind: BridgeEventKind::MessageDelta,
+            occurred_at: "2026-03-21T10:00:04.000Z".to_string(),
+            summary: "Because dart is not on PATH.".to_string(),
+            payload: json!({"type":"agentMessage","text":"Because dart is not on PATH."}),
+            annotations: None,
+        },
+        ThreadTimelineEntryDto {
+            event_id: "status-completed".to_string(),
+            kind: BridgeEventKind::ThreadStatusChanged,
+            occurred_at: "2026-03-21T10:00:05.000Z".to_string(),
+            summary: "completed".to_string(),
+            payload: json!({"status":"completed"}),
+            annotations: None,
+        },
+    ];
+
+    let merged = merge_rpc_and_archive_timeline_entries(rpc_entries, archive_entries);
+
+    assert_eq!(merged.len(), 4);
+    assert_eq!(merged[1].event_id, "evt-user");
+    assert_eq!(merged[2].event_id, "evt-assistant");
 }
 
 #[test]
@@ -701,6 +763,7 @@ fn live_create_thread_and_stream_turn_response() {
             .start_turn_streaming(
                 &snapshot.thread.thread_id,
                 TurnStartRequest {
+                    request_id: None,
                     prompt: prompt.clone(),
                     images: Vec::new(),
                     model: None,
@@ -810,6 +873,7 @@ After completing those steps, reply with exactly {done_token}."
             .start_turn_streaming(
                 &thread_id,
                 TurnStartRequest {
+                    request_id: None,
                     prompt,
                     images: Vec::new(),
                     model: None,

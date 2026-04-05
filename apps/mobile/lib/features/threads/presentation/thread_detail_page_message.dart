@@ -1318,86 +1318,98 @@ class _ChatLoadingMessageCardState extends State<_ChatLoadingMessageCard>
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      key: const Key('thread-running-indicator-card'),
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceZinc800.withValues(alpha: 0.2),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
-      ),
-      child: Row(
-        children: [
-          PhosphorIcon(
-            PhosphorIcons.sparkle(),
-            color: AppTheme.textSubtle,
-            size: 16,
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          key: const Key('thread-running-indicator-card'),
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: AppTheme.surfaceZinc800.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  widget.phaseLabel,
-                  key: const Key('thread-running-phase-label'),
+          child: Row(
+            children: [
+              PhosphorIcon(
+                PhosphorIcons.sparkle(),
+                color: AppTheme.textSubtle,
+                size: 16,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.phaseLabel,
+                      key: const Key('thread-running-phase-label'),
+                      style: GoogleFonts.jetBrainsMono(
+                        color: AppTheme.textMain,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _currentText,
+                      key: const Key('thread-running-scramble'),
+                      style: GoogleFonts.jetBrainsMono(
+                        color: AppTheme.textMuted,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              TextButton.icon(
+                key: const Key('turn-interrupt-button'),
+                onPressed:
+                    widget.controlsEnabled &&
+                        !widget.isInterruptMutationInFlight
+                    ? () async {
+                        await widget.onInterruptActiveTurn();
+                      }
+                    : null,
+                style: TextButton.styleFrom(
+                  foregroundColor: AppTheme.rose,
+                  backgroundColor: AppTheme.rose.withValues(alpha: 0.08),
+                  disabledForegroundColor: AppTheme.textSubtle,
+                  disabledBackgroundColor: AppTheme.surfaceZinc800.withValues(
+                    alpha: 0.35,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  minimumSize: const Size(0, 40),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(
+                      color: AppTheme.rose.withValues(alpha: 0.16),
+                    ),
+                  ),
+                ),
+                icon: widget.isInterruptMutationInFlight
+                    ? const SizedBox.square(
+                        dimension: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : PhosphorIcon(PhosphorIcons.stop(), size: 16),
+                label: Text(
+                  widget.isInterruptMutationInFlight ? 'Cancelling' : 'Cancel',
                   style: GoogleFonts.jetBrainsMono(
-                    color: AppTheme.textMain,
-                    fontSize: 13,
+                    fontSize: 12,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  _currentText,
-                  key: const Key('thread-running-scramble'),
-                  style: GoogleFonts.jetBrainsMono(
-                    color: AppTheme.textMuted,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-          const SizedBox(width: 12),
-          TextButton.icon(
-            key: const Key('turn-interrupt-button'),
-            onPressed:
-                widget.controlsEnabled && !widget.isInterruptMutationInFlight
-                ? () async {
-                    await widget.onInterruptActiveTurn();
-                  }
-                : null,
-            style: TextButton.styleFrom(
-              foregroundColor: AppTheme.rose,
-              backgroundColor: AppTheme.rose.withValues(alpha: 0.08),
-              disabledForegroundColor: AppTheme.textSubtle,
-              disabledBackgroundColor: AppTheme.surfaceZinc800.withValues(
-                alpha: 0.35,
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              minimumSize: const Size(0, 40),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: BorderSide(color: AppTheme.rose.withValues(alpha: 0.16)),
-              ),
-            ),
-            icon: widget.isInterruptMutationInFlight
-                ? const SizedBox.square(
-                    dimension: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : PhosphorIcon(PhosphorIcons.stop(), size: 16),
-            label: Text(
-              widget.isInterruptMutationInFlight ? 'Cancelling' : 'Cancel',
-              style: GoogleFonts.jetBrainsMono(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

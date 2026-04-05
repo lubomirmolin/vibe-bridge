@@ -758,6 +758,82 @@ void main() {
   });
 
   testWidgets(
+    'thread detail keeps the timeline pinned to bottom while send-time UI settles',
+    (tester) async {
+      final timeline = List<ThreadTimelineEntryDto>.generate(
+        36,
+        (index) => _timelineEvent(
+          id: 'evt-bottom-pin-$index',
+          kind: BridgeEventKind.messageDelta,
+          summary: 'Assistant output',
+          payload: {'delta': 'Scrollable event $index'},
+          occurredAt:
+              '2026-03-18T10:${(index % 60).toString().padLeft(2, '0')}:00Z',
+        ),
+      );
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-456': [_thread456Detail()],
+        },
+        timelineScriptByThreadId: {
+          'thread-456': [timeline],
+        },
+        startTurnScriptByThreadId: {
+          'thread-456': [
+            Future<TurnMutationResult>.delayed(
+              const Duration(milliseconds: 20),
+              () => _turnMutationResult(
+                threadId: 'thread-456',
+                operation: 'start_turn',
+                status: ThreadStatus.running,
+                message: 'Turn started',
+              ),
+            ),
+          ],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-456',
+      );
+      await tester.pumpAndSettle();
+
+      final scrollViewFinder = find.byKey(
+        const Key('thread-detail-scroll-view'),
+      );
+      final scrollView = tester.widget<ListView>(scrollViewFinder);
+      final scrollController = scrollView.controller!;
+      scrollController.jumpTo(scrollController.position.maxScrollExtent);
+      await tester.pump();
+
+      expect(
+        scrollController.position.maxScrollExtent - scrollController.offset,
+        closeTo(0, 1),
+      );
+
+      await tester.enterText(
+        find.byKey(const Key('turn-composer-input')),
+        'Keep the viewport steady.',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('turn-composer-submit')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.pump();
+
+      final remainingDistance =
+          scrollController.position.maxScrollExtent - scrollController.offset;
+      expect(remainingDistance, closeTo(0, 8));
+      expect(detailApi.startTurnPromptsByThreadId['thread-456'], [
+        'Keep the viewport steady.',
+      ]);
+    },
+  );
+
+  testWidgets(
     'thread detail restores an unsent composer draft after leaving and reopening',
     (tester) async {
       final detailApi = FakeThreadDetailBridgeApi(

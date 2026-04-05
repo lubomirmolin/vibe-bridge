@@ -10,7 +10,7 @@ pub(crate) use snapshot::{
 };
 #[cfg(test)]
 pub(crate) use snapshot::{
-    parse_repository_name_from_origin, prefer_archive_timeline_when_rpc_lacks_tool_events,
+    merge_rpc_and_archive_timeline_entries, parse_repository_name_from_origin,
 };
 #[cfg(test)]
 pub(crate) use timeline::{normalize_codex_item_payload, timeline_annotations_for_event};

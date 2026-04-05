@@ -1,4 +1,6 @@
 use super::*;
+use std::fmt::Write as _;
+use std::time::Instant;
 
 impl BridgeAppState {
     pub(super) async fn request_notification_thread_resume(&self, thread_id: &str) {
@@ -176,6 +178,10 @@ impl BridgeAppState {
     pub(super) fn schedule_bridge_owned_turn_watchdog(&self, _thread_id: &str) {}
 
     pub(super) async fn refresh_snapshot_after_bridge_turn_completion(&self, thread_id: &str) {
+        let refresh_started_at = Instant::now();
+        eprintln!(
+            "bridge completion snapshot refresh start thread_id={thread_id}"
+        );
         let snapshot = match self.inner.gateway.fetch_thread_snapshot(thread_id).await {
             Ok(snapshot) => snapshot,
             Err(error) => {
@@ -185,6 +191,11 @@ impl BridgeAppState {
                 return;
             }
         };
+        eprintln!(
+            "bridge completion snapshot refresh fetched thread_id={thread_id} elapsed_ms={} snapshot={}",
+            refresh_started_at.elapsed().as_millis(),
+            summarize_snapshot_for_debug(&snapshot)
+        );
         self.apply_bridge_turn_completion_snapshot(thread_id, snapshot)
             .await;
     }
@@ -216,6 +227,16 @@ impl BridgeAppState {
                 .then_some(normalized)
             })
             .collect::<Vec<_>>();
+
+        eprintln!(
+            "bridge completion snapshot apply thread_id={thread_id} previous={} next={} published_status_events={}",
+            previous_snapshot
+                .as_ref()
+                .map(summarize_snapshot_for_debug)
+                .unwrap_or_else(|| "<none>".to_string()),
+            summarize_snapshot_for_debug(&snapshot),
+            events.len()
+        );
 
         self.apply_external_snapshot_update(snapshot, events).await;
     }
@@ -399,4 +420,75 @@ impl BridgeAppState {
             }
         });
     }
+}
+
+fn summarize_snapshot_for_debug(snapshot: &ThreadSnapshotDto) -> String {
+    let mut buffer = String::new();
+    let message_count = snapshot
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == BridgeEventKind::MessageDelta)
+        .count();
+    let status_count = snapshot
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == BridgeEventKind::ThreadStatusChanged)
+        .count();
+    let recent_entries = snapshot
+        .entries
+        .iter()
+        .rev()
+        .take(5)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|entry| {
+            format!(
+                "{}:{:?}:{}",
+                entry.event_id,
+                entry.kind,
+                entry.payload
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .or_else(|| entry.payload.get("status").and_then(Value::as_str))
+                    .unwrap_or("-")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let latest_message = snapshot
+        .entries
+        .iter()
+        .rev()
+        .find(|entry| entry.kind == BridgeEventKind::MessageDelta)
+        .and_then(|entry| {
+            entry.payload
+                .get("text")
+                .and_then(Value::as_str)
+                .or_else(|| entry.payload.get("delta").and_then(Value::as_str))
+                .map(|text| truncate_for_debug(text, 80))
+        })
+        .unwrap_or_else(|| "<none>".to_string());
+    let _ = write!(
+        buffer,
+        "status={:?} updated_at={} entries={} messages={} statuses={} last_message={} recent=[{}]",
+        snapshot.thread.status,
+        snapshot.thread.updated_at,
+        snapshot.entries.len(),
+        message_count,
+        status_count,
+        latest_message,
+        recent_entries
+    );
+    buffer
+}
+
+fn truncate_for_debug(value: &str, max_chars: usize) -> String {
+    let trimmed = value.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+    let mut truncated = trimmed.chars().take(max_chars).collect::<String>();
+    truncated.push_str("...");
+    truncated
 }

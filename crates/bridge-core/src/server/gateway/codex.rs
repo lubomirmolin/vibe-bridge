@@ -4,6 +4,7 @@ mod rpc;
 mod titles;
 mod transport;
 
+use std::fmt::Write as _;
 use std::time::Instant;
 
 use super::mapping::{extract_generated_thread_title, map_thread_snapshot};
@@ -57,7 +58,19 @@ impl CodexGateway {
             let mut transport = take_reserved_transport(&reserved_transports, &thread_id)
                 .unwrap_or(connect_read_transport(&config)?);
             let snapshot = match read_thread_with_resume(&mut transport, &thread_id, true) {
-                Ok(payload) => map_thread_snapshot(payload.thread),
+                Ok(payload) => {
+                    let rpc_snapshot = map_thread_snapshot(payload.thread);
+                    let archive_snapshot = fetch_thread_snapshot_from_archive(&config, &thread_id).ok();
+                    eprintln!(
+                        "bridge codex snapshot compare thread_id={thread_id} rpc={} archive={}",
+                        summarize_snapshot_for_debug(&rpc_snapshot),
+                        archive_snapshot
+                            .as_ref()
+                            .map(summarize_snapshot_for_debug)
+                            .unwrap_or_else(|| "<unavailable>".to_string())
+                    );
+                    rpc_snapshot
+                }
                 Err(error) if error.contains("not found") => {
                     return fetch_thread_snapshot_from_archive(&config, &thread_id);
                 }
@@ -144,6 +157,7 @@ impl CodexGateway {
         let config = self.config.clone();
         let thread_id = thread_id.to_string();
         let TurnStartRequest {
+            request_id,
             prompt,
             images,
             model,
@@ -160,7 +174,8 @@ impl CodexGateway {
             let reserved_transport = take_reserved_transport(&reserved_transports, &thread_id);
             let had_reserved_transport = reserved_transport.is_some();
             eprintln!(
-                "bridge codex turn stream init thread_id={thread_id} had_reserved_transport={had_reserved_transport}"
+                "bridge codex turn stream init request_id={} thread_id={thread_id} had_reserved_transport={had_reserved_transport}",
+                request_id.as_deref().unwrap_or("<none>")
             );
             let mut transport = match reserved_transport {
                 Some(transport) => transport,
@@ -234,7 +249,8 @@ impl CodexGateway {
                     Ok(payload) => payload,
                     Err(error) => {
                         eprintln!(
-                            "bridge codex turn stream start_turn_with_resume failed thread_id={thread_id}: {error}"
+                            "bridge codex turn stream start_turn_with_resume failed request_id={} thread_id={thread_id}: {error}",
+                            request_id.as_deref().unwrap_or("<none>")
                         );
                         let _ = result_tx.send(Err(error));
                         return;
@@ -242,7 +258,8 @@ impl CodexGateway {
                 }
             };
             eprintln!(
-                "bridge codex turn stream accepted thread_id={thread_id} turn_id={}",
+                "bridge codex turn stream accepted request_id={} thread_id={thread_id} turn_id={}",
+                request_id.as_deref().unwrap_or("<none>"),
                 payload.turn.id
             );
 
@@ -270,14 +287,16 @@ impl CodexGateway {
                     Ok(Some(message)) => message,
                     Ok(None) => {
                         eprintln!(
-                            "bridge codex turn stream ended unexpectedly (EOF) thread_id={thread_id} notifications={observed_notification_count} elapsed_ms={}",
+                            "bridge codex turn stream ended unexpectedly (EOF) request_id={} thread_id={thread_id} notifications={observed_notification_count} elapsed_ms={}",
+                            request_id.as_deref().unwrap_or("<none>"),
                             stream_started_at.elapsed().as_millis()
                         );
                         break;
                     }
                     Err(error) => {
                         eprintln!(
-                            "bridge codex turn stream next_message failed thread_id={thread_id} notifications={observed_notification_count} last_method={last_method} elapsed_ms={} error={error}",
+                            "bridge codex turn stream next_message failed request_id={} thread_id={thread_id} notifications={observed_notification_count} last_method={last_method} elapsed_ms={} error={error}",
+                            request_id.as_deref().unwrap_or("<none>"),
                             stream_started_at.elapsed().as_millis()
                         );
                         break;
@@ -324,7 +343,8 @@ impl CodexGateway {
 
                 if method == "turn/completed" {
                     eprintln!(
-                        "bridge codex turn stream completed thread_id={thread_id} notifications={observed_notification_count} elapsed_ms={}",
+                        "bridge codex turn stream completed request_id={} thread_id={thread_id} notifications={observed_notification_count} elapsed_ms={}",
+                        request_id.as_deref().unwrap_or("<none>"),
                         stream_started_at.elapsed().as_millis()
                     );
                     on_turn_completed(thread_id.clone());
@@ -332,7 +352,8 @@ impl CodexGateway {
                 }
             }
             eprintln!(
-                "bridge codex turn stream finished callback thread_id={thread_id} notifications={observed_notification_count} last_method={last_method} elapsed_ms={}",
+                "bridge codex turn stream finished callback request_id={} thread_id={thread_id} notifications={observed_notification_count} last_method={last_method} elapsed_ms={}",
+                request_id.as_deref().unwrap_or("<none>"),
                 stream_started_at.elapsed().as_millis()
             );
             on_stream_finished(thread_id.clone());
@@ -507,4 +528,75 @@ impl CodexGateway {
         .await
         .map_err(|error| format!("codex generate_thread_title task failed: {error}"))?
     }
+}
+
+fn summarize_snapshot_for_debug(snapshot: &ThreadSnapshotDto) -> String {
+    let mut buffer = String::new();
+    let message_count = snapshot
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == BridgeEventKind::MessageDelta)
+        .count();
+    let status_count = snapshot
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == BridgeEventKind::ThreadStatusChanged)
+        .count();
+    let recent_entries = snapshot
+        .entries
+        .iter()
+        .rev()
+        .take(5)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|entry| {
+            format!(
+                "{}:{:?}:{}",
+                entry.event_id,
+                entry.kind,
+                entry.payload
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .or_else(|| entry.payload.get("status").and_then(Value::as_str))
+                    .unwrap_or("-")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let latest_message = snapshot
+        .entries
+        .iter()
+        .rev()
+        .find(|entry| entry.kind == BridgeEventKind::MessageDelta)
+        .and_then(|entry| {
+            entry.payload
+                .get("text")
+                .and_then(Value::as_str)
+                .or_else(|| entry.payload.get("delta").and_then(Value::as_str))
+                .map(|text| truncate_for_debug(text, 80))
+        })
+        .unwrap_or_else(|| "<none>".to_string());
+    let _ = write!(
+        buffer,
+        "status={:?} updated_at={} entries={} messages={} statuses={} last_message={} recent=[{}]",
+        snapshot.thread.status,
+        snapshot.thread.updated_at,
+        snapshot.entries.len(),
+        message_count,
+        status_count,
+        latest_message,
+        recent_entries
+    );
+    buffer
+}
+
+fn truncate_for_debug(value: &str, max_chars: usize) -> String {
+    let trimmed = value.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+    let mut truncated = trimmed.chars().take(max_chars).collect::<String>();
+    truncated.push_str("...");
+    truncated
 }

@@ -15,6 +15,7 @@ use shared_contracts::{
     UserInputAnswerDto,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
+use uuid::Uuid;
 
 use crate::pairing::{
     PairingFinalizeError, PairingFinalizeRequest, PairingHandshakeError, PairingHandshakeRequest,
@@ -596,8 +597,18 @@ async fn start_turn(
     Path(thread_id): Path<String>,
     ExtractJson(request): ExtractJson<StartTurnRequest>,
 ) -> Result<Json<TurnMutationAcceptedDto>, (StatusCode, Json<ErrorEnvelope>)> {
+    let request_id = format!("turn-{}", &Uuid::new_v4().simple().to_string()[..12]);
+    eprintln!(
+        "bridge api start_turn received request_id={request_id} thread_id={thread_id} mode={:?} prompt_chars={} images={} model={} effort={}",
+        request.mode.unwrap_or(TurnMode::Act),
+        request.prompt.trim().chars().count(),
+        request.images.len(),
+        request.model.as_deref().unwrap_or("<default>"),
+        request.effort.as_deref().unwrap_or("<default>")
+    );
     match state
         .start_turn(
+            &request_id,
             &thread_id,
             &request.prompt,
             &request.images,
@@ -615,9 +626,16 @@ async fn start_turn(
         )
         .await
     {
-        Ok(response) => Ok(Json(response)),
+        Ok(response) => {
+            eprintln!(
+                "bridge api start_turn accepted request_id={request_id} thread_id={thread_id} thread_status={:?} turn_id={}",
+                response.thread_status,
+                response.turn_id.as_deref().unwrap_or("<none>")
+            );
+            Ok(Json(response))
+        }
         Err(error) => {
-            eprintln!("bridge start_turn failed for {thread_id}: {error}");
+            eprintln!("bridge start_turn failed request_id={request_id} for {thread_id}: {error}");
             Err(turn_error_response(&thread_id, error, "turn_start_failed"))
         }
     }
@@ -934,13 +952,26 @@ async fn interrupt_turn(
     Path(thread_id): Path<String>,
     request: Option<ExtractJson<InterruptTurnRequest>>,
 ) -> Result<Json<TurnMutationAcceptedDto>, (StatusCode, Json<ErrorEnvelope>)> {
+    let request_id = format!("interrupt-{}", &Uuid::new_v4().simple().to_string()[..12]);
     let turn_id = request
         .as_ref()
         .and_then(|ExtractJson(request)| request.turn_id.as_deref());
+    eprintln!(
+        "bridge api interrupt_turn received request_id={request_id} thread_id={thread_id} turn_id={}",
+        turn_id.unwrap_or("<auto>")
+    );
     match state.interrupt_turn(&thread_id, turn_id).await {
-        Ok(response) => Ok(Json(response)),
+        Ok(response) => {
+            eprintln!(
+                "bridge api interrupt_turn accepted request_id={request_id} thread_id={thread_id} thread_status={:?}",
+                response.thread_status
+            );
+            Ok(Json(response))
+        }
         Err(error) => {
-            eprintln!("bridge interrupt_turn failed for {thread_id}: {error}");
+            eprintln!(
+                "bridge interrupt_turn failed request_id={request_id} for {thread_id}: {error}"
+            );
             Err(turn_error_response(
                 &thread_id,
                 error,

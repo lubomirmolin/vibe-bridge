@@ -65,6 +65,7 @@ pub struct GatewayTurnMutation {
 
 #[derive(Debug, Clone)]
 pub struct TurnStartRequest {
+    pub request_id: Option<String>,
     pub prompt: String,
     pub images: Vec<String>,
     pub model: Option<String>,
