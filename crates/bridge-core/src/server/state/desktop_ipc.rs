@@ -60,8 +60,9 @@ impl BridgeAppState {
                 }
 
                 loop {
-                    if let Err(error) =
-                        drain_notification_control_messages(&control_rx, |message| match message {
+                    if let Err(error) = drain_notification_control_messages(
+                        &control_rx,
+                        |message| match message {
                             NotificationControlMessage::ResumeThread(thread_id) => {
                                 tracked_threads.insert(thread_id.to_string());
                                 if let Some(conversation_state) =
@@ -83,7 +84,7 @@ impl BridgeAppState {
                                                 let state = state.clone();
                                                 handle.block_on(async move {
                                                     state
-                                                        .forget_resumable_notification_thread(
+                                                        .backoff_resumable_notification_thread_after_stale_rollout(
                                                             &thread_id,
                                                         )
                                                         .await;
@@ -138,7 +139,9 @@ impl BridgeAppState {
                                         let state = state.clone();
                                         handle.block_on(async move {
                                             state
-                                                .forget_resumable_notification_thread(&thread_id)
+                                                .backoff_resumable_notification_thread_after_stale_rollout(
+                                                    &thread_id,
+                                                )
                                                 .await;
                                         });
                                         Ok(())
@@ -146,8 +149,8 @@ impl BridgeAppState {
                                     Err(error) => Err(error),
                                 }
                             }
-                        })
-                    {
+                        },
+                    ) {
                         eprintln!("bridge desktop IPC control failed: {error}");
                         break;
                     }

@@ -157,6 +157,7 @@ struct CodexThreadRuntime {
     pending_client_message: Option<PendingTurnClientMessage>,
     pending_user_input: Option<PendingUserInputSession>,
     resumable_notifications: bool,
+    resumable_notifications_stale_until: Option<std::time::Instant>,
     pending_user_message_images: Vec<String>,
 }
 
@@ -167,6 +168,7 @@ impl CodexThreadRuntime {
             && self.pending_client_message.is_none()
             && self.pending_user_input.is_none()
             && !self.resumable_notifications
+            && self.resumable_notifications_stale_until.is_none()
             && self.pending_user_message_images.is_empty()
     }
 }

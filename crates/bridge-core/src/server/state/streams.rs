@@ -1,8 +1,13 @@
 use super::*;
 use std::fmt::Write as _;
-use std::time::Instant;
+use std::time::{Duration as StdDuration, Instant};
 
 use crate::server::gateway::GatewayTurnStreamActivity;
+
+#[cfg(test)]
+const STALE_NOTIFICATION_RESUME_COOLDOWN: StdDuration = StdDuration::from_millis(200);
+#[cfg(not(test))]
+const STALE_NOTIFICATION_RESUME_COOLDOWN: StdDuration = StdDuration::from_secs(10);
 
 impl BridgeAppState {
     pub(super) async fn request_notification_thread_resume(&self, thread_id: &str) {
@@ -14,14 +19,23 @@ impl BridgeAppState {
         }
 
         let next_thread_id = normalized_thread_id.to_string();
-        let is_new = self
+        let now = Instant::now();
+        let should_request = self
             .update_thread_runtime(&next_thread_id, |runtime| {
-                let was_requested = runtime.resumable_notifications;
+                if let Some(stale_until) = runtime.resumable_notifications_stale_until {
+                    if stale_until > now {
+                        return false;
+                    }
+                    runtime.resumable_notifications_stale_until = None;
+                }
+                if runtime.resumable_notifications {
+                    return false;
+                }
                 runtime.resumable_notifications = true;
-                !was_requested
+                true
             })
             .await;
-        if !is_new {
+        if !should_request {
             return;
         }
         eprintln!("bridge notification resume requested thread_id={next_thread_id}");
@@ -68,6 +82,19 @@ impl BridgeAppState {
     pub(super) async fn forget_resumable_notification_thread(&self, thread_id: &str) {
         self.update_thread_runtime(thread_id, |runtime| {
             runtime.resumable_notifications = false;
+            runtime.resumable_notifications_stale_until = None;
+        })
+        .await;
+    }
+
+    pub(super) async fn backoff_resumable_notification_thread_after_stale_rollout(
+        &self,
+        thread_id: &str,
+    ) {
+        let stale_until = Instant::now() + STALE_NOTIFICATION_RESUME_COOLDOWN;
+        self.update_thread_runtime(thread_id, |runtime| {
+            runtime.resumable_notifications = false;
+            runtime.resumable_notifications_stale_until = Some(stale_until);
         })
         .await;
     }
@@ -279,7 +306,9 @@ impl BridgeAppState {
             move |thread_id| {
                 let state = stale_state.clone();
                 stale_handle.block_on(async move {
-                    state.forget_resumable_notification_thread(&thread_id).await;
+                    state
+                        .backoff_resumable_notification_thread_after_stale_rollout(&thread_id)
+                        .await;
                 });
             },
         );

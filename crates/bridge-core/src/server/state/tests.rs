@@ -1528,6 +1528,38 @@ fn request_notification_thread_resume_ignores_non_codex_threads() {
     });
 }
 
+#[tokio::test]
+async fn stale_rollout_backoff_blocks_immediate_notification_resume_requests() {
+    let state = test_bridge_app_state().await;
+    state
+        .backoff_resumable_notification_thread_after_stale_rollout("codex:thread-123")
+        .await;
+    state
+        .request_notification_thread_resume("codex:thread-123")
+        .await;
+
+    assert!(state.resumable_notification_threads().await.is_empty());
+}
+
+#[tokio::test]
+async fn stale_rollout_backoff_expires_and_allows_notification_resume_requests() {
+    let state = test_bridge_app_state().await;
+    state
+        .backoff_resumable_notification_thread_after_stale_rollout("codex:thread-123")
+        .await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+
+    state
+        .request_notification_thread_resume("codex:thread-123")
+        .await;
+
+    assert_eq!(
+        state.resumable_notification_threads().await,
+        std::collections::HashSet::from(["codex:thread-123".to_string()])
+    );
+}
+
 #[test]
 fn resume_notification_thread_retries_missing_rollout_until_success() {
     let mut attempts = 0usize;
