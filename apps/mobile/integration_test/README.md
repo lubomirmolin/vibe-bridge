@@ -199,14 +199,12 @@ $HOME/Library/Android/sdk/platform-tools/adb reverse tcp:3110 tcp:3110
 
 ```bash
 cd apps/mobile
-LIVE_CLAUDE_APPROVAL_BRIDGE_BASE_URL=http://127.0.0.1:3110 \
-LIVE_CLAUDE_APPROVAL_WORKSPACE=/absolute/workspace/path \
 flutter drive --keep-app-running \
   --driver=test_driver/integration_test.dart \
   --target=integration_test/<test_file>.dart \
   -d <android-emulator-id> \
-  --dart-define=LIVE_CLAUDE_APPROVAL_BRIDGE_BASE_URL=http://127.0.0.1:3110 \
-  --dart-define=LIVE_CLAUDE_APPROVAL_WORKSPACE=/absolute/workspace/path
+  --dart-define=LIVE_CODEX_THREAD_CREATION_BRIDGE_BASE_URL=http://127.0.0.1:3110 \
+  --dart-define=LIVE_CODEX_THREAD_CREATION_WORKSPACE=/absolute/workspace/path
 ```
 
 ## Pitfalls

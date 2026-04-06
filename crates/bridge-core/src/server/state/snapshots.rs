@@ -525,12 +525,69 @@ fn merge_external_snapshot_entries(
     }
 
     let mut merged_entries = merged_by_id.into_values().collect::<Vec<_>>();
+    dedupe_synthetic_visible_user_prompts(&mut merged_entries);
     merged_entries.sort_by(|left, right| {
         left.occurred_at
             .cmp(&right.occurred_at)
             .then_with(|| left.event_id.cmp(&right.event_id))
     });
     merged_entries
+}
+
+fn dedupe_synthetic_visible_user_prompts(entries: &mut Vec<ThreadTimelineEntryDto>) {
+    let canonical_user_entries = entries
+        .iter()
+        .filter(|entry| {
+            timeline_entry_is_user_message(entry) && !is_synthetic_visible_user_prompt(entry)
+        })
+        .map(|entry| {
+            (
+                entry.event_id.clone(),
+                normalize_pending_prompt_text(
+                    timeline_entry_primary_text(entry).unwrap_or_default(),
+                ),
+                entry
+                    .payload
+                    .get("client_message_id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string),
+            )
+        })
+        .collect::<Vec<_>>();
+    if canonical_user_entries.is_empty() {
+        return;
+    }
+
+    entries.retain(|entry| {
+        if !is_synthetic_visible_user_prompt(entry) {
+            return true;
+        }
+
+        let Some(turn_id) = entry.event_id.strip_suffix("-visible-user-prompt") else {
+            return true;
+        };
+        let synthetic_text =
+            normalize_pending_prompt_text(timeline_entry_primary_text(entry).unwrap_or_default());
+        let synthetic_client_message_id = entry
+            .payload
+            .get("client_message_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+
+        !canonical_user_entries.iter().any(
+            |(canonical_event_id, canonical_text, canonical_client_message_id)| {
+                canonical_client_message_id.is_some()
+                    && synthetic_client_message_id.is_some()
+                    && canonical_client_message_id.as_deref() == synthetic_client_message_id
+                    || (event_belongs_to_turn(canonical_event_id, turn_id)
+                        && !synthetic_text.is_empty()
+                        && *canonical_text == synthetic_text)
+            },
+        )
+    });
 }
 
 fn merge_timeline_entry(
@@ -659,11 +716,7 @@ fn timeline_entry_matches_pending_turn(
     let Some(turn_id) = pending.turn_id.as_deref() else {
         return false;
     };
-    entry
-        .event_id
-        .split_once('-')
-        .map(|(event_turn_id, _)| event_turn_id == turn_id)
-        .unwrap_or(false)
+    event_belongs_to_turn(&entry.event_id, turn_id)
 }
 
 fn timeline_entry_is_user_message(entry: &ThreadTimelineEntryDto) -> bool {
@@ -673,6 +726,17 @@ fn timeline_entry_is_user_message(entry: &ThreadTimelineEntryDto) -> bool {
 
 fn timeline_entry_lacks_client_message_id(entry: &ThreadTimelineEntryDto) -> bool {
     entry.payload.get("client_message_id").is_none()
+}
+
+fn is_synthetic_visible_user_prompt(entry: &ThreadTimelineEntryDto) -> bool {
+    entry.event_id.ends_with("-visible-user-prompt") && timeline_entry_is_user_message(entry)
+}
+
+fn event_belongs_to_turn(event_id: &str, turn_id: &str) -> bool {
+    event_id == turn_id
+        || event_id
+            .strip_prefix(turn_id)
+            .is_some_and(|suffix| suffix.starts_with('-'))
 }
 
 fn timeline_entry_primary_text(entry: &ThreadTimelineEntryDto) -> Option<&str> {

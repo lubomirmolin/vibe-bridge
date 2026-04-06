@@ -61,17 +61,32 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await _pumpUntilFound(
+        tester,
+        find.byKey(const Key('thread-list-create-button')),
+      );
 
       await tester.tap(find.byKey(const Key('thread-list-create-button')));
-      await tester.pumpAndSettle();
+      await _pumpUntil(
+        tester,
+        () =>
+            find.byKey(const Key('thread-draft-title')).evaluate().isNotEmpty ||
+            find
+                .byKey(const Key('thread-list-workspace-option-$_workspace'))
+                .evaluate()
+                .isNotEmpty,
+        description: 'draft open or workspace options',
+      );
 
       final workspaceOption = find.byKey(
         const Key('thread-list-workspace-option-$_workspace'),
       );
       if (workspaceOption.evaluate().isNotEmpty) {
         await tester.tap(workspaceOption);
-        await tester.pumpAndSettle();
+        await _pumpUntilFound(
+          tester,
+          find.byKey(const Key('thread-draft-title')),
+        );
       }
 
       expect(find.byKey(const Key('thread-draft-title')), findsOneWidget);

@@ -91,12 +91,12 @@ fn hidden_payload_detection_marks_only_active_bridge_protocol_messages() {
 }
 
 #[test]
-fn hidden_upstream_prompts_synthesize_visible_user_messages() {
+fn visible_prompts_synthesize_visible_user_messages_for_bridge_owned_turns() {
     assert!(super::should_synthesize_visible_user_prompt(
         "Commit",
         &super::build_hidden_commit_prompt(),
     ));
-    assert!(!super::should_synthesize_visible_user_prompt(
+    assert!(super::should_synthesize_visible_user_prompt(
         "Commit", "Commit",
     ));
     assert!(!super::should_synthesize_visible_user_prompt(
@@ -260,6 +260,173 @@ async fn external_snapshot_update_enriches_latest_user_message_with_pending_clie
             })
             .await
     );
+}
+
+#[tokio::test]
+async fn external_snapshot_update_enriches_hyphenated_turn_visible_prompt_client_message_id() {
+    let state = test_bridge_app_state().await;
+    let turn_id = "019d5fda-9dec-7c33-b8ab-f4d8e978d125";
+    state
+        .update_thread_runtime("codex:thread-1", |runtime| {
+            runtime.pending_client_message = Some(PendingTurnClientMessage {
+                client_message_id: "client-1".to_string(),
+                turn_id: Some(turn_id.to_string()),
+                prompt_text: "Explain thread titles".to_string(),
+            });
+        })
+        .await;
+
+    state
+        .apply_external_snapshot_update(
+            ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "codex:thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: ProviderKind::Codex,
+                    client: ThreadClientKind::Cli,
+                    title: "Thread".to_string(),
+                    status: ThreadStatus::Completed,
+                    workspace: "/repo".to_string(),
+                    repository: "repo".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-04-03T08:00:00Z".to_string(),
+                    updated_at: "2026-04-03T08:00:05Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "done".to_string(),
+                    active_turn_id: None,
+                },
+                latest_bridge_seq: None,
+                entries: vec![ThreadTimelineEntryDto {
+                    event_id: format!("{turn_id}-visible-user-prompt"),
+                    kind: BridgeEventKind::MessageDelta,
+                    occurred_at: "2026-04-03T08:00:01Z".to_string(),
+                    summary: "Explain thread titles".to_string(),
+                    payload: json!({
+                        "type": "userMessage",
+                        "role": "user",
+                        "text": "Explain thread titles"
+                    }),
+                    annotations: None,
+                }],
+                approvals: vec![],
+                git_status: None,
+                workflow_state: None,
+                pending_user_input: None,
+            },
+            Vec::new(),
+        )
+        .await;
+
+    let snapshot = state
+        .projections()
+        .snapshot("codex:thread-1")
+        .await
+        .expect("snapshot should exist");
+    assert_eq!(snapshot.entries[0].payload["client_message_id"], "client-1");
+}
+
+#[tokio::test]
+async fn external_snapshot_update_dedupes_synthetic_visible_prompt_against_canonical_user_message()
+{
+    let state = test_bridge_app_state().await;
+    state
+        .projections()
+        .put_snapshot(ThreadSnapshotDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread: ThreadDetailDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "codex:thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: ProviderKind::Codex,
+                client: ThreadClientKind::Cli,
+                title: "Thread".to_string(),
+                status: ThreadStatus::Running,
+                workspace: "/repo".to_string(),
+                repository: "repo".to_string(),
+                branch: "main".to_string(),
+                created_at: "2026-04-03T08:00:00Z".to_string(),
+                updated_at: "2026-04-03T08:00:00Z".to_string(),
+                source: "cli".to_string(),
+                access_mode: AccessMode::ControlWithApprovals,
+                last_turn_summary: "Commit".to_string(),
+                active_turn_id: Some("turn-1".to_string()),
+            },
+            latest_bridge_seq: None,
+            entries: vec![ThreadTimelineEntryDto {
+                event_id: "turn-1-visible-user-prompt".to_string(),
+                kind: BridgeEventKind::MessageDelta,
+                occurred_at: "2026-04-03T08:00:00Z".to_string(),
+                summary: "Commit".to_string(),
+                payload: json!({
+                    "type": "userMessage",
+                    "role": "user",
+                    "text": "Commit",
+                    "client_message_id": "client-1"
+                }),
+                annotations: None,
+            }],
+            approvals: vec![],
+            git_status: None,
+            workflow_state: None,
+            pending_user_input: None,
+        })
+        .await;
+
+    state
+        .apply_external_snapshot_update(
+            ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "codex:thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: ProviderKind::Codex,
+                    client: ThreadClientKind::Cli,
+                    title: "Thread".to_string(),
+                    status: ThreadStatus::Completed,
+                    workspace: "/repo".to_string(),
+                    repository: "repo".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-04-03T08:00:00Z".to_string(),
+                    updated_at: "2026-04-03T08:00:05Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "done".to_string(),
+                    active_turn_id: None,
+                },
+                latest_bridge_seq: None,
+                entries: vec![ThreadTimelineEntryDto {
+                    event_id: "turn-1-item-user-1".to_string(),
+                    kind: BridgeEventKind::MessageDelta,
+                    occurred_at: "2026-04-03T08:00:01Z".to_string(),
+                    summary: "Commit".to_string(),
+                    payload: json!({
+                        "type": "userMessage",
+                        "role": "user",
+                        "text": "Commit",
+                        "client_message_id": "client-1"
+                    }),
+                    annotations: None,
+                }],
+                approvals: vec![],
+                git_status: None,
+                workflow_state: None,
+                pending_user_input: None,
+            },
+            Vec::new(),
+        )
+        .await;
+
+    let snapshot = state
+        .projections()
+        .snapshot("codex:thread-1")
+        .await
+        .expect("snapshot should exist");
+    assert_eq!(snapshot.entries.len(), 1);
+    assert_eq!(snapshot.entries[0].event_id, "turn-1-item-user-1");
 }
 
 #[test]

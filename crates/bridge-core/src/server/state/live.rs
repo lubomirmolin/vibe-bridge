@@ -214,7 +214,8 @@ pub(super) fn should_synthesize_visible_user_prompt(
     visible_prompt: &str,
     upstream_prompt: &str,
 ) -> bool {
-    !visible_prompt.trim().is_empty() && is_hidden_message(upstream_prompt)
+    let _ = upstream_prompt;
+    !visible_prompt.trim().is_empty()
 }
 
 pub(super) fn build_visible_user_message_event(
