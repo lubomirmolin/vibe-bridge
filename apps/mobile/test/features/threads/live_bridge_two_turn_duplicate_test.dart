@@ -54,11 +54,13 @@ void main() {
       );
 
       try {
+        final promptOne = _resolveFirstPrompt();
+        final promptTwo = _resolveSecondPrompt();
         final turnOne = await _runTurnAndCapture(
           detailApi: detailApi,
           bridgeApiBaseUrl: bridgeApiBaseUrl,
           threadId: threadId,
-          prompt: _resolveFirstPrompt(),
+          prompt: promptOne,
           rawEvents: rawEvents,
           rawErrors: rawErrors,
         );
@@ -68,15 +70,29 @@ void main() {
           detailApi: detailApi,
           bridgeApiBaseUrl: bridgeApiBaseUrl,
           threadId: threadId,
-          prompt: _resolveSecondPrompt(),
+          prompt: promptTwo,
           rawEvents: rawEvents,
           rawErrors: rawErrors,
         );
         debugPrint(turnTwo.toLogLine());
 
+        final finalHistoryPage = await detailApi.fetchThreadTimelinePage(
+          bridgeApiBaseUrl: bridgeApiBaseUrl,
+          threadId: threadId,
+          limit: 200,
+        );
+        final rolloutTruth = await _captureRolloutTruth(
+          threadId: threadId,
+          promptOne: promptOne,
+          promptTwo: promptTwo,
+          timelineEntries: finalHistoryPage.entries,
+        );
+        debugPrint(rolloutTruth.toLogLine());
+
         final failures = <String>[
           if (!turnOne.isClean) turnOne.toFailureLine(),
           if (!turnTwo.isClean) turnTwo.toFailureLine(),
+          if (!rolloutTruth.isAligned) rolloutTruth.toFailureLine(),
         ];
         if (failures.isNotEmpty) {
           fail(
@@ -478,6 +494,323 @@ Future<String> _resolveWorkspace(String bridgeApiBaseUrl) async {
     fail('Live bridge did not expose any workspace for the duplicate probe.');
   }
   return workspace;
+}
+
+Future<_RolloutTruthReport> _captureRolloutTruth({
+  required String threadId,
+  required String promptOne,
+  required String promptTwo,
+  required List<ThreadTimelineEntryDto> timelineEntries,
+}) async {
+  try {
+    final nativeThreadId = _nativeThreadId(threadId);
+    final codexHome = _resolveCodexHome();
+    final sessionIndexContainsThread = await _sessionIndexHasThread(
+      codexHome: codexHome,
+      nativeThreadId: nativeThreadId,
+    );
+    final rolloutPath = await _resolveRolloutPath(
+      codexHome: codexHome,
+      nativeThreadId: nativeThreadId,
+    );
+
+    final rolloutUserTexts = <String>[];
+    final rolloutAssistantTexts = <String>[];
+    if (rolloutPath != null) {
+      await _collectRolloutMessages(
+        rolloutPath: rolloutPath,
+        userTexts: rolloutUserTexts,
+        assistantTexts: rolloutAssistantTexts,
+      );
+    }
+
+    final timelineUserTexts = _extractTimelineUserTexts(timelineEntries);
+    final timelineAssistantTexts = _extractTimelineAssistantTexts(
+      timelineEntries,
+    );
+
+    return _RolloutTruthReport(
+      threadId: threadId,
+      nativeThreadId: nativeThreadId,
+      rolloutPath: rolloutPath,
+      sessionIndexContainsThread: sessionIndexContainsThread,
+      rolloutPromptOneCount: _countNormalizedTextMatches(
+        rolloutUserTexts,
+        promptOne,
+      ),
+      rolloutPromptTwoCount: _countNormalizedTextMatches(
+        rolloutUserTexts,
+        promptTwo,
+      ),
+      timelinePromptOneCount: _countNormalizedTextMatches(
+        timelineUserTexts,
+        promptOne,
+      ),
+      timelinePromptTwoCount: _countNormalizedTextMatches(
+        timelineUserTexts,
+        promptTwo,
+      ),
+      rolloutAssistantTexts: List<String>.unmodifiable(rolloutAssistantTexts),
+      timelineAssistantTexts: List<String>.unmodifiable(timelineAssistantTexts),
+    );
+  } on Object catch (error, stackTrace) {
+    return _RolloutTruthReport(
+      threadId: threadId,
+      nativeThreadId: _nativeThreadId(threadId),
+      rolloutPath: null,
+      sessionIndexContainsThread: false,
+      rolloutPromptOneCount: 0,
+      rolloutPromptTwoCount: 0,
+      timelinePromptOneCount: 0,
+      timelinePromptTwoCount: 0,
+      rolloutAssistantTexts: const <String>[],
+      timelineAssistantTexts: const <String>[],
+      error: '$error\n$stackTrace',
+    );
+  }
+}
+
+Future<bool> _sessionIndexHasThread({
+  required String codexHome,
+  required String nativeThreadId,
+}) async {
+  final sessionIndexFile = File('$codexHome/session_index.jsonl');
+  if (!await sessionIndexFile.exists()) {
+    return false;
+  }
+
+  await for (final line
+      in sessionIndexFile
+          .openRead()
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) {
+      continue;
+    }
+    final parsed = jsonDecode(trimmed);
+    if (parsed is! Map<String, dynamic>) {
+      continue;
+    }
+    final id = parsed['id'];
+    if (id is String && id.trim() == nativeThreadId) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+Future<String?> _resolveRolloutPath({
+  required String codexHome,
+  required String nativeThreadId,
+}) async {
+  final sessionsDir = Directory('$codexHome/sessions');
+  if (!await sessionsDir.exists()) {
+    return null;
+  }
+
+  final candidates = <String>[];
+  await for (final entity in sessionsDir.list(recursive: true)) {
+    if (entity is! File) {
+      continue;
+    }
+    final path = entity.path;
+    if (!path.contains('/rollout-') ||
+        !path.endsWith('$nativeThreadId.jsonl')) {
+      continue;
+    }
+    candidates.add(path);
+  }
+
+  if (candidates.isEmpty) {
+    return null;
+  }
+  candidates.sort();
+  return candidates.last;
+}
+
+Future<void> _collectRolloutMessages({
+  required String rolloutPath,
+  required List<String> userTexts,
+  required List<String> assistantTexts,
+}) async {
+  final rolloutFile = File(rolloutPath);
+  if (!await rolloutFile.exists()) {
+    return;
+  }
+
+  await for (final line
+      in rolloutFile
+          .openRead()
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) {
+      continue;
+    }
+    final parsed = jsonDecode(trimmed);
+    if (parsed is! Map<String, dynamic>) {
+      continue;
+    }
+    if (parsed['type'] != 'response_item') {
+      continue;
+    }
+    final payload = parsed['payload'];
+    if (payload is! Map<String, dynamic> || payload['type'] != 'message') {
+      continue;
+    }
+    final role = payload['role'];
+    if (role is! String) {
+      continue;
+    }
+    final text = _extractRolloutContentText(payload['content']);
+    if (text == null || text.isEmpty) {
+      continue;
+    }
+    if (role == 'user') {
+      userTexts.add(text);
+    } else if (role == 'assistant') {
+      assistantTexts.add(text);
+    }
+  }
+}
+
+String? _extractRolloutContentText(Object? content) {
+  if (content is! List) {
+    return null;
+  }
+  final parts = <String>[];
+  for (final entry in content) {
+    if (entry is! Map<String, dynamic>) {
+      continue;
+    }
+    final text = entry['text'];
+    if (text is String && text.trim().isNotEmpty) {
+      parts.add(_normalizeProbeText(text));
+      continue;
+    }
+    final outputText = entry['output_text'];
+    if (outputText is String && outputText.trim().isNotEmpty) {
+      parts.add(_normalizeProbeText(outputText));
+    }
+  }
+  if (parts.isEmpty) {
+    return null;
+  }
+  return _normalizeProbeText(parts.join('\n'));
+}
+
+List<String> _extractTimelineUserTexts(List<ThreadTimelineEntryDto> entries) {
+  return entries
+      .where(
+        (entry) =>
+            entry.kind == BridgeEventKind.messageDelta &&
+            _isUserPayload(entry.payload),
+      )
+      .map((entry) => _normalizeProbeText(_messageText(entry.payload) ?? ''))
+      .where((text) => text.isNotEmpty)
+      .toList(growable: false);
+}
+
+int _countNormalizedTextMatches(List<String> haystack, String target) {
+  final normalizedTarget = _normalizeProbeText(target);
+  return haystack
+      .where((candidate) => _normalizeProbeText(candidate) == normalizedTarget)
+      .length;
+}
+
+String _nativeThreadId(String threadId) {
+  final separator = threadId.indexOf(':');
+  if (separator < 0 || separator + 1 >= threadId.length) {
+    return threadId.trim();
+  }
+  return threadId.substring(separator + 1).trim();
+}
+
+String _resolveCodexHome() {
+  final fromEnv = Platform.environment['CODEX_HOME']?.trim();
+  if (fromEnv != null && fromEnv.isNotEmpty) {
+    return fromEnv;
+  }
+
+  final home = Platform.environment['HOME']?.trim();
+  if (home == null || home.isEmpty) {
+    throw StateError('HOME is not available; cannot resolve ~/.codex.');
+  }
+  return '$home/.codex';
+}
+
+class _RolloutTruthReport {
+  const _RolloutTruthReport({
+    required this.threadId,
+    required this.nativeThreadId,
+    required this.rolloutPath,
+    required this.sessionIndexContainsThread,
+    required this.rolloutPromptOneCount,
+    required this.rolloutPromptTwoCount,
+    required this.timelinePromptOneCount,
+    required this.timelinePromptTwoCount,
+    required this.rolloutAssistantTexts,
+    required this.timelineAssistantTexts,
+    this.error,
+  });
+
+  final String threadId;
+  final String nativeThreadId;
+  final String? rolloutPath;
+  final bool sessionIndexContainsThread;
+  final int rolloutPromptOneCount;
+  final int rolloutPromptTwoCount;
+  final int timelinePromptOneCount;
+  final int timelinePromptTwoCount;
+  final List<String> rolloutAssistantTexts;
+  final List<String> timelineAssistantTexts;
+  final String? error;
+
+  bool get assistantListsMatch =>
+      listEquals(rolloutAssistantTexts, timelineAssistantTexts);
+
+  bool get isAligned =>
+      error == null &&
+      sessionIndexContainsThread &&
+      rolloutPath != null &&
+      rolloutPromptOneCount == 1 &&
+      rolloutPromptTwoCount == 1 &&
+      timelinePromptOneCount == 1 &&
+      timelinePromptTwoCount == 1 &&
+      assistantListsMatch;
+
+  String toLogLine() {
+    return 'LIVE_BRIDGE_JSONL_TRUTH '
+        'thread_id=$threadId '
+        'native_thread_id=$nativeThreadId '
+        'session_index_contains_thread=$sessionIndexContainsThread '
+        'rollout_path=${rolloutPath ?? "<missing>"} '
+        'rollout_prompt_one_count=$rolloutPromptOneCount '
+        'rollout_prompt_two_count=$rolloutPromptTwoCount '
+        'timeline_prompt_one_count=$timelinePromptOneCount '
+        'timeline_prompt_two_count=$timelinePromptTwoCount '
+        'assistant_lists_match=$assistantListsMatch '
+        'rollout_assistant=${_previewList(rolloutAssistantTexts)} '
+        'timeline_assistant=${_previewList(timelineAssistantTexts)} '
+        'error=${error ?? "<none>"}';
+  }
+
+  String toFailureLine() {
+    return 'thread_id=$threadId '
+        'native_thread_id=$nativeThreadId '
+        'session_index_contains_thread=$sessionIndexContainsThread '
+        'rollout_path=${rolloutPath ?? "<missing>"} '
+        'rollout_prompt_one_count=$rolloutPromptOneCount '
+        'rollout_prompt_two_count=$rolloutPromptTwoCount '
+        'timeline_prompt_one_count=$timelinePromptOneCount '
+        'timeline_prompt_two_count=$timelinePromptTwoCount '
+        'assistant_lists_match=$assistantListsMatch '
+        'rollout_assistant=${_previewList(rolloutAssistantTexts)} '
+        'timeline_assistant=${_previewList(timelineAssistantTexts)} '
+        'error=${error ?? "<none>"}';
+  }
 }
 
 class _TurnReport {

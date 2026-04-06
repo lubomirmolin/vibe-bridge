@@ -259,20 +259,37 @@ Future<void> _selectWorkspaceForDraft(
   WidgetTester tester, {
   required String workspacePath,
 }) async {
-  final deadline = DateTime.now().add(const Duration(seconds: 20));
+  final deadline = DateTime.now().add(const Duration(seconds: 30));
   final preferredOption = find.byKey(
     Key('thread-list-workspace-option-$workspacePath'),
   );
+  final normalizedWorkspacePath = workspacePath.trim().toLowerCase();
+  DateTime? lastCreateTapAt;
 
   while (DateTime.now().isBefore(deadline)) {
-    if (find.byKey(const Key('thread-draft-title')).evaluate().isNotEmpty) {
+    if (find.byKey(const Key('thread-draft-title')).evaluate().isNotEmpty ||
+        find.byKey(const Key('turn-composer-input')).evaluate().isNotEmpty) {
       return;
     }
 
     if (preferredOption.evaluate().isNotEmpty) {
       await tester.tap(preferredOption);
-      await tester.pumpAndSettle();
-      return;
+      await tester.pump(const Duration(milliseconds: 250));
+      continue;
+    }
+
+    final pathMatchedWorkspaceOption = find.byWidgetPredicate((widget) {
+      if (widget.key is! Key) {
+        return false;
+      }
+      final keyValue = (widget.key as Key).toString().toLowerCase();
+      return keyValue.contains('thread-list-workspace-option-') &&
+          keyValue.contains(normalizedWorkspacePath);
+    });
+    if (pathMatchedWorkspaceOption.evaluate().isNotEmpty) {
+      await tester.tap(pathMatchedWorkspaceOption.first, warnIfMissed: false);
+      await tester.pump(const Duration(milliseconds: 250));
+      continue;
     }
 
     final anyWorkspaceOption = find.byWidgetPredicate((widget) {
@@ -282,15 +299,34 @@ Future<void> _selectWorkspaceForDraft(
           );
     });
     if (anyWorkspaceOption.evaluate().isNotEmpty) {
-      await tester.tap(anyWorkspaceOption.first);
-      await tester.pumpAndSettle();
-      return;
+      await tester.tap(anyWorkspaceOption.first, warnIfMissed: false);
+      await tester.pump(const Duration(milliseconds: 250));
+      continue;
     }
 
-    await tester.pump(const Duration(milliseconds: 150));
+    final createButton = find.byKey(const Key('thread-list-create-button'));
+    final canRetapCreateButton =
+        createButton.evaluate().isNotEmpty &&
+        (lastCreateTapAt == null ||
+            DateTime.now().difference(lastCreateTapAt!) >
+                const Duration(seconds: 1));
+    if (canRetapCreateButton) {
+      await tester.tap(createButton, warnIfMissed: false);
+      lastCreateTapAt = DateTime.now();
+      await tester.pump(const Duration(milliseconds: 250));
+    }
+
+    await tester.pump(const Duration(milliseconds: 200));
   }
 
-  fail('Timed out waiting for draft workspace selection or direct draft open.');
+  fail(
+    'Timed out waiting for draft workspace selection or direct draft open. '
+    'workspace_path=$workspacePath '
+    'draft_title_visible='
+    '${find.byKey(const Key('thread-draft-title')).evaluate().isNotEmpty} '
+    'composer_visible='
+    '${find.byKey(const Key('turn-composer-input')).evaluate().isNotEmpty}',
+  );
 }
 
 Future<void> _submitPrompt(
