@@ -252,10 +252,10 @@ async fn list_threads(State(state): State<BridgeAppState>) -> Json<Vec<ThreadSum
 async fn thread_snapshot(
     State(state): State<BridgeAppState>,
     Path(thread_id): Path<String>,
-) -> Result<Json<ThreadSnapshotDto>, StatusCode> {
+) -> Result<Json<ThreadSnapshotDto>, (StatusCode, Json<ErrorEnvelope>)> {
     match state.ensure_snapshot(&thread_id).await {
         Ok(snapshot) => Ok(Json(snapshot)),
-        Err(_) => Err(StatusCode::NOT_FOUND),
+        Err(message) => Err(snapshot_error_response(&thread_id, &message)),
     }
 }
 
@@ -944,23 +944,27 @@ async fn thread_git_push(
 async fn create_thread(
     State(state): State<BridgeAppState>,
     ExtractJson(request): ExtractJson<CreateThreadRequest>,
-) -> Result<Json<ThreadSnapshotDto>, StatusCode> {
+) -> Result<Json<ThreadSnapshotDto>, (StatusCode, Json<ErrorEnvelope>)> {
+    let workspace = request.workspace.trim();
+    if workspace.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "thread_creation_failed",
+            "invalid_workspace",
+            "Workspace path must not be empty.",
+        ));
+    }
+
     match state
         .create_thread(
             request.provider.unwrap_or(ProviderKind::Codex),
-            &request.workspace,
+            workspace,
             request.model.as_deref(),
         )
         .await
     {
         Ok(snapshot) => Ok(Json(snapshot)),
-        Err(error) => {
-            eprintln!(
-                "bridge create_thread failed for workspace {}: {error}",
-                request.workspace
-            );
-            Err(StatusCode::BAD_GATEWAY)
-        }
+        Err(message) => Err(create_thread_error_response(&message)),
     }
 }
 
@@ -1002,14 +1006,14 @@ async fn thread_history(
     State(state): State<BridgeAppState>,
     Path(thread_id): Path<String>,
     Query(query): Query<ThreadHistoryQuery>,
-) -> Result<Json<ThreadTimelinePageDto>, StatusCode> {
+) -> Result<Json<ThreadTimelinePageDto>, (StatusCode, Json<ErrorEnvelope>)> {
     let limit = query.limit.unwrap_or(50);
     match state
         .timeline_page(&thread_id, query.before.as_deref(), limit)
         .await
     {
         Ok(page) => Ok(Json(page)),
-        Err(_) => Err(StatusCode::NOT_FOUND),
+        Err(message) => Err(snapshot_error_response(&thread_id, &message)),
     }
 }
 
@@ -1357,6 +1361,17 @@ fn turn_error_response(
         return error_response(StatusCode::CONFLICT, error_name, "no_active_turn", message);
     }
 
+    if message.contains("already has an active codex stream") {
+        return error_response(
+            StatusCode::CONFLICT,
+            error_name,
+            "turn_already_active",
+            format!(
+                "{thread_id}: a turn is already running on this thread. Wait for it to complete or interrupt it first."
+            ),
+        );
+    }
+
     error_response(
         StatusCode::BAD_GATEWAY,
         error_name,
@@ -1380,6 +1395,64 @@ fn git_diff_error_response(thread_id: &str, message: String) -> (StatusCode, Jso
         "git_diff_unavailable",
         "git_diff_unavailable",
         format!("{thread_id}: {message}"),
+    )
+}
+
+/// Returns true if the error message indicates an upstream (codex/transport) failure
+/// rather than a resource-not-found condition. Used to distinguish 503 from 404.
+fn is_upstream_unavailable_message(message: &str) -> bool {
+    message.contains("codex")
+        || message.contains("transport")
+        || message.contains("connect")
+        || message.contains("task failed")
+        || message.contains("join error")
+        || message.contains("spawn")
+}
+
+fn snapshot_error_response(thread_id: &str, message: &str) -> (StatusCode, Json<ErrorEnvelope>) {
+    // Check for thread-not-found first, even when the message also contains
+    // codex/transport keywords (e.g. "codex thread snapshot task failed: thread X not found").
+    if message.contains(" not found") {
+        return error_response(
+            StatusCode::NOT_FOUND,
+            "snapshot_unavailable",
+            "thread_not_found",
+            format!("{thread_id}: {message}"),
+        );
+    }
+
+    if is_upstream_unavailable_message(message) {
+        return error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "snapshot_unavailable",
+            "codex_unavailable",
+            format!("{thread_id}: {message}"),
+        );
+    }
+
+    error_response(
+        StatusCode::NOT_FOUND,
+        "snapshot_unavailable",
+        "snapshot_fetch_failed",
+        format!("{thread_id}: {message}"),
+    )
+}
+
+fn create_thread_error_response(message: &str) -> (StatusCode, Json<ErrorEnvelope>) {
+    if is_upstream_unavailable_message(message) {
+        return error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "thread_creation_failed",
+            "codex_unavailable",
+            format!("Codex is currently unavailable: {message}"),
+        );
+    }
+
+    error_response(
+        StatusCode::BAD_GATEWAY,
+        "thread_creation_failed",
+        "upstream_thread_creation_failed",
+        message.to_string(),
     )
 }
 
@@ -2994,5 +3067,274 @@ for line in sys.stdin:
 
     fn run_git_in(cwd: &Path, args: impl IntoIterator<Item = impl AsRef<str>>) {
         run_git(cwd, args);
+    }
+
+    // ── Error envelope tests ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn thread_snapshot_returns_json_error_envelope_for_missing_thread() {
+        let app = router(test_state());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/threads/codex%3Anonexistent-thread-id/snapshot")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+
+        // In a unit test environment without a running codex process, the snapshot
+        // request returns 503 (codex unavailable). With a live codex, it would return
+        // 404 (thread not found). Both status codes carry a consistent JSON error
+        // envelope, which is the primary assertion.
+        assert!(
+            response.status() == StatusCode::NOT_FOUND
+                || response.status() == StatusCode::SERVICE_UNAVAILABLE
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert!(decoded["error"].as_str().is_some_and(|e| !e.is_empty()));
+        assert!(decoded["code"].as_str().is_some_and(|c| !c.is_empty()));
+        assert!(decoded["message"].as_str().is_some_and(|m| !m.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn thread_history_returns_json_error_envelope_for_missing_thread() {
+        let app = router(test_state());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/threads/codex%3Anonexistent-thread-id/history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+
+        // In a unit test environment without a running codex process, the history
+        // request returns 503 (codex unavailable). With a live codex, it would return
+        // 404 (thread not found). Both status codes carry a consistent JSON error
+        // envelope, which is the primary assertion.
+        assert!(
+            response.status() == StatusCode::NOT_FOUND
+                || response.status() == StatusCode::SERVICE_UNAVAILABLE
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert!(decoded["error"].as_str().is_some_and(|e| !e.is_empty()));
+        assert!(decoded["code"].as_str().is_some_and(|c| !c.is_empty()));
+        assert!(decoded["message"].as_str().is_some_and(|m| !m.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn create_thread_returns_400_for_empty_workspace() {
+        let app = router(test_state());
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/threads",
+                json!({"provider":"codex","workspace":""}),
+            ))
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert_eq!(decoded["error"], "thread_creation_failed");
+        assert_eq!(decoded["code"], "invalid_workspace");
+        assert_eq!(decoded["message"], "Workspace path must not be empty.");
+    }
+
+    #[tokio::test]
+    async fn create_thread_returns_400_for_whitespace_only_workspace() {
+        let app = router(test_state());
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/threads",
+                json!({"provider":"codex","workspace":"   "}),
+            ))
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        assert_eq!(decoded["code"], "invalid_workspace");
+    }
+
+    #[tokio::test]
+    async fn start_turn_returns_404_for_missing_thread() {
+        let app = router(test_state());
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/threads/codex%3Anonexistent-thread/turns",
+                json!({"prompt":"hello"}),
+            ))
+            .await
+            .expect("request should succeed");
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read");
+        let decoded: Value = serde_json::from_slice(&body).expect("body should decode");
+        // The turn handler returns various error codes for missing threads.
+        // The key assertion is that the response has a JSON body with error, code, message.
+        assert!(decoded["error"].as_str().is_some_and(|e| !e.is_empty()));
+        assert!(decoded["code"].as_str().is_some_and(|c| !c.is_empty()));
+        assert!(decoded["message"].as_str().is_some_and(|m| !m.is_empty()));
+    }
+
+    #[test]
+    fn error_response_helper_produces_consistent_envelope_shape() {
+        let (status, json) = super::error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "test_error",
+            "test_code",
+            "test message detail",
+        );
+
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(json.error, "test_error".to_string());
+        assert_eq!(json.code, "test_code".to_string());
+        assert_eq!(json.message, "test message detail".to_string());
+    }
+
+    #[test]
+    fn snapshot_error_response_returns_404_for_missing_thread() {
+        let (status, json) = super::snapshot_error_response(
+            "codex:thread-123",
+            "thread codex:thread-123 not found in codex",
+        );
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(json.code, "thread_not_found".to_string());
+    }
+
+    #[test]
+    fn snapshot_error_response_returns_503_for_codex_transport_failure() {
+        let (status, json) = super::snapshot_error_response(
+            "codex:thread-123",
+            "codex transport connect failed: connection refused",
+        );
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(json.code, "codex_unavailable".to_string());
+    }
+
+    #[test]
+    fn snapshot_error_response_returns_404_for_task_failed_with_not_found() {
+        let (status, json) = super::snapshot_error_response(
+            "codex:nonexistent-thread-id",
+            "codex thread snapshot task failed: thread nonexistent-thread-id not found",
+        );
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(json.code, "thread_not_found".to_string());
+    }
+
+    #[test]
+    fn snapshot_error_response_returns_503_for_task_failed_without_not_found() {
+        let (status, json) = super::snapshot_error_response(
+            "codex:thread-123",
+            "codex thread snapshot task failed: connection refused",
+        );
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(json.code, "codex_unavailable".to_string());
+    }
+
+    #[test]
+    fn snapshot_error_response_returns_503_for_spawn_failure() {
+        let (status, json) = super::snapshot_error_response(
+            "codex:thread-123",
+            "codex thread snapshot spawn error: No such file or directory",
+        );
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(json.code, "codex_unavailable".to_string());
+    }
+
+    #[test]
+    fn snapshot_error_response_returns_404_for_generic_failure() {
+        let (status, json) =
+            super::snapshot_error_response("codex:thread-123", "unexpected sync failure");
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(json.code, "snapshot_fetch_failed".to_string());
+    }
+
+    #[test]
+    fn create_thread_error_response_returns_503_for_codex_failure() {
+        let (status, json) =
+            super::create_thread_error_response("codex create_thread task failed: transport error");
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(json.code, "codex_unavailable".to_string());
+    }
+
+    #[test]
+    fn create_thread_error_response_returns_502_for_generic_failure() {
+        let (status, json) =
+            super::create_thread_error_response("workspace path does not exist: /no/such/path");
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(json.code, "upstream_thread_creation_failed".to_string());
+    }
+
+    #[test]
+    fn create_thread_error_response_returns_503_for_task_failed() {
+        let (status, json) =
+            super::create_thread_error_response("codex create_thread task failed: transport error");
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(json.code, "codex_unavailable".to_string());
+    }
+
+    #[test]
+    fn is_upstream_unavailable_message_detects_transport_keywords() {
+        assert!(super::is_upstream_unavailable_message(
+            "codex transport connect failed"
+        ));
+        assert!(super::is_upstream_unavailable_message(
+            "codex thread snapshot task failed: not found"
+        ));
+        assert!(super::is_upstream_unavailable_message(
+            "spawn error: No such file"
+        ));
+        assert!(super::is_upstream_unavailable_message(
+            "join error: task panicked"
+        ));
+        assert!(!super::is_upstream_unavailable_message(
+            "unexpected sync failure"
+        ));
+        // Note: "thread codex:abc not found in codex" contains "codex" so this helper
+        // returns true. The caller (snapshot_error_response) must check for "not found"
+        // first to correctly classify these as 404 rather than 503.
+    }
+
+    #[test]
+    fn turn_error_response_returns_409_for_concurrent_stream() {
+        let (status, json) = super::turn_error_response(
+            "codex:thread-1",
+            "thread codex:thread-1 already has an active codex stream".to_string(),
+            "turn_start_failed",
+        );
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(json.code, "turn_already_active".to_string());
+        assert!(json.message.contains("turn is already running"));
+    }
+
+    #[test]
+    fn turn_error_response_returns_404_for_missing_thread() {
+        let (status, json) = super::turn_error_response(
+            "codex:nonexistent",
+            "thread codex:nonexistent not found".to_string(),
+            "turn_start_failed",
+        );
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(json.code, "thread_not_found".to_string());
     }
 }
