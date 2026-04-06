@@ -11,6 +11,7 @@ Future<void> waitForCodexTurnCompletion(
   required String promptLabel,
   required String expectedPrompt,
   required int expectedUserPromptCount,
+  bool failOnExcessUserPromptCount = false,
   Future<void> Function()? onPendingUserInput,
   Duration timeout = const Duration(minutes: 3),
 }) async {
@@ -65,6 +66,17 @@ Future<void> waitForCodexTurnCompletion(
         signals.userPrompts.length >= expectedUserPromptCount &&
         signals.userPrompts[expectedUserPromptCount - 1] ==
             normalizedExpectedPrompt;
+
+    if (failOnExcessUserPromptCount &&
+        signals.userPrompts.length > expectedUserPromptCount) {
+      fail(
+        'Codex thread $threadId observed too many user prompts during the $promptLabel turn. '
+        'expected=$expectedUserPromptCount '
+        'observed=${signals.userPrompts.length} '
+        'prompts="${signals.userPrompts.join(' || ')}"',
+      );
+    }
+
     final settledThreadStatus =
         rawStatus == ThreadStatus.completed.wireValue ||
         rawStatus == ThreadStatus.idle.wireValue;

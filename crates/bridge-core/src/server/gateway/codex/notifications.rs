@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -21,7 +21,7 @@ pub struct CodexNotificationStream {
 pub(crate) struct CodexNotificationNormalizer {
     active_turn_id_by_thread: HashMap<String, String>,
     items_by_event_id: HashMap<String, Value>,
-    message_event_ids_with_delta: HashSet<String>,
+    item_event_id_by_thread_item: HashMap<(String, String), String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -241,18 +241,12 @@ impl CodexNotificationNormalizer {
         phase: ItemLifecyclePhase,
     ) -> Option<BridgeEventEnvelope<Value>> {
         let item_id = item.get("id").and_then(Value::as_str)?.to_string();
-        let event_id = turn_id
-            .map(|turn_id| format!("{turn_id}-{item_id}"))
-            .unwrap_or_else(|| self.event_id_for_item(&thread_id, &item_id));
+        let event_id = self.resolve_item_event_id(&thread_id, turn_id.as_deref(), &item_id);
         self.items_by_event_id
             .insert(event_id.clone(), item.clone());
 
-        if is_message_item(&item) {
-            let should_publish_message_fallback = phase == ItemLifecyclePhase::Completed
-                && !self.message_event_ids_with_delta.contains(&event_id);
-            if !should_publish_message_fallback {
-                return None;
-            }
+        if is_message_item(&item) && phase != ItemLifecyclePhase::Completed {
+            return None;
         }
 
         let (kind, payload) = normalize_codex_item_payload(&item)?;
@@ -276,7 +270,11 @@ impl CodexNotificationNormalizer {
     ) -> Option<BridgeEventEnvelope<Value>> {
         let notification: CodexDeltaNotification = serde_json::from_value(params.clone()).ok()?;
         let thread_id = normalize_codex_notification_thread_id(&notification.thread_id);
-        let event_id = format!("{}-{}", notification.turn_id, notification.item_id);
+        let event_id = self.resolve_item_event_id(
+            &thread_id,
+            Some(notification.turn_id.as_str()),
+            &notification.item_id,
+        );
         let canonical_item_type = canonicalize_codex_item_type(item_type);
         let payload = self
             .items_by_event_id
@@ -286,9 +284,6 @@ impl CodexNotificationNormalizer {
             });
 
         apply_delta_to_item_payload(payload, &notification.delta, target);
-        if matches!(canonical_item_type, "agentMessage" | "userMessage") {
-            self.message_event_ids_with_delta.insert(event_id.clone());
-        }
 
         let (kind, normalized_payload) = match (canonical_item_type, target) {
             ("userMessage", DeltaTarget::Text) => (
@@ -334,11 +329,32 @@ impl CodexNotificationNormalizer {
         ))
     }
 
-    fn event_id_for_item(&self, thread_id: &str, item_id: &str) -> String {
-        self.active_turn_id_by_thread
-            .get(thread_id)
-            .map(|turn_id| format!("{turn_id}-{item_id}"))
-            .unwrap_or_else(|| item_id.to_string())
+    fn resolve_item_event_id(
+        &mut self,
+        thread_id: &str,
+        turn_id: Option<&str>,
+        item_id: &str,
+    ) -> String {
+        let key = (thread_id.to_string(), item_id.to_string());
+        if let Some(turn_id) = turn_id.filter(|value| !value.trim().is_empty()) {
+            let event_id = format!("{turn_id}-{item_id}");
+            self.item_event_id_by_thread_item
+                .insert(key, event_id.clone());
+            return event_id;
+        }
+
+        if let Some(existing) = self.item_event_id_by_thread_item.get(&key) {
+            return existing.clone();
+        }
+
+        if let Some(turn_id) = self.active_turn_id_by_thread.get(thread_id) {
+            let event_id = format!("{turn_id}-{item_id}");
+            self.item_event_id_by_thread_item
+                .insert(key, event_id.clone());
+            return event_id;
+        }
+
+        item_id.to_string()
     }
 }
 
@@ -542,8 +558,13 @@ fn is_message_item(item: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::gateway::legacy_archive::load_archive_timeline_entries_for_session_path;
     use crate::server::projection::ProjectionStore;
-    use shared_contracts::{ProviderKind, ThreadClientKind, ThreadStatus, ThreadSummaryDto};
+    use shared_contracts::{
+        ProviderKind, ThreadClientKind, ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto,
+    };
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[derive(Debug, Deserialize)]
     struct RawNotificationFixture {
@@ -671,6 +692,132 @@ mod tests {
         assert_eq!(assistant_entry.payload["text"], "Needle applied.");
     }
 
+    #[test]
+    fn late_message_completion_without_turn_id_reuses_existing_event_id() {
+        let events = replay_inline_notifications(
+            r#"
+{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-late","turn":{"id":"turn-late-1","status":"inProgress"}}}
+{"jsonrpc":"2.0","method":"thread/status/changed","params":{"threadId":"thread-late","status":{"type":"active"}}}
+{"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"threadId":"thread-late","turnId":"turn-late-1","itemId":"item-assistant-1","delta":"Hello"}}
+{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-late","turn":{"id":"turn-late-1","status":"completed"}}}
+{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"thread-late","item":{"id":"item-assistant-1","type":"agentMessage","text":"Hello."}}}
+"#,
+        );
+
+        let assistant_events: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == BridgeEventKind::MessageDelta)
+            .collect();
+        assert_eq!(assistant_events.len(), 2);
+        assert_eq!(assistant_events[0].event_id, "turn-late-1-item-assistant-1");
+        assert_eq!(assistant_events[1].event_id, "turn-late-1-item-assistant-1");
+        assert_eq!(assistant_events[1].payload["text"], "Hello.");
+    }
+
+    #[tokio::test]
+    async fn late_message_completion_without_turn_id_updates_existing_assistant_entry() {
+        let events = replay_inline_notifications(
+            r#"
+{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-late","turn":{"id":"turn-late-1","status":"inProgress"}}}
+{"jsonrpc":"2.0","method":"thread/status/changed","params":{"threadId":"thread-late","status":{"type":"active"}}}
+{"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"threadId":"thread-late","turnId":"turn-late-1","itemId":"item-assistant-1","delta":"Hello"}}
+{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-late","turn":{"id":"turn-late-1","status":"completed"}}}
+{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"thread-late","item":{"id":"item-assistant-1","type":"agentMessage","text":"Hello."}}}
+"#,
+        );
+        let store = store_for_thread("codex:thread-late").await;
+        for event in &events {
+            store.apply_live_event(event).await;
+        }
+
+        let snapshot = store
+            .snapshot("codex:thread-late")
+            .await
+            .expect("fixture should materialize a snapshot");
+        assert_eq!(snapshot.thread.status, ThreadStatus::Completed);
+
+        let assistant_entries: Vec<_> = snapshot
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.kind == BridgeEventKind::MessageDelta
+                    && entry
+                        .payload
+                        .get("role")
+                        .and_then(Value::as_str)
+                        .is_some_and(|role| role == "assistant")
+            })
+            .collect();
+        assert_eq!(assistant_entries.len(), 1);
+        assert_eq!(
+            assistant_entries[0].event_id,
+            "turn-late-1-item-assistant-1"
+        );
+        assert_eq!(assistant_entries[0].payload["text"], "Hello.");
+    }
+
+    #[tokio::test]
+    async fn live_notifications_converge_with_rollout_truth_for_completed_turn() {
+        let native_thread_id = "thread-parity";
+        let thread_id = format!("codex:{native_thread_id}");
+        let live_events = replay_inline_notifications(
+            r#"
+{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-parity","turn":{"id":"turn-parity-1","status":"inProgress"}}}
+{"jsonrpc":"2.0","method":"thread/status/changed","params":{"threadId":"thread-parity","status":{"type":"active"}}}
+{"jsonrpc":"2.0","method":"item/userMessage/delta","params":{"threadId":"thread-parity","turnId":"turn-parity-1","itemId":"item-user-1","delta":"Hello parity?"}}
+{"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"threadId":"thread-parity","turnId":"turn-parity-1","itemId":"item-assistant-1","delta":"Parity answer from assistant."}}
+{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"thread-parity","item":{"id":"item-assistant-1","type":"agentMessage","text":"Parity answer from assistant."}}}
+{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-parity","turn":{"id":"turn-parity-1","status":"completed"}}}
+"#,
+        );
+        let live_store = store_for_thread(&thread_id).await;
+        for event in &live_events {
+            live_store.apply_live_event(event).await;
+        }
+        let live_snapshot = live_store
+            .snapshot(&thread_id)
+            .await
+            .expect("live fixture should materialize a snapshot");
+
+        let archive_events = replay_archive_rollout(
+            native_thread_id,
+            r#"
+{"timestamp":"2026-04-06T09:00:00.000Z","type":"session_meta","payload":{"id":"thread-parity","timestamp":"2026-04-06T09:00:00.000Z","cwd":"/tmp/codex-fixture","source":"cli","git":{"branch":"main","repository_url":"git@github.com:openai/codex-mobile-companion.git"}}}
+{"timestamp":"2026-04-06T09:00:01.000Z","type":"event_msg","payload":{"type":"task_started"}}
+{"timestamp":"2026-04-06T09:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"Hello parity?"}}
+{"timestamp":"2026-04-06T09:00:03.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Parity answer from assistant."}],"phase":"final_answer"}}
+{"timestamp":"2026-04-06T09:00:04.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-parity-1","last_agent_message":"Parity answer from assistant."}}
+"#,
+        );
+        let archive_store = store_for_thread(&thread_id).await;
+        for event in &archive_events {
+            archive_store.apply_live_event(event).await;
+        }
+        let archive_snapshot = archive_store
+            .snapshot(&thread_id)
+            .await
+            .expect("archive fixture should materialize a snapshot");
+
+        assert_eq!(live_snapshot.thread.status, ThreadStatus::Completed);
+        assert_eq!(archive_snapshot.thread.status, ThreadStatus::Completed);
+        assert_eq!(
+            snapshot_message_text(&live_snapshot, "user").as_deref(),
+            Some("Hello parity?")
+        );
+        assert_eq!(
+            snapshot_message_text(&archive_snapshot, "user").as_deref(),
+            Some("Hello parity?")
+        );
+        assert_eq!(
+            snapshot_message_text(&live_snapshot, "assistant").as_deref(),
+            snapshot_message_text(&archive_snapshot, "assistant").as_deref()
+        );
+        assert_eq!(
+            snapshot_message_text(&live_snapshot, "assistant").as_deref(),
+            Some("Parity answer from assistant.")
+        );
+    }
+
     fn replay_fixture(path: &str) -> Vec<BridgeEventEnvelope<Value>> {
         let raw = match path {
             "act_turn_notifications.jsonl" => {
@@ -684,6 +831,52 @@ mod tests {
             }
             _ => panic!("unknown codex notification fixture: {path}"),
         };
+        replay_raw_notifications(raw)
+    }
+
+    fn replay_inline_notifications(raw: &str) -> Vec<BridgeEventEnvelope<Value>> {
+        replay_raw_notifications(raw)
+    }
+
+    fn replay_archive_rollout(
+        native_thread_id: &str,
+        raw_rollout: &str,
+    ) -> Vec<BridgeEventEnvelope<Value>> {
+        let temp_root = std::env::temp_dir().join(format!(
+            "bridge-core-rollout-parity-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&temp_root).expect("temp rollout directory should be created");
+        let rollout_path = temp_root.join(format!(
+            "rollout-2026-04-06T09-00-00-{native_thread_id}.jsonl"
+        ));
+        fs::write(&rollout_path, raw_rollout.trim())
+            .expect("test rollout fixture should be written");
+
+        let timeline_entries =
+            load_archive_timeline_entries_for_session_path(native_thread_id, &rollout_path);
+        let _ = fs::remove_dir_all(&temp_root);
+
+        let thread_id = format!("codex:{native_thread_id}");
+        timeline_entries
+            .into_iter()
+            .map(|entry| {
+                BridgeEventEnvelope::new(
+                    entry.event_id,
+                    thread_id.clone(),
+                    entry.kind,
+                    entry.occurred_at,
+                    entry.payload,
+                )
+            })
+            .collect()
+    }
+
+    fn replay_raw_notifications(raw: &str) -> Vec<BridgeEventEnvelope<Value>> {
         let notifications: Vec<RawNotificationFixture> = raw
             .lines()
             .filter(|line| !line.trim().is_empty())
@@ -700,6 +893,22 @@ mod tests {
                 normalizer.normalize(&notification.method, &notification.params)
             })
             .collect()
+    }
+
+    fn snapshot_message_text(snapshot: &ThreadSnapshotDto, role: &str) -> Option<String> {
+        snapshot
+            .entries
+            .iter()
+            .find(|entry| {
+                entry.kind == BridgeEventKind::MessageDelta
+                    && entry
+                        .payload
+                        .get("role")
+                        .and_then(Value::as_str)
+                        .is_some_and(|entry_role| entry_role == role)
+            })
+            .and_then(|entry| entry.payload.get("text").and_then(Value::as_str))
+            .map(ToString::to_string)
     }
 
     async fn store_for_thread(thread_id: &str) -> ProjectionStore {

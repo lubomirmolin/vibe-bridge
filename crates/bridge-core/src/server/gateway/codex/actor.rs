@@ -790,10 +790,11 @@ fn parse_actor_stream_message(
     let event = normalizer
         .normalize(method, &params)
         .filter(|event| event.thread_id == thread_id);
+    let turn_completed = method == "turn/completed" && event.is_some();
     ParsedActorStreamMessage::Notification {
         method: method.to_string(),
         event,
-        turn_completed: method == "turn/completed",
+        turn_completed,
     }
 }
 
@@ -974,6 +975,46 @@ mod tests {
         (controls, events, activity.finish())
     }
 
+    fn replay_stream_until_completion(
+        thread_id: &str,
+        messages: &[Value],
+    ) -> (
+        Vec<GatewayTurnControlRequest>,
+        Vec<BridgeEventEnvelope<Value>>,
+        GatewayTurnStreamActivity,
+    ) {
+        let mut normalizer = CodexNotificationNormalizer::default();
+        let mut controls = Vec::new();
+        let mut events = Vec::new();
+        let mut activity = ActiveTurnAccumulator::default();
+
+        for message in messages {
+            match parse_actor_stream_message(thread_id, &mut normalizer, message) {
+                ParsedActorStreamMessage::Ignore => {}
+                ParsedActorStreamMessage::Control { request, .. } => {
+                    activity.record_control_request(&request);
+                    controls.push(request);
+                }
+                ParsedActorStreamMessage::Notification {
+                    event,
+                    turn_completed,
+                    ..
+                } => {
+                    if let Some(event) = event {
+                        activity.record_event(&event);
+                        events.push(event);
+                    }
+                    if turn_completed {
+                        activity.record_turn_completed();
+                        break;
+                    }
+                }
+            }
+        }
+
+        (controls, events, activity.finish())
+    }
+
     async fn store_for_thread(thread_id: &str) -> ProjectionStore {
         let store = ProjectionStore::new();
         store
@@ -1078,5 +1119,108 @@ mod tests {
         assert!(activity.saw_workflow_event);
         assert!(activity.saw_turn_completed);
         assert!(!activity.requires_completion_snapshot_refresh());
+    }
+
+    #[test]
+    fn parse_actor_stream_message_ignores_turn_completed_for_different_thread() {
+        let mut normalizer = CodexNotificationNormalizer::default();
+        let message = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-other",
+                "turn": { "id": "turn-other-1", "status": "completed" }
+            }
+        });
+
+        match parse_actor_stream_message("codex:thread-target", &mut normalizer, &message) {
+            ParsedActorStreamMessage::Notification {
+                event,
+                turn_completed,
+                ..
+            } => {
+                assert!(event.is_none());
+                assert!(!turn_completed);
+            }
+            _ => panic!("expected notification variant"),
+        }
+    }
+
+    #[test]
+    fn parse_actor_stream_message_marks_turn_completed_for_target_thread() {
+        let mut normalizer = CodexNotificationNormalizer::default();
+        let message = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-target",
+                "turn": { "id": "turn-target-1", "status": "completed" }
+            }
+        });
+
+        match parse_actor_stream_message("codex:thread-target", &mut normalizer, &message) {
+            ParsedActorStreamMessage::Notification {
+                event,
+                turn_completed,
+                ..
+            } => {
+                assert!(event.is_some());
+                assert!(turn_completed);
+            }
+            _ => panic!("expected notification variant"),
+        }
+    }
+
+    #[test]
+    fn stream_loop_semantics_do_not_break_on_other_thread_completion() {
+        let messages = vec![
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread-other",
+                    "turn": { "id": "turn-other-1", "status": "completed" }
+                }
+            }),
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "threadId": "thread-target",
+                    "turnId": "turn-target-1",
+                    "itemId": "msg-target-1",
+                    "delta": "Hello"
+                }
+            }),
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread-target",
+                    "turn": { "id": "turn-target-1", "status": "completed" }
+                }
+            }),
+        ];
+
+        let (_controls, events, activity) =
+            replay_stream_until_completion("codex:thread-target", &messages);
+
+        assert!(
+            events.iter().any(|event| {
+                event.kind == BridgeEventKind::MessageDelta
+                    && event.payload.get("role").and_then(Value::as_str) == Some("assistant")
+            }),
+            "assistant message should still be processed before completion"
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == BridgeEventKind::ThreadStatusChanged)
+                .count(),
+            1,
+            "only target thread completion should emit status event"
+        );
+        assert!(activity.saw_assistant_message);
+        assert!(activity.saw_turn_completed);
     }
 }

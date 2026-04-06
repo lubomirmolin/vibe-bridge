@@ -89,6 +89,7 @@ void main() {
         promptLabel: 'first',
         expectedPrompt: _buildFirstProbePrompt(),
         expectedUserPromptCount: 1,
+        failOnExcessUserPromptCount: true,
       );
 
       final firstPrompt = _buildFirstProbePrompt();
@@ -112,6 +113,7 @@ void main() {
         promptLabel: 'second',
         expectedPrompt: secondPrompt,
         expectedUserPromptCount: 2,
+        failOnExcessUserPromptCount: true,
       );
 
       final alignment = await _waitForCanonicalTimelineAlignment(
@@ -124,10 +126,21 @@ void main() {
       );
 
       expect(
-        find.byKey(const Key('thread-detail-session-content')),
-        findsOneWidget,
+        _hasNearDuplicateAssistantMessages(
+          alignment.controllerAssistantMessages,
+        ),
+        isFalse,
+        reason:
+            'Controller assistant timeline contains near-duplicate streamed '
+            'outputs (${alignment.controllerAssistantMessages.join(' || ')}).',
       );
-      expect(find.byKey(const Key('thread-detail-title')), findsOneWidget);
+      expect(
+        _hasNearDuplicateAssistantMessages(alignment.timelineAssistantMessages),
+        isFalse,
+        reason:
+            'Bridge timeline contains near-duplicate streamed outputs '
+            '(${alignment.timelineAssistantMessages.join(' || ')}).',
+      );
 
       debugPrint(
         'LIVE_CODEX_DUPLICATE_TEXT_RESULT '
@@ -498,6 +511,44 @@ String _singleLinePreview(String text) {
     return normalized;
   }
   return '${normalized.substring(0, 100)}...';
+}
+
+bool _hasNearDuplicateAssistantMessages(List<String> messages) {
+  for (var index = 1; index < messages.length; index += 1) {
+    if (_areNearDuplicateAssistantMessages(
+      messages[index - 1],
+      messages[index],
+    )) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool _areNearDuplicateAssistantMessages(String left, String right) {
+  final normalizedLeft = _normalizeText(left);
+  final normalizedRight = _normalizeText(right);
+  if (normalizedLeft.isEmpty || normalizedRight.isEmpty) {
+    return false;
+  }
+  if (normalizedLeft == normalizedRight) {
+    return true;
+  }
+
+  final strippedLeft = normalizedLeft.replaceAll(RegExp(r'[.!?]+$'), '');
+  final strippedRight = normalizedRight.replaceAll(RegExp(r'[.!?]+$'), '');
+  if (strippedLeft.isNotEmpty && strippedLeft == strippedRight) {
+    return true;
+  }
+
+  final shorter = normalizedLeft.length <= normalizedRight.length
+      ? normalizedLeft
+      : normalizedRight;
+  final longer = normalizedLeft.length > normalizedRight.length
+      ? normalizedLeft
+      : normalizedRight;
+  final lengthGap = longer.length - shorter.length;
+  return lengthGap <= 2 && longer.startsWith(shorter);
 }
 
 Future<void> _pumpUntilFound(

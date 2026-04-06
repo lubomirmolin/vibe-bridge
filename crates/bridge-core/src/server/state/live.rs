@@ -19,9 +19,13 @@ impl LiveDeltaCompactor {
                 {
                     return event;
                 }
-                let role = match event.payload.get("type").and_then(Value::as_str) {
-                    Some("userMessage") => "user",
-                    _ => "assistant",
+                let role = match event.payload.get("role").and_then(Value::as_str) {
+                    Some("user") => "user",
+                    Some("assistant") => "assistant",
+                    _ => match event.payload.get("type").and_then(Value::as_str) {
+                        Some("userMessage") => "user",
+                        _ => "assistant",
+                    },
                 };
                 let current_text = event
                     .payload
@@ -216,6 +220,33 @@ pub(super) fn should_synthesize_visible_user_prompt(
 ) -> bool {
     let _ = upstream_prompt;
     !visible_prompt.trim().is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn live_delta_compactor_preserves_explicit_message_role() {
+        let mut compactor = LiveDeltaCompactor::default();
+        let compacted = compactor.compact(BridgeEventEnvelope {
+            contract_version: CONTRACT_VERSION.to_string(),
+            event_id: "evt-role-preserve".to_string(),
+            bridge_seq: None,
+            thread_id: "codex:thread-role-preserve".to_string(),
+            kind: BridgeEventKind::MessageDelta,
+            occurred_at: "2026-04-06T09:00:00Z".to_string(),
+            payload: json!({
+                "id": "item-user-1",
+                "type": "message",
+                "role": "user",
+                "text": "Hello",
+            }),
+            annotations: None,
+        });
+
+        assert_eq!(compacted.payload["role"], "user");
+    }
 }
 
 pub(super) fn build_visible_user_message_event(

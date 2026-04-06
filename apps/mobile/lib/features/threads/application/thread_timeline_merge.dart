@@ -112,9 +112,32 @@ ThreadActivityItem preferTimelineMergedItem({
 
   switch (candidate.type) {
     case ThreadActivityItemType.userPrompt:
-      return candidate.messageImageUrls.length > current.messageImageUrls.length
-          ? candidate
-          : current;
+      if (_isSyntheticAndCanonicalPairForSameTurn(current, candidate)) {
+        return candidate;
+      }
+
+      final currentClientMessageId = _normalizedClientMessageId(current);
+      final candidateClientMessageId = _normalizedClientMessageId(candidate);
+      if (candidateClientMessageId != null && currentClientMessageId == null) {
+        return candidate;
+      }
+      if (currentClientMessageId != null && candidateClientMessageId == null) {
+        return current;
+      }
+
+      if (candidate.messageImageUrls.length > current.messageImageUrls.length) {
+        return candidate;
+      }
+      if (current.messageImageUrls.length > candidate.messageImageUrls.length) {
+        return current;
+      }
+
+      final currentBody = _normalizeActivityBody(current.body);
+      final candidateBody = _normalizeActivityBody(candidate.body);
+      if (candidateBody.length > currentBody.length) {
+        return candidate;
+      }
+      return current;
     case ThreadActivityItemType.assistantOutput:
       final currentBody = _normalizeActivityBody(current.body);
       final candidateBody = _normalizeActivityBody(candidate.body);
@@ -181,22 +204,36 @@ bool _isEquivalentTimelineActivityItem({
   if (existing.kind != candidate.kind || existing.type != candidate.type) {
     return false;
   }
-  if (!_areTimelineMomentsEquivalent(
-    existing.occurredAt,
-    candidate.occurredAt,
-  )) {
-    return false;
-  }
 
   switch (candidate.type) {
     case ThreadActivityItemType.userPrompt:
-      return _normalizeActivityBody(existing.body) ==
+      final sameContent =
+          _normalizeActivityBody(existing.body) ==
               _normalizeActivityBody(candidate.body) &&
           setEquals(
             existing.messageImageUrls.toSet(),
             candidate.messageImageUrls.toSet(),
           );
+      if (!sameContent) {
+        return false;
+      }
+      if (_sharesClientMessageIdentity(existing, candidate)) {
+        return true;
+      }
+      if (_isSyntheticAndCanonicalPairForSameTurn(existing, candidate)) {
+        return true;
+      }
+      return _areTimelineMomentsEquivalent(
+        existing.occurredAt,
+        candidate.occurredAt,
+      );
     case ThreadActivityItemType.assistantOutput:
+      if (!_areTimelineMomentsEquivalent(
+        existing.occurredAt,
+        candidate.occurredAt,
+      )) {
+        return false;
+      }
       return _areEquivalentAssistantBodies(existing.body, candidate.body);
     case ThreadActivityItemType.planUpdate:
     case ThreadActivityItemType.terminalOutput:
@@ -257,4 +294,61 @@ String _normalizeActivityBody(String body) => body.trim();
 
 String _compactActivityBody(String body) {
   return body.replaceAll(RegExp(r'\s+'), '');
+}
+
+bool _sharesClientMessageIdentity(
+  ThreadActivityItem existing,
+  ThreadActivityItem candidate,
+) {
+  final existingClientMessageId = _normalizedClientMessageId(existing);
+  final candidateClientMessageId = _normalizedClientMessageId(candidate);
+  return existingClientMessageId != null &&
+      candidateClientMessageId != null &&
+      existingClientMessageId == candidateClientMessageId;
+}
+
+String? _normalizedClientMessageId(ThreadActivityItem item) {
+  final value = item.clientMessageId?.trim();
+  if (value == null || value.isEmpty) {
+    return null;
+  }
+  return value;
+}
+
+bool _isSyntheticAndCanonicalPairForSameTurn(
+  ThreadActivityItem existing,
+  ThreadActivityItem candidate,
+) {
+  final existingSyntheticTurnId = _syntheticVisiblePromptTurnId(
+    existing.eventId,
+  );
+  final candidateSyntheticTurnId = _syntheticVisiblePromptTurnId(
+    candidate.eventId,
+  );
+
+  if (existingSyntheticTurnId != null &&
+      _eventBelongsToTurn(candidate.eventId, existingSyntheticTurnId)) {
+    return true;
+  }
+  if (candidateSyntheticTurnId != null &&
+      _eventBelongsToTurn(existing.eventId, candidateSyntheticTurnId)) {
+    return true;
+  }
+  return false;
+}
+
+String? _syntheticVisiblePromptTurnId(String eventId) {
+  const suffix = '-visible-user-prompt';
+  if (!eventId.endsWith(suffix)) {
+    return null;
+  }
+  final turnId = eventId.substring(0, eventId.length - suffix.length).trim();
+  return turnId.isEmpty ? null : turnId;
+}
+
+bool _eventBelongsToTurn(String eventId, String turnId) {
+  if (eventId == turnId) {
+    return true;
+  }
+  return eventId.startsWith('$turnId-');
 }

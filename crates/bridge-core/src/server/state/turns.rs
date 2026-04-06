@@ -301,9 +301,7 @@ impl BridgeAppState {
             .await;
             self.schedule_bridge_owned_turn_watchdog(thread_id);
         }
-        if !synthesizes_visible_prompt
-            && let Some(client_message_id) = normalized_client_message_id.as_ref()
-        {
+        if let Some(client_message_id) = normalized_client_message_id.as_ref() {
             self.update_thread_runtime(thread_id, |runtime| {
                 runtime.pending_client_message = Some(PendingTurnClientMessage {
                     client_message_id: client_message_id.clone(),
