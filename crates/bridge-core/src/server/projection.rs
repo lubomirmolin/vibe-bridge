@@ -12,6 +12,7 @@ use tokio::sync::RwLock;
 use crate::incremental_text::merge_incremental_text;
 use crate::server::contracts::{GitMutationStatusDto, RepositoryContextDto};
 use crate::server::controls::ApprovalRecordDto;
+use crate::server::timeline_dedupe::dedupe_visible_user_prompt_representations;
 
 #[derive(Debug, Default, Clone)]
 pub struct ProjectionStore {
@@ -93,6 +94,7 @@ impl ProjectionStore {
                 .clone()
                 .or_else(|| previous_snapshot.workflow_state.clone());
         }
+        dedupe_visible_user_prompt_representations(&mut snapshot.entries);
         for approval in &snapshot.approvals {
             state
                 .approvals
@@ -486,7 +488,7 @@ fn apply_live_event_locked(state: &mut ProjectionState, event: &BridgeEventEnvel
             } else {
                 snapshot.entries.push(next_entry);
             }
-            dedupe_synthetic_visible_user_prompts(&mut snapshot.entries);
+            dedupe_visible_user_prompt_representations(&mut snapshot.entries);
         }
 
         if let Some(approval) = approval_update.as_ref() {
@@ -507,87 +509,6 @@ fn apply_live_event_locked(state: &mut ProjectionState, event: &BridgeEventEnvel
             .approvals
             .insert(approval.approval_id.clone(), approval);
     }
-}
-
-fn dedupe_synthetic_visible_user_prompts(entries: &mut Vec<ThreadTimelineEntryDto>) {
-    let canonical_user_entries = entries
-        .iter()
-        .filter(|entry| {
-            timeline_entry_is_user_message(entry) && !is_synthetic_visible_user_prompt(entry)
-        })
-        .map(|entry| {
-            (
-                entry.event_id.clone(),
-                normalized_timeline_entry_text(entry),
-                timeline_entry_client_message_id(entry).map(str::to_string),
-            )
-        })
-        .collect::<Vec<_>>();
-    if canonical_user_entries.is_empty() {
-        return;
-    }
-
-    entries.retain(|entry| {
-        if !is_synthetic_visible_user_prompt(entry) {
-            return true;
-        }
-
-        let Some(turn_id) = entry.event_id.strip_suffix("-visible-user-prompt") else {
-            return true;
-        };
-        let synthetic_text = normalized_timeline_entry_text(entry);
-        let synthetic_client_message_id = timeline_entry_client_message_id(entry);
-
-        !canonical_user_entries.iter().any(
-            |(canonical_event_id, canonical_text, canonical_client_message_id)| {
-                canonical_client_message_id.is_some()
-                    && synthetic_client_message_id.is_some()
-                    && canonical_client_message_id.as_deref() == synthetic_client_message_id
-                    || (event_belongs_to_turn(canonical_event_id, turn_id)
-                        && !synthetic_text.is_empty()
-                        && *canonical_text == synthetic_text)
-            },
-        )
-    });
-}
-
-fn is_synthetic_visible_user_prompt(entry: &ThreadTimelineEntryDto) -> bool {
-    entry.event_id.ends_with("-visible-user-prompt") && timeline_entry_is_user_message(entry)
-}
-
-fn timeline_entry_is_user_message(entry: &ThreadTimelineEntryDto) -> bool {
-    entry.payload.get("role").and_then(Value::as_str) == Some("user")
-        || entry.payload.get("type").and_then(Value::as_str) == Some("userMessage")
-}
-
-fn timeline_entry_client_message_id(entry: &ThreadTimelineEntryDto) -> Option<&str> {
-    entry
-        .payload
-        .get("client_message_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-}
-
-fn normalized_timeline_entry_text(entry: &ThreadTimelineEntryDto) -> String {
-    entry
-        .payload
-        .get("text")
-        .and_then(Value::as_str)
-        .or_else(|| entry.payload.get("delta").and_then(Value::as_str))
-        .map(normalize_timeline_text)
-        .unwrap_or_default()
-}
-
-fn normalize_timeline_text(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn event_belongs_to_turn(event_id: &str, turn_id: &str) -> bool {
-    event_id == turn_id
-        || event_id
-            .strip_prefix(turn_id)
-            .is_some_and(|suffix| suffix.starts_with('-'))
 }
 
 fn combine_latest_bridge_seq(current: Option<u64>, next: Option<u64>) -> Option<u64> {
@@ -1615,6 +1536,177 @@ mod tests {
             .expect("snapshot should exist");
         assert_eq!(snapshot.entries.len(), 1);
         assert_eq!(snapshot.entries[0].event_id, "turn-1-item-user-1");
+    }
+
+    #[tokio::test]
+    async fn apply_live_user_message_dedupes_matching_archive_user_prompt() {
+        let store = ProjectionStore::new();
+        store
+            .replace_summaries(vec![ThreadSummaryDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
+                title: "Hot thread".to_string(),
+                status: ThreadStatus::Running,
+                workspace: "/tmp/a".to_string(),
+                repository: "repo-a".to_string(),
+                branch: "main".to_string(),
+                updated_at: "2026-03-21T10:00:00Z".to_string(),
+            }])
+            .await;
+        store
+            .put_snapshot(ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
+                    title: "Hot thread".to_string(),
+                    status: ThreadStatus::Running,
+                    workspace: "/tmp/a".to_string(),
+                    repository: "repo-a".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-03-21T09:00:00Z".to_string(),
+                    updated_at: "2026-03-21T10:00:00Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "Commit".to_string(),
+                    active_turn_id: Some("turn-1".to_string()),
+                },
+                latest_bridge_seq: None,
+                entries: vec![ThreadTimelineEntryDto {
+                    event_id: "codex:thread-1-archive-2".to_string(),
+                    kind: BridgeEventKind::MessageDelta,
+                    occurred_at: "2026-03-21T10:01:00.000Z".to_string(),
+                    summary: "Commit".to_string(),
+                    payload: json!({
+                        "type": "userMessage",
+                        "role": "user",
+                        "delta": "Commit",
+                    }),
+                    annotations: None,
+                }],
+                approvals: vec![],
+                git_status: None,
+                workflow_state: None,
+                pending_user_input: None,
+            })
+            .await;
+
+        store
+            .apply_live_event(&BridgeEventEnvelope {
+                contract_version: CONTRACT_VERSION.to_string(),
+                event_id: "turn-1-item-user-1".to_string(),
+                bridge_seq: None,
+                thread_id: "thread-1".to_string(),
+                kind: BridgeEventKind::MessageDelta,
+                occurred_at: "2026-03-21T10:01:00.500Z".to_string(),
+                payload: json!({
+                    "id": "item-user-1",
+                    "type": "message",
+                    "role": "user",
+                    "text": "Commit",
+                }),
+                annotations: None,
+            })
+            .await;
+
+        let snapshot = store
+            .snapshot("thread-1")
+            .await
+            .expect("snapshot should exist");
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.entries[0].event_id, "turn-1-item-user-1");
+    }
+
+    #[tokio::test]
+    async fn apply_live_user_message_keeps_far_older_archive_user_prompt_with_same_text() {
+        let store = ProjectionStore::new();
+        store
+            .replace_summaries(vec![ThreadSummaryDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
+                title: "Hot thread".to_string(),
+                status: ThreadStatus::Running,
+                workspace: "/tmp/a".to_string(),
+                repository: "repo-a".to_string(),
+                branch: "main".to_string(),
+                updated_at: "2026-03-21T10:00:00Z".to_string(),
+            }])
+            .await;
+        store
+            .put_snapshot(ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
+                    title: "Hot thread".to_string(),
+                    status: ThreadStatus::Running,
+                    workspace: "/tmp/a".to_string(),
+                    repository: "repo-a".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-03-21T09:00:00Z".to_string(),
+                    updated_at: "2026-03-21T10:00:00Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "Commit".to_string(),
+                    active_turn_id: Some("turn-2".to_string()),
+                },
+                latest_bridge_seq: None,
+                entries: vec![ThreadTimelineEntryDto {
+                    event_id: "codex:thread-1-archive-2".to_string(),
+                    kind: BridgeEventKind::MessageDelta,
+                    occurred_at: "2026-03-21T10:00:00.000Z".to_string(),
+                    summary: "Commit".to_string(),
+                    payload: json!({
+                        "type": "userMessage",
+                        "role": "user",
+                        "delta": "Commit",
+                    }),
+                    annotations: None,
+                }],
+                approvals: vec![],
+                git_status: None,
+                workflow_state: None,
+                pending_user_input: None,
+            })
+            .await;
+
+        store
+            .apply_live_event(&BridgeEventEnvelope {
+                contract_version: CONTRACT_VERSION.to_string(),
+                event_id: "turn-2-item-user-1".to_string(),
+                bridge_seq: None,
+                thread_id: "thread-1".to_string(),
+                kind: BridgeEventKind::MessageDelta,
+                occurred_at: "2026-03-21T10:05:00.000Z".to_string(),
+                payload: json!({
+                    "id": "item-user-1",
+                    "type": "message",
+                    "role": "user",
+                    "text": "Commit",
+                }),
+                annotations: None,
+            })
+            .await;
+
+        let snapshot = store
+            .snapshot("thread-1")
+            .await
+            .expect("snapshot should exist");
+        assert_eq!(snapshot.entries.len(), 2);
+        assert_eq!(snapshot.entries[0].event_id, "codex:thread-1-archive-2");
+        assert_eq!(snapshot.entries[1].event_id, "turn-2-item-user-1");
     }
 
     #[tokio::test]

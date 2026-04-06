@@ -9,6 +9,7 @@ mod pairing_route;
 mod projection;
 mod speech;
 mod state;
+mod timeline_dedupe;
 pub(crate) mod timeline_events;
 
 use std::fs;

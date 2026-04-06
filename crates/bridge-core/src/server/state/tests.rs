@@ -429,6 +429,149 @@ async fn external_snapshot_update_dedupes_synthetic_visible_prompt_against_canon
     assert_eq!(snapshot.entries[0].event_id, "turn-1-item-user-1");
 }
 
+#[tokio::test]
+async fn external_snapshot_update_dedupes_archive_user_prompt_against_canonical_user_message() {
+    let state = test_bridge_app_state().await;
+
+    state
+        .apply_external_snapshot_update(
+            ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "codex:thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: ProviderKind::Codex,
+                    client: ThreadClientKind::Cli,
+                    title: "Thread".to_string(),
+                    status: ThreadStatus::Completed,
+                    workspace: "/repo".to_string(),
+                    repository: "repo".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-04-03T08:00:00Z".to_string(),
+                    updated_at: "2026-04-03T08:00:05Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "done".to_string(),
+                    active_turn_id: None,
+                },
+                latest_bridge_seq: None,
+                entries: vec![
+                    ThreadTimelineEntryDto {
+                        event_id: "codex:thread-1-archive-2".to_string(),
+                        kind: BridgeEventKind::MessageDelta,
+                        occurred_at: "2026-04-03T08:00:01.000Z".to_string(),
+                        summary: "Hello".to_string(),
+                        payload: json!({
+                            "type": "userMessage",
+                            "role": "user",
+                            "delta": "Hello"
+                        }),
+                        annotations: None,
+                    },
+                    ThreadTimelineEntryDto {
+                        event_id: "turn-1-item-user-1".to_string(),
+                        kind: BridgeEventKind::MessageDelta,
+                        occurred_at: "2026-04-03T08:00:01.000Z".to_string(),
+                        summary: "Hello".to_string(),
+                        payload: json!({
+                            "type": "message",
+                            "role": "user",
+                            "text": "Hello"
+                        }),
+                        annotations: None,
+                    },
+                ],
+                approvals: vec![],
+                git_status: None,
+                workflow_state: None,
+                pending_user_input: None,
+            },
+            Vec::new(),
+        )
+        .await;
+
+    let snapshot = state
+        .projections()
+        .snapshot("codex:thread-1")
+        .await
+        .expect("snapshot should exist");
+    assert_eq!(snapshot.entries.len(), 1);
+    assert_eq!(snapshot.entries[0].event_id, "turn-1-item-user-1");
+}
+
+#[tokio::test]
+async fn external_snapshot_update_keeps_archive_user_prompt_when_matching_canonical_is_far_apart() {
+    let state = test_bridge_app_state().await;
+
+    state
+        .apply_external_snapshot_update(
+            ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "codex:thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: ProviderKind::Codex,
+                    client: ThreadClientKind::Cli,
+                    title: "Thread".to_string(),
+                    status: ThreadStatus::Completed,
+                    workspace: "/repo".to_string(),
+                    repository: "repo".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-04-03T08:00:00Z".to_string(),
+                    updated_at: "2026-04-03T08:05:05Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "done".to_string(),
+                    active_turn_id: None,
+                },
+                latest_bridge_seq: None,
+                entries: vec![
+                    ThreadTimelineEntryDto {
+                        event_id: "codex:thread-1-archive-2".to_string(),
+                        kind: BridgeEventKind::MessageDelta,
+                        occurred_at: "2026-04-03T08:00:01.000Z".to_string(),
+                        summary: "Commit".to_string(),
+                        payload: json!({
+                            "type": "userMessage",
+                            "role": "user",
+                            "delta": "Commit"
+                        }),
+                        annotations: None,
+                    },
+                    ThreadTimelineEntryDto {
+                        event_id: "turn-2-item-user-1".to_string(),
+                        kind: BridgeEventKind::MessageDelta,
+                        occurred_at: "2026-04-03T08:05:01.000Z".to_string(),
+                        summary: "Commit".to_string(),
+                        payload: json!({
+                            "type": "message",
+                            "role": "user",
+                            "text": "Commit"
+                        }),
+                        annotations: None,
+                    },
+                ],
+                approvals: vec![],
+                git_status: None,
+                workflow_state: None,
+                pending_user_input: None,
+            },
+            Vec::new(),
+        )
+        .await;
+
+    let snapshot = state
+        .projections()
+        .snapshot("codex:thread-1")
+        .await
+        .expect("snapshot should exist");
+    assert_eq!(snapshot.entries.len(), 2);
+    assert_eq!(snapshot.entries[0].event_id, "codex:thread-1-archive-2");
+    assert_eq!(snapshot.entries[1].event_id, "turn-2-item-user-1");
+}
+
 #[test]
 fn terminal_timeline_refreshes_when_cached_exploration_command_lacks_annotations() {
     let snapshot = ThreadSnapshotDto {
