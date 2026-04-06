@@ -335,6 +335,76 @@ void main() {
   );
 
   test(
+    'thread-detail suppresses duplicate composer submits while a start-turn mutation is in flight',
+    () async {
+      final listController = ThreadListController(
+        bridgeApi: ScriptedThreadListBridgeApi(
+          scriptedResults: [
+            _threadSummaries(
+              reconnectThreadStatus: ThreadStatus.idle,
+              reconnectUpdatedAt: '2026-03-18T09:30:00Z',
+            ),
+          ],
+        ),
+        cacheRepository: _newCacheRepository(),
+        liveStream: ScriptedThreadLiveStream(),
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+      );
+      addTearDown(listController.dispose);
+
+      final detailApi = ScriptedThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.idle,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:00:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Normalize event payloads',
+            ),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [<ThreadTimelineEntryDto>[]],
+        },
+      );
+      final detailController = ThreadDetailController(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: 'thread-123',
+        initialVisibleTimelineEntries: 20,
+        bridgeApi: detailApi,
+        liveStream: ScriptedThreadLiveStream(),
+        threadListController: listController,
+      );
+      addTearDown(detailController.dispose);
+
+      await _waitUntil(() => !detailController.state.isLoading);
+
+      detailApi.startTurnBlocker = Completer<void>();
+      final firstSubmit = detailController.submitComposerInput('Ship once');
+      await _waitUntil(() => detailController.state.isComposerMutationInFlight);
+
+      final secondSubmit = await detailController.submitComposerInput(
+        'Ship twice',
+      );
+
+      expect(secondSubmit, isFalse);
+      expect(detailApi.startTurnCallCount, 1);
+      expect(detailApi.startTurnPromptsByThreadId['thread-123'], ['Ship once']);
+
+      detailApi.startTurnBlocker?.complete();
+      expect(await firstSubmit, isTrue);
+    },
+  );
+
+  test(
     'thread-detail silent turn watchdog reloads snapshot history after a stalled turn',
     () async {
       final listController = ThreadListController(
@@ -2369,6 +2439,8 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
       <String, List<String?>>{};
   final Map<String, List<List<String>>> startTurnImagesByThreadId =
       <String, List<List<String>>>{};
+  int startTurnCallCount = 0;
+  Completer<void>? startTurnBlocker;
 
   @override
   Future<ModelCatalogDto> fetchModelCatalog({
@@ -2538,7 +2610,8 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     List<String> images = const <String>[],
     String? model,
     String? effort,
-  }) {
+  }) async {
+    startTurnCallCount += 1;
     startTurnPromptsByThreadId
         .putIfAbsent(threadId, () => <String>[])
         .add(prompt);
@@ -2548,15 +2621,17 @@ class ScriptedThreadDetailBridgeApi implements ThreadDetailBridgeApi {
     startTurnImagesByThreadId
         .putIfAbsent(threadId, () => <List<String>>[])
         .add(List<String>.unmodifiable(images));
-    return Future<TurnMutationResult>.value(
-      TurnMutationResult(
-        contractVersion: contractVersion,
-        threadId: threadId,
-        operation: 'turn_start',
-        outcome: 'accepted',
-        threadStatus: ThreadStatus.running,
-        message: 'Turn started and streaming is active',
-      ),
+    final blocker = startTurnBlocker;
+    if (blocker != null) {
+      await blocker.future;
+    }
+    return TurnMutationResult(
+      contractVersion: contractVersion,
+      threadId: threadId,
+      operation: 'turn_start',
+      outcome: 'accepted',
+      threadStatus: ThreadStatus.running,
+      message: 'Turn started and streaming is active',
     );
   }
 

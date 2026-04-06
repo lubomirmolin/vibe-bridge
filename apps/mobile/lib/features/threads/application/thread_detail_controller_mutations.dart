@@ -12,6 +12,9 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
     if (thread == null) {
       return false;
     }
+    if (state.isComposerMutationInFlight || state.isInterruptMutationInFlight) {
+      return false;
+    }
 
     if (!state.canRunMutatingActions) {
       state = state.copyWith(
@@ -244,6 +247,9 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
     String? model,
     String? reasoningEffort,
   }) async {
+    if (state.isComposerMutationInFlight || state.isInterruptMutationInFlight) {
+      return false;
+    }
     final pending = state.pendingUserInput;
     if (pending == null) {
       final workflowState = state.workflowState;
@@ -347,6 +353,9 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
     if (thread == null) {
       return false;
     }
+    if (state.isComposerMutationInFlight || state.isInterruptMutationInFlight) {
+      return false;
+    }
 
     if (!state.canRunMutatingActions) {
       state = state.copyWith(
@@ -402,6 +411,9 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
 
   Future<bool> interruptActiveTurn() async {
     if (!state.isTurnActive) {
+      return false;
+    }
+    if (state.isInterruptMutationInFlight || state.isComposerMutationInFlight) {
       return false;
     }
 
