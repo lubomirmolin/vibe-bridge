@@ -1,37 +1,23 @@
-#!/usr/bin/env bash
+#!/bin/bash
+# Mission initialization script — runs at start of each worker session
 set -euo pipefail
 
-ROOT="/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion"
+REPO_ROOT="/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion"
 
-if [ ! -d "$ROOT/.git" ]; then
-  git init "$ROOT" >/dev/null 2>&1 || true
+# Check Flutter dependencies
+cd "$REPO_ROOT/apps/mobile"
+flutter pub get 2>/dev/null || true
+
+# Check Rust compilation
+cargo check --manifest-path "$REPO_ROOT/Cargo.toml" --workspace --all-targets 2>/dev/null || true
+
+# Ensure adb port forwarding is set up
+ADB="$HOME/Library/Android/sdk/platform-tools/adb"
+BRIDGE_PORT=3210
+
+# Check if emulator is accessible
+if $ADB devices 2>/dev/null | grep -q "emulator-5554"; then
+  $ADB -s emulator-5554 reverse tcp:$BRIDGE_PORT tcp:$BRIDGE_PORT 2>/dev/null || true
 fi
 
-if [ -f "$ROOT/apps/mobile/pubspec.yaml" ]; then
-  flutter pub get --directory "$ROOT/apps/mobile"
-fi
-
-if [ -f "$ROOT/Cargo.toml" ]; then
-  cargo fetch --manifest-path "$ROOT/Cargo.toml"
-fi
-
-if command -v rustup >/dev/null 2>&1 && [ -f "$ROOT/apps/mobile/pubspec.yaml" ]; then
-  rustup target add \
-    --toolchain stable \
-    aarch64-linux-android \
-    armv7-linux-androideabi \
-    x86_64-linux-android \
-    i686-linux-android
-fi
-
-if ! command -v codex >/dev/null 2>&1; then
-  echo "warning: codex CLI not found in PATH; real-data thread validation will be limited" >&2
-fi
-
-if command -v adb >/dev/null 2>&1; then
-  adb start-server >/dev/null 2>&1 || true
-fi
-
-if [ -f "$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj" ]; then
-  xcodebuild -project "$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj" -scheme CodexMobileCompanion -list >/dev/null
-fi
+echo "Init complete"

@@ -2,20 +2,45 @@
 
 Environment variables, external dependencies, and setup notes.
 
-**What belongs here:** required local tools, SDKs, platform notes, dependency quirks, and environment constraints.
-**What does NOT belong here:** service ports and commands from `.factory/services.yaml`.
+**What belongs here:** Required env vars, external dependencies, dependency quirks, platform-specific notes.
+**What does NOT belong here:** Service ports/commands (use `.factory/services.yaml`).
 
 ---
 
-- Mission uses a local-only stack: Flutter/Dart, Rust/Cargo, Swift/Xcode, Tailscale, and the local `codex` CLI.
-- Existing local findings during planning:
-  - Flutter, Dart, Rust, Cargo, Swift, Xcode, Tailscale, and `codex app-server` are installed.
-  - iOS/macOS validation path is available.
-  - Android SDK exists, and a dry run successfully launched the Android emulator validation path; use the repair tooling only if emulator drift recurs.
-- Android emulator repair is now scripted through `.factory/services.yaml` commands: use `android-repair` to recreate missing AVD payloads from checked-in definitions and `android-validate` to verify Flutter can enumerate Android targets afterward.
-- For this mission's live validation, Android emulator runs should use the host bridge through `http://10.0.2.2:3110` unless `LIVE_BRIDGE_BASE_URL` is explicitly overridden for the emulator target.
-- For the real-data thread-detail parity mission, treat `~/.codex` as read-only input. The primary regression thread is `019d0d0c-07df-7632-81fa-a1636651400a` (`Investigate thread detail sync`).
-- Android live validation must begin from an unpaired/empty-store state when proving first-run manual pairing; seeded secure-store trust does not count as evidence for this mission.
-- No external backend accounts or cloud services are part of v1.
-- Sensitive material belongs in platform secure storage or macOS Keychain, never in repo-tracked plaintext files.
-- Mobile secure storage is now backed by `PersistedSecureStore()`: `apps/mobile/lib/foundation/storage/secure_store_provider.dart` returns the persisted implementation so trusted-session and related secure values can survive real app process death/relaunch instead of living only in memory.
+## External Dependencies
+
+- **Codex CLI**: Available via bun at `/Users/lubomirmolin/.bun/bin/codex`
+- **Flutter SDK**: 3.38.9 stable (Dart 3.10.8)
+- **Rust Toolchain**: 1.94.0
+- **Android SDK**: At `$HOME/Library/Android/sdk/`
+- **Emulators**: Pixel_6_Pro_API_34 (preferred for testing)
+
+## Environment Variables
+
+Integration tests accept these via `--dart-define`:
+- `LIVE_CODEX_THREAD_CREATION_BRIDGE_BASE_URL` — bridge URL (default varies by test)
+- `LIVE_CODEX_THREAD_CREATION_WORKSPACE` — workspace path
+- `LIVE_CODEX_THREAD_CREATION_PROMPT_ONE/TWO` — custom prompts for duplicate text test
+- `LIVE_CODEX_QUICK_ACTION_WORKSPACE` — workspace for quick action tests
+- `LIVE_BRIDGE_BASE_URL` — bridge URL for approval flow tests
+- `LIVE_THREAD_UI_BRIDGE_BASE_URL` — bridge URL for UI timing test
+- `LIVE_THREAD_UI_THREAD_ID` — specific thread for UI timing test
+
+Bridge server accepts:
+- `BRIDGE_HOST` — bind host (default: 127.0.0.1)
+- `BRIDGE_PORT` — bind port (default: 3210)
+- `CODEX_DESKTOP_IPC_SOCKET` — desktop IPC socket path
+
+## Platform Notes
+
+- macOS (darwin 24.6.0), Apple M1 Pro, 32 GB RAM, 10 cores
+- Codex authentication is handled by the codex binary (no extra env vars needed)
+- Android emulator must have adb port forwarding set up for bridge access
+- Physical device (Samsung SM_F966B) also connected but prefer emulator for testing
+
+## Dependency Quirks
+
+- `rg` (ripgrep) is NOT installed — use `grep` or the Grep/Glob tools
+- `gh` (GitHub CLI) is NOT installed
+- Emulator GPU: `swiftshader_indirect` for software rendering
+- Bridge PID file (`bridge-server.pid`) may be stale — always verify process is running

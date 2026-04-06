@@ -1,134 +1,30 @@
 commands:
-  install: >-
-    "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/init.sh"
-  android-repair: >-
-    "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/scripts/android-validation-harness.sh" --repair-only
-  android-validate: >-
-    "/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/.factory/scripts/android-validation-harness.sh"
-  mobile-thread-tests: >-
-    ROOT="/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion";
-    (cd "$ROOT/apps/mobile" && flutter test test/features/threads/thread_detail_page_test.dart && flutter test test/features/threads/reconnect_retry_scheduling_test.dart)
-  bridge-thread-tests: >-
-    ROOT="/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion";
-    cargo test --manifest-path "$ROOT/Cargo.toml" -p bridge-core
-  real-thread-detail-snapshot: >-
-    THREAD_ID="${TARGET_THREAD_ID:-019d0d0c-07df-7632-81fa-a1636651400a}";
-    curl -sf "http://127.0.0.1:3110/threads/$THREAD_ID" && printf '\n' && curl -sf "http://127.0.0.1:3110/threads/$THREAD_ID/timeline?limit=${TARGET_THREAD_LIMIT:-80}"
-  policy-access-mode: >-
-    curl -sf "http://127.0.0.1:3110/policy/access-mode"
-  real-thread-detail-timing: >-
-    THREAD_ID="${TARGET_THREAD_ID:-019d0d0c-07df-7632-81fa-a1636651400a}";
-    python3 - <<'PY'
-import json, time, urllib.request, os
-thread = os.environ.get('TARGET_THREAD_ID', '019d0d0c-07df-7632-81fa-a1636651400a')
-base = 'http://127.0.0.1:3110'
-urls = [
-    f'{base}/threads/{thread}',
-    f'{base}/threads/{thread}/timeline?limit=80',
-    f'{base}/threads/{thread}',
-    f'{base}/threads/{thread}/timeline?limit=80',
-]
-for url in urls:
-    start = time.perf_counter()
-    with urllib.request.urlopen(url) as resp:
-        payload = json.load(resp)
-    elapsed = time.perf_counter() - start
-    print(json.dumps({"url": url, "elapsed_seconds": round(elapsed, 3), "thread_id": payload.get("thread", {}).get("thread_id", payload.get("thread_id"))}))
-PY
-  mobile-pairing-tests: >-
-    ROOT="/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion";
-    (cd "$ROOT/apps/mobile" && flutter test test/features/pairing/pairing_flow_test.dart && flutter test test/features/pairing/pairing_controller_test.dart && flutter test test/features/pairing/pairing_qr_validator_test.dart)
-  android-live-debug-launch: >-
-    ROOT="/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion";
-    DEVICE="${ANDROID_DEVICE_ID:-emulator-5554}";
-    (cd "$ROOT/apps/mobile" && flutter run -d "$DEVICE" --debug --target lib/main.dart --dart-define=LIVE_BRIDGE_BASE_URL=${LIVE_BRIDGE_BASE_URL:-http://10.0.2.2:3110} --no-resident)
-  mobile-release-apk: >-
-    ROOT="/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion";
-    (cd "$ROOT/apps/mobile" && flutter build apk --release)
-  lint: >-
-    set -e;
-    ROOT="/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion";
-    if [ ! -f "$ROOT/apps/mobile/pubspec.yaml" ] && [ ! -f "$ROOT/Cargo.toml" ] && [ ! -d "$ROOT/apps/mac-shell" ]; then echo "workspace not scaffolded yet"; exit 0; fi;
-    if [ -f "$ROOT/apps/mobile/pubspec.yaml" ]; then flutter analyze "$ROOT/apps/mobile"; fi;
-    if [ -f "$ROOT/Cargo.toml" ]; then cargo fmt --manifest-path "$ROOT/Cargo.toml" --all --check && cargo clippy --manifest-path "$ROOT/Cargo.toml" --workspace --all-targets -- -D warnings; fi;
-    if [ -f "$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj" ]; then xcodebuild -project "$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi
-  typecheck: >-
-    ROOT="/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion";
-    if [ ! -f "$ROOT/apps/mobile/pubspec.yaml" ] && [ ! -f "$ROOT/Cargo.toml" ] && [ ! -d "$ROOT/apps/mac-shell" ]; then echo "workspace not scaffolded yet"; exit 0; fi;
-    if [ -f "$ROOT/apps/mobile/pubspec.yaml" ]; then flutter analyze "$ROOT/apps/mobile"; fi;
-    if [ -f "$ROOT/Cargo.toml" ]; then cargo check --manifest-path "$ROOT/Cargo.toml" --workspace --all-targets; fi;
-    if [ -f "$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj" ]; then xcodebuild -project "$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj" -scheme CodexMobileCompanion -destination 'platform=macOS' build >/dev/null; fi
-  test: >-
-    set -e;
-    ROOT="/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion";
-    if [ ! -f "$ROOT/apps/mobile/pubspec.yaml" ] && [ ! -f "$ROOT/Cargo.toml" ] && [ ! -d "$ROOT/apps/mac-shell" ]; then echo "workspace not scaffolded yet"; exit 0; fi;
-    if [ -f "$ROOT/apps/mobile/pubspec.yaml" ]; then (cd "$ROOT/apps/mobile" && flutter test --concurrency=5); fi;
-    if [ -f "$ROOT/Cargo.toml" ]; then cargo test --manifest-path "$ROOT/Cargo.toml" --workspace --jobs 5; fi;
-    if [ -f "$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj" ]; then xcodebuild test -project "$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj" -scheme CodexMobileCompanion -destination 'platform=macOS'; fi
-  build: >-
-    ROOT="/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion";
-    if [ ! -f "$ROOT/apps/mobile/pubspec.yaml" ] && [ ! -f "$ROOT/Cargo.toml" ] && [ ! -d "$ROOT/apps/mac-shell" ]; then echo "workspace not scaffolded yet"; exit 0; fi;
-    if [ -f "$ROOT/apps/mobile/pubspec.yaml" ]; then (cd "$ROOT/apps/mobile" && flutter build apk --debug); fi;
-    if [ -f "$ROOT/Cargo.toml" ]; then cargo build --manifest-path "$ROOT/Cargo.toml" --workspace; fi;
-    if [ -f "$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj/project.pbxproj" ]; then xcodebuild -project "$ROOT/apps/mac-shell/CodexMobileCompanion.xcodeproj" -scheme CodexMobileCompanion -destination 'platform=macOS' build; fi
+  install: cd /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile && flutter pub get
+  typecheck: cargo check --manifest-path /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/Cargo.toml --workspace --all-targets
+  build: cargo build --manifest-path /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/Cargo.toml --workspace
+  test: cargo test --manifest-path /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/Cargo.toml --workspace --jobs 5
+  lint: cargo clippy --manifest-path /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/Cargo.toml --workspace --all-targets -- -D warnings
+  flutter_analyze: cd /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile && flutter analyze
+  flutter_test: cd /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/apps/mobile && flutter test --concurrency=5
 
 services:
-  codex-app-server:
-    start: >-
-      codex app-server --listen ws://127.0.0.1:4222
-    stop: >-
-      lsof -ti tcp:4222 | xargs kill 2>/dev/null || true
-    healthcheck: >-
-      lsof -ti tcp:4222 >/dev/null
+  codex_app_server:
+    start: echo "Managed by bridge auto-spawn, do not start manually"
+    stop: echo "Managed by bridge, do not stop manually"
+    healthcheck: curl -sf http://127.0.0.1:4222/health 2>/dev/null || echo "codex health check not available via HTTP"
     port: 4222
     depends_on: []
 
-  bridge:
-    start: >-
-      ROOT="/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion";
-      test -f "$ROOT/Cargo.toml" || { echo "bridge not scaffolded yet"; exit 0; };
-      cargo run --manifest-path "$ROOT/Cargo.toml" -p bridge-core --bin bridge-server -- --host 127.0.0.1 --port 3110 --admin-port 3111
-    stop: >-
-      lsof -ti tcp:3110 | xargs kill 2>/dev/null || true; lsof -ti tcp:3111 | xargs kill 2>/dev/null || true
-    healthcheck: >-
-      ROOT="/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion";
-      test -f "$ROOT/Cargo.toml" || exit 0;
-      curl -sf http://127.0.0.1:3110/health
-    port: 3110
-    depends_on: []
+  bridge_server:
+    start: cargo run --manifest-path /Users/lubomirmolin/PhpstormProjects/codex-mobile-companion/Cargo.toml -p bridge-core -- --host 127.0.0.1 --port 3210 --codex-mode auto --state-directory /tmp/codex-mobile-companion-local-bridge
+    stop: "lsof -ti :3210 | xargs kill 2>/dev/null || true"
+    healthcheck: curl -sf http://127.0.0.1:3210/healthz
+    port: 3210
+    depends_on: [codex_app_server]
 
-  tailscale-serve:
-    start: >-
-      tailscale serve --bg 3110
-    stop: >-
-      tailscale serve reset
-    healthcheck: >-
-      tailscale serve status | grep 3110
-    port: 3110
-    depends_on: [bridge]
-
-  mission-bridge:
-    start: >-
-      ROOT="/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion";
-      lsof -ti tcp:3110 | xargs kill 2>/dev/null || true;
-      lsof -ti tcp:3111 | xargs kill 2>/dev/null || true;
-      cargo run --manifest-path "$ROOT/Cargo.toml" -p bridge-core --bin bridge-server -- --host 127.0.0.1 --port 3140 --admin-port 3141
-    stop: >-
-      lsof -ti tcp:3140 | xargs kill 2>/dev/null || true; lsof -ti tcp:3141 | xargs kill 2>/dev/null || true
-    healthcheck: >-
-      curl -sf http://127.0.0.1:3140/health
-    port: 3140
-    depends_on: [codex-app-server]
-
-  mission-bridge:
-    start: >-
-      ROOT="/Users/lubomirmolin/PhpstormProjects/codex-mobile-companion";
-      lsof -ti tcp:3110 | xargs kill 2>/dev/null || true;
-      lsof -ti tcp:3111 | xargs kill 2>/dev/null || true;
-      cargo run --manifest-path "$ROOT/Cargo.toml" -p bridge-core --bin bridge-server -- --host 127.0.0.1 --port 3140 --admin-port 3141
-    stop: >-
-      lsof -ti tcp:3140 | xargs kill 2>/dev/null || true; lsof -ti tcp:3141 | xargs kill 2>/dev/null || true
-    healthcheck: >-
-      curl -sf http://127.0.0.1:3140/health
-    port: 3140
+  android_emulator:
+    start: $HOME/Library/Android/sdk/emulator/emulator -avd Pixel_6_Pro_API_34 -no-snapshot -no-boot-anim -gpu swiftshader_indirect &
+    stop: "$HOME/Library/Android/sdk/platform-tools/adb -s emulator-5554 emu kill 2>/dev/null || true"
+    healthcheck: $HOME/Library/Android/sdk/platform-tools/adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | grep -q 1
+    port: 5554
     depends_on: []
