@@ -80,6 +80,24 @@ fn update_plan_function_call_normalizes_to_plan_delta() {
 }
 
 #[test]
+fn proposed_plan_agent_message_normalizes_to_plan_delta() {
+    let item = json!({
+        "id": "msg-plan",
+        "type": "agentMessage",
+        "text": "<proposed_plan>\n# Final plan\n- Inspect bridge payload\n- Update Flutter UI\n</proposed_plan>",
+    });
+
+    let (kind, payload) =
+        normalize_codex_item_payload(&item).expect("proposed plan should normalize");
+    assert_eq!(kind, BridgeEventKind::PlanDelta);
+    assert_eq!(payload["type"], "plan");
+    assert_eq!(
+        payload["text"].as_str(),
+        Some("# Final plan\n- Inspect bridge payload\n- Update Flutter UI")
+    );
+}
+
+#[test]
 fn web_search_item_normalizes_to_command_delta() {
     let item = json!({
         "id": "web-1",
@@ -479,6 +497,47 @@ fn map_thread_snapshot_keeps_legacy_hidden_plan_protocol_messages_out_of_ui() {
 
     assert!(snapshot.entries.is_empty());
     assert!(snapshot.pending_user_input.is_none());
+}
+
+#[test]
+fn map_thread_snapshot_splits_visible_assistant_text_from_proposed_plan_block() {
+    let snapshot = map_thread_snapshot(CodexThread {
+        id: "thread-proposed-plan".to_string(),
+        name: Some("Plan mode".to_string()),
+        preview: Some("preview".to_string()),
+        status: CodexThreadStatus {
+            kind: "idle".to_string(),
+        },
+        cwd: "/workspace/repo".to_string(),
+        path: None,
+        git_info: Some(CodexGitInfo {
+            branch: Some("main".to_string()),
+            origin_url: Some("git@github.com:example/repo.git".to_string()),
+        }),
+        created_at: 1_710_000_000,
+        updated_at: 1_710_000_300,
+        source: Value::String("cli".to_string()),
+        turns: vec![CodexTurn {
+            id: "turn-plan".to_string(),
+            items: vec![json!({
+                "id": "msg-plan",
+                "type": "agentMessage",
+                "text": "Here is the finalized approach.\n<proposed_plan>\n# Final plan\n- Inspect bridge payload\n- Update Flutter UI\n</proposed_plan>\nWe can refine it further if needed.",
+            })],
+        }],
+    });
+
+    assert_eq!(snapshot.entries.len(), 2);
+    assert_eq!(snapshot.entries[0].kind, BridgeEventKind::MessageDelta);
+    assert_eq!(
+        snapshot.entries[0].payload["text"].as_str(),
+        Some("Here is the finalized approach.\n\nWe can refine it further if needed.")
+    );
+    assert_eq!(snapshot.entries[1].kind, BridgeEventKind::PlanDelta);
+    assert_eq!(
+        snapshot.entries[1].payload["text"].as_str(),
+        Some("# Final plan\n- Inspect bridge payload\n- Update Flutter UI")
+    );
 }
 
 #[test]

@@ -2,30 +2,39 @@ use super::super::super::*;
 use super::annotations::value_to_text;
 use super::hidden::summarize_web_search_action;
 
+const PROPOSED_PLAN_OPEN_TAG: &str = "<proposed_plan>";
+const PROPOSED_PLAN_CLOSE_TAG: &str = "</proposed_plan>";
+
 pub(crate) fn normalize_codex_item_payload(item: &Value) -> Option<(BridgeEventKind, Value)> {
-    let item_type = canonicalize_codex_item_type(item.get("type").and_then(Value::as_str)?);
+    normalize_codex_item_payloads(item).into_iter().next()
+}
+
+pub(crate) fn normalize_codex_item_payloads(item: &Value) -> Vec<(BridgeEventKind, Value)> {
+    let Some(item_type) = item.get("type").and_then(Value::as_str) else {
+        return Vec::new();
+    };
+    let item_type = canonicalize_codex_item_type(item_type);
     match item_type {
-        "userMessage" => Some((
+        "userMessage" => vec![(
             BridgeEventKind::MessageDelta,
             normalize_message_item(item, "user"),
-        )),
-        "agentMessage" => Some((
-            BridgeEventKind::MessageDelta,
-            normalize_message_item(item, "assistant"),
-        )),
-        "plan" => Some((BridgeEventKind::PlanDelta, normalize_plan_item(item))),
-        "commandExecution" => Some((BridgeEventKind::CommandDelta, normalize_command_item(item))),
-        "fileChange" => Some((
+        )],
+        "agentMessage" => normalize_agent_message_item_payloads(item),
+        "plan" => vec![(BridgeEventKind::PlanDelta, normalize_plan_item(item))],
+        "commandExecution" => {
+            vec![(BridgeEventKind::CommandDelta, normalize_command_item(item))]
+        }
+        "fileChange" => vec![(
             BridgeEventKind::FileChange,
             normalize_file_change_item(item),
-        )),
-        "webSearch" => Some((
+        )],
+        "webSearch" => vec![(
             BridgeEventKind::CommandDelta,
             normalize_web_search_item(item),
-        )),
+        )],
         "functionCall" | "customToolCall" => normalize_codex_tool_invocation_item(item),
         "functionCallOutput" | "customToolCallOutput" => normalize_codex_tool_output_item(item),
-        _ => None,
+        _ => Vec::new(),
     }
 }
 
@@ -40,7 +49,45 @@ fn canonicalize_codex_item_type(item_type: &str) -> &str {
     }
 }
 
-fn normalize_codex_tool_invocation_item(item: &Value) -> Option<(BridgeEventKind, Value)> {
+fn normalize_agent_message_item_payloads(item: &Value) -> Vec<(BridgeEventKind, Value)> {
+    let payload = normalize_message_item(item, "assistant");
+    let Some(text) = payload.get("text").and_then(Value::as_str) else {
+        return vec![(BridgeEventKind::MessageDelta, payload)];
+    };
+    let Some(parsed) = extract_proposed_plan_block(text) else {
+        return vec![(BridgeEventKind::MessageDelta, payload)];
+    };
+
+    let mut events = Vec::new();
+    if !parsed.visible_text.is_empty() {
+        let mut visible_payload = payload.clone();
+        if let Some(object) = visible_payload.as_object_mut() {
+            object.insert(
+                "text".to_string(),
+                Value::String(parsed.visible_text.clone()),
+            );
+        }
+        events.push((BridgeEventKind::MessageDelta, visible_payload));
+    }
+    if !parsed.plan_text.is_empty() {
+        events.push((
+            BridgeEventKind::PlanDelta,
+            json!({
+                "id": item.get("id").and_then(Value::as_str).unwrap_or_default(),
+                "type": "plan",
+                "text": parsed.plan_text,
+            }),
+        ));
+    }
+
+    if events.is_empty() {
+        vec![(BridgeEventKind::MessageDelta, payload)]
+    } else {
+        events
+    }
+}
+
+fn normalize_codex_tool_invocation_item(item: &Value) -> Vec<(BridgeEventKind, Value)> {
     let tool_name = item
         .get("name")
         .and_then(Value::as_str)
@@ -49,7 +96,7 @@ fn normalize_codex_tool_invocation_item(item: &Value) -> Option<(BridgeEventKind
     if tool_name == "update_plan"
         && let Some(payload) = normalize_update_plan_tool_item(item)
     {
-        return Some((BridgeEventKind::PlanDelta, payload));
+        return vec![(BridgeEventKind::PlanDelta, payload)];
     }
     let input = item
         .get("input")
@@ -71,7 +118,7 @@ fn normalize_codex_tool_invocation_item(item: &Value) -> Option<(BridgeEventKind
         }
     }
 
-    Some((
+    vec![(
         if is_file_change {
             BridgeEventKind::FileChange
         } else {
@@ -82,7 +129,7 @@ fn normalize_codex_tool_invocation_item(item: &Value) -> Option<(BridgeEventKind
         } else {
             normalize_command_item(&payload)
         },
-    ))
+    )]
 }
 
 fn normalize_update_plan_tool_item(item: &Value) -> Option<Value> {
@@ -185,7 +232,7 @@ fn render_update_plan_text(
     lines.join("\n")
 }
 
-fn normalize_codex_tool_output_item(item: &Value) -> Option<(BridgeEventKind, Value)> {
+fn normalize_codex_tool_output_item(item: &Value) -> Vec<(BridgeEventKind, Value)> {
     let output = item
         .get("output")
         .and_then(Value::as_str)
@@ -198,7 +245,7 @@ fn normalize_codex_tool_output_item(item: &Value) -> Option<(BridgeEventKind, Va
         object.insert("output".to_string(), Value::String(normalized_output));
     }
 
-    Some((
+    vec![(
         if is_file_change {
             BridgeEventKind::FileChange
         } else {
@@ -209,7 +256,7 @@ fn normalize_codex_tool_output_item(item: &Value) -> Option<(BridgeEventKind, Va
         } else {
             normalize_command_item(&payload)
         },
-    ))
+    )]
 }
 
 fn normalize_message_item(item: &Value, role: &str) -> Value {
@@ -231,6 +278,34 @@ fn normalize_message_item(item: &Value, role: &str) -> Value {
     }
 
     payload
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProposedPlanBlock {
+    visible_text: String,
+    plan_text: String,
+}
+
+fn extract_proposed_plan_block(text: &str) -> Option<ProposedPlanBlock> {
+    let open_index = text.find(PROPOSED_PLAN_OPEN_TAG)?;
+    let plan_start = open_index + PROPOSED_PLAN_OPEN_TAG.len();
+    let close_relative = text[plan_start..].find(PROPOSED_PLAN_CLOSE_TAG)?;
+    let close_index = plan_start + close_relative;
+
+    let mut visible_text = String::new();
+    visible_text.push_str(&text[..open_index]);
+    visible_text.push_str(&text[close_index + PROPOSED_PLAN_CLOSE_TAG.len()..]);
+
+    let visible_text = visible_text.trim().to_string();
+    let plan_text = text[plan_start..close_index].trim().to_string();
+    if visible_text.is_empty() && plan_text.is_empty() {
+        return None;
+    }
+
+    Some(ProposedPlanBlock {
+        visible_text,
+        plan_text,
+    })
 }
 
 fn normalize_plan_item(item: &Value) -> Value {

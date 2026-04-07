@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
 import 'package:vibe_bridge/features/threads/domain/parsed_command_output.dart';
 
+const String _proposedPlanOpenTag = '<proposed_plan>';
+const String _proposedPlanCloseTag = '</proposed_plan>';
+
 enum ThreadActivityItemType {
   userPrompt,
   assistantOutput,
@@ -302,6 +305,11 @@ ThreadActivityItemType _mapType(
 ) {
   switch (kind) {
     case BridgeEventKind.messageDelta:
+      if (!_isUserMessagePayload(payload) &&
+          _extractVisibleMessageText(payload) == null &&
+          _extractProposedPlanText(payload) != null) {
+        return ThreadActivityItemType.planUpdate;
+      }
       return _isUserMessagePayload(payload)
           ? ThreadActivityItemType.userPrompt
           : ThreadActivityItemType.assistantOutput;
@@ -410,7 +418,7 @@ String _bodyForType(
   switch (type) {
     case ThreadActivityItemType.userPrompt:
     case ThreadActivityItemType.assistantOutput:
-      return _extractMessageText(payload) ?? '';
+      return _extractVisibleMessageText(payload) ?? '';
     case ThreadActivityItemType.planUpdate:
       if (plan != null && plan.hasSteps) {
         return plan.renderText();
@@ -615,7 +623,7 @@ class _BackgroundTerminalInvocation {
 }
 
 String _extractSummary(BridgeEventKind kind, Map<String, dynamic> payload) {
-  return _extractMessageText(payload) ??
+  return _extractVisibleMessageText(payload) ??
       _extractPlanText(payload) ??
       _optionalString(payload, 'summary') ??
       _optionalString(payload, 'delta') ??
@@ -623,7 +631,20 @@ String _extractSummary(BridgeEventKind kind, Map<String, dynamic> payload) {
       kind.wireValue;
 }
 
-String? _extractMessageText(Map<String, dynamic> payload) {
+String? _extractVisibleMessageText(Map<String, dynamic> payload) {
+  final text = _extractRawMessageText(payload);
+  if (text == null) {
+    return null;
+  }
+
+  final extractedPlan = _extractProposedPlanBlock(text);
+  final visibleText = extractedPlan == null
+      ? text.trim()
+      : extractedPlan.visibleText;
+  return visibleText.isEmpty ? null : visibleText;
+}
+
+String? _extractRawMessageText(Map<String, dynamic> payload) {
   final text = _optionalString(payload, 'text');
   if (text != null) {
     return text;
@@ -689,10 +710,57 @@ List<String> _extractMessageImageUrls(Map<String, dynamic> payload) {
 }
 
 String? _extractPlanText(Map<String, dynamic> payload) {
-  return _optionalString(payload, 'delta') ??
+  return _extractProposedPlanText(payload) ??
+      _optionalString(payload, 'delta') ??
       _optionalString(payload, 'instruction') ??
       _optionalString(payload, 'text') ??
       _optionalString(payload, 'phase');
+}
+
+String? _extractProposedPlanText(Map<String, dynamic> payload) {
+  final text = _extractRawMessageText(payload);
+  if (text == null) {
+    return null;
+  }
+
+  final extracted = _extractProposedPlanBlock(text);
+  if (extracted == null || extracted.planText.isEmpty) {
+    return null;
+  }
+  return extracted.planText;
+}
+
+_ExtractedProposedPlan? _extractProposedPlanBlock(String text) {
+  final openIndex = text.indexOf(_proposedPlanOpenTag);
+  if (openIndex < 0) {
+    return null;
+  }
+
+  final planStart = openIndex + _proposedPlanOpenTag.length;
+  final closeIndex = text.indexOf(_proposedPlanCloseTag, planStart);
+  if (closeIndex < 0) {
+    return null;
+  }
+
+  final visibleText =
+      '${text.substring(0, openIndex)}${text.substring(closeIndex + _proposedPlanCloseTag.length)}'
+          .trim();
+  final planText = text.substring(planStart, closeIndex).trim();
+  if (visibleText.isEmpty && planText.isEmpty) {
+    return null;
+  }
+
+  return _ExtractedProposedPlan(visibleText: visibleText, planText: planText);
+}
+
+class _ExtractedProposedPlan {
+  const _ExtractedProposedPlan({
+    required this.visibleText,
+    required this.planText,
+  });
+
+  final String visibleText;
+  final String planText;
 }
 
 ThreadPlanStepStatus _threadPlanStepStatusFromWire(String? value) {

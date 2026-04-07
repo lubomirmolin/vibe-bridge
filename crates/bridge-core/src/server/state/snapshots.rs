@@ -5,8 +5,12 @@ use crate::server::timeline_events::build_timeline_event_envelope;
 impl BridgeAppState {
     pub async fn ensure_snapshot(&self, thread_id: &str) -> Result<ThreadSnapshotDto, String> {
         if let Some(snapshot) = self.projections().snapshot(thread_id).await {
-            self.request_notification_thread_resume(thread_id).await;
-            return Ok(snapshot);
+            let needs_full_load = snapshot.thread.status != ThreadStatus::Running
+                && !snapshot_has_substantive_entries(&snapshot);
+            if !needs_full_load {
+                self.request_notification_thread_resume(thread_id).await;
+                return Ok(snapshot);
+            }
         }
 
         let snapshot = self.refresh_snapshot_from_gateway(thread_id).await?;
@@ -583,6 +587,10 @@ pub(super) fn should_refresh_terminal_timeline_snapshot(
         return false;
     }
 
+    if !snapshot_has_substantive_entries(snapshot) {
+        return true;
+    }
+
     if summary
         .map(|summary| summary.updated_at > snapshot.thread.updated_at)
         .unwrap_or(false)
@@ -705,4 +713,29 @@ fn normalize_pending_prompt_text(value: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Returns `true` if the snapshot has been fully loaded from the gateway (i.e. it is
+/// not a stub created by hydrating from the persisted event log alone).
+///
+/// Stubs are created by `ensure_snapshot_for_thread_from_summary_locked` with
+/// `source = "bridge_event_log"` and carry no message/command/file-change entries.
+/// A snapshot with that source and no substantive content needs a full gateway refresh
+/// before it can be shown to the user.
+fn snapshot_has_substantive_entries(snapshot: &ThreadSnapshotDto) -> bool {
+    // If the source is anything other than the synthetic event-log placeholder, treat
+    // the snapshot as already loaded (even if entries happen to be empty, e.g. brand-new
+    // threads or test fixtures that intentionally carry no content).
+    if snapshot.thread.source != "bridge_event_log" {
+        return true;
+    }
+    snapshot.entries.iter().any(|entry| {
+        matches!(
+            entry.kind,
+            BridgeEventKind::MessageDelta
+                | BridgeEventKind::CommandDelta
+                | BridgeEventKind::FileChange
+                | BridgeEventKind::PlanDelta
+        )
+    })
 }

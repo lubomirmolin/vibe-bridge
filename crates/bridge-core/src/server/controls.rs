@@ -154,7 +154,7 @@ pub fn read_git_state_for_status(
 ) -> Result<ResolvedGitState, String> {
     match read_git_state(workspace, thread_id) {
         Ok(state) => Ok(state),
-        Err(error) if is_not_git_repository_error(&error) => {
+        Err(error) if is_git_context_unavailable_error(&error) => {
             let workspace = normalize_workspace(workspace)?;
             Ok(non_repository_git_state(workspace, thread_id))
         }
@@ -442,8 +442,13 @@ fn non_repository_git_state(workspace: &Path, thread_id: &str) -> ResolvedGitSta
     }
 }
 
-fn is_not_git_repository_error(error: &str) -> bool {
-    error.contains("not a git repository")
+fn is_git_context_unavailable_error(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    normalized.contains("not a git repository")
+        || normalized.contains("needed a single revision")
+        || normalized.contains("ambiguous argument 'head'")
+        || normalized.contains("unknown revision or path not in the working tree")
+        || normalized.contains("bad revision 'head'")
 }
 
 fn run_git<I, S>(workspace: &Path, args: I) -> Result<String, String>
@@ -516,6 +521,29 @@ mod tests {
         assert_eq!(state.response.status.ahead_by, 0);
         assert_eq!(state.response.status.behind_by, 0);
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn read_git_state_for_status_returns_placeholder_for_repo_without_head() {
+        let root = unique_temp_dir("repo-without-head");
+        let repo = root.join("repo");
+        fs::create_dir_all(&repo).expect("repo dir should exist");
+        run_git_ok(&repo, ["init"]);
+        run_git_ok(&repo, ["config", "user.name", "Codex"]);
+        run_git_ok(&repo, ["config", "user.email", "codex@example.com"]);
+
+        let state = read_git_state_for_status(repo.to_string_lossy().as_ref(), "thread-1")
+            .expect("repo without HEAD should degrade into unavailable git status");
+
+        assert_eq!(state.response.repository.workspace, repo.to_string_lossy());
+        assert_eq!(state.response.repository.repository, "unknown-repository");
+        assert_eq!(state.response.repository.branch, "unknown");
+        assert_eq!(state.response.repository.remote, "local");
+        assert!(!state.response.status.dirty);
+        assert_eq!(state.response.status.ahead_by, 0);
+        assert_eq!(state.response.status.behind_by, 0);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

@@ -4,7 +4,7 @@ use super::super::legacy_archive::{
 };
 use super::super::*;
 use super::timeline::{
-    normalize_codex_item_payload, payload_contains_hidden_message, summarize_live_payload,
+    normalize_codex_item_payloads, payload_contains_hidden_message, summarize_live_payload,
     timeline_annotations_for_event,
 };
 use shared_contracts::ThreadClientKind;
@@ -298,32 +298,58 @@ fn map_thread_timeline_entries(thread: &CodexThread) -> Vec<ThreadTimelineEntryD
 
     for turn in &thread.turns {
         for (index, item) in turn.items.iter().enumerate() {
-            let Some((kind, payload)) = normalize_codex_item_payload(item) else {
-                continue;
-            };
-            if kind == BridgeEventKind::MessageDelta && payload_contains_hidden_message(&payload) {
+            let payloads = normalize_codex_item_payloads(item);
+            if payloads.is_empty() {
                 continue;
             }
-
             let item_id = item
                 .get("id")
                 .and_then(Value::as_str)
                 .map(ToString::to_string)
                 .unwrap_or_else(|| format!("{}-{index}", turn.id));
-            let event_id = format!("{}-{item_id}", turn.id);
+            let base_event_id = format!("{}-{item_id}", turn.id);
+            let has_multiple_payloads = payloads.len() > 1;
 
-            entries.push(ThreadTimelineEntryDto {
-                event_id: event_id.clone(),
-                kind,
-                occurred_at: codex_item_occurred_at(item, &turn.id, thread.updated_at),
-                summary: summarize_live_payload(kind, &payload),
-                annotations: timeline_annotations_for_event(&event_id, kind, &payload),
-                payload,
-            });
+            for (kind, payload) in payloads {
+                if kind == BridgeEventKind::MessageDelta
+                    && payload_contains_hidden_message(&payload)
+                {
+                    continue;
+                }
+
+                let event_id = if has_multiple_payloads {
+                    format!("{base_event_id}-{}", timeline_payload_suffix(kind))
+                } else {
+                    base_event_id.clone()
+                };
+
+                entries.push(ThreadTimelineEntryDto {
+                    event_id: event_id.clone(),
+                    kind,
+                    occurred_at: codex_item_occurred_at(item, &turn.id, thread.updated_at),
+                    summary: summarize_live_payload(kind, &payload),
+                    annotations: timeline_annotations_for_event(&event_id, kind, &payload),
+                    payload,
+                });
+            }
         }
     }
 
     entries
+}
+
+fn timeline_payload_suffix(kind: BridgeEventKind) -> &'static str {
+    match kind {
+        BridgeEventKind::MessageDelta => "message",
+        BridgeEventKind::PlanDelta => "plan",
+        BridgeEventKind::CommandDelta => "command",
+        BridgeEventKind::FileChange => "file",
+        BridgeEventKind::ThreadStatusChanged => "status",
+        BridgeEventKind::ApprovalRequested => "approval",
+        BridgeEventKind::SecurityAudit => "security",
+        BridgeEventKind::ThreadMetadataChanged => "metadata",
+        BridgeEventKind::UserInputRequested => "user-input",
+    }
 }
 
 fn unix_timestamp_to_iso8601(timestamp: i64) -> String {

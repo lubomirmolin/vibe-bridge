@@ -921,5 +921,12 @@ bool _isRepositoryContextResolvable(RepositoryContextDto context) {
 }
 
 bool _isNonRepositoryGitStatusError(String message) {
-  return message.toLowerCase().contains('not a git repository');
+  final normalized = message.toLowerCase();
+  return normalized.contains('not a git repository') ||
+      normalized.contains('needed a single revision') ||
+      normalized.contains("ambiguous argument 'head'") ||
+      normalized.contains(
+        'unknown revision or path not in the working tree',
+      ) ||
+      normalized.contains("bad revision 'head'");
 }
