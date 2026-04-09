@@ -2070,6 +2070,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                                   optionId;
                             });
                           },
+                          onOpenSettings: openSettingsSheet,
                           onOpenDiff: null,
                           onSubmitComposer: _submitDraftComposerInput,
                           onSubmitPendingUserInput: null,
@@ -2540,6 +2541,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                                       optionId,
                                     );
                                   },
+                                  onOpenSettings: openSettingsSheet,
                                   onOpenDiff: _toggleDiffView,
                                   onSubmitComposer: (value) =>
                                       _submitComposerInput(controller, value),

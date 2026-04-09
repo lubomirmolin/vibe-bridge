@@ -56,6 +56,7 @@ class _PinnedTurnComposer extends StatelessWidget {
     required this.onRemoveImage,
     required this.onComposerModeChanged,
     required this.onSelectPlanOption,
+    this.onOpenSettings,
     this.onOpenDiff,
     required this.onSubmitComposer,
     required this.onSubmitPendingUserInput,
@@ -93,6 +94,7 @@ class _PinnedTurnComposer extends StatelessWidget {
   final ValueChanged<XFile> onRemoveImage;
   final ValueChanged<TurnMode> onComposerModeChanged;
   final void Function(String questionId, String optionId) onSelectPlanOption;
+  final VoidCallback? onOpenSettings;
   final VoidCallback? onOpenDiff;
   final Future<bool> Function(String rawInput) onSubmitComposer;
   final Future<bool> Function(String rawInput)? onSubmitPendingUserInput;
@@ -489,8 +491,8 @@ class _PinnedTurnComposer extends StatelessWidget {
                         ),
                       ),
                       Positioned(
-                        right: -16.0,
-                        bottom: 0,
+                        right: -20.0,
+                        bottom: 4,
                         child: _ComposerPrimaryActionRail(
                           composerController: composerController,
                           attachedImages: attachedImages,
@@ -518,7 +520,9 @@ class _PinnedTurnComposer extends StatelessWidget {
                 _ComposerFooter(
                   selectedProvider: selectedProvider,
                   selectedModel: selectedModel,
+                  selectedReasoning: selectedReasoning,
                   threadUsage: threadUsage,
+                  onOpenSettings: onOpenSettings,
                   latestDiffAdditions: latestDiffAdditions,
                   latestDiffDeletions: latestDiffDeletions,
                   onOpenDiff: onOpenDiff,
@@ -537,7 +541,9 @@ class _ComposerFooter extends StatelessWidget {
   const _ComposerFooter({
     required this.selectedProvider,
     required this.selectedModel,
+    required this.selectedReasoning,
     required this.threadUsage,
+    this.onOpenSettings,
     this.latestDiffAdditions,
     this.latestDiffDeletions,
     this.onOpenDiff,
@@ -545,13 +551,29 @@ class _ComposerFooter extends StatelessWidget {
 
   final ProviderKind selectedProvider;
   final String selectedModel;
+  final String selectedReasoning;
   final ThreadUsageDto? threadUsage;
+  final VoidCallback? onOpenSettings;
   final int? latestDiffAdditions;
   final int? latestDiffDeletions;
   final VoidCallback? onOpenDiff;
 
   @override
   Widget build(BuildContext context) {
+    final additions = latestDiffAdditions;
+    final deletions = latestDiffDeletions;
+    final hasDiffSummary =
+        additions != null &&
+        deletions != null &&
+        (additions > 0 || deletions > 0);
+    final diffSummary = hasDiffSummary
+        ? _ComposerDiffSummary(
+            additions: additions,
+            deletions: deletions,
+            onTap: onOpenDiff,
+          )
+        : null;
+
     final metadata = Wrap(
       crossAxisAlignment: WrapCrossAlignment.center,
       spacing: 6,
@@ -562,12 +584,26 @@ class _ComposerFooter extends StatelessWidget {
           children: [
             ProviderIcon(provider: selectedProvider, size: 14),
             const SizedBox(width: 6),
-            Text(
-              selectedModel,
-              style: const TextStyle(
-                color: AppTheme.textMuted,
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                key: const Key('thread-composer-model-footer-button'),
+                borderRadius: BorderRadius.circular(999),
+                onTap: onOpenSettings,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 2,
+                    vertical: 2,
+                  ),
+                  child: Text(
+                    '$selectedModel · $selectedReasoning',
+                    style: const TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
               ),
             ),
           ],
@@ -579,54 +615,17 @@ class _ComposerFooter extends StatelessWidget {
           ),
           _UsageMetrics(threadUsage: threadUsage!),
         ],
+        if (diffSummary != null) ...[
+          const Text(
+            '•',
+            style: TextStyle(color: AppTheme.textSubtle, fontSize: 11),
+          ),
+          diffSummary,
+        ],
       ],
     );
-    final additions = latestDiffAdditions;
-    final deletions = latestDiffDeletions;
-    final hasDiffSummary =
-        additions != null &&
-        deletions != null &&
-        (additions > 0 || deletions > 0);
 
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Padding(
-        padding: const EdgeInsets.only(left: 4, top: 2),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            if (!hasDiffSummary) {
-              return metadata;
-            }
-
-            final diffSummary = _ComposerDiffSummary(
-              additions: additions,
-              deletions: deletions,
-              onTap: onOpenDiff,
-            );
-            final shouldStack = constraints.maxWidth < 460;
-            if (shouldStack) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  metadata,
-                  const SizedBox(height: 6),
-                  Align(alignment: Alignment.centerRight, child: diffSummary),
-                ],
-              );
-            }
-
-            return Row(
-              children: [
-                Expanded(child: metadata),
-                const SizedBox(width: 12),
-                diffSummary,
-              ],
-            );
-          },
-        ),
-      ),
-    );
+    return Align(alignment: Alignment.center, child: metadata);
   }
 }
 
@@ -643,47 +642,31 @@ class _ComposerDiffSummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final content = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      child: Row(
-        key: const Key('thread-composer-diff-summary'),
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '+$additions',
-            key: const Key('thread-composer-diff-additions'),
-            style: GoogleFonts.jetBrainsMono(
-              color: AppTheme.emerald,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-            ),
+    final content = Row(
+      key: const Key('thread-composer-diff-summary'),
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '+$additions',
+          key: const Key('thread-composer-diff-additions'),
+          style: GoogleFonts.jetBrainsMono(
+            color: AppTheme.emerald,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
           ),
-          const SizedBox(width: 8),
-          Text(
-            '-$deletions',
-            key: const Key('thread-composer-diff-deletions'),
-            style: GoogleFonts.jetBrainsMono(
-              color: AppTheme.rose,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-            ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          '-$deletions',
+          key: const Key('thread-composer-diff-deletions'),
+          style: GoogleFonts.jetBrainsMono(
+            color: AppTheme.rose,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
           ),
-        ],
-      ),
+        ),
+      ],
     );
-
-    final decorated = DecoratedBox(
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceZinc900.withValues(alpha: 0.8),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
-      ),
-      child: content,
-    );
-
-    if (onTap == null) {
-      return decorated;
-    }
 
     return Material(
       color: Colors.transparent,
@@ -691,7 +674,7 @@ class _ComposerDiffSummary extends StatelessWidget {
         key: const Key('thread-composer-diff-summary-button'),
         onTap: onTap,
         borderRadius: BorderRadius.circular(999),
-        child: decorated,
+        child: content,
       ),
     );
   }
