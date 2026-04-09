@@ -144,6 +144,7 @@ mod tests {
             occurred_at: "2026-03-21T12:00:00Z".to_string(),
             payload: json!({"status":"running"}),
             annotations: None,
+            bridge_seq: None,
         };
 
         let compacted = compact_list_event(event);
@@ -160,6 +161,7 @@ mod tests {
             occurred_at: "2026-03-21T12:00:00Z".to_string(),
             payload: json!({"delta":"hello"}),
             annotations: None,
+            bridge_seq: None,
         };
 
         assert!(super::filter_event_for_scope(event, &EventSubscriptionScope::List).is_none());

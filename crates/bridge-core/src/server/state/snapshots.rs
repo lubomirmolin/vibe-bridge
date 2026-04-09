@@ -16,7 +16,12 @@ impl BridgeAppState {
         let mut snapshot = self.inner.gateway.fetch_thread_snapshot(thread_id).await?;
         snapshot.thread.access_mode = self.access_mode().await;
         self.merge_bridge_turn_metadata(&mut snapshot).await;
-        self.projections().put_snapshot(snapshot.clone()).await;
+        self.apply_external_snapshot_update(
+            RawThreadEventSource::SnapshotRepair,
+            snapshot.clone(),
+            Vec::new(),
+        )
+        .await;
         self.apply_local_placeholder_thread_title_fallback(thread_id)
             .await;
         self.request_notification_thread_resume(thread_id).await;
@@ -80,7 +85,12 @@ impl BridgeAppState {
             summaries.push(next_summary);
         }
 
-        self.projections().put_snapshot(snapshot.clone()).await;
+        self.apply_external_snapshot_update(
+            RawThreadEventSource::SnapshotRepair,
+            snapshot.clone(),
+            Vec::new(),
+        )
+        .await;
         self.projections().replace_summaries(summaries).await;
         Ok(snapshot)
     }
@@ -261,6 +271,7 @@ impl BridgeAppState {
 
     pub(super) async fn apply_external_snapshot_update(
         &self,
+        source: RawThreadEventSource,
         mut snapshot: ThreadSnapshotDto,
         events: Vec<BridgeEventEnvelope<Value>>,
     ) {
@@ -283,14 +294,8 @@ impl BridgeAppState {
             summaries.push(next_summary);
         }
 
-        self.projections().put_snapshot(snapshot).await;
+        self.dispatch_snapshot_merge_and_wait(source, snapshot, events)
+            .await;
         self.projections().replace_summaries(summaries).await;
-
-        for event in events {
-            if should_clear_transient_thread_state(&event) {
-                self.clear_transient_thread_state(&event.thread_id).await;
-            }
-            self.event_hub().publish(event);
-        }
     }
 }

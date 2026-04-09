@@ -25,6 +25,7 @@ impl BridgeAppState {
                 resumed_notification_threads: RwLock::new(HashSet::new()),
                 inflight_thread_title_generations: RwLock::new(HashSet::new()),
                 pending_user_message_images: RwLock::new(HashMap::new()),
+                outgoing_turns: RwLock::new(HashMap::new()),
                 access_mode: RwLock::new(AccessMode::ControlWithApprovals),
                 security_events: RwLock::new(Vec::new()),
                 codex_usage_client: RwLock::new(CodexUsageClient::default()),
@@ -32,6 +33,7 @@ impl BridgeAppState {
                 event_hub: EventHub::new(512),
                 notification_control_tx: Mutex::new(None),
                 desktop_ipc_control_tx: Mutex::new(None),
+                thread_reducers: Mutex::new(HashMap::new()),
                 pairing_sessions: Mutex::new(pairing_sessions),
                 pairing_route,
                 git_controls: Mutex::new(GitControlState::default()),
@@ -212,6 +214,7 @@ impl BridgeAppState {
             payload: serde_json::to_value(audit_event)
                 .expect("security audit payload should serialize"),
             annotations: None,
+            bridge_seq: None,
         };
         let record = SecurityEventRecordDto {
             severity: severity.into(),

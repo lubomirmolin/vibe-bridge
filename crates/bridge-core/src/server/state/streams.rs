@@ -169,7 +169,97 @@ impl BridgeAppState {
             .contains(thread_id)
     }
 
-    pub(super) fn schedule_bridge_owned_turn_watchdog(&self, _thread_id: &str) {}
+    pub(super) fn schedule_bridge_owned_turn_watchdog(&self, thread_id: &str) {
+        let state = self.clone();
+        let thread_id = thread_id.to_string();
+        tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_secs(5)).await;
+                let Some(tracker) = state
+                    .inner
+                    .outgoing_turns
+                    .read()
+                    .await
+                    .get(&thread_id)
+                    .cloned()
+                else {
+                    break;
+                };
+
+                let (timeout_after, timeout_reason) = match tracker.phase {
+                    OutgoingTurnPhase::Queued => {
+                        (Duration::from_secs(10), "waiting_for_turn_start_ack")
+                    }
+                    OutgoingTurnPhase::TurnStartAcked => {
+                        (Duration::from_secs(15), "waiting_for_user_item")
+                    }
+                    OutgoingTurnPhase::UserItemSeen => (
+                        Duration::from_secs(20),
+                        "waiting_for_first_assistant_signal",
+                    ),
+                    OutgoingTurnPhase::FirstAssistantSignal
+                    | OutgoingTurnPhase::Completed
+                    | OutgoingTurnPhase::Failed
+                    | OutgoingTurnPhase::Timeout => break,
+                };
+
+                let Some(last_transition_at) =
+                    chrono::DateTime::parse_from_rfc3339(&tracker.last_transition_at)
+                        .ok()
+                        .map(|timestamp| timestamp.with_timezone(&Utc))
+                else {
+                    continue;
+                };
+                let Ok(timeout_window) = chrono::Duration::from_std(timeout_after) else {
+                    continue;
+                };
+                if Utc::now().signed_duration_since(last_transition_at) < timeout_window {
+                    continue;
+                }
+
+                state
+                    .mark_outgoing_turn_phase(
+                        &thread_id,
+                        OutgoingTurnPhase::Timeout,
+                        tracker.turn_id.clone(),
+                        Some(timeout_reason.to_string()),
+                    )
+                    .await;
+                let mut payload = json!({
+                    "status": "running",
+                    "reason": "turn_timeout",
+                    "turn_phase": "timeout",
+                    "timeout_reason": timeout_reason,
+                    "observed_phase": outgoing_turn_phase_wire_value(tracker.phase),
+                });
+                if let Some(turn_id) = tracker.turn_id.filter(|value| !value.trim().is_empty()) {
+                    payload["turn_id"] = Value::String(turn_id);
+                }
+                state
+                    .dispatch_thread_event(build_raw_thread_event(
+                        RawThreadEventSource::BridgeLocal,
+                        BridgeEventEnvelope {
+                            contract_version: CONTRACT_VERSION.to_string(),
+                            event_id: format!(
+                                "{thread_id}-status-turn-timeout-{}",
+                                Utc::now().timestamp_millis()
+                            ),
+                            thread_id: thread_id.clone(),
+                            kind: BridgeEventKind::ThreadStatusChanged,
+                            occurred_at: Utc::now().to_rfc3339(),
+                            payload,
+                            annotations: None,
+                            bridge_seq: None,
+                        },
+                    ))
+                    .await;
+                state
+                    .refresh_snapshot_after_bridge_turn_completion(&thread_id)
+                    .await;
+                break;
+            }
+        });
+    }
 
     pub(super) async fn refresh_snapshot_after_bridge_turn_completion(&self, thread_id: &str) {
         let snapshot = match self.inner.gateway.fetch_thread_snapshot(thread_id).await {
@@ -213,12 +303,81 @@ impl BridgeAppState {
             })
             .collect::<Vec<_>>();
 
-        self.apply_external_snapshot_update(snapshot, events).await;
+        self.apply_external_snapshot_update(RawThreadEventSource::SnapshotRepair, snapshot, events)
+            .await;
     }
 
     pub fn start_notification_forwarder(&self) {
         let state = self.clone();
         let handle = tokio::runtime::Handle::current();
+        enum NotificationDispatch {
+            Health(ServiceHealthDto),
+            ForgetThread(String),
+            ForgetThreads(Vec<String>),
+            Event(BridgeEventEnvelope<Value>),
+        }
+
+        let (dispatch_tx, mut dispatch_rx) =
+            tokio_mpsc::unbounded_channel::<NotificationDispatch>();
+        let processor_state = self.clone();
+        handle.spawn(async move {
+            let mut compactor = LiveDeltaCompactor::default();
+            while let Some(message) = dispatch_rx.recv().await {
+                match message {
+                    NotificationDispatch::Health(health) => {
+                        processor_state.set_codex_health(health).await;
+                    }
+                    NotificationDispatch::ForgetThread(thread_id) => {
+                        processor_state
+                            .forget_resumable_notification_thread(&thread_id)
+                            .await;
+                    }
+                    NotificationDispatch::ForgetThreads(thread_ids) => {
+                        processor_state
+                            .forget_resumable_notification_threads(thread_ids)
+                            .await;
+                    }
+                    NotificationDispatch::Event(event) => {
+                        let mut normalized = compactor.compact(event);
+                        if !should_publish_compacted_event(&normalized) {
+                            continue;
+                        }
+                        let has_live_turn_stream = processor_state
+                            .has_bridge_turn_stream_active(&normalized.thread_id)
+                            .await;
+                        if has_live_turn_stream
+                            && should_skip_background_notification_event(&normalized)
+                        {
+                            continue;
+                        }
+                        let should_suppress_for_bridge_owned_turn =
+                            should_suppress_notification_event_for_bridge_active_turn(
+                                &normalized,
+                                processor_state
+                                    .has_bridge_owned_active_turn(&normalized.thread_id)
+                                    .await,
+                            );
+                        if should_suppress_for_bridge_owned_turn {
+                            continue;
+                        }
+                        processor_state
+                            .rewrite_interrupted_thread_status_event(&mut normalized)
+                            .await;
+                        if normalized.kind != BridgeEventKind::ThreadStatusChanged {
+                            processor_state
+                                .merge_pending_user_message_images(&mut normalized)
+                                .await;
+                        }
+                        processor_state
+                            .dispatch_thread_event(build_raw_thread_event(
+                                RawThreadEventSource::AppServerNotification,
+                                normalized,
+                            ))
+                            .await;
+                    }
+                }
+            }
+        });
         let (control_tx, control_rx) = mpsc::channel();
         *self
             .inner
@@ -226,41 +385,34 @@ impl BridgeAppState {
             .lock()
             .expect("notification control lock should not be poisoned") = Some(control_tx);
         std::thread::spawn(move || {
-            let mut compactor = LiveDeltaCompactor::default();
             loop {
                 let mut notifications = match state.inner.gateway.notification_stream() {
                     Ok(stream) => {
-                        let state = state.clone();
-                        handle.block_on(async move {
-                            state
-                                .set_codex_health(ServiceHealthDto {
-                                    status: ServiceHealthStatus::Healthy,
-                                    message: None,
-                                })
-                                .await;
-                        });
+                        let _ = dispatch_tx.send(NotificationDispatch::Health(ServiceHealthDto {
+                            status: ServiceHealthStatus::Healthy,
+                            message: None,
+                        }));
                         stream
                     }
                     Err(error) => {
                         eprintln!("bridge notification stream failed to start: {error}");
-                        let state = state.clone();
-                        handle.block_on(async move {
-                            state
-                                .set_codex_health(ServiceHealthDto {
-                                    status: ServiceHealthStatus::Degraded,
-                                    message: Some(format!(
-                                        "notification stream unavailable: {error}"
-                                    )),
-                                })
-                                .await;
-                        });
+                        let _ = dispatch_tx.send(NotificationDispatch::Health(ServiceHealthDto {
+                            status: ServiceHealthStatus::Degraded,
+                            message: Some(format!("notification stream unavailable: {error}")),
+                        }));
                         std::thread::sleep(std::time::Duration::from_secs(2));
                         continue;
                     }
                 };
 
-                let resumed_threads =
-                    handle.block_on(async { state.resumable_notification_threads().await });
+                let resumed_threads = {
+                    let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+                    let state = state.clone();
+                    handle.spawn(async move {
+                        let _ = reply_tx.send(state.resumable_notification_threads().await);
+                    });
+                    reply_rx.recv().unwrap_or_default()
+                };
                 let dropped_threads =
                     match resume_notification_threads(resumed_threads.iter(), |thread_id| {
                         notifications.resume_thread(thread_id)
@@ -273,12 +425,7 @@ impl BridgeAppState {
                         }
                     };
                 if !dropped_threads.is_empty() {
-                    let state = state.clone();
-                    handle.block_on(async move {
-                        state
-                            .forget_resumable_notification_threads(dropped_threads)
-                            .await;
-                    });
+                    let _ = dispatch_tx.send(NotificationDispatch::ForgetThreads(dropped_threads));
                 }
 
                 loop {
@@ -291,12 +438,8 @@ impl BridgeAppState {
                                 ) {
                                     Ok(()) => Ok(()),
                                     Err(error) if is_stale_rollout_resume_error(&error) => {
-                                        let state = state.clone();
-                                        handle.block_on(async move {
-                                            state
-                                                .forget_resumable_notification_thread(&thread_id)
-                                                .await;
-                                        });
+                                        let _ = dispatch_tx
+                                            .send(NotificationDispatch::ForgetThread(thread_id));
                                         Ok(())
                                     }
                                     Err(error) => Err(error),
@@ -310,71 +453,25 @@ impl BridgeAppState {
 
                     match notifications.next_event() {
                         Ok(Some(event)) => {
-                            let mut normalized = compactor.compact(event);
-                            if !should_publish_compacted_event(&normalized) {
-                                continue;
-                            }
-                            let state = state.clone();
-                            handle.block_on(async move {
-                                let has_live_turn_stream = state
-                                    .has_bridge_turn_stream_active(&normalized.thread_id)
-                                    .await;
-                                if has_live_turn_stream
-                                    && should_skip_background_notification_event(&normalized)
-                                {
-                                    return;
-                                }
-                                let should_suppress_for_bridge_owned_turn =
-                                    should_suppress_notification_event_for_bridge_active_turn(
-                                        &normalized,
-                                        state
-                                            .has_bridge_owned_active_turn(&normalized.thread_id)
-                                            .await,
-                                    );
-                                if should_suppress_for_bridge_owned_turn {
-                                    return;
-                                }
-                                if should_clear_transient_thread_state(&normalized) {
-                                    state
-                                        .clear_transient_thread_state(&normalized.thread_id)
-                                        .await;
-                                }
-                                if normalized.kind != BridgeEventKind::ThreadStatusChanged {
-                                    state
-                                        .merge_pending_user_message_images(&mut normalized)
-                                        .await;
-                                }
-                                state.projections().apply_live_event(&normalized).await;
-                                state.event_hub().publish(normalized);
-                            });
+                            let _ = dispatch_tx.send(NotificationDispatch::Event(event));
                         }
                         Ok(None) => {
-                            let state = state.clone();
-                            handle.block_on(async move {
-                                state
-                                    .set_codex_health(ServiceHealthDto {
-                                        status: ServiceHealthStatus::Degraded,
-                                        message: Some(
-                                            "notification stream closed; reconnecting".to_string(),
-                                        ),
-                                    })
-                                    .await;
-                            });
+                            let _ =
+                                dispatch_tx.send(NotificationDispatch::Health(ServiceHealthDto {
+                                    status: ServiceHealthStatus::Degraded,
+                                    message: Some(
+                                        "notification stream closed; reconnecting".to_string(),
+                                    ),
+                                }));
                             break;
                         }
                         Err(error) => {
                             eprintln!("bridge notification stream failed: {error}");
-                            let state = state.clone();
-                            handle.block_on(async move {
-                                state
-                                    .set_codex_health(ServiceHealthDto {
-                                        status: ServiceHealthStatus::Degraded,
-                                        message: Some(format!(
-                                            "notification stream failed: {error}"
-                                        )),
-                                    })
-                                    .await;
-                            });
+                            let _ =
+                                dispatch_tx.send(NotificationDispatch::Health(ServiceHealthDto {
+                                    status: ServiceHealthStatus::Degraded,
+                                    message: Some(format!("notification stream failed: {error}")),
+                                }));
                             break;
                         }
                     }
@@ -383,5 +480,17 @@ impl BridgeAppState {
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
         });
+    }
+}
+
+fn outgoing_turn_phase_wire_value(phase: OutgoingTurnPhase) -> &'static str {
+    match phase {
+        OutgoingTurnPhase::Queued => "queued",
+        OutgoingTurnPhase::TurnStartAcked => "turn_start_acked",
+        OutgoingTurnPhase::UserItemSeen => "user_item_seen",
+        OutgoingTurnPhase::FirstAssistantSignal => "first_assistant_signal",
+        OutgoingTurnPhase::Completed => "completed",
+        OutgoingTurnPhase::Timeout => "timeout",
+        OutgoingTurnPhase::Failed => "failed",
     }
 }

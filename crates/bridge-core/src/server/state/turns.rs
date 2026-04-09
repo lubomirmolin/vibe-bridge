@@ -75,22 +75,98 @@ impl BridgeAppState {
                 .insert(thread_id.to_string(), normalized_images.clone());
         }
         let visible_prompt = visible_prompt.trim();
-        let state = self.clone();
-        let handle = tokio::runtime::Handle::current();
-        let completion_handle = handle.clone();
-        let stream_finish_handle = completion_handle.clone();
-        let compactor = Arc::new(std::sync::Mutex::new(LiveDeltaCompactor::default()));
-        let completion_state = self.clone();
-        let stream_finish_state = self.clone();
-        let control_state = self.clone();
-        let control_handle = handle.clone();
-        let control_thread_id = thread_id.to_string();
+        enum TurnStreamDispatch {
+            Event(BridgeEventEnvelope<Value>),
+            Control {
+                request: GatewayTurnControlRequest,
+                reply: mpsc::SyncSender<Result<Option<Value>, String>>,
+            },
+            Completed(String),
+            Finished(String),
+        }
+
+        let (dispatch_tx, mut dispatch_rx) = tokio_mpsc::unbounded_channel::<TurnStreamDispatch>();
+        let processor_state = self.clone();
+        let processor_thread_id = thread_id.to_string();
+        tokio::spawn(async move {
+            let mut compactor = LiveDeltaCompactor::default();
+            while let Some(message) = dispatch_rx.recv().await {
+                match message {
+                    TurnStreamDispatch::Event(event) => {
+                        if let Some(user_input_event) = processor_state
+                            .build_pending_user_input_event_from_live_message(&event)
+                            .await
+                        {
+                            processor_state
+                                .dispatch_thread_event(RawThreadEvent {
+                                    source: RawThreadEventSource::BridgeLocal,
+                                    thread_id: user_input_event.thread_id.clone(),
+                                    turn_id: None,
+                                    item_id: None,
+                                    phase: RawThreadEventPhase::UserInput,
+                                    event: user_input_event,
+                                })
+                                .await;
+                            continue;
+                        }
+
+                        let mut normalized = compactor.compact(event);
+                        if !should_publish_compacted_event(&normalized) {
+                            continue;
+                        }
+                        if should_suppress_live_event(&normalized) {
+                            continue;
+                        }
+
+                        processor_state
+                            .rewrite_interrupted_thread_status_event(&mut normalized)
+                            .await;
+                        if normalized.kind != BridgeEventKind::ThreadStatusChanged {
+                            processor_state
+                                .merge_pending_user_message_images(&mut normalized)
+                                .await;
+                        }
+                        processor_state
+                            .dispatch_thread_event(build_raw_thread_event(
+                                RawThreadEventSource::AppServerLive,
+                                normalized,
+                            ))
+                            .await;
+                    }
+                    TurnStreamDispatch::Control { request, reply } => {
+                        let result = processor_state
+                            .handle_turn_control_request(&processor_thread_id, request)
+                            .await;
+                        let _ = reply.send(result);
+                    }
+                    TurnStreamDispatch::Completed(completed_thread_id) => {
+                        processor_state
+                            .finalize_bridge_owned_turn(&completed_thread_id)
+                            .await;
+                    }
+                    TurnStreamDispatch::Finished(finished_thread_id) => {
+                        processor_state
+                            .mark_bridge_turn_stream_finished(&finished_thread_id)
+                            .await;
+                        processor_state
+                            .refresh_snapshot_after_bridge_turn_completion(&finished_thread_id)
+                            .await;
+                    }
+                }
+            }
+        });
         self.inner
             .pending_bridge_owned_turns
             .write()
             .await
             .insert(thread_id.to_string());
+        self.mark_outgoing_turn_phase(thread_id, OutgoingTurnPhase::Queued, None, None)
+            .await;
         self.mark_bridge_turn_stream_started(thread_id).await;
+        let event_dispatch_tx = dispatch_tx.clone();
+        let control_dispatch_tx = dispatch_tx.clone();
+        let completed_dispatch_tx = dispatch_tx.clone();
+        let finished_dispatch_tx = dispatch_tx.clone();
         let result = match self.inner.gateway.start_turn_streaming(
             thread_id,
             TurnStartRequest {
@@ -102,85 +178,42 @@ impl BridgeAppState {
                     self.access_mode().await,
                 )),
             },
-            move |event| {
-                let state = state.clone();
-                if let Some(user_input_event) = handle.block_on(async {
-                    state
-                        .build_pending_user_input_event_from_live_message(&event)
-                        .await
-                }) {
-                    let state = state.clone();
-                    handle.block_on(async move {
-                        state
-                            .projections()
-                            .apply_live_event(&user_input_event)
-                            .await;
-                        state.event_hub().publish(user_input_event);
-                    });
-                    return;
+            {
+                move |event| {
+                    let _ = event_dispatch_tx.send(TurnStreamDispatch::Event(event));
                 }
-                let mut normalized = compactor
-                    .lock()
-                    .expect("turn stream compactor lock should not be poisoned")
-                    .compact(event);
-                if !should_publish_compacted_event(&normalized) {
-                    return;
-                }
-                if should_suppress_live_event(&normalized) {
-                    return;
-                }
-                let state = state.clone();
-                handle.block_on(async {
-                    state
-                        .rewrite_interrupted_thread_status_event(&mut normalized)
-                        .await;
-                });
-                handle.block_on(async move {
-                    if should_clear_transient_thread_state(&normalized) {
-                        state
-                            .clear_transient_thread_state(&normalized.thread_id)
-                            .await;
-                    }
-                    if normalized.kind != BridgeEventKind::ThreadStatusChanged {
-                        state
-                            .merge_pending_user_message_images(&mut normalized)
-                            .await;
-                    }
-                    state.projections().apply_live_event(&normalized).await;
-                    state.event_hub().publish(normalized);
-                });
             },
             move |control_request| {
-                let state = control_state.clone();
-                let thread_id = control_thread_id.clone();
-                control_handle.block_on(async move {
-                    state
-                        .handle_turn_control_request(&thread_id, control_request)
-                        .await
-                })
-            },
-            move |completed_thread_id| {
-                let state = completion_state.clone();
-                completion_handle.block_on(async move {
-                    state.finalize_bridge_owned_turn(&completed_thread_id).await;
+                let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+                let _ = control_dispatch_tx.send(TurnStreamDispatch::Control {
+                    request: control_request,
+                    reply: reply_tx,
                 });
+                reply_rx
+                    .recv()
+                    .unwrap_or_else(|error| Err(format!("turn control processor failed: {error}")))
+            },
+            {
+                move |completed_thread_id| {
+                    let _ = completed_dispatch_tx
+                        .send(TurnStreamDispatch::Completed(completed_thread_id));
+                }
             },
             move |finished_thread_id| {
-                let state = stream_finish_state.clone();
-                stream_finish_handle.block_on(async move {
-                    state
-                        .mark_bridge_turn_stream_finished(&finished_thread_id)
-                        .await;
-                    state
-                        .refresh_snapshot_after_bridge_turn_completion(&finished_thread_id)
-                        .await;
-                });
+                let _ = finished_dispatch_tx.send(TurnStreamDispatch::Finished(finished_thread_id));
             },
         ) {
             Ok(result) => result,
             Err(error) => {
                 self.mark_bridge_turn_stream_finished(thread_id).await;
                 self.clear_transient_thread_state(thread_id).await;
+                self.mark_outgoing_turn_phase(
+                    thread_id,
+                    OutgoingTurnPhase::Failed,
+                    None,
+                    Some("turn_start_failed".to_string()),
+                )
+                .await;
                 return Err(error);
             }
         };
@@ -202,6 +235,13 @@ impl BridgeAppState {
                 .write()
                 .await
                 .insert(thread_id.to_string(), turn_id);
+            self.mark_outgoing_turn_phase(
+                thread_id,
+                OutgoingTurnPhase::TurnStartAcked,
+                result.response.turn_id.clone(),
+                None,
+            )
+            .await;
             self.schedule_bridge_owned_turn_watchdog(thread_id);
         }
         let occurred_at = Utc::now().to_rfc3339();
@@ -216,10 +256,11 @@ impl BridgeAppState {
             effort,
         );
         self.record_bridge_turn_metadata(&turn_started_event).await;
-        self.projections()
-            .apply_live_event(&turn_started_event)
-            .await;
-        self.event_hub().publish(turn_started_event);
+        self.dispatch_thread_event(build_raw_thread_event(
+            RawThreadEventSource::BridgeLocal,
+            turn_started_event,
+        ))
+        .await;
         if !visible_prompt.is_empty() {
             let workspace = self
                 .projections()
@@ -573,6 +614,7 @@ impl BridgeAppState {
                 "state": "pending",
             }),
             annotations: None,
+            bridge_seq: None,
         })
     }
 
@@ -588,9 +630,13 @@ impl BridgeAppState {
                 "state": "resolved",
             }),
             annotations: None,
+            bridge_seq: None,
         };
-        self.projections().apply_live_event(&event).await;
-        self.event_hub().publish(event);
+        self.dispatch_thread_event(build_raw_thread_event(
+            RawThreadEventSource::BridgeLocal,
+            event,
+        ))
+        .await;
     }
 
     async fn publish_user_input_pending_event(
@@ -612,9 +658,13 @@ impl BridgeAppState {
                 "state": "pending",
             }),
             annotations: None,
+            bridge_seq: None,
         };
-        self.projections().apply_live_event(&event).await;
-        self.event_hub().publish(event);
+        self.dispatch_thread_event(build_raw_thread_event(
+            RawThreadEventSource::BridgeLocal,
+            event,
+        ))
+        .await;
     }
 
     pub(super) async fn merge_pending_user_message_images(
@@ -705,22 +755,24 @@ impl BridgeAppState {
             .await?;
         let occurred_at = Utc::now().to_rfc3339();
         self.mark_thread_interrupt_requested(thread_id).await;
-        self.projections()
-            .mark_thread_status(thread_id, ThreadStatus::Interrupted, &occurred_at)
-            .await;
         self.inner.active_turn_ids.write().await.remove(thread_id);
-        self.event_hub().publish(BridgeEventEnvelope {
-            contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
-            event_id: format!("{thread_id}-status-{occurred_at}"),
-            thread_id: thread_id.to_string(),
-            kind: BridgeEventKind::ThreadStatusChanged,
-            occurred_at,
-            payload: json!({
-                "status": "interrupted",
-                "reason": "interrupt_requested",
-            }),
-            annotations: None,
-        });
+        self.dispatch_thread_event(build_raw_thread_event(
+            RawThreadEventSource::BridgeLocal,
+            BridgeEventEnvelope {
+                contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+                event_id: format!("{thread_id}-status-{occurred_at}"),
+                thread_id: thread_id.to_string(),
+                kind: BridgeEventKind::ThreadStatusChanged,
+                occurred_at,
+                payload: json!({
+                    "status": "interrupted",
+                    "reason": "interrupt_requested",
+                }),
+                annotations: None,
+                bridge_seq: None,
+            },
+        ))
+        .await;
         Ok(result.response)
     }
 }

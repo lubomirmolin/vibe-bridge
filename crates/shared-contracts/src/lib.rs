@@ -197,6 +197,8 @@ pub struct ThreadTimelinePageDto {
     pub pending_user_input: Option<PendingUserInputDto>,
     pub next_before: Option<String>,
     pub has_more_before: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_bridge_seq: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -459,6 +461,8 @@ pub struct BridgeEventEnvelope<TPayload> {
     pub payload: TPayload,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub annotations: Option<ThreadTimelineAnnotationsDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bridge_seq: Option<u64>,
 }
 
 impl<TPayload> BridgeEventEnvelope<TPayload> {
@@ -477,11 +481,17 @@ impl<TPayload> BridgeEventEnvelope<TPayload> {
             occurred_at: occurred_at.into(),
             payload,
             annotations: None,
+            bridge_seq: None,
         }
     }
 
     pub fn with_annotations(mut self, annotations: Option<ThreadTimelineAnnotationsDto>) -> Self {
         self.annotations = annotations;
+        self
+    }
+
+    pub fn with_bridge_seq(mut self, bridge_seq: Option<u64>) -> Self {
+        self.bridge_seq = bridge_seq;
         self
     }
 }

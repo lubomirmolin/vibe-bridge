@@ -1,3 +1,5 @@
+pub(crate) mod item_state;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -9,9 +11,12 @@ use shared_contracts::{
 };
 use tokio::sync::RwLock;
 
-use crate::incremental_text::merge_incremental_text;
 use crate::server::controls::ApprovalRecordDto;
 use crate::thread_api::RepositoryContextDto;
+use item_state::{
+    ProjectionItemPhase, ThreadItemProjectionState, infer_item_phase, is_incremental_item_kind,
+    materialize_entries,
+};
 
 #[derive(Debug, Default, Clone)]
 pub struct ProjectionStore {
@@ -24,6 +29,8 @@ struct ProjectionState {
     snapshots: HashMap<String, ThreadSnapshotDto>,
     approvals: HashMap<String, ApprovalSummaryDto>,
     approval_records: HashMap<String, ApprovalRecordDto>,
+    latest_bridge_seq_by_thread: HashMap<String, u64>,
+    item_states_by_thread: HashMap<String, HashMap<String, ThreadItemProjectionState>>,
 }
 
 impl ProjectionStore {
@@ -75,6 +82,7 @@ impl ProjectionStore {
             })
     }
 
+    #[allow(dead_code)]
     pub async fn put_snapshot(&self, snapshot: ThreadSnapshotDto) {
         let mut state = self.inner.write().await;
         for approval in &snapshot.approvals {
@@ -82,9 +90,13 @@ impl ProjectionStore {
                 .approvals
                 .insert(approval.approval_id.clone(), approval.clone());
         }
-        state
-            .snapshots
-            .insert(snapshot.thread.thread_id.clone(), snapshot);
+        let thread_id = snapshot.thread.thread_id.clone();
+        seed_item_states_from_snapshot(&mut state, &snapshot);
+        let mut next_snapshot = snapshot;
+        if let Some(item_states) = state.item_states_by_thread.get(&thread_id) {
+            next_snapshot.entries = materialize_entries(item_states);
+        }
+        state.snapshots.insert(thread_id, next_snapshot);
     }
 
     pub async fn snapshot(&self, thread_id: &str) -> Option<ThreadSnapshotDto> {
@@ -127,11 +139,30 @@ impl ProjectionStore {
             pending_user_input: snapshot.pending_user_input.clone(),
             next_before,
             has_more_before,
+            latest_bridge_seq: state.latest_bridge_seq_by_thread.get(thread_id).copied(),
         })
     }
 
     pub async fn apply_live_event(&self, event: &BridgeEventEnvelope<Value>) {
+        self.apply_live_event_with_phase(event, infer_item_phase(event))
+            .await;
+    }
+
+    pub async fn apply_live_event_with_phase(
+        &self,
+        event: &BridgeEventEnvelope<Value>,
+        phase: ProjectionItemPhase,
+    ) {
         let mut state = self.inner.write().await;
+        let next_item_entries = if is_incremental_item_kind(event.kind) {
+            apply_item_state_event(&mut state, &event.thread_id, event, phase);
+            state
+                .item_states_by_thread
+                .get(&event.thread_id)
+                .map(materialize_entries)
+        } else {
+            None
+        };
         let approval_update = (event.kind == BridgeEventKind::ApprovalRequested)
             .then(|| approval_summary_from_payload(&event.payload, &event.thread_id))
             .flatten();
@@ -183,18 +214,22 @@ impl ProjectionStore {
 
             if event.kind == BridgeEventKind::UserInputRequested {
                 snapshot.pending_user_input = pending_user_input_from_payload(&event.payload);
+            } else if is_incremental_item_kind(event.kind) {
+                snapshot.entries = next_item_entries.clone().unwrap_or_default();
+                if let Some(entry) = snapshot
+                    .entries
+                    .iter()
+                    .find(|entry| entry.event_id == event.event_id)
+                    .filter(|entry| !entry.summary.trim().is_empty())
+                {
+                    snapshot.thread.last_turn_summary = entry.summary.clone();
+                }
             } else {
                 let existing_entry_index = snapshot
                     .entries
                     .iter()
                     .position(|entry| entry.event_id == event.event_id);
-                let aggregated_payload = merge_live_payload(
-                    existing_entry_index
-                        .and_then(|index| snapshot.entries.get(index))
-                        .map(|entry| &entry.payload),
-                    event.kind,
-                    &event.payload,
-                );
+                let aggregated_payload = event.payload.clone();
                 let summary = summarize_live_payload(event.kind, &aggregated_payload);
                 if !summary.trim().is_empty() {
                     snapshot.thread.last_turn_summary = summary.clone();
@@ -236,6 +271,51 @@ impl ProjectionStore {
         }
     }
 
+    pub async fn merge_snapshot_repair(
+        &self,
+        snapshot: &ThreadSnapshotDto,
+        latest_bridge_seq: Option<u64>,
+    ) {
+        let mut state = self.inner.write().await;
+        let thread_id = snapshot.thread.thread_id.clone();
+        if let Some(sequence) = latest_bridge_seq {
+            state
+                .latest_bridge_seq_by_thread
+                .insert(thread_id.clone(), sequence);
+        }
+
+        if let Some(existing_snapshot) = state.snapshots.get_mut(&thread_id) {
+            existing_snapshot.thread = snapshot.thread.clone();
+            existing_snapshot.approvals = snapshot.approvals.clone();
+            existing_snapshot.git_status = snapshot.git_status.clone();
+            existing_snapshot.pending_user_input = snapshot.pending_user_input.clone();
+        } else {
+            state.snapshots.insert(thread_id.clone(), snapshot.clone());
+        }
+
+        merge_item_states_from_snapshot(&mut state, snapshot);
+        let next_entries = state
+            .item_states_by_thread
+            .get(&thread_id)
+            .map(materialize_entries)
+            .unwrap_or_default();
+        if let Some(existing_snapshot) = state.snapshots.get_mut(&thread_id) {
+            existing_snapshot.entries = next_entries;
+        }
+    }
+
+    pub async fn latest_bridge_seq(&self, thread_id: &str) -> Option<u64> {
+        let state = self.inner.read().await;
+        state.latest_bridge_seq_by_thread.get(thread_id).copied()
+    }
+
+    pub async fn set_latest_bridge_seq(&self, thread_id: &str, bridge_seq: u64) {
+        let mut state = self.inner.write().await;
+        state
+            .latest_bridge_seq_by_thread
+            .insert(thread_id.to_string(), bridge_seq);
+    }
+
     pub async fn mark_thread_running(
         &self,
         thread_id: &str,
@@ -254,6 +334,7 @@ impl ProjectionStore {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn mark_thread_status(
         &self,
         thread_id: &str,
@@ -453,6 +534,56 @@ fn approval_summary_from_record(approval: &ApprovalRecordDto) -> ApprovalSummary
     }
 }
 
+#[allow(dead_code)]
+fn seed_item_states_from_snapshot(state: &mut ProjectionState, snapshot: &ThreadSnapshotDto) {
+    let item_states = state
+        .item_states_by_thread
+        .entry(snapshot.thread.thread_id.clone())
+        .or_default();
+    for entry in &snapshot.entries {
+        item_states.insert(
+            entry.event_id.clone(),
+            ThreadItemProjectionState::seed_from_entry(entry),
+        );
+    }
+}
+
+fn merge_item_states_from_snapshot(state: &mut ProjectionState, snapshot: &ThreadSnapshotDto) {
+    for entry in &snapshot.entries {
+        let repair_event = BridgeEventEnvelope {
+            contract_version: snapshot.contract_version.clone(),
+            event_id: entry.event_id.clone(),
+            thread_id: snapshot.thread.thread_id.clone(),
+            kind: entry.kind,
+            occurred_at: entry.occurred_at.clone(),
+            payload: entry.payload.clone(),
+            annotations: entry.annotations.clone(),
+            bridge_seq: None,
+        };
+        apply_item_state_event(
+            state,
+            &snapshot.thread.thread_id,
+            &repair_event,
+            ProjectionItemPhase::Repair,
+        );
+    }
+}
+
+fn apply_item_state_event(
+    state: &mut ProjectionState,
+    thread_id: &str,
+    event: &BridgeEventEnvelope<Value>,
+    phase: ProjectionItemPhase,
+) {
+    let item_states = state
+        .item_states_by_thread
+        .entry(thread_id.to_string())
+        .or_default();
+    let next_state =
+        ThreadItemProjectionState::apply_event(item_states.get(&event.event_id), event, phase);
+    item_states.insert(event.event_id.clone(), next_state);
+}
+
 fn pending_user_input_from_payload(payload: &Value) -> Option<PendingUserInputDto> {
     match payload.get("state").and_then(Value::as_str) {
         Some("resolved") => None,
@@ -518,159 +649,11 @@ fn summarize_live_payload(kind: BridgeEventKind, payload: &Value) -> String {
     }
 }
 
-fn merge_live_payload(existing: Option<&Value>, kind: BridgeEventKind, incoming: &Value) -> Value {
-    match kind {
-        BridgeEventKind::MessageDelta => {
-            let replace = incoming
-                .get("replace")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let existing_text = existing
-                .and_then(|payload| payload.get("text"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let next_text = merge_incremental_text(
-                existing_text,
-                incoming
-                    .get("delta")
-                    .or_else(|| incoming.get("text"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-                replace,
-            );
-            let mut payload = serde_json::json!({
-                "id": incoming.get("id").and_then(Value::as_str).or_else(|| existing.and_then(|payload| payload.get("id")).and_then(Value::as_str)).unwrap_or_default(),
-                "type": "message",
-                "role": incoming.get("role").and_then(Value::as_str).or_else(|| existing.and_then(|payload| payload.get("role")).and_then(Value::as_str)).unwrap_or("assistant"),
-                "text": next_text,
-            });
-            if let Some(images) = incoming
-                .get("images")
-                .cloned()
-                .or_else(|| existing.and_then(|payload| payload.get("images")).cloned())
-                && let Some(object) = payload.as_object_mut()
-            {
-                object.insert("images".to_string(), images);
-            }
-            payload
-        }
-        BridgeEventKind::PlanDelta => {
-            let replace = incoming
-                .get("replace")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let existing_text = existing
-                .and_then(|payload| payload.get("text"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let next_text = merge_incremental_text(
-                existing_text,
-                incoming
-                    .get("delta")
-                    .or_else(|| incoming.get("text"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-                replace,
-            );
-
-            let mut payload = serde_json::json!({
-                "id": incoming.get("id").and_then(Value::as_str).or_else(|| existing.and_then(|payload| payload.get("id")).and_then(Value::as_str)).unwrap_or_default(),
-                "type": "plan",
-                "text": next_text,
-            });
-            if let Some(object) = payload.as_object_mut() {
-                if let Some(explanation) = incoming
-                    .get("explanation")
-                    .or_else(|| existing.and_then(|payload| payload.get("explanation")))
-                {
-                    object.insert("explanation".to_string(), explanation.clone());
-                }
-                if let Some(steps) = incoming
-                    .get("steps")
-                    .or_else(|| existing.and_then(|payload| payload.get("steps")))
-                {
-                    object.insert("steps".to_string(), steps.clone());
-                }
-                if let Some(completed_count) = incoming
-                    .get("completed_count")
-                    .or_else(|| existing.and_then(|payload| payload.get("completed_count")))
-                {
-                    object.insert("completed_count".to_string(), completed_count.clone());
-                }
-                if let Some(total_count) = incoming
-                    .get("total_count")
-                    .or_else(|| existing.and_then(|payload| payload.get("total_count")))
-                {
-                    object.insert("total_count".to_string(), total_count.clone());
-                }
-            }
-
-            payload
-        }
-        BridgeEventKind::UserInputRequested => incoming.clone(),
-        BridgeEventKind::CommandDelta => {
-            let replace = incoming
-                .get("replace")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let existing_output = existing
-                .and_then(|payload| payload.get("output"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let next_output = merge_incremental_text(
-                existing_output,
-                incoming
-                    .get("delta")
-                    .or_else(|| incoming.get("output"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-                replace,
-            );
-
-            serde_json::json!({
-                "id": incoming.get("id").and_then(Value::as_str).or_else(|| existing.and_then(|payload| payload.get("id")).and_then(Value::as_str)).unwrap_or_default(),
-                "type": "command",
-                "command": incoming.get("command").and_then(Value::as_str).or_else(|| existing.and_then(|payload| payload.get("command")).and_then(Value::as_str)).unwrap_or_default(),
-                "cmd": incoming.get("cmd").cloned().or_else(|| existing.and_then(|payload| payload.get("cmd")).cloned()),
-                "workdir": incoming.get("workdir").cloned().or_else(|| incoming.get("cwd").cloned()).or_else(|| existing.and_then(|payload| payload.get("workdir")).cloned()),
-                "output": next_output,
-            })
-        }
-        BridgeEventKind::FileChange => {
-            let replace = incoming
-                .get("replace")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let existing_diff = existing
-                .and_then(|payload| payload.get("resolved_unified_diff"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let next_diff = merge_incremental_text(
-                existing_diff,
-                incoming
-                    .get("delta")
-                    .or_else(|| incoming.get("resolved_unified_diff"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-                replace,
-            );
-
-            serde_json::json!({
-                "id": incoming.get("id").and_then(Value::as_str).or_else(|| existing.and_then(|payload| payload.get("id")).and_then(Value::as_str)).unwrap_or_default(),
-                "type": "file_change",
-                "path": incoming.get("path").and_then(Value::as_str).or_else(|| existing.and_then(|payload| payload.get("path")).and_then(Value::as_str)).unwrap_or_default(),
-                "resolved_unified_diff": next_diff,
-            })
-        }
-        _ => incoming.clone(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::ProjectionStore;
+    use super::{ProjectionItemPhase, ProjectionStore};
     use shared_contracts::{
         AccessMode, BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, ThreadDetailDto,
         ThreadSnapshotDto, ThreadStatus, ThreadSummaryDto, ThreadTimelineEntryDto,
@@ -776,6 +759,7 @@ mod tests {
                     "text": "streamed text",
                 }),
                 annotations: None,
+                bridge_seq: None,
             })
             .await;
 
@@ -858,6 +842,7 @@ mod tests {
                     "images": ["data:image/png;base64,AAA"],
                 }),
                 annotations: None,
+                bridge_seq: None,
             })
             .await;
 
@@ -932,6 +917,7 @@ mod tests {
                     "replace": true,
                 }),
                 annotations: None,
+                bridge_seq: None,
             })
             .await;
 
@@ -950,6 +936,7 @@ mod tests {
                     "replace": false,
                 }),
                 annotations: None,
+                bridge_seq: None,
             })
             .await;
 
@@ -1187,6 +1174,7 @@ mod tests {
                     "total_count": 2,
                 }),
                 annotations: None,
+                bridge_seq: None,
             })
             .await;
 
@@ -1260,6 +1248,7 @@ mod tests {
                     "reason": "upstream_notification",
                 }),
                 annotations: None,
+                bridge_seq: None,
             })
             .await;
 
@@ -1332,6 +1321,7 @@ mod tests {
                     "turn_id": "turn-1",
                 }),
                 annotations: None,
+                bridge_seq: None,
             })
             .await;
 
@@ -1349,5 +1339,250 @@ mod tests {
             snapshot.entries[0].payload["model"].as_str(),
             Some("gpt-5-mini")
         );
+    }
+
+    #[tokio::test]
+    async fn snapshot_repair_does_not_clobber_active_live_text() {
+        let store = ProjectionStore::new();
+        store
+            .replace_summaries(vec![ThreadSummaryDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
+                title: "Thread".to_string(),
+                status: ThreadStatus::Running,
+                workspace: "/tmp/a".to_string(),
+                repository: "repo-a".to_string(),
+                branch: "main".to_string(),
+                updated_at: "2026-03-21T10:00:00Z".to_string(),
+            }])
+            .await;
+        store
+            .put_snapshot(ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
+                    title: "Thread".to_string(),
+                    status: ThreadStatus::Running,
+                    workspace: "/tmp/a".to_string(),
+                    repository: "repo-a".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-03-21T09:00:00Z".to_string(),
+                    updated_at: "2026-03-21T10:00:00Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: String::new(),
+                    active_turn_id: Some("turn-1".to_string()),
+                },
+                entries: vec![],
+                approvals: vec![],
+                git_status: None,
+                pending_user_input: None,
+            })
+            .await;
+
+        store
+            .apply_live_event_with_phase(
+                &BridgeEventEnvelope {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    event_id: "evt-1".to_string(),
+                    thread_id: "thread-1".to_string(),
+                    kind: BridgeEventKind::MessageDelta,
+                    occurred_at: "2026-03-21T10:01:00Z".to_string(),
+                    payload: json!({
+                        "id": "msg-1",
+                        "type": "message",
+                        "role": "assistant",
+                        "text": "hello world",
+                    }),
+                    annotations: None,
+                    bridge_seq: None,
+                },
+                ProjectionItemPhase::Delta,
+            )
+            .await;
+
+        store
+            .merge_snapshot_repair(
+                &ThreadSnapshotDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread: ThreadDetailDto {
+                        contract_version: CONTRACT_VERSION.to_string(),
+                        thread_id: "thread-1".to_string(),
+                        native_thread_id: "thread-1".to_string(),
+                        provider: shared_contracts::ProviderKind::Codex,
+                        client: shared_contracts::ThreadClientKind::Cli,
+                        title: "Thread".to_string(),
+                        status: ThreadStatus::Running,
+                        workspace: "/tmp/a".to_string(),
+                        repository: "repo-a".to_string(),
+                        branch: "main".to_string(),
+                        created_at: "2026-03-21T09:00:00Z".to_string(),
+                        updated_at: "2026-03-21T10:01:01Z".to_string(),
+                        source: "desktop_ipc".to_string(),
+                        access_mode: AccessMode::ControlWithApprovals,
+                        last_turn_summary: String::new(),
+                        active_turn_id: Some("turn-1".to_string()),
+                    },
+                    entries: vec![ThreadTimelineEntryDto {
+                        event_id: "evt-1".to_string(),
+                        kind: BridgeEventKind::MessageDelta,
+                        occurred_at: "2026-03-21T10:01:01Z".to_string(),
+                        summary: "hello".to_string(),
+                        payload: json!({
+                            "id": "msg-1",
+                            "type": "message",
+                            "role": "assistant",
+                            "text": "hello",
+                            "source": "desktop_ipc",
+                        }),
+                        annotations: None,
+                    }],
+                    approvals: vec![],
+                    git_status: None,
+                    pending_user_input: None,
+                },
+                Some(9),
+            )
+            .await;
+
+        let snapshot = store
+            .snapshot("thread-1")
+            .await
+            .expect("snapshot should exist");
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.entries[0].payload["text"], "hello world");
+        assert_eq!(snapshot.entries[0].payload["source"], "desktop_ipc");
+
+        let page = store
+            .timeline_page("thread-1", None, 10)
+            .await
+            .expect("page should exist");
+        assert_eq!(page.latest_bridge_seq, Some(9));
+    }
+
+    #[tokio::test]
+    async fn snapshot_repair_backfills_settled_item_without_overwriting_final_text() {
+        let store = ProjectionStore::new();
+        store
+            .replace_summaries(vec![ThreadSummaryDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread_id: "thread-1".to_string(),
+                native_thread_id: "thread-1".to_string(),
+                provider: shared_contracts::ProviderKind::Codex,
+                client: shared_contracts::ThreadClientKind::Cli,
+                title: "Thread".to_string(),
+                status: ThreadStatus::Completed,
+                workspace: "/tmp/a".to_string(),
+                repository: "repo-a".to_string(),
+                branch: "main".to_string(),
+                updated_at: "2026-03-21T10:00:00Z".to_string(),
+            }])
+            .await;
+        store
+            .put_snapshot(ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
+                    title: "Thread".to_string(),
+                    status: ThreadStatus::Completed,
+                    workspace: "/tmp/a".to_string(),
+                    repository: "repo-a".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-03-21T09:00:00Z".to_string(),
+                    updated_at: "2026-03-21T10:00:00Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: String::new(),
+                    active_turn_id: None,
+                },
+                entries: vec![],
+                approvals: vec![],
+                git_status: None,
+                pending_user_input: None,
+            })
+            .await;
+
+        store
+            .apply_live_event_with_phase(
+                &BridgeEventEnvelope {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    event_id: "evt-1".to_string(),
+                    thread_id: "thread-1".to_string(),
+                    kind: BridgeEventKind::CommandDelta,
+                    occurred_at: "2026-03-21T10:01:00Z".to_string(),
+                    payload: json!({
+                        "id": "cmd-1",
+                        "type": "command",
+                        "command": "ls",
+                        "output": "done",
+                    }),
+                    annotations: None,
+                    bridge_seq: None,
+                },
+                ProjectionItemPhase::Final,
+            )
+            .await;
+
+        store
+            .merge_snapshot_repair(
+                &ThreadSnapshotDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread: ThreadDetailDto {
+                        contract_version: CONTRACT_VERSION.to_string(),
+                        thread_id: "thread-1".to_string(),
+                        native_thread_id: "thread-1".to_string(),
+                        provider: shared_contracts::ProviderKind::Codex,
+                        client: shared_contracts::ThreadClientKind::Cli,
+                        title: "Thread".to_string(),
+                        status: ThreadStatus::Completed,
+                        workspace: "/tmp/a".to_string(),
+                        repository: "repo-a".to_string(),
+                        branch: "main".to_string(),
+                        created_at: "2026-03-21T09:00:00Z".to_string(),
+                        updated_at: "2026-03-21T10:01:01Z".to_string(),
+                        source: "archive".to_string(),
+                        access_mode: AccessMode::ControlWithApprovals,
+                        last_turn_summary: String::new(),
+                        active_turn_id: None,
+                    },
+                    entries: vec![ThreadTimelineEntryDto {
+                        event_id: "evt-1".to_string(),
+                        kind: BridgeEventKind::CommandDelta,
+                        occurred_at: "2026-03-21T10:01:01Z".to_string(),
+                        summary: "done".to_string(),
+                        payload: json!({
+                            "id": "cmd-1",
+                            "type": "command",
+                            "command": "ls",
+                            "output": "stale",
+                            "exit_code": 0,
+                        }),
+                        annotations: None,
+                    }],
+                    approvals: vec![],
+                    git_status: None,
+                    pending_user_input: None,
+                },
+                None,
+            )
+            .await;
+
+        let snapshot = store
+            .snapshot("thread-1")
+            .await
+            .expect("snapshot should exist");
+        assert_eq!(snapshot.entries[0].payload["output"], "done");
+        assert_eq!(snapshot.entries[0].payload["exit_code"], 0);
     }
 }

@@ -3,6 +3,7 @@ mod desktop_ipc;
 mod git_diff;
 mod lifecycle;
 mod live;
+mod reducer;
 mod snapshots;
 mod streams;
 mod titles;
@@ -20,6 +21,10 @@ use self::live::{
     should_clear_transient_thread_state, should_publish_compacted_event,
     should_skip_background_notification_event, should_suppress_live_event,
     should_suppress_notification_event_for_bridge_active_turn, thread_status_wire_value,
+};
+use self::reducer::{
+    OutgoingTurnPhase, OutgoingTurnTracker, RawThreadEvent, RawThreadEventPhase,
+    RawThreadEventSource, ThreadReducerCommand, build_raw_thread_event,
 };
 use self::titles::{
     extract_text_from_payload, is_placeholder_thread_title, merge_reconciled_thread_summaries,
@@ -53,7 +58,7 @@ use shared_contracts::{
     UserInputQuestionDto,
 };
 use tokio::sync::RwLock;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 use tokio::time::{Duration, sleep};
 
 use crate::codex_ipc::{
@@ -104,6 +109,7 @@ struct BridgeAppStateInner {
     resumed_notification_threads: RwLock<HashSet<String>>,
     inflight_thread_title_generations: RwLock<HashSet<String>>,
     pending_user_message_images: RwLock<HashMap<String, Vec<String>>>,
+    outgoing_turns: RwLock<HashMap<String, OutgoingTurnTracker>>,
     access_mode: RwLock<AccessMode>,
     security_events: RwLock<Vec<SecurityEventRecordDto>>,
     codex_usage_client: RwLock<CodexUsageClient>,
@@ -111,6 +117,7 @@ struct BridgeAppStateInner {
     event_hub: EventHub,
     notification_control_tx: Mutex<Option<mpsc::Sender<NotificationControlMessage>>>,
     desktop_ipc_control_tx: Mutex<Option<mpsc::Sender<NotificationControlMessage>>>,
+    thread_reducers: Mutex<HashMap<String, tokio_mpsc::UnboundedSender<ThreadReducerCommand>>>,
     pairing_sessions: Mutex<PairingSessionService>,
     pairing_route: PairingRouteState,
     git_controls: Mutex<GitControlState>,

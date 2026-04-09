@@ -463,6 +463,7 @@ impl ThreadApiService {
             pending_user_input: None,
             next_before,
             has_more_before,
+            latest_bridge_seq: None,
         })
     }
 

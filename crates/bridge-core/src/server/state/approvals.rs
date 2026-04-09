@@ -37,9 +37,13 @@ impl BridgeAppState {
             payload: serde_json::to_value(&approval)
                 .expect("approval event payload should serialize"),
             annotations: None,
+            bridge_seq: None,
         };
-        self.projections().apply_live_event(&event).await;
-        self.event_hub().publish(event);
+        self.dispatch_thread_event(build_raw_thread_event(
+            RawThreadEventSource::BridgeLocal,
+            event,
+        ))
+        .await;
 
         Ok(ApprovalGateResponse {
             contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
@@ -185,10 +189,11 @@ impl BridgeAppState {
         }
         .map_err(ResolveApprovalError::MutationFailed)?;
 
-        self.projections()
-            .apply_live_event(&executed.command_event)
-            .await;
-        self.event_hub().publish(executed.command_event);
+        self.dispatch_thread_event(build_raw_thread_event(
+            RawThreadEventSource::BridgeLocal,
+            executed.command_event,
+        ))
+        .await;
         self.projections()
             .update_git_state(
                 record.action.thread_id(),
@@ -229,10 +234,11 @@ impl BridgeAppState {
             snapshot.thread.status,
             occurred_at,
         )?;
-        self.projections()
-            .apply_live_event(&executed.command_event)
-            .await;
-        self.event_hub().publish(executed.command_event);
+        self.dispatch_thread_event(build_raw_thread_event(
+            RawThreadEventSource::BridgeLocal,
+            executed.command_event,
+        ))
+        .await;
         self.projections()
             .update_git_state(
                 thread_id,

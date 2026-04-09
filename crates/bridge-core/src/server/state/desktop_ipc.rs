@@ -10,6 +10,42 @@ impl BridgeAppState {
 
         let state = self.clone();
         let handle = tokio::runtime::Handle::current();
+        enum DesktopIpcDispatch {
+            ForgetThread(String),
+            ForgetThreads(Vec<String>),
+            Snapshot {
+                snapshot: Box<ThreadSnapshotDto>,
+                events: Vec<BridgeEventEnvelope<Value>>,
+            },
+        }
+
+        let (dispatch_tx, mut dispatch_rx) = tokio_mpsc::unbounded_channel::<DesktopIpcDispatch>();
+        let processor_state = self.clone();
+        handle.spawn(async move {
+            while let Some(message) = dispatch_rx.recv().await {
+                match message {
+                    DesktopIpcDispatch::ForgetThread(thread_id) => {
+                        processor_state
+                            .forget_resumable_notification_thread(&thread_id)
+                            .await;
+                    }
+                    DesktopIpcDispatch::ForgetThreads(thread_ids) => {
+                        processor_state
+                            .forget_resumable_notification_threads(thread_ids)
+                            .await;
+                    }
+                    DesktopIpcDispatch::Snapshot { snapshot, events } => {
+                        processor_state
+                            .apply_external_snapshot_update(
+                                RawThreadEventSource::DesktopIpc,
+                                *snapshot,
+                                events,
+                            )
+                            .await;
+                    }
+                }
+            }
+        });
         let (control_tx, control_rx) = mpsc::channel();
         *self
             .inner
@@ -31,8 +67,14 @@ impl BridgeAppState {
                     }
                 };
 
-                let mut tracked_threads =
-                    handle.block_on(async { state.resumable_notification_threads().await });
+                let mut tracked_threads = {
+                    let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+                    let state = state.clone();
+                    handle.spawn(async move {
+                        let _ = reply_tx.send(state.resumable_notification_threads().await);
+                    });
+                    reply_rx.recv().unwrap_or_default()
+                };
                 let dropped_threads =
                     match resume_notification_threads(tracked_threads.iter(), |thread_id| {
                         match client.external_resume_thread(thread_id) {
@@ -51,12 +93,7 @@ impl BridgeAppState {
                     for thread_id in &dropped_threads {
                         tracked_threads.remove(thread_id);
                     }
-                    let state = state.clone();
-                    handle.block_on(async move {
-                        state
-                            .forget_resumable_notification_threads(dropped_threads)
-                            .await;
-                    });
+                    let _ = dispatch_tx.send(DesktopIpcDispatch::ForgetThreads(dropped_threads));
                 }
 
                 loop {
@@ -67,9 +104,17 @@ impl BridgeAppState {
                                 if let Some(conversation_state) =
                                     conversation_state_by_thread.get(&thread_id).cloned()
                                 {
-                                    let previous_snapshot = handle.block_on(async {
-                                        state.projections().snapshot(&thread_id).await
-                                    });
+                                    let previous_snapshot = {
+                                        let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+                                        let state = state.clone();
+                                        let thread_id = thread_id.clone();
+                                        handle.spawn(async move {
+                                            let _ = reply_tx.send(
+                                                state.projections().snapshot(&thread_id).await,
+                                            );
+                                        });
+                                        reply_rx.recv().unwrap_or(None)
+                                    };
                                     if previous_snapshot.as_ref().is_some_and(|snapshot| {
                                         snapshot.thread.status == ThreadStatus::Running
                                     }) {
@@ -80,25 +125,40 @@ impl BridgeAppState {
                                             }
                                             Err(error) if is_stale_rollout_resume_error(&error) => {
                                                 tracked_threads.remove(&thread_id);
-                                                let state = state.clone();
-                                                handle.block_on(async move {
-                                                    state
-                                                        .forget_resumable_notification_thread(
-                                                            &thread_id,
-                                                        )
-                                                        .await;
-                                                });
+                                                let _ = dispatch_tx.send(
+                                                    DesktopIpcDispatch::ForgetThread(thread_id),
+                                                );
                                                 Ok(())
                                             }
                                             Err(error) => Err(error),
                                         }?;
                                         return Ok(());
                                     }
-                                    let previous_summary_status = handle.block_on(async {
-                                        state.projections().summary_status(&thread_id).await
-                                    });
-                                    let access_mode =
-                                        handle.block_on(async { state.access_mode().await });
+                                    let (previous_summary_status, access_mode, has_bridge_turn) = {
+                                        let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+                                        let state = state.clone();
+                                        let thread_id = thread_id.clone();
+                                        handle.spawn(async move {
+                                            let summary_status = state
+                                                .projections()
+                                                .summary_status(&thread_id)
+                                                .await;
+                                            let access_mode = state.access_mode().await;
+                                            let has_bridge_turn = state
+                                                .has_bridge_owned_active_turn(&thread_id)
+                                                .await;
+                                            let _ = reply_tx.send((
+                                                summary_status,
+                                                access_mode,
+                                                has_bridge_turn,
+                                            ));
+                                        });
+                                        reply_rx.recv().unwrap_or((
+                                            None,
+                                            AccessMode::ReadOnly,
+                                            false,
+                                        ))
+                                    };
                                     let latest_raw_turn_status = conversation_state
                                         .get("turns")
                                         .and_then(Value::as_array)
@@ -114,19 +174,12 @@ impl BridgeAppState {
                                             &mut compactor,
                                             false,
                                             latest_raw_turn_status.as_deref(),
-                                            handle.block_on(async {
-                                                state.has_bridge_owned_active_turn(&thread_id).await
-                                            }),
+                                            has_bridge_turn,
                                         )
                                     {
-                                        let state = state.clone();
-                                        handle.block_on(async move {
-                                            state
-                                                .apply_external_snapshot_update(
-                                                    next_snapshot,
-                                                    events,
-                                                )
-                                                .await;
+                                        let _ = dispatch_tx.send(DesktopIpcDispatch::Snapshot {
+                                            snapshot: Box::new(next_snapshot),
+                                            events,
                                         });
                                     }
                                 }
@@ -135,12 +188,8 @@ impl BridgeAppState {
                                     Err(error) if error.contains("no-client-found") => Ok(()),
                                     Err(error) if is_stale_rollout_resume_error(&error) => {
                                         tracked_threads.remove(&thread_id);
-                                        let state = state.clone();
-                                        handle.block_on(async move {
-                                            state
-                                                .forget_resumable_notification_thread(&thread_id)
-                                                .await;
-                                        });
+                                        let _ = dispatch_tx
+                                            .send(DesktopIpcDispatch::ForgetThread(thread_id));
                                         Ok(())
                                     }
                                     Err(error) => Err(error),
@@ -194,11 +243,28 @@ impl BridgeAppState {
                         continue;
                     }
 
-                    let previous_snapshot =
-                        handle.block_on(async { state.projections().snapshot(&thread_id).await });
-                    let previous_summary_status = handle
-                        .block_on(async { state.projections().summary_status(&thread_id).await });
-                    let access_mode = handle.block_on(async { state.access_mode().await });
+                    let (previous_snapshot, previous_summary_status, access_mode, has_bridge_turn) = {
+                        let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+                        let state = state.clone();
+                        let thread_id = thread_id.clone();
+                        handle.spawn(async move {
+                            let snapshot = state.projections().snapshot(&thread_id).await;
+                            let summary_status =
+                                state.projections().summary_status(&thread_id).await;
+                            let access_mode = state.access_mode().await;
+                            let has_bridge_turn =
+                                state.has_bridge_owned_active_turn(&thread_id).await;
+                            let _ = reply_tx.send((
+                                snapshot,
+                                summary_status,
+                                access_mode,
+                                has_bridge_turn,
+                            ));
+                        });
+                        reply_rx
+                            .recv()
+                            .unwrap_or((None, None, AccessMode::ReadOnly, false))
+                    };
                     let latest_raw_turn_status = conversation_state
                         .get("turns")
                         .and_then(Value::as_array)
@@ -213,9 +279,7 @@ impl BridgeAppState {
                         &mut compactor,
                         is_patch_update,
                         latest_raw_turn_status.as_deref(),
-                        handle.block_on(async {
-                            state.has_bridge_owned_active_turn(&thread_id).await
-                        }),
+                        has_bridge_turn,
                     ) {
                         Ok(update) => update,
                         Err(error) => {
@@ -226,11 +290,9 @@ impl BridgeAppState {
                         }
                     };
 
-                    let state = state.clone();
-                    handle.block_on(async move {
-                        state
-                            .apply_external_snapshot_update(next_snapshot, events)
-                            .await;
+                    let _ = dispatch_tx.send(DesktopIpcDispatch::Snapshot {
+                        snapshot: Box::new(next_snapshot),
+                        events,
                     });
                 }
 

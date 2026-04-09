@@ -494,6 +494,7 @@ pub fn diff_thread_snapshots(
             occurred_at: entry.occurred_at.clone(),
             payload: entry.payload.clone(),
             annotations: entry.annotations.clone(),
+            bridge_seq: None,
         });
     }
 
@@ -513,6 +514,7 @@ pub fn diff_thread_snapshots(
                 "reason": "desktop_ipc",
             }),
             annotations: None,
+            bridge_seq: None,
         });
     }
 

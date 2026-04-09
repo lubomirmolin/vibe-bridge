@@ -195,6 +195,7 @@ pub(super) fn build_turn_started_history_event(
         occurred_at: occurred_at.to_string(),
         payload,
         annotations: None,
+        bridge_seq: None,
     }
 }
 

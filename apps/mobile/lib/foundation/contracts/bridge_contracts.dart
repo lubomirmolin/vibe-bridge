@@ -2034,6 +2034,7 @@ class ThreadTimelinePageDto {
     this.pendingUserInput,
     required this.nextBefore,
     required this.hasMoreBefore,
+    this.latestBridgeSeq,
   });
 
   final String contractVersion;
@@ -2042,6 +2043,7 @@ class ThreadTimelinePageDto {
   final PendingUserInputDto? pendingUserInput;
   final String? nextBefore;
   final bool hasMoreBefore;
+  final int? latestBridgeSeq;
 
   factory ThreadTimelinePageDto.fromJson(Map<String, dynamic> json) {
     final threadJson = json['thread'];
@@ -2079,6 +2081,7 @@ class ThreadTimelinePageDto {
           : null,
       nextBefore: json['next_before'] as String?,
       hasMoreBefore: json['has_more_before'] as bool? ?? false,
+      latestBridgeSeq: (json['latest_bridge_seq'] as num?)?.toInt(),
     );
   }
 
@@ -2091,6 +2094,7 @@ class ThreadTimelinePageDto {
         'pending_user_input': pendingUserInput!.toJson(),
       'next_before': nextBefore,
       'has_more_before': hasMoreBefore,
+      'latest_bridge_seq': latestBridgeSeq,
     };
   }
 }
@@ -2180,6 +2184,7 @@ class BridgeEventEnvelope<TPayload> {
     required this.occurredAt,
     required this.payload,
     this.annotations,
+    this.bridgeSeq,
   });
 
   final String contractVersion;
@@ -2189,6 +2194,7 @@ class BridgeEventEnvelope<TPayload> {
   final String occurredAt;
   final TPayload payload;
   final ThreadTimelineAnnotationsDto? annotations;
+  final int? bridgeSeq;
 
   factory BridgeEventEnvelope.fromJson(
     Map<String, dynamic> json,
@@ -2206,6 +2212,7 @@ class BridgeEventEnvelope<TPayload> {
               json['annotations'] as Map<String, dynamic>,
             )
           : null,
+      bridgeSeq: (json['bridge_seq'] as num?)?.toInt(),
     );
   }
 
@@ -2220,6 +2227,7 @@ class BridgeEventEnvelope<TPayload> {
       'occurred_at': occurredAt,
       'payload': payloadEncoder(payload),
       'annotations': annotations?.toJson(),
+      'bridge_seq': bridgeSeq,
     };
   }
 }

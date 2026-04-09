@@ -127,37 +127,43 @@ impl BridgeAppState {
             return Ok(());
         }
 
-        if is_provider_thread_id(thread_id, ProviderKind::Codex) {
-            if let Err(error) = self
+        if is_provider_thread_id(thread_id, ProviderKind::Codex)
+            && let Err(error) = self
                 .inner
                 .gateway
                 .set_thread_name(thread_id, normalized_title)
                 .await
-            {
-                eprintln!(
-                    "bridge generated thread title upstream rename failed thread_id={thread_id}: {error}; keeping local title"
-                );
-            }
+        {
+            eprintln!(
+                "bridge generated thread title upstream rename failed thread_id={thread_id}: {error}; keeping local title"
+            );
         }
         let occurred_at = Utc::now().to_rfc3339();
         let status = self
             .projections()
-            .update_thread_title(thread_id, normalized_title, &occurred_at)
+            .snapshot(thread_id)
             .await
+            .map(|snapshot| snapshot.thread.status)
+            .or(self.projections().summary_status(thread_id).await)
             .unwrap_or(ThreadStatus::Idle);
-        self.event_hub().publish(BridgeEventEnvelope {
-            contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
-            event_id: format!("{thread_id}-title-{occurred_at}"),
-            thread_id: thread_id.to_string(),
-            kind: BridgeEventKind::ThreadStatusChanged,
-            occurred_at,
-            payload: json!({
-                "status": thread_status_wire_value(status),
-                "reason": "thread_title_generated",
-                "title": normalized_title,
-            }),
-            annotations: None,
-        });
+        self.dispatch_thread_event(build_raw_thread_event(
+            RawThreadEventSource::BridgeLocal,
+            BridgeEventEnvelope {
+                contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+                event_id: format!("{thread_id}-title-{occurred_at}"),
+                thread_id: thread_id.to_string(),
+                kind: BridgeEventKind::ThreadStatusChanged,
+                occurred_at,
+                payload: json!({
+                    "status": thread_status_wire_value(status),
+                    "reason": "thread_title_generated",
+                    "title": normalized_title,
+                }),
+                annotations: None,
+                bridge_seq: None,
+            },
+        ))
+        .await;
         Ok(())
     }
 }

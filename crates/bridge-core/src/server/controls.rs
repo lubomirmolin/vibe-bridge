@@ -270,6 +270,7 @@ fn build_executed_mutation(
             "action": context.operation,
         }),
         annotations: None,
+        bridge_seq: None,
     };
 
     Ok(ExecutedGitMutation {
