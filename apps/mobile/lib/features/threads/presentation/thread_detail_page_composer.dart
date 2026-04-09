@@ -455,30 +455,37 @@ class _PinnedTurnComposer extends StatelessWidget {
                                     ),
                             ),
                             SizedBox(
-                              width: hasPendingUserInput
-                                  ? _composerPrimaryButtonSize
-                                  : _composerPrimaryRailWidth,
+                              width:
+                                  (hasPendingUserInput
+                                      ? _composerPrimaryButtonSize
+                                      : _composerPrimaryRailWidth) -
+                                  8.0,
                             ),
                           ],
                         ),
                       ),
-                      _ComposerPrimaryActionRail(
-                        composerController: composerController,
-                        attachedImages: attachedImages,
-                        composerMode: composerMode,
-                        supportsPlanMode: supportsPlanMode,
-                        hasPendingUserInput: hasPendingUserInput,
-                        selectedPlanOptionByQuestionId:
-                            selectedPlanOptionByQuestionId,
-                        controlsEnabled: controlsEnabled,
-                        isTurnActive: isTurnActive,
-                        isComposerMutationInFlight: isComposerMutationInFlight,
-                        isInterruptMutationInFlight:
-                            isInterruptMutationInFlight,
-                        isSpeechRecording: isSpeechRecording,
-                        isSpeechTranscribing: isSpeechTranscribing,
-                        onComposerModeChanged: onComposerModeChanged,
-                        onSubmitCurrentInput: submitCurrentInput,
+                      Positioned(
+                        right: -8.0,
+                        bottom: 0,
+                        child: _ComposerPrimaryActionRail(
+                          composerController: composerController,
+                          attachedImages: attachedImages,
+                          composerMode: composerMode,
+                          supportsPlanMode: supportsPlanMode,
+                          hasPendingUserInput: hasPendingUserInput,
+                          selectedPlanOptionByQuestionId:
+                              selectedPlanOptionByQuestionId,
+                          controlsEnabled: controlsEnabled,
+                          isTurnActive: isTurnActive,
+                          isComposerMutationInFlight:
+                              isComposerMutationInFlight,
+                          isInterruptMutationInFlight:
+                              isInterruptMutationInFlight,
+                          isSpeechRecording: isSpeechRecording,
+                          isSpeechTranscribing: isSpeechTranscribing,
+                          onComposerModeChanged: onComposerModeChanged,
+                          onSubmitCurrentInput: submitCurrentInput,
+                        ),
                       ),
                     ],
                   ),
@@ -1337,6 +1344,7 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
   late final AnimationController _snapController;
   late Animation<double> _snapAnimation;
   double _dragDx = 0.0;
+  bool _hasTriggeredLockHaptic = false;
 
   @override
   void initState() {
@@ -1365,7 +1373,20 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
     setState(() {
       _dragDx += details.delta.dx;
       // Soft clamp for pulling right (elastic feel)
-      if (_dragDx > 24.0) _dragDx = 24.0;
+      if (_dragDx > 24.0) {
+        _dragDx = 24.0;
+      }
+
+      // Stop at exactly the switch position
+      if (_dragDx <= -_composerModePeekOffset) {
+        _dragDx = -_composerModePeekOffset;
+        if (!_hasTriggeredLockHaptic) {
+          HapticFeedback.selectionClick();
+          _hasTriggeredLockHaptic = true;
+        }
+      } else {
+        _hasTriggeredLockHaptic = false;
+      }
     });
   }
 
@@ -1373,11 +1394,15 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
     if (widget.hasPendingUserInput || !widget.supportsPlanMode) return;
     final velocity = details.primaryVelocity ?? 0;
 
-    if (_dragDx < -20 || velocity < -180) {
+    if (_dragDx <= -20 || velocity < -180) {
       // Snap to next
-      _snapAnimation = Tween<double>(begin: _dragDx, end: -68.0).animate(
-        CurvedAnimation(parent: _snapController, curve: Curves.easeOutCubic),
-      );
+      _snapAnimation =
+          Tween<double>(begin: _dragDx, end: -_composerModePeekOffset).animate(
+            CurvedAnimation(
+              parent: _snapController,
+              curve: Curves.easeOutCubic,
+            ),
+          );
 
       _snapController.forward(from: 0.0).then((_) {
         final secondaryMode = widget.composerMode == TurnMode.act
@@ -1386,6 +1411,7 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
         widget.onComposerModeChanged(secondaryMode);
         setState(() {
           _dragDx = 0;
+          _hasTriggeredLockHaptic = false;
         });
       });
     } else {
@@ -1394,7 +1420,11 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
         CurvedAnimation(parent: _snapController, curve: Curves.easeOutCubic),
       );
 
-      _snapController.forward(from: 0.0);
+      _snapController.forward(from: 0.0).then((_) {
+        setState(() {
+          _hasTriggeredLockHaptic = false;
+        });
+      });
     }
   }
 
@@ -1526,8 +1556,8 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
                 child: MagneticButton(
                   isCircle: true,
                   variant: MagneticButtonVariant.primary,
-                  backgroundColorOverride: Colors
-                      .transparent, // Let the container handle the background for lerping
+                  backgroundColorOverride: Colors.transparent,
+                  // Let the container handle the background for lerping
                   foregroundColorOverride: iconColor,
                   onClick:
                       (isActive && dragProgress > 0.5) && canRunPrimaryAction
@@ -1615,34 +1645,50 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
                     children: [
                       Positioned(
                         left: 0,
-                        child: Transform(
-                          transform: Matrix4.identity()
-                            ..translateByDouble(secondaryOffset, 0.0, 0.0, 1.0)
-                            ..scaleByDouble(
-                              secondaryScale,
-                              secondaryScale,
-                              1.0,
-                              1.0,
+                        child: Opacity(
+                          opacity: secondaryProgress,
+                          child: Transform(
+                            transform: Matrix4.identity()
+                              ..translateByDouble(
+                                secondaryOffset,
+                                0.0,
+                                0.0,
+                                1.0,
+                              )
+                              ..scaleByDouble(
+                                secondaryScale,
+                                secondaryScale,
+                                1.0,
+                                1.0,
+                              ),
+                            alignment: Alignment.center,
+                            child: buildPrimaryButton(
+                              mode: secondaryMode,
+                              isActive: false, // will handle color internally
+                              dragProgress: secondaryProgress,
                             ),
-                          alignment: Alignment.center,
-                          child: buildPrimaryButton(
-                            mode: secondaryMode,
-                            isActive: false, // will handle color internally
-                            dragProgress: secondaryProgress,
                           ),
                         ),
                       ),
                       Positioned(
                         left: 0,
-                        child: Transform(
-                          transform: Matrix4.identity()
-                            ..translateByDouble(activeOffset, 0.0, 0.0, 1.0)
-                            ..scaleByDouble(activeScale, activeScale, 1.0, 1.0),
-                          alignment: Alignment.center,
-                          child: buildPrimaryButton(
-                            mode: activeMode,
-                            isActive: true, // will handle color internally
-                            dragProgress: activeProgress,
+                        child: Opacity(
+                          opacity: activeProgress,
+                          child: Transform(
+                            transform: Matrix4.identity()
+                              ..translateByDouble(activeOffset, 0.0, 0.0, 1.0)
+                              ..scaleByDouble(
+                                activeScale,
+                                activeScale,
+                                1.0,
+                                1.0,
+                              ),
+                            alignment: Alignment.center,
+                            child: buildPrimaryButton(
+                              mode: activeMode,
+                              isActive: true, // will handle color internally
+                              dragProgress: activeProgress,
+                            ),
                           ),
                         ),
                       ),
