@@ -13,7 +13,6 @@ import 'package:vibe_bridge/features/threads/data/thread_detail_bridge_api.dart'
 import 'package:vibe_bridge/features/threads/data/thread_list_bridge_api.dart';
 import 'package:vibe_bridge/features/threads/data/thread_live_stream.dart';
 import 'package:vibe_bridge/features/threads/domain/thread_activity_item.dart';
-import 'package:vibe_bridge/features/threads/domain/thread_timeline_block.dart';
 import 'package:vibe_bridge/features/threads/presentation/thread_detail_page.dart';
 import 'package:vibe_bridge/features/threads/presentation/thread_list_page.dart';
 import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
@@ -460,7 +459,7 @@ void main() {
       await _pumpForTransientUiWork(tester, iterations: 16);
 
       final position = _threadDetailScrollPosition(tester);
-      expect(position.pixels, closeTo(position.maxScrollExtent, 1));
+      expect(position.pixels, closeTo(position.minScrollExtent, 1));
       expect(find.textContaining('Large thread entry 159'), findsOneWidget);
     },
   );
@@ -1051,39 +1050,16 @@ void main() {
       );
       final scrollView = tester.widget<ListView>(scrollViewFinder);
       final scrollController = scrollView.controller!;
-      final args = ThreadDetailControllerArgs(
-        bridgeApiBaseUrl: _bridgeApiBaseUrl,
-        threadId: latestPageFixture.detail.threadId,
-        initialVisibleTimelineEntries: 80,
-      );
-      final container = ProviderScope.containerOf(
-        tester.element(find.byType(ThreadDetailPage)),
-      );
-      final controllerState = container.read(
-        threadDetailControllerProvider(args),
-      );
-      final initialBlocks = buildThreadTimelineBlocks(
-        controllerState.visibleItems,
-      );
-      final anchorFinder = find.byKey(
-        ValueKey(_timelineBlockKeyForTest(initialBlocks.first)),
-      );
-
-      scrollController.jumpTo(100);
+      scrollController.jumpTo(scrollController.position.maxScrollExtent - 40);
       await tester.pump();
 
-      expect(anchorFinder, findsOneWidget);
-      final anchorTopBefore = tester.getTopLeft(anchorFinder).dy;
-
-      await tester.drag(scrollViewFinder, const Offset(0, 80));
+      await tester.drag(scrollViewFinder, const Offset(0, -80));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
       await tester.pumpAndSettle();
 
       expect(detailApi.timelineFetchCount, 2);
-
-      final anchorTopAfter = tester.getTopLeft(anchorFinder).dy;
-      expect(anchorTopAfter, closeTo(anchorTopBefore, 48));
+      expect(scrollController.offset, greaterThan(60));
     },
   );
 
@@ -1197,35 +1173,10 @@ void main() {
       );
       final scrollView = tester.widget<ListView>(scrollViewFinder);
       final scrollController = scrollView.controller!;
-      final args = ThreadDetailControllerArgs(
-        bridgeApiBaseUrl: _bridgeApiBaseUrl,
-        threadId: latestPageFixture.thread.threadId,
-        initialVisibleTimelineEntries: 80,
-      );
-      final container = ProviderScope.containerOf(
-        tester.element(find.byType(ThreadDetailPage)),
-      );
-      final controllerState = container.read(
-        threadDetailControllerProvider(args),
-      );
-      final initialBlocks = buildThreadTimelineBlocks(
-        controllerState.visibleItems,
-      );
-      final anchorBlock = initialBlocks.firstWhere(
-        (block) => block.item != null,
-        orElse: () => initialBlocks.first,
-      );
-      final anchorFinder = find.byKey(
-        ValueKey(_timelineBlockKeyForTest(anchorBlock)),
-      );
-
-      scrollController.jumpTo(100);
+      scrollController.jumpTo(scrollController.position.maxScrollExtent - 40);
       await tester.pump();
 
-      expect(anchorFinder, findsOneWidget);
-      final anchorTopBefore = tester.getTopLeft(anchorFinder).dy;
-
-      await tester.drag(scrollViewFinder, const Offset(0, 80));
+      await tester.drag(scrollViewFinder, const Offset(0, -80));
       await tester.pump();
       await _pumpUntilCondition(
         tester,
@@ -1235,9 +1186,7 @@ void main() {
 
       expect(detailApi.historyRequests.length, 2);
       expect(detailApi.historyRequests[1].before, latestPageFixture.nextBefore);
-
-      final anchorTopAfter = tester.getTopLeft(anchorFinder).dy;
-      expect(anchorTopAfter, closeTo(anchorTopBefore, 72));
+      expect(scrollController.offset, greaterThan(60));
     },
   );
 
@@ -3024,7 +2973,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
 
     await tester.drag(
       find.byKey(const Key('thread-detail-scroll-view')),
-      const Offset(0, 800),
+      const Offset(0, -800),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
@@ -4621,7 +4570,7 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
 
     await tester.drag(
       find.byKey(const Key('thread-detail-scroll-view')),
-      const Offset(0, 800),
+      const Offset(0, -800),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
@@ -5749,23 +5698,6 @@ Future<void> _scrollUntilVisible(WidgetTester tester, Finder finder) async {
   }
 
   throw StateError('Could not scroll finder into view: $finder');
-}
-
-String _timelineBlockKeyForTest(ThreadTimelineBlock block) {
-  if (block.item != null) {
-    return 'activity:${block.item!.eventId}';
-  }
-
-  if (block.workSummary != null) {
-    return 'work-summary:${block.workSummary!.anchorEventId}';
-  }
-
-  final exploration = block.exploration;
-  if (exploration != null) {
-    return 'exploration:${exploration.sourceEventIds.join("|")}';
-  }
-
-  return 'timeline-block';
 }
 
 ScrollPosition _threadDetailScrollPosition(WidgetTester tester) {

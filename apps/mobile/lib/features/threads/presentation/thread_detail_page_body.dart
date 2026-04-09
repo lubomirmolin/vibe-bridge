@@ -118,32 +118,43 @@ class _ThreadDetailBody extends StatelessWidget {
         child: KeyedSubtree(
           key: timelineScrollViewKey,
           child: ListView.builder(
+            reverse: true,
             controller: scrollController,
             key: const Key('thread-detail-scroll-view'),
             cacheExtent: state.isLoadingEarlierHistory ? 8000 : 3200,
             physics: const AlwaysScrollableScrollPhysics(
               parent: BouncingScrollPhysics(),
             ),
+            // In a reversed list, `top` padding is rendered at the visual
+            // bottom (near the composer) and `bottom` at the visual top
+            // (behind the header).
             padding: EdgeInsets.only(
               left: 24,
               right: 24,
-              bottom: hasPinnedComposer ? 140 : 16,
-              top: 212,
+              top: hasPinnedComposer ? 140 : 16,
+              bottom: 212,
             ),
             itemCount: itemCount,
             itemBuilder: (context, index) {
+              // In a reversed list index 0 is the visually bottommost item.
+              // We map reversed indices so that trailing children (active
+              // turn indicator) are at the visual bottom and leading
+              // children (warnings, "Timeline" label, earlier-history
+              // loader) are at the visual top.
+              final reversedIndex = itemCount - 1 - index;
               Widget child;
-              if (index < leadingChildren.length) {
-                child = leadingChildren[index];
-              } else if (index < leadingChildren.length + timelineItemCount) {
+              if (reversedIndex < leadingChildren.length) {
+                child = leadingChildren[reversedIndex];
+              } else if (reversedIndex <
+                  leadingChildren.length + timelineItemCount) {
                 child = _buildTimelineChild(
                   state: state,
                   timelineBlocks: timelineBlocks,
-                  timelineIndex: index - leadingChildren.length,
+                  timelineIndex: reversedIndex - leadingChildren.length,
                 );
               } else {
                 child =
-                    trailingChildren[index -
+                    trailingChildren[reversedIndex -
                         leadingChildren.length -
                         timelineItemCount];
               }
@@ -155,7 +166,7 @@ class _ThreadDetailBody extends StatelessWidget {
                     maxWidth: _ThreadDetailPageState._sessionContentMaxWidth,
                   ),
                   child: SizedBox(
-                    key: index == 0
+                    key: reversedIndex == 0
                         ? const Key('thread-detail-session-content')
                         : null,
                     width: double.infinity,
