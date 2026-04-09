@@ -1,14 +1,16 @@
 # AI Agent Instructions
 
-Welcome! This document provides context, architectural rules, and guidelines for AI agents working in the `codex-mobile-companion` repository. Please read and adhere to these guidelines when making code changes, refactoring, or assisting with development.
+This document is the working contract for AI agents in the `codex-mobile-companion` repository. Follow it when making code changes, refactoring, debugging, or validating behavior.
 
 ## 1. Project Overview
-This repository contains a mobile companion app for local Codex sessions. It's a monorepo consisting of:
+This repository is a monorepo for a mobile companion app and host-side bridge stack for local Codex sessions. The main parts are:
 - **`apps/mobile`**: Flutter mobile app targeting iOS and Android.
 - **`apps/linux-shell`**: Flutter Linux host shell.
 - **`apps/mac-shell`**: SwiftUI macOS companion shell.
 - **`crates/bridge-core`**: Rust bridge server.
-- **`crates/shared-contracts`**: Shared API contracts across the stack.
+- **`crates/shared-contracts`**: Rust shared contracts and schema helpers.
+- **`shared/contracts`**: Shared contract fixtures/versioning used across the stack.
+- **`packages/codex_ui`**: Shared Flutter UI package.
 
 The system connects a mobile app to a locally running Codex session through a host bridge. First-party host shells currently target Linux and macOS.
 
@@ -80,5 +82,11 @@ xcodebuild -project apps/mac-shell/VibeBridgeCompanion.xcodeproj -scheme VibeBri
 - **Formatting**: Always apply native formatters (`cargo fmt`, `dart format`) to modified files.
 - **Consistency**: Keep mobile UI code dense, prioritizing a coding-tool aesthetic with clear monospaced outputs for logs and terminal content.
 - **Resilience**: Assume mobile connections drop often; ensure WebSockets in the mobile app handle reconnections securely.
+- **Do Not Repeat Yourself**: Prefer extracting shared logic, helpers, widgets, or types instead of copying behavior into multiple places. Do not preserve obvious duplication just to keep a change narrowly local.
+- **Finish the Task Completely**: Do not stop at a partial repair, temporary workaround, or "good enough for now" patch. Do the full fix in the same pass whenever reasonably possible, including the follow-through needed to keep the codebase coherent.
+- **No Stopgap Framing**: Avoid approaches justified as the fastest way to stop a regression if they knowingly leave structural problems behind. The default expectation is to implement the correct fix from the start, not a band-aid that someone else has to finish later.
+- **Refactor When Needed**: If the right fix requires refactoring for reuse, separation of concerns, or readability, do that work as part of the task instead of treating refactoring as optional cleanup.
+- **File Size Discipline**: Keep files below 1000 lines of code when practical. `1500` lines is the absolute hard limit for any code file. If a file is trending large, split responsibilities before adding more weight.
+- **Prefer Cohesive Modules**: Do not solve file-size limits by scattering tiny abstractions with unclear ownership. Split code along meaningful boundaries so each file has one understandable job.
 
-You can read claude code source code in the /claudecodesrc folder
+You can read codex & claude code source code in the /claudecodesrc folder

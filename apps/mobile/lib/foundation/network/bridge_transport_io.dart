@@ -212,14 +212,14 @@ class IoBridgeTransport implements BridgeTransport {
       return;
     }
     if (body is String) {
-      request.write(body);
+      request.add(utf8.encode(body));
       return;
     }
     if (body is List<int>) {
       request.add(body);
       return;
     }
-    request.write(jsonEncode(body));
+    request.add(utf8.encode(jsonEncode(body)));
   }
 }
 

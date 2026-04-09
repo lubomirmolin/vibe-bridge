@@ -17,6 +17,7 @@ import 'package:vibe_bridge/features/threads/presentation/thread_git_diff_page.d
 import 'package:vibe_bridge/foundation/connectivity/live_connection_state.dart';
 import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
 import 'package:vibe_bridge/foundation/layout/adaptive_layout.dart';
+import 'package:vibe_bridge/foundation/logging/thread_diagnostics.dart';
 import 'package:vibe_bridge/foundation/media/speech_capture.dart';
 import 'package:vibe_bridge/foundation/session/current_bridge_session.dart';
 import 'package:codex_ui/codex_ui.dart';
@@ -272,10 +273,26 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   }
 
   void _logDraftFlow(String event, [Map<String, Object?> data = const {}]) {
+    final payload = <String, Object?>{
+      'widgetThreadId': widget.threadId,
+      'effectiveThreadId': _effectiveThreadId,
+      'draftWorkspacePath': widget.draftWorkspacePath,
+      'isDraftMode': _isDraftMode,
+      ...data,
+    };
     debugPrint(
       'thread_detail_draft_flow '
       'event=$event '
-      'payload=${jsonEncode(<String, Object?>{'widgetThreadId': widget.threadId, 'effectiveThreadId': _effectiveThreadId, 'draftWorkspacePath': widget.draftWorkspacePath, 'isDraftMode': _isDraftMode, ...data})}',
+      'payload=${jsonEncode(payload)}',
+    );
+    unawaited(
+      ref
+          .read(threadDiagnosticsServiceProvider)
+          .record(
+            kind: 'thread_detail_draft_flow',
+            threadId: (_effectiveThreadId ?? widget.threadId)?.trim(),
+            data: <String, Object?>{'event': event, ...payload},
+          ),
     );
   }
 
@@ -1705,6 +1722,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       'mode': (mode ?? _composerMode).wireValue,
       'controllerHasThread': controller.currentThread != null,
       'controllerStatus': controller.currentThread?.status.wireValue,
+      'canRunMutatingActions': controller.canRunMutatingActions,
+      'isConnectivityUnavailable': controller.isConnectivityUnavailable,
+      'liveConnectionState': controller.liveConnectionState.name,
+      'turnControlErrorMessage': controller.turnControlErrorMessage,
     });
     final imageDataUrls = await _encodeAttachedImages(
       attachedImages ?? _attachedImages,
@@ -1720,6 +1741,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       'success': success,
       'threadId': controller.currentThread?.threadId ?? _effectiveThreadId,
       'controllerStatus': controller.currentThread?.status.wireValue,
+      'canRunMutatingActions': controller.canRunMutatingActions,
+      'isConnectivityUnavailable': controller.isConnectivityUnavailable,
+      'liveConnectionState': controller.liveConnectionState.name,
+      'turnControlErrorMessage': controller.turnControlErrorMessage,
     });
     if (!mounted || !success) {
       return success;
@@ -2095,6 +2120,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
           'hasThread': state.hasThread,
           'isTurnActive': state.isTurnActive,
           'isComposerMutationInFlight': state.isComposerMutationInFlight,
+          'canRunMutatingActions': state.canRunMutatingActions,
+          'isConnectivityUnavailable': state.isConnectivityUnavailable,
+          'liveConnectionState': state.liveConnectionState.name,
+          'turnControlErrorMessage': state.turnControlErrorMessage,
           'initialInputChars':
               _effectiveInitialComposerInput?.trim().length ?? 0,
           'initialAttachedImageCount': _effectiveInitialAttachedImages.length,

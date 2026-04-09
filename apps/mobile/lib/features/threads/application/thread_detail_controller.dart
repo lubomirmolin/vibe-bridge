@@ -9,6 +9,7 @@ import 'package:vibe_bridge/features/threads/data/thread_detail_bridge_api.dart'
 import 'package:vibe_bridge/features/threads/data/thread_live_stream.dart';
 import 'package:vibe_bridge/features/threads/domain/thread_activity_item.dart';
 import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
+import 'package:vibe_bridge/foundation/logging/thread_diagnostics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -21,6 +22,7 @@ final threadDetailControllerProvider = StateNotifierProvider.autoDispose
       final threadListController = ref.read(
         threadListControllerProvider(args.bridgeApiBaseUrl).notifier,
       );
+      final diagnostics = ref.read(threadDiagnosticsServiceProvider);
 
       return ThreadDetailController(
         bridgeApiBaseUrl: args.bridgeApiBaseUrl,
@@ -29,6 +31,16 @@ final threadDetailControllerProvider = StateNotifierProvider.autoDispose
         bridgeApi: ref.watch(threadDetailBridgeApiProvider),
         liveStream: ref.watch(threadLiveStreamProvider),
         threadListController: threadListController,
+        debugLog: (message) {
+          debugPrint(message);
+          unawaited(
+            diagnostics.record(
+              kind: 'thread_detail_controller_log',
+              threadId: args.threadId,
+              data: <String, Object?>{'message': message},
+            ),
+          );
+        },
       );
     });
 
@@ -531,6 +543,10 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   }
 
   ThreadDetailDto? get currentThread => state.thread;
+  bool get canRunMutatingActions => state.canRunMutatingActions;
+  bool get isConnectivityUnavailable => state.isConnectivityUnavailable;
+  LiveConnectionState get liveConnectionState => state.liveConnectionState;
+  String? get turnControlErrorMessage => state.turnControlErrorMessage;
 
   StreamSubscription<BridgeEventEnvelope<Map<String, dynamic>>>?
   _liveEventSubscription;
@@ -1781,10 +1797,22 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   }) async {
     final thread = state.thread;
     if (thread == null) {
+      _debugLog(
+        'thread_detail_submit_composer_blocked '
+        'threadId=${state.threadId} '
+        'reason=missing_thread',
+      );
       return false;
     }
 
     if (!state.canRunMutatingActions) {
+      _debugLog(
+        'thread_detail_submit_composer_blocked '
+        'threadId=${state.threadId} '
+        'reason=mutating_actions_unavailable '
+        'isConnectivityUnavailable=${state.isConnectivityUnavailable} '
+        'liveConnectionState=${state.liveConnectionState.name}',
+      );
       state = state.copyWith(
         turnControlErrorMessage:
             'Turn controls are unavailable while the bridge is offline.',
@@ -1798,6 +1826,11 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         .where((image) => image.isNotEmpty)
         .toList(growable: false);
     if (input.isEmpty && normalizedImages.isEmpty) {
+      _debugLog(
+        'thread_detail_submit_composer_blocked '
+        'threadId=${state.threadId} '
+        'reason=empty_input',
+      );
       state = state.copyWith(
         turnControlErrorMessage: state.isTurnActive
             ? 'Active-turn steering is unavailable in this build. Interrupt the turn or wait for it to finish before sending a new prompt.'
@@ -1807,6 +1840,12 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     }
 
     if (state.isTurnActive && normalizedImages.isNotEmpty) {
+      _debugLog(
+        'thread_detail_submit_composer_blocked '
+        'threadId=${state.threadId} '
+        'reason=images_during_active_turn '
+        'imageCount=${normalizedImages.length}',
+      );
       state = state.copyWith(
         turnControlErrorMessage:
             'Interrupt the active turn or wait for it to finish before attaching images.',
@@ -1847,13 +1886,26 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       );
       return true;
     } on ThreadTurnBridgeException catch (error) {
+      _debugLog(
+        'thread_detail_submit_composer_failed '
+        'threadId=${state.threadId} '
+        'message=${error.message} '
+        'isConnectivityError=${error.isConnectivityError}',
+      );
       _removePendingLocalUserPrompt(localPendingPromptId);
       state = state.copyWith(
         isComposerMutationInFlight: false,
         turnControlErrorMessage: error.message,
       );
       return false;
-    } catch (_) {
+    } catch (error, stackTrace) {
+      _debugLog(
+        'thread_detail_submit_composer_failed '
+        'threadId=${state.threadId} '
+        'message=unknown_error '
+        'errorType=${error.runtimeType} '
+        'stackPreview=${stackTrace.toString().split('\n').take(6).join(' | ')}',
+      );
       _removePendingLocalUserPrompt(localPendingPromptId);
       state = state.copyWith(
         isComposerMutationInFlight: false,
