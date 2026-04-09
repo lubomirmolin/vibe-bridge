@@ -2042,6 +2042,8 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                           selectedPlanOptionByQuestionId:
                               _selectedPlanOptionByQuestionId,
                           selectedProvider: _selectedProvider,
+                          selectedModel: _selectedModel,
+                          selectedReasoning: _selectedReasoning,
                           supportsPlanMode: _supportsPlanMode,
                           session: currentSession,
                           accessModeErrorMessage:
@@ -2485,6 +2487,8 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                               selectedPlanOptionByQuestionId:
                                   _selectedPlanOptionByQuestionId,
                               selectedProvider: _selectedProvider,
+                              selectedModel: _selectedModel,
+                              selectedReasoning: _selectedReasoning,
                               supportsPlanMode: _supportsPlanMode,
                               session: currentSession,
                               accessModeErrorMessage:

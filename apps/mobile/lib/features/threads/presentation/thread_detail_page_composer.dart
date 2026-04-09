@@ -30,6 +30,8 @@ class _PinnedTurnComposer extends StatelessWidget {
     required this.composerMode,
     required this.selectedPlanOptionByQuestionId,
     required this.selectedProvider,
+    required this.selectedModel,
+    required this.selectedReasoning,
     required this.supportsPlanMode,
     required this.session,
     required this.accessModeErrorMessage,
@@ -62,6 +64,8 @@ class _PinnedTurnComposer extends StatelessWidget {
   final PendingUserInputDto? pendingUserInput;
   final Map<String, String> selectedPlanOptionByQuestionId;
   final ProviderKind selectedProvider;
+  final String selectedModel;
+  final String selectedReasoning;
   final bool supportsPlanMode;
   final AppBridgeSession? session;
   final String? accessModeErrorMessage;
@@ -490,11 +494,12 @@ class _PinnedTurnComposer extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (threadUsage != null &&
-                    selectedProvider == ProviderKind.codex) ...[
-                  const SizedBox(height: 8),
-                  _ThreadUsageMicroBars(threadUsage: threadUsage!),
-                ],
+                const SizedBox(height: 8),
+                _ComposerFooter(
+                  selectedProvider: selectedProvider,
+                  selectedModel: selectedModel,
+                  threadUsage: threadUsage,
+                ),
                 buildStatusMessages(),
               ],
             ),
@@ -505,8 +510,60 @@ class _PinnedTurnComposer extends StatelessWidget {
   }
 }
 
-class _ThreadUsageMicroBars extends StatelessWidget {
-  const _ThreadUsageMicroBars({required this.threadUsage});
+class _ComposerFooter extends StatelessWidget {
+  const _ComposerFooter({
+    required this.selectedProvider,
+    required this.selectedModel,
+    required this.threadUsage,
+  });
+
+  final ProviderKind selectedProvider;
+  final String selectedModel;
+  final ThreadUsageDto? threadUsage;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 4, top: 2),
+        child: Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 6,
+          runSpacing: 4,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ProviderIcon(provider: selectedProvider, size: 14),
+                const SizedBox(width: 6),
+                Text(
+                  selectedModel,
+                  style: const TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+            if (threadUsage != null &&
+                selectedProvider == ProviderKind.codex) ...[
+              const Text(
+                '•',
+                style: TextStyle(color: AppTheme.textSubtle, fontSize: 11),
+              ),
+              _UsageMetrics(threadUsage: threadUsage!),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _UsageMetrics extends StatelessWidget {
+  const _UsageMetrics({required this.threadUsage});
 
   final ThreadUsageDto threadUsage;
 
@@ -533,21 +590,18 @@ class _ThreadUsageMicroBars extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Wrap(
-        spacing: 10,
-        runSpacing: 6,
-        children: windows
-            .map(
-              (window) => _ThreadUsageWindowBar(
-                key: window.key,
-                resetLabel: window.resetLabel,
-                usedPercent: window.usedPercent,
-              ),
-            )
-            .toList(growable: false),
-      ),
+    return Wrap(
+      spacing: 12,
+      runSpacing: 4,
+      children: windows
+          .map((window) {
+            return _SimpleUsageBar(
+              key: window.key,
+              resetLabel: window.resetLabel,
+              usedPercent: window.usedPercent,
+            );
+          })
+          .toList(growable: false),
     );
   }
 }
@@ -564,8 +618,8 @@ class _UsageWindowPresentation {
   final int usedPercent;
 }
 
-class _ThreadUsageWindowBar extends StatelessWidget {
-  const _ThreadUsageWindowBar({
+class _SimpleUsageBar extends StatelessWidget {
+  const _SimpleUsageBar({
     super.key,
     required this.resetLabel,
     required this.usedPercent,
@@ -578,42 +632,41 @@ class _ThreadUsageWindowBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final remainingPercent = 100 - usedPercent.clamp(0, 100);
     final normalizedProgress = remainingPercent.toDouble() / 100;
-    return Semantics(
-      label: 'Usage resets in $resetLabel with $remainingPercent percent left',
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            resetLabel,
-            style: GoogleFonts.ibmPlexMono(
-              color: AppTheme.textMuted,
-              fontSize: 11,
-              fontWeight: FontWeight.w500,
-              letterSpacing: 0.2,
+
+    Color barColor = const Color(0xFF10B981); // Emerald 500
+    if (remainingPercent < 20) {
+      barColor = const Color(0xFFEF4444); // Red 500
+    } else if (remainingPercent < 50) {
+      barColor = const Color(0xFFF59E0B); // Amber 500
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Text(
+          resetLabel,
+          style: GoogleFonts.ibmPlexMono(
+            color: AppTheme.textMuted,
+            fontSize: 10,
+            fontWeight: FontWeight.w500,
+            letterSpacing: 0.2,
+          ),
+        ),
+        const SizedBox(width: 4),
+        SizedBox(
+          width: 32,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(1.5),
+            child: LinearProgressIndicator(
+              minHeight: 3,
+              value: normalizedProgress,
+              backgroundColor: Colors.white.withValues(alpha: 0.08),
+              valueColor: AlwaysStoppedAnimation<Color>(barColor),
             ),
           ),
-          const SizedBox(width: 6),
-          SizedBox(
-            width: 44,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: LinearProgressIndicator(
-                minHeight: 4,
-                value: normalizedProgress.toDouble(),
-                backgroundColor: Colors.white.withValues(alpha: 0.08),
-                valueColor: AlwaysStoppedAnimation<Color>(
-                  Color.lerp(
-                        const Color(0xFF34D399),
-                        const Color(0xFFF59E0B),
-                        normalizedProgress,
-                      ) ??
-                      const Color(0xFF34D399),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
