@@ -1,8 +1,0 @@
-{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-approval-control","turn":{"id":"turn-approval-control-1","status":"inProgress","items":[]}}}
-{"jsonrpc":"2.0","method":"item/userMessage/delta","params":{"threadId":"thread-approval-control","turnId":"turn-approval-control-1","itemId":"item-user-1","delta":"Pick a workspace root"}} 
-{"jsonrpc":"2.0","method":"item/started","params":{"threadId":"thread-approval-control","turnId":"turn-approval-control-1","item":{"id":"call1","type":"commandExecution","command":"pwd","cwd":"/tmp/project","status":"inProgress","commandActions":[]}}}
-{"jsonrpc":"2.0","id":"request-permissions-1","method":"item/permissions/requestApproval","params":{"threadId":"thread-approval-control","turnId":"turn-approval-control-1","itemId":"call1","reason":"Select a workspace root","permissions":{"fileSystem":{"write":[".","../shared"]}}}}
-{"jsonrpc":"2.0","method":"serverRequest/resolved","params":{"threadId":"thread-approval-control","requestId":"request-permissions-1"}}
-{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"thread-approval-control","turnId":"turn-approval-control-1","item":{"id":"call1","type":"commandExecution","command":"pwd","cwd":"/tmp/project","status":"completed","commandActions":[],"aggregatedOutput":"/tmp/project","exitCode":0,"durationMs":12}}}
-{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"thread-approval-control","turnId":"turn-approval-control-1","item":{"id":"item-assistant-1","type":"agentMessage","text":"done"}}}
-{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-approval-control","turn":{"id":"turn-approval-control-1","status":"completed","items":[]}}}

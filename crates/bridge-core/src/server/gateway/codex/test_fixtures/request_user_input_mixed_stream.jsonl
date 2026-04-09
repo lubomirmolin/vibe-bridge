@@ -1,6 +1,0 @@
-{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-plan-control","turn":{"id":"turn-plan-control-1","status":"inProgress","items":[]}}}
-{"jsonrpc":"2.0","method":"item/userMessage/delta","params":{"threadId":"thread-plan-control","turnId":"turn-plan-control-1","itemId":"item-user-1","delta":"Plan the Codex rewrite"}} 
-{"jsonrpc":"2.0","id":"request-user-input-1","method":"item/tool/requestUserInput","params":{"threadId":"thread-plan-control","turnId":"turn-plan-control-1","itemId":"call1","questions":[{"id":"confirm_path","header":"Confirm","question":"Proceed with the plan?","options":[{"label":"Yes (Recommended)","description":"Continue the current plan."},{"label":"No","description":"Stop and revisit the approach."}]}]}}
-{"jsonrpc":"2.0","method":"serverRequest/resolved","params":{"threadId":"thread-plan-control","requestId":"request-user-input-1"}}
-{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"thread-plan-control","turnId":"turn-plan-control-1","item":{"id":"item-assistant-1","type":"agentMessage","text":"Need one clarification before I continue."}}}
-{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-plan-control","turn":{"id":"turn-plan-control-1","status":"completed","items":[]}}}

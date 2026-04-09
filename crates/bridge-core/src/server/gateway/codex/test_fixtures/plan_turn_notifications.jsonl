@@ -1,5 +1,0 @@
-{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thread-plan","turn":{"id":"turn-plan-1","status":"inProgress"}}}
-{"jsonrpc":"2.0","method":"thread/status/changed","params":{"threadId":"thread-plan","status":{"type":"active"}}}
-{"jsonrpc":"2.0","method":"item/plan/delta","params":{"threadId":"thread-plan","turnId":"turn-plan-1","itemId":"item-plan-1","delta":"1 out of 2 tasks completed\n1. Inspect bridge payload\n"}}
-{"jsonrpc":"2.0","method":"item/plan/delta","params":{"threadId":"thread-plan","turnId":"turn-plan-1","itemId":"item-plan-1","delta":"2. Add Flutter card"}}
-{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread-plan","turn":{"id":"turn-plan-1","status":"completed"}}}
