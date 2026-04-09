@@ -1754,6 +1754,88 @@ void main() {
     },
   );
 
+  testWidgets('markdown bullet lists render as separate list rows', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail(status: ThreadStatus.completed)],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-list',
+              kind: BridgeEventKind.messageDelta,
+              summary: 'Assistant output',
+              payload: {
+                'type': 'agentMessage',
+                'text':
+                    'If you want, I can draft:\n- a 5-6 sentence responsible disclosure note\n- a fuller bug report with title, severity, impact, PoC, and remediation',
+              },
+              occurredAt: '2026-03-18T10:02:00Z',
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('thread-message-text-0')),
+    );
+
+    expect(find.byKey(const Key('thread-message-text-0')), findsWidgets);
+    expect(find.byKey(const Key('thread-message-list-1')), findsOneWidget);
+    expect(
+      find.byKey(const Key('thread-message-list-1-item-0-marker')),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<Text>(
+            find.byKey(const Key('thread-message-list-1-item-0-marker')),
+          )
+          .data,
+      '•',
+    );
+
+    final firstItemFinder = find.byKey(
+      const Key('thread-message-list-1-item-0-text'),
+    );
+    final secondItemFinder = find.byKey(
+      const Key('thread-message-list-1-item-1-text'),
+    );
+    expect(firstItemFinder, findsWidgets);
+    expect(secondItemFinder, findsWidgets);
+
+    final firstSelectable = find.descendant(
+      of: firstItemFinder,
+      matching: find.byType(SelectableText),
+    );
+    final secondSelectable = find.descendant(
+      of: secondItemFinder,
+      matching: find.byType(SelectableText),
+    );
+    expect(firstSelectable, findsOneWidget);
+    expect(secondSelectable, findsOneWidget);
+    expect(
+      tester.widget<SelectableText>(firstSelectable).data,
+      'a 5-6 sentence responsible disclosure note',
+    );
+    expect(
+      tester.widget<SelectableText>(secondSelectable).data,
+      'a fuller bug report with title, severity, impact, PoC, and remediation',
+    );
+  });
+
   testWidgets(
     'thread detail hides lifecycle and security noise from the conversation timeline',
     (tester) async {

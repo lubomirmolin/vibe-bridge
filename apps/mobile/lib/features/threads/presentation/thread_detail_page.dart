@@ -42,6 +42,7 @@ part 'thread_detail_page_composer.dart';
 part 'thread_detail_page_draft.dart';
 part 'thread_detail_page_header.dart';
 part 'thread_detail_page_message.dart';
+part 'thread_detail_page_message_markdown.dart';
 part 'thread_detail_page_timeline.dart';
 
 const double threadSessionContentMaxWidth = 1280;

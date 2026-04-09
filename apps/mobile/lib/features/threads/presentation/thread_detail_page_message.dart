@@ -293,23 +293,21 @@ class _ThreadMessageBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final segments = _MessageBodyParser.parse(body);
-    if (segments.length == 1 &&
-        segments.first.kind == _MessageSegmentKind.text &&
-        imageUrls.isEmpty) {
-      return _ThreadInlineText(
-        key: const Key('thread-message-text-0'),
-        text: segments.first.content,
-        textStyle: textStyle,
-      );
+    final children = <Widget>[];
+    var textBlockIndex = 0;
+
+    void addChild(Widget child) {
+      if (children.isNotEmpty) {
+        children.add(const SizedBox(height: 10));
+      }
+      children.add(child);
     }
 
-    final children = <Widget>[];
     if (body.isNotEmpty) {
-      for (var index = 0; index < segments.length; index++) {
-        final segment = segments[index];
+      for (final segment in segments) {
         switch (segment.kind) {
           case _MessageSegmentKind.code:
-            children.add(
+            addChild(
               _ThreadCodeBlockViewer(
                 code: segment.content,
                 languageHint: segment.languageHint,
@@ -318,31 +316,28 @@ class _ThreadMessageBody extends StatelessWidget {
             );
             break;
           case _MessageSegmentKind.text:
-            if (segment.content.isNotEmpty) {
-              children.add(
-                _ThreadInlineText(
-                  key: Key('thread-message-text-$index'),
-                  text: segment.content,
+            if (segment.content.isEmpty) {
+              break;
+            }
+
+            final textBlocks = _MessageTextBlockParser.parse(segment.content);
+            for (final block in textBlocks) {
+              addChild(
+                _ThreadTextBlock(
+                  block: block,
                   textStyle: textStyle,
+                  blockIndex: textBlockIndex,
                 ),
               );
+              textBlockIndex += 1;
             }
             break;
-        }
-
-        if (index < segments.length - 1) {
-          children.add(const SizedBox(height: 10));
         }
       }
     }
 
     for (var index = 0; index < imageUrls.length; index++) {
-      if (children.isNotEmpty) {
-        children.add(const SizedBox(height: 10));
-      }
-      children.add(
-        _ThreadMessageImage(imageUrl: imageUrls[index], index: index),
-      );
+      addChild(_ThreadMessageImage(imageUrl: imageUrls[index], index: index));
     }
 
     return Column(
