@@ -3130,6 +3130,10 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
             .length,
         1,
       );
+      expect(
+        find.byKey(const Key('thread-message-sending-spinner')),
+        findsOneWidget,
+      );
       expect(find.text('Sending'), findsOneWidget);
 
       startTurnCompleter.complete(
@@ -3257,6 +3261,10 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
             .pendingLocalUserPrompts
             .length,
         1,
+      );
+      expect(
+        find.byKey(const Key('thread-message-sending-spinner')),
+        findsOneWidget,
       );
       expect(find.text('Sending'), findsOneWidget);
 

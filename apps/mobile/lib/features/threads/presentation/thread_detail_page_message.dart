@@ -48,10 +48,14 @@ class _ChatMessageCard extends StatelessWidget {
                   if (isSending || isFailed) ...[
                     const SizedBox(width: 10),
                     if (isSending)
-                      PhosphorIcon(
-                        PhosphorIcons.circleNotch(),
-                        color: AppTheme.emerald,
-                        size: 13,
+                      SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(
+                          key: const Key('thread-message-sending-spinner'),
+                          strokeWidth: 1.75,
+                          color: AppTheme.emerald,
+                        ),
                       )
                     else
                       PhosphorIcon(
