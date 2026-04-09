@@ -320,7 +320,7 @@ Future<void> _pumpUntilFound(
       return;
     }
   }
-  fail('Timed out waiting for ${finder.description}.');
+  fail('Timed out waiting for ${finder.describeMatch(Plurality.many)}.');
 }
 
 void _tryHideTestKeyboard(WidgetTester tester) {

@@ -1617,8 +1617,13 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
                         left: 0,
                         child: Transform(
                           transform: Matrix4.identity()
-                            ..translate(secondaryOffset, 0.0)
-                            ..scale(secondaryScale, secondaryScale),
+                            ..translateByDouble(secondaryOffset, 0.0, 0.0, 1.0)
+                            ..scaleByDouble(
+                              secondaryScale,
+                              secondaryScale,
+                              1.0,
+                              1.0,
+                            ),
                           alignment: Alignment.center,
                           child: buildPrimaryButton(
                             mode: secondaryMode,
@@ -1631,8 +1636,8 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
                         left: 0,
                         child: Transform(
                           transform: Matrix4.identity()
-                            ..translate(activeOffset, 0.0)
-                            ..scale(activeScale, activeScale),
+                            ..translateByDouble(activeOffset, 0.0, 0.0, 1.0)
+                            ..scaleByDouble(activeScale, activeScale, 1.0, 1.0),
                           alignment: Alignment.center,
                           child: buildPrimaryButton(
                             mode: activeMode,

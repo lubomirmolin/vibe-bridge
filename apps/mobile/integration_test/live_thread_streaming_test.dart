@@ -135,8 +135,8 @@ class _TestBridgeServer {
   final Map<String, ThreadTimelineEntryDto> _timelineByEventId =
       <String, ThreadTimelineEntryDto>{};
 
-  ThreadSummaryDto _threadSummary;
-  ThreadDetailDto _threadDetail;
+  final ThreadSummaryDto _threadSummary;
+  final ThreadDetailDto _threadDetail;
 
   static Future<_TestBridgeServer> start() async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -191,40 +191,6 @@ class _TestBridgeServer {
     request.response.headers.contentType = ContentType.json;
     request.response.write(jsonEncode(body));
     await request.response.close();
-  }
-
-  ThreadStatus? _resolveThreadStatus(
-    BridgeEventEnvelope<Map<String, dynamic>> event,
-  ) {
-    if (event.kind != BridgeEventKind.threadStatusChanged) {
-      return null;
-    }
-
-    final rawStatus = event.payload['status'];
-    if (rawStatus is! String) {
-      return null;
-    }
-
-    try {
-      return threadStatusFromWire(rawStatus);
-    } on FormatException {
-      return null;
-    }
-  }
-
-  String _summarizeEvent(BridgeEventEnvelope<Map<String, dynamic>> event) {
-    final payload = event.payload;
-    final text = payload['text'];
-    if (text is String && text.trim().isNotEmpty) {
-      return text.trim();
-    }
-
-    final delta = payload['delta'];
-    if (delta is String && delta.trim().isNotEmpty) {
-      return delta.trim();
-    }
-
-    return event.kind.wireValue;
   }
 }
 
