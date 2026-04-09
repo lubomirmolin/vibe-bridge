@@ -1597,6 +1597,59 @@ void main() {
     expect((children[2] as TextSpan).text, ' Next step.');
   });
 
+  testWidgets('assistant app directives render git pills not raw text', (
+    tester,
+  ) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-123': [_thread123Detail(status: ThreadStatus.completed)],
+      },
+      timelineScriptByThreadId: {
+        'thread-123': [
+          <ThreadTimelineEntryDto>[
+            _timelineEvent(
+              id: 'evt-directives',
+              kind: BridgeEventKind.messageDelta,
+              summary: 'Assistant output',
+              payload: {
+                'type': 'agentMessage',
+                'text':
+                    'Working tree is clean.\n\n::git-stage{cwd="/tmp/repo"}\n::git-commit{cwd="/tmp/repo"}',
+              },
+              occurredAt: '2026-03-18T10:02:00Z',
+            ),
+          ],
+        ],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-123',
+    );
+    await tester.pumpAndSettle();
+
+    await _scrollUntilVisible(
+      tester,
+      find.byKey(const Key('thread-message-text-0')),
+    );
+
+    expect(find.textContaining('Working tree is clean.'), findsOneWidget);
+    expect(find.textContaining('::git-stage'), findsNothing);
+    expect(find.textContaining('::git-commit'), findsNothing);
+    expect(find.text('Staged'), findsOneWidget);
+    expect(find.text('Committed'), findsOneWidget);
+    expect(
+      find.byKey(const Key('thread-message-directive-pill-0')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('thread-message-directive-pill-1')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets(
     'assistant standalone markdown bold titles render without asterisks',
     (tester) async {

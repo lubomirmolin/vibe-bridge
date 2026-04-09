@@ -80,6 +80,7 @@ class _ChatMessageCard extends StatelessWidget {
             ],
             _ThreadMessageBody(
               body: item.body,
+              hideAppDirectives: !isUser,
               imageUrls: item.messageImageUrls,
               textStyle: TextStyle(
                 color: isUser
@@ -286,17 +287,23 @@ class _MessageTimestampLabel {
 class _ThreadMessageBody extends StatelessWidget {
   const _ThreadMessageBody({
     required this.body,
+    required this.hideAppDirectives,
     required this.imageUrls,
     required this.textStyle,
   });
 
   final String body;
+  final bool hideAppDirectives;
   final List<String> imageUrls;
   final TextStyle textStyle;
 
   @override
   Widget build(BuildContext context) {
-    final segments = _MessageBodyParser.parse(body);
+    final parsedBody = hideAppDirectives
+        ? _parseAssistantDirectiveBody(body)
+        : _ParsedAssistantDirectiveBody(displayBody: body, pills: const []);
+    final displayBody = parsedBody.displayBody;
+    final segments = _MessageBodyParser.parse(displayBody);
     final children = <Widget>[];
     var textBlockIndex = 0;
 
@@ -307,7 +314,7 @@ class _ThreadMessageBody extends StatelessWidget {
       children.add(child);
     }
 
-    if (body.isNotEmpty) {
+    if (displayBody.isNotEmpty) {
       for (final segment in segments) {
         switch (segment.kind) {
           case _MessageSegmentKind.code:
@@ -344,9 +351,183 @@ class _ThreadMessageBody extends StatelessWidget {
       addChild(_ThreadMessageImage(imageUrl: imageUrls[index], index: index));
     }
 
+    if (parsedBody.pills.isNotEmpty) {
+      addChild(_AssistantDirectivePillRow(pills: parsedBody.pills));
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: children,
+    );
+  }
+}
+
+class _ParsedAssistantDirectiveBody {
+  const _ParsedAssistantDirectiveBody({
+    required this.displayBody,
+    required this.pills,
+  });
+
+  final String displayBody;
+  final List<_AssistantDirectivePillData> pills;
+}
+
+class _AssistantDirectivePillData {
+  const _AssistantDirectivePillData({
+    required this.label,
+    required this.icon,
+    required this.textColor,
+    required this.backgroundColor,
+    required this.borderColor,
+  });
+
+  final String label;
+  final IconData icon;
+  final Color textColor;
+  final Color backgroundColor;
+  final Color borderColor;
+}
+
+_ParsedAssistantDirectiveBody _parseAssistantDirectiveBody(String body) {
+  if (body.trim().isEmpty) {
+    return const _ParsedAssistantDirectiveBody(displayBody: '', pills: []);
+  }
+
+  final directivePattern = RegExp(
+    r'^\s*::([a-z0-9-]+)\{.*\}\s*$',
+    caseSensitive: false,
+  );
+  final keptLines = <String>[];
+  final pills = <_AssistantDirectivePillData>[];
+  var previousWasBlank = false;
+
+  for (final line in body.split('\n')) {
+    final match = directivePattern.firstMatch(line);
+    if (match != null) {
+      final pill = _directivePillForName(match.group(1) ?? '');
+      if (pill != null) {
+        pills.add(pill);
+      }
+      continue;
+    }
+
+    final isBlank = line.trim().isEmpty;
+    if (isBlank && (keptLines.isEmpty || previousWasBlank)) {
+      continue;
+    }
+
+    keptLines.add(line);
+    previousWasBlank = isBlank;
+  }
+
+  while (keptLines.isNotEmpty && keptLines.last.trim().isEmpty) {
+    keptLines.removeLast();
+  }
+
+  return _ParsedAssistantDirectiveBody(
+    displayBody: keptLines.join('\n'),
+    pills: pills,
+  );
+}
+
+_AssistantDirectivePillData? _directivePillForName(String rawName) {
+  final name = rawName.trim().toLowerCase();
+  switch (name) {
+    case 'git-stage':
+      return _AssistantDirectivePillData(
+        label: 'Staged',
+        icon: PhosphorIcons.checkCircle(),
+        textColor: const Color(0xFF34D399),
+        backgroundColor: AppTheme.emerald.withValues(alpha: 0.14),
+        borderColor: AppTheme.emerald.withValues(alpha: 0.28),
+      );
+    case 'git-commit':
+      return _AssistantDirectivePillData(
+        label: 'Committed',
+        icon: PhosphorIcons.gitCommit(),
+        textColor: const Color(0xFF7DD3FC),
+        backgroundColor: const Color(0xFF0EA5E9).withValues(alpha: 0.12),
+        borderColor: const Color(0xFF38BDF8).withValues(alpha: 0.28),
+      );
+    case 'git-create-branch':
+      return _AssistantDirectivePillData(
+        label: 'Branch created',
+        icon: PhosphorIcons.gitBranch(),
+        textColor: const Color(0xFFFBBF24),
+        backgroundColor: AppTheme.amber.withValues(alpha: 0.12),
+        borderColor: AppTheme.amber.withValues(alpha: 0.28),
+      );
+    case 'git-push':
+      return _AssistantDirectivePillData(
+        label: 'Pushed',
+        icon: PhosphorIcons.uploadSimple(),
+        textColor: const Color(0xFFA78BFA),
+        backgroundColor: const Color(0xFF8B5CF6).withValues(alpha: 0.12),
+        borderColor: const Color(0xFFA78BFA).withValues(alpha: 0.28),
+      );
+    case 'git-create-pr':
+      return _AssistantDirectivePillData(
+        label: 'PR created',
+        icon: PhosphorIcons.gitPullRequest(),
+        textColor: const Color(0xFFF9A8D4),
+        backgroundColor: const Color(0xFFEC4899).withValues(alpha: 0.12),
+        borderColor: const Color(0xFFF472B6).withValues(alpha: 0.28),
+      );
+  }
+
+  return null;
+}
+
+class _AssistantDirectivePillRow extends StatelessWidget {
+  const _AssistantDirectivePillRow({required this.pills});
+
+  final List<_AssistantDirectivePillData> pills;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (var index = 0; index < pills.length; index++)
+          _AssistantDirectivePill(
+            key: Key('thread-message-directive-pill-$index'),
+            pill: pills[index],
+          ),
+      ],
+    );
+  }
+}
+
+class _AssistantDirectivePill extends StatelessWidget {
+  const _AssistantDirectivePill({super.key, required this.pill});
+
+  final _AssistantDirectivePillData pill;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: pill.backgroundColor,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: pill.borderColor),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          PhosphorIcon(pill.icon, color: pill.textColor, size: 13),
+          const SizedBox(width: 6),
+          Text(
+            pill.label,
+            style: GoogleFonts.jetBrainsMono(
+              color: pill.textColor,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
