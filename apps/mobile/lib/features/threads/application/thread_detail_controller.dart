@@ -557,6 +557,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
   bool _shouldRefreshDetailAfterCurrentRequest = false;
   bool _shouldRefreshSnapshotAfterCurrentRequest = false;
   bool _isDisposed = false;
+  int? _lastSeenLiveBridgeSeq;
   DateTime? _pendingPromptSubmittedAt;
   DateTime? _lastActiveTurnSignalAt;
   bool _activeTurnSawMeaningfulLiveActivity = false;
@@ -629,6 +630,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         expectedThreadId: requestedThreadId,
         context: 'loading thread timeline',
       );
+      _seedLatestBridgeSeq(scopedPage.latestBridgeSeq);
 
       final items = _mergeTimelineEntries(
         currentItems: const <ThreadActivityItem>[],
@@ -722,6 +724,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
           expectedThreadId: requestedThreadId,
           context: 'loading older history',
         );
+        _seedLatestBridgeSeq(scopedPage.latestBridgeSeq);
         latestThread = _fresherThreadDetail(
           current: latestThread,
           candidate: scopedPage.thread,
@@ -898,8 +901,19 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         expectedThreadId: requestedThreadId,
         context: 'running reconnect catch-up timeline refresh',
       );
-
-      final mergedItems = _mergeTimeline(scopedPage.entries);
+      _seedLatestBridgeSeq(scopedPage.latestBridgeSeq);
+      final mergedItems =
+          state.items.isNotEmpty &&
+              _shouldMergeSnapshotTimelineIntoCurrentItems(
+                nextThread: scopedDetail,
+                latestBridgeSeq: scopedPage.latestBridgeSeq,
+              )
+          ? _mergeTimelineEntries(
+              currentItems: state.items,
+              timeline: scopedPage.entries,
+            )
+          : _mergeTimeline(scopedPage.entries);
+      _replaceKnownEventIds(mergedItems);
 
       if (_isDisposed) {
         return;
@@ -981,6 +995,39 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     }
 
     return List<ThreadActivityItem>.unmodifiable(nextItems);
+  }
+
+  void _seedLatestBridgeSeq(int? latestBridgeSeq) {
+    if (latestBridgeSeq == null) {
+      return;
+    }
+    final current = _lastSeenLiveBridgeSeq;
+    if (current == null || latestBridgeSeq > current) {
+      _lastSeenLiveBridgeSeq = latestBridgeSeq;
+    }
+  }
+
+  bool _snapshotTimelineIsBehindLive(int? latestBridgeSeq) {
+    final current = _lastSeenLiveBridgeSeq;
+    if (latestBridgeSeq == null || current == null) {
+      return false;
+    }
+    return latestBridgeSeq < current;
+  }
+
+  bool _shouldMergeSnapshotTimelineIntoCurrentItems({
+    required ThreadDetailDto nextThread,
+    required int? latestBridgeSeq,
+  }) {
+    if (_snapshotTimelineIsBehindLive(latestBridgeSeq)) {
+      return true;
+    }
+    if (nextThread.status == ThreadStatus.running) {
+      return true;
+    }
+    return _lastActiveTurnSignalAt != null ||
+        _pendingPromptSubmittedAt != null ||
+        _activeTurnNeedsSnapshotCatchUp;
   }
 
   void _trackKnownEventIds(List<ThreadActivityItem> items) {
@@ -1350,6 +1397,9 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
     if (_isDuplicateLiveFrame(event)) {
       return;
     }
+    if (event.bridgeSeq != null) {
+      _lastSeenLiveBridgeSeq = event.bridgeSeq;
+    }
 
     final shouldReloadTimeline = _shouldReloadTimelineAfterLiveEvent(event);
 
@@ -1387,6 +1437,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       occurredAt: event.occurredAt,
       payload: mergedPayload,
       annotations: event.annotations,
+      bridgeSeq: event.bridgeSeq,
     );
     final nextItem = ThreadActivityItem.fromLiveEvent(mergedEvent);
     _logLiveEvent(
@@ -1622,6 +1673,7 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
         expectedThreadId: requestedThreadId,
         context: 'refreshing live thread snapshot timeline',
       );
+      _seedLatestBridgeSeq(scopedPage.latestBridgeSeq);
       final nextThread =
           _shouldApplyRefreshedThreadDetail(
             current: state.thread,
@@ -1630,7 +1682,18 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
           ? scopedDetail
           : (state.thread ?? scopedDetail);
 
-      final items = _replaceTimelineItems(scopedPage.entries);
+      final shouldMergeSnapshotIntoCurrentItems =
+          state.items.isNotEmpty &&
+          _shouldMergeSnapshotTimelineIntoCurrentItems(
+            nextThread: nextThread,
+            latestBridgeSeq: scopedPage.latestBridgeSeq,
+          );
+      final items = shouldMergeSnapshotIntoCurrentItems
+          ? _mergeTimelineEntries(
+              currentItems: state.items,
+              timeline: scopedPage.entries,
+            )
+          : _replaceTimelineItems(scopedPage.entries);
       _replaceKnownEventIds(items);
 
       state = state.copyWith(
@@ -1757,6 +1820,18 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
       return;
     }
 
+    final reason = (event.payload['reason'] as String?)?.trim();
+    if (status == ThreadStatus.running && reason == 'turn_timeout') {
+      final timeoutReason = (event.payload['timeout_reason'] as String?)
+          ?.trim();
+      _activeTurnNeedsSnapshotCatchUp = true;
+      state = state.copyWith(
+        streamErrorMessage: _turnTimeoutMessage(timeoutReason),
+      );
+      _scheduleThreadSnapshotRefresh(delay: const Duration(milliseconds: 100));
+      return;
+    }
+
     final thread = state.thread;
     if (thread == null) {
       return;
@@ -1785,6 +1860,19 @@ class ThreadDetailController extends StateNotifier<ThreadDetailState> {
 
     if (status != ThreadStatus.running) {
       _finishTrackingActiveTurn();
+    }
+  }
+
+  String _turnTimeoutMessage(String? timeoutReason) {
+    switch (timeoutReason) {
+      case 'waiting_for_turn_start_ack':
+        return 'Bridge queued the prompt, but Codex did not acknowledge turn start in time.';
+      case 'waiting_for_user_item':
+        return 'Bridge started the turn, but the user message never appeared in the live stream.';
+      case 'waiting_for_first_assistant_signal':
+        return 'Bridge sent the message, but no assistant response arrived in time.';
+      default:
+        return 'Bridge is still waiting for this turn to produce a live response.';
     }
   }
 

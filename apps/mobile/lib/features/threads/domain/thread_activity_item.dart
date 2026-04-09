@@ -137,6 +137,7 @@ class ThreadActivityItem {
     required this.title,
     required this.body,
     required this.payload,
+    this.clientMessageId,
     this.messageImageUrls = const <String>[],
     this.presentation,
     this.parsedCommandOutput,
@@ -153,6 +154,7 @@ class ThreadActivityItem {
   final String title;
   final String body;
   final Map<String, dynamic> payload;
+  final String? clientMessageId;
   final List<String> messageImageUrls;
   final ThreadActivityPresentation? presentation;
   final ParsedCommandOutput? parsedCommandOutput;
@@ -216,6 +218,7 @@ class ThreadActivityItem {
       title: title,
       body: body,
       payload: payload,
+      clientMessageId: _optionalString(payload, 'client_message_id'),
       messageImageUrls: messageImageUrls,
       presentation: presentation,
       parsedCommandOutput: parsedCommandOutput,
@@ -227,6 +230,7 @@ class ThreadActivityItem {
     required String eventId,
     required String occurredAt,
     required String body,
+    String? clientMessageId,
     List<String> messageImageUrls = const <String>[],
     ThreadActivityLocalMessageState localMessageState =
         ThreadActivityLocalMessageState.sending,
@@ -243,8 +247,12 @@ class ThreadActivityItem {
         'type': 'message',
         'role': 'user',
         'text': body,
+        ...?clientMessageId == null
+            ? null
+            : <String, dynamic>{'client_message_id': clientMessageId},
         'images': messageImageUrls,
       },
+      clientMessageId: clientMessageId,
       messageImageUrls: messageImageUrls,
       localMessageState: localMessageState,
       localErrorMessage: localErrorMessage,
@@ -265,6 +273,7 @@ class ThreadActivityItem {
       title: title,
       body: body,
       payload: payload,
+      clientMessageId: clientMessageId,
       messageImageUrls: messageImageUrls,
       presentation: presentation,
       parsedCommandOutput: parsedCommandOutput,
