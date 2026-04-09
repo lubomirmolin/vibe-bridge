@@ -5,9 +5,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use shared_contracts::{BridgeEventEnvelope, BridgeEventKind, CONTRACT_VERSION, GitStatusDto};
 
-use crate::server::contracts::{
-    GitMutationStatusDto, GitStatusResponse, MutationResultResponse, RepositoryContextDto,
-};
+use crate::thread_api::{GitStatusResponse, MutationResultResponse, RepositoryContextDto};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -71,7 +69,7 @@ pub struct ApprovalRecordDto {
     pub requested_at: String,
     pub resolved_at: Option<String>,
     pub repository: RepositoryContextDto,
-    pub git_status: GitMutationStatusDto,
+    pub git_status: crate::thread_api::GitStatusDto,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -126,7 +124,7 @@ pub fn read_git_state(workspace: &str, thread_id: &str) -> Result<ResolvedGitSta
         branch: branch.clone(),
         remote: remote_name.clone().unwrap_or_else(|| "unknown".to_string()),
     };
-    let mutation_status = GitMutationStatusDto {
+    let mutation_status = crate::thread_api::GitStatusDto {
         dirty,
         ahead_by,
         behind_by,
@@ -142,7 +140,12 @@ pub fn read_git_state(workspace: &str, thread_id: &str) -> Result<ResolvedGitSta
             ahead_by,
             behind_by,
         },
-        response: GitStatusResponse::new(thread_id, repository_context, mutation_status),
+        response: GitStatusResponse {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread_id: thread_id.to_string(),
+            repository: repository_context,
+            status: mutation_status,
+        },
         branch,
         remote_name,
     })
@@ -154,7 +157,7 @@ pub fn read_git_state_for_status(
 ) -> Result<ResolvedGitState, String> {
     match read_git_state(workspace, thread_id) {
         Ok(state) => Ok(state),
-        Err(error) if is_git_context_unavailable_error(&error) => {
+        Err(error) if is_not_git_repository_error(&error) => {
             let workspace = normalize_workspace(workspace)?;
             Ok(non_repository_git_state(workspace, thread_id))
         }
@@ -254,7 +257,6 @@ fn build_executed_mutation(
     let command_event = BridgeEventEnvelope {
         contract_version: CONTRACT_VERSION.to_string(),
         event_id: format!("{thread_id}-{}-{occurred_at}", context.operation),
-        bridge_seq: None,
         thread_id: thread_id.to_string(),
         kind: BridgeEventKind::CommandDelta,
         occurred_at: occurred_at.to_string(),
@@ -272,15 +274,16 @@ fn build_executed_mutation(
 
     Ok(ExecutedGitMutation {
         snapshot_status: state.snapshot_status,
-        mutation: MutationResultResponse::new(
-            thread_id,
-            context.operation,
-            "success",
-            context.message,
+        mutation: MutationResultResponse {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread_id: thread_id.to_string(),
+            operation: context.operation.to_string(),
+            outcome: "success".to_string(),
+            message: context.message,
             thread_status,
-            state.response.repository,
-            state.response.status,
-        ),
+            repository: state.response.repository,
+            status: state.response.status,
+        },
         command_event,
     })
 }
@@ -420,7 +423,7 @@ fn non_repository_git_state(workspace: &Path, thread_id: &str) -> ResolvedGitSta
         branch: "unknown".to_string(),
         remote: "local".to_string(),
     };
-    let status = GitMutationStatusDto {
+    let status = crate::thread_api::GitStatusDto {
         dirty: false,
         ahead_by: 0,
         behind_by: 0,
@@ -436,19 +439,19 @@ fn non_repository_git_state(workspace: &Path, thread_id: &str) -> ResolvedGitSta
             ahead_by: 0,
             behind_by: 0,
         },
-        response: GitStatusResponse::new(thread_id, repository_context, status),
+        response: GitStatusResponse {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread_id: thread_id.to_string(),
+            repository: repository_context,
+            status,
+        },
         branch: "unknown".to_string(),
         remote_name: None,
     }
 }
 
-fn is_git_context_unavailable_error(error: &str) -> bool {
-    let normalized = error.to_ascii_lowercase();
-    normalized.contains("not a git repository")
-        || normalized.contains("needed a single revision")
-        || normalized.contains("ambiguous argument 'head'")
-        || normalized.contains("unknown revision or path not in the working tree")
-        || normalized.contains("bad revision 'head'")
+fn is_not_git_repository_error(error: &str) -> bool {
+    error.contains("not a git repository")
 }
 
 fn run_git<I, S>(workspace: &Path, args: I) -> Result<String, String>
@@ -521,29 +524,6 @@ mod tests {
         assert_eq!(state.response.status.ahead_by, 0);
         assert_eq!(state.response.status.behind_by, 0);
         let _ = fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn read_git_state_for_status_returns_placeholder_for_repo_without_head() {
-        let root = unique_temp_dir("repo-without-head");
-        let repo = root.join("repo");
-        fs::create_dir_all(&repo).expect("repo dir should exist");
-        run_git_ok(&repo, ["init"]);
-        run_git_ok(&repo, ["config", "user.name", "Codex"]);
-        run_git_ok(&repo, ["config", "user.email", "codex@example.com"]);
-
-        let state = read_git_state_for_status(repo.to_string_lossy().as_ref(), "thread-1")
-            .expect("repo without HEAD should degrade into unavailable git status");
-
-        assert_eq!(state.response.repository.workspace, repo.to_string_lossy());
-        assert_eq!(state.response.repository.repository, "unknown-repository");
-        assert_eq!(state.response.repository.branch, "unknown");
-        assert_eq!(state.response.repository.remote, "local");
-        assert!(!state.response.status.dirty);
-        assert_eq!(state.response.status.ahead_by, 0);
-        assert_eq!(state.response.status.behind_by, 0);
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

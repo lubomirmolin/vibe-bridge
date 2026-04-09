@@ -1,10 +1,17 @@
 part of 'thread_detail_controller.dart';
 
 mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
+  @override
   Future<void> loadThread() async {
     if (_isDisposed) {
       return;
     }
+
+    var loadPhase = 'reset_state';
+    _recordDiagnostic(
+      'thread_load_started',
+      data: <String, Object?>{'phase': loadPhase},
+    );
 
     _reconnectScheduler.cancel();
     state = _resetTransientState(
@@ -12,11 +19,13 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
     ).copyWith(isLoading: true, isUnavailable: false);
 
     try {
+      loadPhase = 'close_live_subscription';
       await _closeLiveSubscription();
       _knownEventIds.clear();
       _lastLiveFrameFingerprintByEventId.clear();
       final requestedThreadId = state.threadId;
 
+      loadPhase = 'fetch_thread_detail';
       final detail = await _bridgeApi.fetchThreadDetail(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
         threadId: requestedThreadId,
@@ -35,6 +44,7 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
       ).copyWith(thread: scopedDetail, isLoading: true, isUnavailable: false);
       _threadListController.syncThreadDetail(scopedDetail);
 
+      loadPhase = 'fetch_thread_timeline';
       final page = await _bridgeApi.fetchThreadTimelinePage(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
         threadId: requestedThreadId,
@@ -71,7 +81,7 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
         hasMoreBefore: scopedPage.hasMoreBefore,
         nextBefore: scopedPage.nextBefore,
       );
-      await refreshGitStatus(showLoading: false);
+      loadPhase = 'start_live_subscription';
       await _startLiveSubscription();
       if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
         return;
@@ -81,11 +91,31 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
         liveConnectionState: LiveConnectionState.connected,
         clearStreamErrorMessage: true,
       );
+      _recordDiagnostic(
+        'thread_load_completed',
+        data: <String, Object?>{
+          'phase': 'completed',
+          'itemCount': items.length,
+          'hasMoreBefore': scopedPage.hasMoreBefore,
+          'latestBridgeSeq': scopedPage.latestBridgeSeq,
+        },
+      );
+      unawaited(refreshGitStatus(showLoading: false));
     } on ThreadDetailBridgeException catch (error) {
       if (_isDisposed) {
         return;
       }
 
+      _recordDiagnostic(
+        'thread_load_failed',
+        data: <String, Object?>{
+          'phase': loadPhase,
+          'error': error.message,
+          'errorType': error.runtimeType.toString(),
+          'isUnavailable': error.isUnavailable,
+          'isConnectivityError': error.isConnectivityError,
+        },
+      );
       state = state.copyWith(
         isLoading: false,
         errorMessage: error.message,
@@ -95,11 +125,20 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
             ? LiveConnectionState.disconnected
             : state.liveConnectionState,
       );
-    } catch (_) {
+    } catch (error, stackTrace) {
       if (_isDisposed) {
         return;
       }
 
+      _recordDiagnostic(
+        'thread_load_failed',
+        data: <String, Object?>{
+          'phase': loadPhase,
+          'error': error.toString(),
+          'errorType': error.runtimeType.toString(),
+          'stackPreview': _stackPreview(stackTrace),
+        },
+      );
       state = state.copyWith(
         isLoading: false,
         errorMessage: 'Couldn’t load this thread right now.',
@@ -108,6 +147,7 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
     }
   }
 
+  @override
   Future<void> loadEarlierHistory() async {
     if (!state.canLoadEarlierHistory) {
       return;
@@ -115,6 +155,16 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
 
     final requestedThreadId = state.threadId;
     final previousBlockSignatures = _visibleBlockSignatures(state.visibleItems);
+    var loadPhase = 'fetch_thread_timeline_before';
+
+    _recordDiagnostic(
+      'thread_history_load_started',
+      data: <String, Object?>{
+        'phase': loadPhase,
+        'nextBefore': state.nextBefore,
+        'visibleItemCount': state.visibleItems.length,
+      },
+    );
 
     state = state.copyWith(
       isLoadingEarlierHistory: true,
@@ -179,11 +229,30 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
       if (latestThread != null) {
         _threadListController.syncThreadDetail(latestThread);
       }
+      _recordDiagnostic(
+        'thread_history_load_completed',
+        data: <String, Object?>{
+          'phase': 'completed',
+          'itemCount': items.length,
+          'hasMoreBefore': hasMoreBefore,
+          'nextBefore': nextBefore,
+        },
+      );
     } on ThreadDetailBridgeException catch (error) {
       if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
         return;
       }
 
+      _recordDiagnostic(
+        'thread_history_load_failed',
+        data: <String, Object?>{
+          'phase': loadPhase,
+          'error': error.message,
+          'errorType': error.runtimeType.toString(),
+          'isConnectivityError': error.isConnectivityError,
+          'isUnavailable': error.isUnavailable,
+        },
+      );
       state = state.copyWith(
         isLoadingEarlierHistory: false,
         streamErrorMessage: error.message,
@@ -192,11 +261,20 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
             ? LiveConnectionState.disconnected
             : state.liveConnectionState,
       );
-    } catch (_) {
+    } catch (error, stackTrace) {
       if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
         return;
       }
 
+      _recordDiagnostic(
+        'thread_history_load_failed',
+        data: <String, Object?>{
+          'phase': loadPhase,
+          'error': error.toString(),
+          'errorType': error.runtimeType.toString(),
+          'stackPreview': _stackPreview(stackTrace),
+        },
+      );
       state = state.copyWith(
         isLoadingEarlierHistory: false,
         streamErrorMessage: 'Couldn’t load older history right now.',
@@ -205,11 +283,13 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
     }
   }
 
+  @override
   Future<void> retryReconnectCatchUp() async {
     _reconnectScheduler.cancel();
     await _runReconnectCatchUp();
   }
 
+  @override
   Future<void> _startLiveSubscription({
     int? afterSeq,
     bool handleFailure = true,
@@ -253,6 +333,7 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
     }
   }
 
+  @override
   void _handleLiveStreamDisconnected() {
     if (_isDisposed) {
       return;
@@ -279,10 +360,14 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
     _reconnectScheduler.schedule();
   }
 
+  @override
   Future<void> _runReconnectCatchUp() async {
     if (_isDisposed) {
       return;
     }
+
+    var catchUpPhase = 'close_live_subscription';
+    _recordDiagnostic('thread_reconnect_catchup_started');
 
     try {
       final lastSeenBridgeSeq = _lastSeenLiveBridgeSeq;
@@ -298,6 +383,7 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
           lastSeenBridgeSeq != null && !_activeTurnNeedsSnapshotCatchUp;
       if (canUseReplayOnly) {
         try {
+          catchUpPhase = 'replay_only_live_subscription';
           await _startLiveSubscription(
             afterSeq: lastSeenBridgeSeq,
             handleFailure: false,
@@ -314,12 +400,20 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
             isShowingCachedData: false,
             isConnectivityUnavailable: false,
           );
+          _recordDiagnostic(
+            'thread_reconnect_catchup_completed',
+            data: <String, Object?>{
+              'phase': 'replay_only_completed',
+              'afterSeq': lastSeenBridgeSeq,
+            },
+          );
           return;
         } on ThreadLiveReplayGapException {
           _activeTurnNeedsSnapshotCatchUp = true;
         }
       }
 
+      catchUpPhase = 'fetch_thread_detail';
       final detail = await _bridgeApi.fetchThreadDetail(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
         threadId: requestedThreadId,
@@ -345,6 +439,7 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
       );
       _threadListController.syncThreadDetail(scopedDetail);
 
+      catchUpPhase = 'fetch_thread_timeline';
       final page = await _bridgeApi.fetchThreadTimelinePage(
         bridgeApiBaseUrl: _bridgeApiBaseUrl,
         threadId: requestedThreadId,
@@ -387,16 +482,39 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
         source: 'reconnect_catchup',
       );
 
-      await refreshGitStatus(showLoading: false);
+      catchUpPhase = 'restart_live_subscription';
       await _startLiveSubscription(
         afterSeq: lastSeenBridgeSeq,
         handleFailure: false,
       );
+      if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
+        return;
+      }
+      _recordDiagnostic(
+        'thread_reconnect_catchup_completed',
+        data: <String, Object?>{
+          'phase': 'completed',
+          'itemCount': mergedItems.length,
+          'hasMoreBefore': scopedPage.hasMoreBefore,
+          'latestBridgeSeq': scopedPage.latestBridgeSeq,
+        },
+      );
+      unawaited(refreshGitStatus(showLoading: false));
     } on ThreadDetailBridgeException catch (error) {
       if (_isDisposed) {
         return;
       }
 
+      _recordDiagnostic(
+        'thread_reconnect_catchup_failed',
+        data: <String, Object?>{
+          'phase': catchUpPhase,
+          'error': error.message,
+          'errorType': error.runtimeType.toString(),
+          'isConnectivityError': error.isConnectivityError,
+          'isUnavailable': error.isUnavailable,
+        },
+      );
       state = state.copyWith(
         liveConnectionState: LiveConnectionState.disconnected,
         streamErrorMessage: error.message,
@@ -410,16 +528,33 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
       if (_isDisposed) {
         return;
       }
+      _recordDiagnostic(
+        'thread_reconnect_catchup_failed',
+        data: <String, Object?>{
+          'phase': catchUpPhase,
+          'errorType': 'ThreadLiveReplayGapException',
+        },
+      );
       _reconnectScheduler.schedule();
-    } catch (_) {
+    } catch (error, stackTrace) {
       if (_isDisposed) {
         return;
       }
 
+      _recordDiagnostic(
+        'thread_reconnect_catchup_failed',
+        data: <String, Object?>{
+          'phase': catchUpPhase,
+          'error': error.toString(),
+          'errorType': error.runtimeType.toString(),
+          'stackPreview': _stackPreview(stackTrace),
+        },
+      );
       _reconnectScheduler.schedule();
     }
   }
 
+  @override
   List<ThreadActivityItem> _mergeTimeline(
     List<ThreadTimelineEntryDto> timeline,
   ) {
@@ -428,6 +563,7 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
     return nextItems;
   }
 
+  @override
   List<ThreadActivityItem> _mergeTimelineEntries({
     required List<ThreadActivityItem> currentItems,
     required List<ThreadTimelineEntryDto> timeline,
@@ -435,16 +571,19 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
     return mergeTimelineEntries(currentItems: currentItems, timeline: timeline);
   }
 
+  @override
   void _trackKnownEventIds(List<ThreadActivityItem> items) {
     _knownEventIds.addAll(items.map((item) => item.eventId));
   }
 
+  @override
   void _replaceKnownEventIds(List<ThreadActivityItem> items) {
     _knownEventIds
       ..clear()
       ..addAll(items.map((item) => item.eventId));
   }
 
+  @override
   List<ThreadActivityItem> _prependTimelineEntries(
     List<ThreadActivityItem> currentItems,
     List<ThreadTimelineEntryDto> timeline,
@@ -456,6 +595,7 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
     );
   }
 
+  @override
   ThreadDetailDto? _fresherThreadDetail({
     required ThreadDetailDto? current,
     required ThreadDetailDto? candidate,
@@ -476,10 +616,12 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
     return candidateUpdatedAt.isAfter(currentUpdatedAt) ? candidate : current;
   }
 
+  @override
   bool _isRequestCurrent(String requestThreadId) {
     return !_isDisposed && state.threadId == requestThreadId;
   }
 
+  @override
   ThreadDetailDto _ensureScopedThreadDetail({
     required ThreadDetailDto detail,
     required String expectedThreadId,
@@ -495,6 +637,7 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
     );
   }
 
+  @override
   ThreadTimelinePageDto _ensureScopedTimelinePage({
     required ThreadTimelinePageDto page,
     required String expectedThreadId,
@@ -508,6 +651,7 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
     return page;
   }
 
+  @override
   bool _didRevealNewVisibleBlock({
     required List<String> previousBlockSignatures,
     required List<ThreadActivityItem> nextItems,
@@ -522,6 +666,7 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
     );
   }
 
+  @override
   List<String> _visibleBlockSignatures(List<ThreadActivityItem> items) {
     if (items.isEmpty) {
       return const <String>[];
@@ -558,6 +703,7 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
     return List<String>.unmodifiable(signatures);
   }
 
+  @override
   bool _hasNewLeadingVisibleBlock({
     required List<String> previousBlockSignatures,
     required List<String> nextBlockSignatures,
@@ -575,4 +721,12 @@ mixin _ThreadDetailControllerLoadingMixin on _ThreadDetailControllerContext {
 
     return nextIndex >= 0;
   }
+}
+
+String _stackPreview(StackTrace stackTrace, {int maxLines = 6}) {
+  final lines = stackTrace.toString().trim().split('\n');
+  if (lines.length <= maxLines) {
+    return lines.join('\n');
+  }
+  return lines.take(maxLines).join('\n');
 }

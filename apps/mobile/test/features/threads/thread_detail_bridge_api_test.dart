@@ -42,8 +42,6 @@ void main() {
             'http://${InternetAddress.loopbackIPv4.address}:${server.port}',
         threadId: 'thread-123',
         prompt: 'Investigate model propagation',
-        clientMessageId: 'client-msg-123',
-        clientTurnIntentId: 'turn-intent-123',
         images: const <String>['data:image/png;base64,AAA'],
         model: 'gpt-5-mini',
         effort: 'high',
@@ -51,8 +49,6 @@ void main() {
 
       expect(requestPath, <String>['/threads/thread-123/turns']);
       expect(requestBody['prompt'], 'Investigate model propagation');
-      expect(requestBody['client_message_id'], 'client-msg-123');
-      expect(requestBody['client_turn_intent_id'], 'turn-intent-123');
       expect(requestBody['images'], const <String>[
         'data:image/png;base64,AAA',
       ]);

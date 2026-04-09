@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:ui';
 
 import 'package:vibe_bridge/features/approvals/application/approvals_queue_controller.dart';
 import 'package:vibe_bridge/features/approvals/presentation/approval_presenter.dart';
@@ -18,7 +17,6 @@ import 'package:vibe_bridge/features/threads/presentation/thread_git_diff_page.d
 import 'package:vibe_bridge/foundation/connectivity/live_connection_state.dart';
 import 'package:vibe_bridge/foundation/contracts/bridge_contracts.dart';
 import 'package:vibe_bridge/foundation/layout/adaptive_layout.dart';
-import 'package:vibe_bridge/foundation/logging/thread_diagnostics.dart';
 import 'package:vibe_bridge/foundation/media/speech_capture.dart';
 import 'package:vibe_bridge/foundation/session/current_bridge_session.dart';
 import 'package:codex_ui/codex_ui.dart';
@@ -30,7 +28,6 @@ import 'package:vibe_bridge/shared/widgets/provider_icon.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
@@ -226,12 +223,12 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   bool _isWideLayoutExitScheduled = false;
   int _modelCatalogLoadEpoch = 0;
   int _threadUsageLoadEpoch = 0;
-  String? _lastLoggedUiLoadingSignature;
 
   double _lastScrollOffset = 0;
   double _scrollOffsetOnDirectionChange = 0;
   bool _isScrollingDown = false;
   bool _isTimelineAutoFollowEnabled = true;
+  String? _lastInitialSubmitGateLogKey;
 
   bool get _isDraftMode =>
       widget.threadId == null && _localDraftTransition == null;
@@ -272,6 +269,14 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     final initialComposerInput = _effectiveInitialComposerInput?.trim();
     return (initialComposerInput != null && initialComposerInput.isNotEmpty) ||
         _effectiveInitialAttachedImages.isNotEmpty;
+  }
+
+  void _logDraftFlow(String event, [Map<String, Object?> data = const {}]) {
+    debugPrint(
+      'thread_detail_draft_flow '
+      'event=$event '
+      'payload=${jsonEncode(<String, Object?>{'widgetThreadId': widget.threadId, 'effectiveThreadId': _effectiveThreadId, 'draftWorkspacePath': widget.draftWorkspacePath, 'isDraftMode': _isDraftMode, ...data})}',
+    );
   }
 
   SpeechCapture get _resolvedSpeechCapture {
@@ -712,11 +717,11 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
           position.maxScrollExtent,
         );
     final remainingDistance = position.maxScrollExtent - effectiveOffset;
-    final effectiveTolerance = math.max(
-      24,
-      math.min(tolerance, position.maxScrollExtent * 0.25),
+    final effectiveTolerance = math.min(
+      tolerance,
+      position.maxScrollExtent * 0.25,
     );
-    return remainingDistance <= effectiveTolerance;
+    return remainingDistance < effectiveTolerance;
   }
 
   void _maybeAutoLoadEarlierHistory() {
@@ -811,113 +816,14 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     });
   }
 
-  void _stabilizeTimelineViewportAfterMutation({
-    _TimelineViewportAnchor? anchor,
-    required double previousOffset,
-    required double previousMaxScrollExtent,
-    int remainingFrames = 12,
-    int stableFrameCount = 0,
-    double? previousObservedMaxScrollExtent,
-  }) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_timelineScrollController.hasClients) {
-        return;
-      }
-
-      final position = _timelineScrollController.position;
-      final anchorDelta = _timelineAnchorDelta(anchor);
-      if (anchorDelta != null && anchorDelta.abs() >= 0.5) {
-        final compensatedOffset = clampDouble(
-          position.pixels + anchorDelta,
-          position.minScrollExtent,
-          position.maxScrollExtent,
-        );
-        if ((position.pixels - compensatedOffset).abs() >= 0.5) {
-          _timelineScrollController.jumpTo(compensatedOffset);
-        }
-      } else {
-        final insertedExtent =
-            position.maxScrollExtent - previousMaxScrollExtent;
-        if (insertedExtent > 0) {
-          final compensatedOffset = clampDouble(
-            previousOffset + insertedExtent,
-            position.minScrollExtent,
-            position.maxScrollExtent,
-          );
-          if ((position.pixels - compensatedOffset).abs() >= 0.5) {
-            _timelineScrollController.jumpTo(compensatedOffset);
-          }
-        }
-      }
-
-      final hasStableExtent =
-          previousObservedMaxScrollExtent != null &&
-          (position.maxScrollExtent - previousObservedMaxScrollExtent).abs() <
-              0.5;
-      final nextStableFrameCount = hasStableExtent ? stableFrameCount + 1 : 0;
-      if (remainingFrames <= 0 || nextStableFrameCount >= 2) {
-        return;
-      }
-
-      _stabilizeTimelineViewportAfterMutation(
-        anchor: anchor,
-        previousOffset: previousOffset,
-        previousMaxScrollExtent: previousMaxScrollExtent,
-        remainingFrames: remainingFrames - 1,
-        stableFrameCount: nextStableFrameCount,
-        previousObservedMaxScrollExtent: position.maxScrollExtent,
-      );
-    });
-  }
-
-  Future<T> _runTimelineMutationWithViewportStabilization<T>(
-    Future<T> Function() operation,
-  ) async {
-    if (!_timelineScrollController.hasClients) {
-      return operation();
-    }
-
-    final shouldPinBottom = _isTimelineNearBottom(tolerance: 120);
-    if (shouldPinBottom) {
-      _isTimelineAutoFollowEnabled = true;
-      _followTimelineBottomUntilSettled();
-      final result = await operation();
-      if (mounted) {
-        _isTimelineAutoFollowEnabled = true;
-        _followTimelineBottomUntilSettled();
-      }
-      return result;
-    }
-
-    final position = _timelineScrollController.position;
-    final previousOffset = clampDouble(
-      _timelineScrollController.offset,
-      position.minScrollExtent,
-      position.maxScrollExtent,
-    );
-    final previousMaxScrollExtent = position.maxScrollExtent;
-    final anchor = _captureLeadingVisibleTimelineAnchor();
-    _stabilizeTimelineViewportAfterMutation(
-      anchor: anchor,
-      previousOffset: previousOffset,
-      previousMaxScrollExtent: previousMaxScrollExtent,
-    );
-
-    final result = await operation();
-    if (mounted) {
-      _stabilizeTimelineViewportAfterMutation(
-        anchor: anchor,
-        previousOffset: previousOffset,
-        previousMaxScrollExtent: previousMaxScrollExtent,
-      );
-    }
-    return result;
-  }
-
   @override
   void didUpdateWidget(covariant ThreadDetailPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.threadId != widget.threadId) {
+      _logDraftFlow('did_update_widget_thread_changed', <String, Object?>{
+        'oldThreadId': oldWidget.threadId,
+        'newThreadId': widget.threadId,
+      });
       _localDraftTransition = null;
       final nextThreadId = widget.threadId?.trim();
       _selectedProvider = nextThreadId == null || nextThreadId.isEmpty
@@ -928,12 +834,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       );
       _didInitialScrollToBottom = false;
       _didSubmitInitialComposerInput = false;
+      _lastInitialSubmitGateLogKey = null;
       _didRestoreComposerDraft = false;
       _lastPersistedComposerDraftValue = null;
       _isTimelineAutoFollowEnabled = true;
-      _lastScrollOffset = 0;
-      _scrollOffsetOnDirectionChange = 0;
-      _isScrollingDown = false;
       _timelineBottomFollowRunId += 1;
       _timelineExpansionState.clear();
       _threadUsage = null;
@@ -948,6 +852,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     }
     if (oldWidget.initialComposerInput != widget.initialComposerInput) {
       _didSubmitInitialComposerInput = false;
+      _lastInitialSubmitGateLogKey = null;
     }
     if (!listEquals(
       oldWidget.initialAttachedImages,
@@ -958,6 +863,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       );
       if (widget.initialAttachedImages.isNotEmpty) {
         _didSubmitInitialComposerInput = false;
+        _lastInitialSubmitGateLogKey = null;
       }
     }
   }
@@ -1043,7 +949,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       return;
     }
     _didInitialScrollToBottom = true;
-    _isTimelineAutoFollowEnabled = true;
     _followTimelineBottomUntilSettled();
   }
 
@@ -1215,10 +1120,8 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   void _scrollToTimelineBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_timelineScrollController.hasClients) return;
-      if (!_isTimelineAutoFollowEnabled) {
-        return;
-      }
       final position = _timelineScrollController.position;
+      _isTimelineAutoFollowEnabled = true;
       _timelineScrollController.animateTo(
         position.maxScrollExtent,
         duration: const Duration(milliseconds: 250),
@@ -1603,11 +1506,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     }
 
     _markTimelineUserScroll();
-    if (direction == ScrollDirection.forward) {
-      _isTimelineAutoFollowEnabled = false;
-      return;
-    }
-
     if (!_isTimelineNearBottom(tolerance: 180)) {
       _isTimelineAutoFollowEnabled = false;
       return;
@@ -1658,182 +1556,17 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     );
   }
 
-  Future<void> _showDiagnosticsSheet(BuildContext context) {
-    final diagnostics = ref.read(threadDiagnosticsServiceProvider);
-    final threadId = _effectiveThreadId;
-    return showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: AppTheme.background,
-      isScrollControlled: true,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setModalState) {
-          Future<void> refresh() async {
-            setModalState(() {});
-          }
-
-          return SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-              child: FutureBuilder<({String logs, String path})>(
-                future: () async {
-                  final logs = await diagnostics.export(threadId: threadId);
-                  final path = await diagnostics.describeLogLocation();
-                  return (logs: logs, path: path);
-                }(),
-                builder: (context, snapshot) {
-                  final payload = snapshot.data;
-                  final logs = payload?.logs ?? '';
-                  final path = payload?.path ?? '';
-                  return Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Thread diagnostics',
-                        style: GoogleFonts.jetBrainsMono(
-                          color: AppTheme.textMain,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        threadId == null
-                            ? 'No thread is selected yet.'
-                            : 'Current thread: $threadId',
-                        style: GoogleFonts.jetBrainsMono(
-                          color: AppTheme.textSubtle,
-                          fontSize: 11,
-                        ),
-                      ),
-                      if (path.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          path,
-                          style: GoogleFonts.jetBrainsMono(
-                            color: AppTheme.textMuted,
-                            fontSize: 10,
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          TextButton(
-                            onPressed: logs.trim().isEmpty
-                                ? null
-                                : () async {
-                                    await Clipboard.setData(
-                                      ClipboardData(text: logs),
-                                    );
-                                    if (!context.mounted) {
-                                      return;
-                                    }
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Diagnostics copied'),
-                                      ),
-                                    );
-                                  },
-                            child: const Text('Copy'),
-                          ),
-                          const SizedBox(width: 8),
-                          TextButton(
-                            onPressed: () async {
-                              await diagnostics.clear();
-                              await refresh();
-                            },
-                            child: const Text('Clear'),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        height: MediaQuery.of(context).size.height * 0.55,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: AppTheme.surfaceZinc900,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: Colors.white.withValues(alpha: 0.08),
-                            ),
-                          ),
-                          child: SingleChildScrollView(
-                            padding: const EdgeInsets.all(12),
-                            child: SelectableText(
-                              logs.trim().isEmpty
-                                  ? 'No diagnostics recorded yet.'
-                                  : logs,
-                              style: GoogleFonts.jetBrainsMono(
-                                color: AppTheme.textMain,
-                                fontSize: 11,
-                                height: 1.45,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  void _logUiLoadingStateIfNeeded(ThreadDetailState state) {
-    final effectiveThreadId = _effectiveThreadId?.trim();
-    if (effectiveThreadId == null || effectiveThreadId.isEmpty) {
-      return;
-    }
-
-    final sendingCount = state.visibleItems
-        .where(
-          (item) =>
-              item.localMessageState == ThreadActivityLocalMessageState.sending,
-        )
-        .length;
-    final failedCount = state.visibleItems
-        .where(
-          (item) =>
-              item.localMessageState == ThreadActivityLocalMessageState.failed,
-        )
-        .length;
-    final signature = jsonEncode(<String, Object?>{
-      'threadId': effectiveThreadId,
-      'threadStatus': state.thread?.status.wireValue,
-      'isTurnActive': state.isTurnActive,
-      'isComposerMutationInFlight': state.isComposerMutationInFlight,
-      'isInterruptMutationInFlight': state.isInterruptMutationInFlight,
-      'visibleSendingCount': sendingCount,
-      'visibleFailedCount': failedCount,
-      'pendingLocalPromptCount': state.pendingLocalUserPrompts.length,
-      'runningOverlayVisible': state.isTurnActive,
-      'composerLoadingVisible': state.isComposerMutationInFlight,
-      'showingAnyLoadingUi':
-          state.isTurnActive ||
-          state.isComposerMutationInFlight ||
-          sendingCount > 0,
-    });
-    if (_lastLoggedUiLoadingSignature == signature) {
-      return;
-    }
-    _lastLoggedUiLoadingSignature = signature;
-    final diagnostics = ref.read(threadDiagnosticsServiceProvider);
-    unawaited(
-      diagnostics.record(
-        kind: 'thread_ui_loading_state',
-        threadId: effectiveThreadId,
-        data: jsonDecode(signature) as Map<String, Object?>,
-      ),
-    );
-  }
-
   Future<bool> _submitDraftComposerInput(String rawInput) async {
     final workspacePath = widget.draftWorkspacePath?.trim() ?? '';
+    _logDraftFlow('draft_submit_started', <String, Object?>{
+      'workspacePath': workspacePath,
+      'rawChars': rawInput.length,
+      'trimmedChars': rawInput.trim().length,
+      'attachedImageCount': _attachedImages.length,
+      'selectedProvider': _selectedProvider.wireValue,
+      'selectedModel': _selectedModel,
+      'composerMode': _composerMode.wireValue,
+    });
     if (workspacePath.isEmpty) {
       setState(() {
         _draftThreadErrorMessage = 'No workspace is available for this draft.';
@@ -1864,6 +1597,12 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
         model: _selectedModel,
       );
       final thread = snapshot.thread;
+      _logDraftFlow('draft_thread_created', <String, Object?>{
+        'createdThreadId': thread.threadId,
+        'threadStatus': thread.status.wireValue,
+        'inputChars': input.length,
+        'attachedImageCount': _attachedImages.length,
+      });
       final listController = ref.read(
         threadListControllerProvider(widget.bridgeApiBaseUrl).notifier,
       );
@@ -1882,6 +1621,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
         initialSelectedReasoningEffort: _selectedReasoningEffortWireValue(),
       );
       if (widget.onDraftThreadCreated != null) {
+        _logDraftFlow('draft_thread_created_callback', <String, Object?>{
+          'createdThreadId': thread.threadId,
+          'inputChars': input.length,
+        });
         unawaited(
           ref
               .read(threadComposerDraftRepositoryProvider)
@@ -1898,14 +1641,17 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
         _draftThreadErrorMessage = null;
         _didInitialScrollToBottom = false;
         _didSubmitInitialComposerInput = false;
-        _isTimelineAutoFollowEnabled = true;
-        _lastScrollOffset = 0;
-        _scrollOffsetOnDirectionChange = 0;
-        _isScrollingDown = false;
+        _lastInitialSubmitGateLogKey = null;
         _timelineExpansionState.clear();
         _attachedImages = List<XFile>.unmodifiable(
           transition.initialAttachedImages,
         );
+      });
+      _logDraftFlow('draft_transition_installed', <String, Object?>{
+        'createdThreadId': transition.threadId,
+        'inputChars': transition.initialComposerInput.length,
+        'attachedImageCount': transition.initialAttachedImages.length,
+        'initialTurnMode': transition.initialTurnMode.wireValue,
       });
       unawaited(_loadThreadUsage());
       unawaited(
@@ -1916,6 +1662,10 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       unawaited(_clearComposerDraft(draftId: 'workspace:$workspacePath'));
       return true;
     } on ThreadCreateBridgeException catch (error) {
+      _logDraftFlow('draft_thread_create_failed', <String, Object?>{
+        'message': error.message,
+        'isConnectivityError': error.isConnectivityError,
+      });
       if (!mounted) {
         return false;
       }
@@ -1924,7 +1674,11 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
         _draftThreadErrorMessage = error.message;
       });
       return false;
-    } catch (_) {
+    } catch (error, stackTrace) {
+      _logDraftFlow('draft_thread_create_failed_unknown', <String, Object?>{
+        'error': error.toString(),
+        'stackPreview': stackTrace.toString().split('\n').take(6).join('\n'),
+      });
       if (!mounted) {
         return false;
       }
@@ -1943,31 +1697,30 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     TurnMode? mode,
     List<XFile>? attachedImages,
   }) async {
-    final effectiveThreadId = _effectiveThreadId ?? 'draft';
-    debugPrint(
-      'thread_detail_page_submit_composer '
-      'threadId=$effectiveThreadId '
-      'chars=${rawInput.trim().length} '
-      'mode=${(mode ?? _composerMode).wireValue}',
-    );
+    _logDraftFlow('initial_submit_invoked', <String, Object?>{
+      'threadId': controller.currentThread?.threadId ?? _effectiveThreadId,
+      'rawChars': rawInput.length,
+      'trimmedChars': rawInput.trim().length,
+      'attachedImageCount': (attachedImages ?? _attachedImages).length,
+      'mode': (mode ?? _composerMode).wireValue,
+      'controllerHasThread': controller.currentThread != null,
+      'controllerStatus': controller.currentThread?.status.wireValue,
+    });
     final imageDataUrls = await _encodeAttachedImages(
       attachedImages ?? _attachedImages,
     );
-    final success = await _runTimelineMutationWithViewportStabilization(
-      () => controller.submitComposerInput(
-        rawInput,
-        mode: mode ?? _composerMode,
-        images: imageDataUrls,
-        model: _selectedModel,
-        reasoningEffort: _selectedReasoningEffortWireValue(),
-      ),
+    final success = await controller.submitComposerInput(
+      rawInput,
+      mode: mode ?? _composerMode,
+      images: imageDataUrls,
+      model: _selectedModel,
+      reasoningEffort: _selectedReasoningEffortWireValue(),
     );
-    debugPrint(
-      'thread_detail_page_submit_composer_result '
-      'threadId=$effectiveThreadId '
-      'success=$success '
-      'mounted=$mounted',
-    );
+    _logDraftFlow('initial_submit_completed', <String, Object?>{
+      'success': success,
+      'threadId': controller.currentThread?.threadId ?? _effectiveThreadId,
+      'controllerStatus': controller.currentThread?.status.wireValue,
+    });
     if (!mounted || !success) {
       return success;
     }
@@ -2236,7 +1989,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                           attachedImages: _attachedImages,
                           threadUsage: _threadUsage,
                           composerMode: _composerMode,
-                          workflowState: null,
                           pendingUserInput: null,
                           selectedPlanOptionByQuestionId:
                               _selectedPlanOptionByQuestionId,
@@ -2322,6 +2074,35 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     );
 
     if (!_didSubmitInitialComposerInput &&
+        _hasPendingInitialComposerSubmission) {
+      final gateLogKey = jsonEncode(<String, Object?>{
+        'effectiveThreadId': _effectiveThreadId,
+        'isLoading': state.isLoading,
+        'hasThread': state.hasThread,
+        'isTurnActive': state.isTurnActive,
+        'isComposerMutationInFlight': state.isComposerMutationInFlight,
+        'didSubmitInitialComposerInput': _didSubmitInitialComposerInput,
+        'hasPendingInitialComposerSubmission':
+            _hasPendingInitialComposerSubmission,
+        'initialInputChars': _effectiveInitialComposerInput?.trim().length ?? 0,
+        'initialAttachedImageCount': _effectiveInitialAttachedImages.length,
+      });
+      if (_lastInitialSubmitGateLogKey != gateLogKey) {
+        _lastInitialSubmitGateLogKey = gateLogKey;
+        _logDraftFlow('initial_submit_gate', <String, Object?>{
+          'effectiveThreadId': _effectiveThreadId,
+          'isLoading': state.isLoading,
+          'hasThread': state.hasThread,
+          'isTurnActive': state.isTurnActive,
+          'isComposerMutationInFlight': state.isComposerMutationInFlight,
+          'initialInputChars':
+              _effectiveInitialComposerInput?.trim().length ?? 0,
+          'initialAttachedImageCount': _effectiveInitialAttachedImages.length,
+        });
+      }
+    }
+
+    if (!_didSubmitInitialComposerInput &&
         !state.isLoading &&
         state.hasThread &&
         !state.isTurnActive &&
@@ -2331,6 +2112,12 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       if (initialComposerInput != null ||
           _effectiveInitialAttachedImages.isNotEmpty) {
         _didSubmitInitialComposerInput = true;
+        _logDraftFlow('initial_submit_scheduled', <String, Object?>{
+          'threadId': _effectiveThreadId,
+          'inputChars': initialComposerInput?.length ?? 0,
+          'attachedImageCount': _effectiveInitialAttachedImages.length,
+          'mode': _effectiveInitialTurnMode.wireValue,
+        });
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) {
             return;
@@ -2348,7 +2135,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
 
     final threadApprovals = approvalsState.forThread(_effectiveThreadId!);
     final pendingUserInput = state.pendingUserInput;
-    final workflowState = state.workflowState;
     final pendingUserInputRequestId = pendingUserInput?.requestId;
     if (_lastPendingUserInputRequestId != pendingUserInputRequestId) {
       _lastPendingUserInputRequestId = pendingUserInputRequestId;
@@ -2364,7 +2150,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     final isReadOnlyMode = effectiveAccessMode == AccessMode.readOnly;
     final controlsEnabled = state.canRunMutatingActions && !isReadOnlyMode;
     final desktopIntegrationControlsEnabled = state.canRunMutatingActions;
-    _logUiLoadingStateIfNeeded(state);
     final gitControls = _ResolvedGitControls.resolve(
       thread: state.thread,
       gitStatus: state.gitStatus,
@@ -2465,6 +2250,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                   state: state,
                   isReadOnlyMode: isReadOnlyMode,
                   controlsEnabled: controlsEnabled,
+                  onInterruptActiveTurn: controller.interruptActiveTurn,
                   desktopIntegrationEnabled: desktopIntegrationState.isEnabled,
                   onRetry: controller.loadThread,
                   onRetryReconnect: controller.retryReconnectCatchUp,
@@ -2508,7 +2294,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                     onOpenGitSyncSheet: openGitSyncSheet,
                     onOpenOnMac: controller.openOnMac,
                     onOpenDiff: _openDiffView,
-                    onOpenDiagnostics: () => _showDiagnosticsSheet(context),
                     onToggleSidebar: widget.onToggleSidebar,
                     onToggleDiff: _toggleDiffView,
                     onOpenSettings: openSettingsSheet,
@@ -2612,55 +2397,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                                 );
                               },
                             ),
-                            AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 180),
-                              switchInCurve: Curves.easeOutCubic,
-                              switchOutCurve: Curves.easeInCubic,
-                              transitionBuilder: (child, animation) =>
-                                  FadeTransition(
-                                    opacity: animation,
-                                    child: SizeTransition(
-                                      axisAlignment: 1,
-                                      sizeFactor: animation,
-                                      child: child,
-                                    ),
-                                  ),
-                              child: state.isTurnActive
-                                  ? Padding(
-                                      key: const ValueKey(
-                                        'thread-detail-running-overlay',
-                                      ),
-                                      padding: const EdgeInsets.only(
-                                        left: 24,
-                                        right: 24,
-                                        top: 8,
-                                        bottom: 12,
-                                      ),
-                                      child: Align(
-                                        alignment: Alignment.topCenter,
-                                        child: ConstrainedBox(
-                                          constraints: const BoxConstraints(
-                                            maxWidth: _sessionContentMaxWidth,
-                                          ),
-                                          child: _ChatLoadingMessageCard(
-                                            phaseLabel: _runningTurnPhaseLabel(
-                                              state.visibleItems,
-                                            ),
-                                            controlsEnabled: controlsEnabled,
-                                            isInterruptMutationInFlight: state
-                                                .isInterruptMutationInFlight,
-                                            onInterruptActiveTurn:
-                                                controller.interruptActiveTurn,
-                                          ),
-                                        ),
-                                      ),
-                                    )
-                                  : const SizedBox.shrink(
-                                      key: ValueKey(
-                                        'thread-detail-running-overlay-empty',
-                                      ),
-                                    ),
-                            ),
                             _PinnedTurnComposer(
                               composerController: _composerController,
                               composerFocusNode: _composerFocusNode,
@@ -2684,7 +2420,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                               attachedImages: _attachedImages,
                               threadUsage: _threadUsage,
                               composerMode: _composerMode,
-                              workflowState: workflowState,
                               pendingUserInput: pendingUserInput,
                               selectedPlanOptionByQuestionId:
                                   _selectedPlanOptionByQuestionId,

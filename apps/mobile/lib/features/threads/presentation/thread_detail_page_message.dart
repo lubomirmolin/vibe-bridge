@@ -48,14 +48,10 @@ class _ChatMessageCard extends StatelessWidget {
                   if (isSending || isFailed) ...[
                     const SizedBox(width: 10),
                     if (isSending)
-                      SizedBox(
-                        width: 12,
-                        height: 12,
-                        child: CircularProgressIndicator(
-                          key: const Key('thread-message-sending-spinner'),
-                          strokeWidth: 1.75,
-                          color: AppTheme.emerald,
-                        ),
+                      PhosphorIcon(
+                        PhosphorIcons.circleNotch(),
+                        color: AppTheme.emerald,
+                        size: 13,
                       )
                     else
                       PhosphorIcon(
@@ -771,6 +767,34 @@ class _InlineQuoteParser {
       return const <InlineSpan>[];
     }
 
+    final lines = text.split('\n');
+    final spans = <InlineSpan>[];
+    for (var lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      if (lineIndex > 0) {
+        spans.add(TextSpan(text: '\n', style: textStyle));
+      }
+
+      final line = lines[lineIndex];
+      final titleSpan = _tryParseMarkdownTitle(line, textStyle);
+      if (titleSpan != null) {
+        spans.add(titleSpan);
+        continue;
+      }
+
+      spans.addAll(_parseInlineContent(line, textStyle));
+    }
+
+    return spans;
+  }
+
+  static List<InlineSpan> _parseInlineContent(
+    String text,
+    TextStyle textStyle,
+  ) {
+    if (text.isEmpty) {
+      return const <InlineSpan>[];
+    }
+
     final spans = <InlineSpan>[];
     final buffer = StringBuffer();
     var index = 0;
@@ -818,6 +842,16 @@ class _InlineQuoteParser {
     return spans;
   }
 
+  static TextSpan? _tryParseMarkdownTitle(String text, TextStyle textStyle) {
+    final match = RegExp(r'^\s*\*\*\s*(.+?)\s*\*\*\s*$').firstMatch(text);
+    final title = match?.group(1)?.trim();
+    if (title == null || title.isEmpty) {
+      return null;
+    }
+
+    return TextSpan(text: title, style: _buildTitleStyle(textStyle));
+  }
+
   static TextSpan _buildLinkSpan(String label, TextStyle textStyle) {
     final isFileLike = _looksLikeFileReference(label);
     final baseStyle = textStyle.copyWith(
@@ -844,6 +878,18 @@ class _InlineQuoteParser {
       textStyle: baseStyle,
       fontSize: textStyle.fontSize,
       height: textStyle.height,
+    );
+  }
+
+  static TextStyle _buildTitleStyle(TextStyle textStyle) {
+    final titleFontSize = (textStyle.fontSize ?? 14) + 2;
+    return GoogleFonts.jetBrainsMono(
+      textStyle: textStyle.copyWith(
+        color: AppTheme.textMain,
+        fontSize: titleFontSize,
+        height: 1.35,
+        fontWeight: FontWeight.w700,
+      ),
     );
   }
 
@@ -1318,98 +1364,86 @@ class _ChatLoadingMessageCardState extends State<_ChatLoadingMessageCard>
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
-          key: const Key('thread-running-indicator-card'),
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            color: AppTheme.surfaceZinc800.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+    return Container(
+      key: const Key('thread-running-indicator-card'),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceZinc800.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+      ),
+      child: Row(
+        children: [
+          PhosphorIcon(
+            PhosphorIcons.sparkle(),
+            color: AppTheme.textSubtle,
+            size: 16,
           ),
-          child: Row(
-            children: [
-              PhosphorIcon(
-                PhosphorIcons.sparkle(),
-                color: AppTheme.textSubtle,
-                size: 16,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.phaseLabel,
-                      key: const Key('thread-running-phase-label'),
-                      style: GoogleFonts.jetBrainsMono(
-                        color: AppTheme.textMain,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _currentText,
-                      key: const Key('thread-running-scramble'),
-                      style: GoogleFonts.jetBrainsMono(
-                        color: AppTheme.textMuted,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              TextButton.icon(
-                key: const Key('turn-interrupt-button'),
-                onPressed:
-                    widget.controlsEnabled &&
-                        !widget.isInterruptMutationInFlight
-                    ? () async {
-                        await widget.onInterruptActiveTurn();
-                      }
-                    : null,
-                style: TextButton.styleFrom(
-                  foregroundColor: AppTheme.rose,
-                  backgroundColor: AppTheme.rose.withValues(alpha: 0.08),
-                  disabledForegroundColor: AppTheme.textSubtle,
-                  disabledBackgroundColor: AppTheme.surfaceZinc800.withValues(
-                    alpha: 0.35,
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  minimumSize: const Size(0, 40),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: BorderSide(
-                      color: AppTheme.rose.withValues(alpha: 0.16),
-                    ),
-                  ),
-                ),
-                icon: widget.isInterruptMutationInFlight
-                    ? const SizedBox.square(
-                        dimension: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : PhosphorIcon(PhosphorIcons.stop(), size: 16),
-                label: Text(
-                  widget.isInterruptMutationInFlight ? 'Cancelling' : 'Cancel',
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.phaseLabel,
+                  key: const Key('thread-running-phase-label'),
                   style: GoogleFonts.jetBrainsMono(
-                    fontSize: 12,
+                    color: AppTheme.textMain,
+                    fontSize: 13,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 4),
+                Text(
+                  _currentText,
+                  key: const Key('thread-running-scramble'),
+                  style: GoogleFonts.jetBrainsMono(
+                    color: AppTheme.textMuted,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
+          const SizedBox(width: 12),
+          TextButton.icon(
+            key: const Key('turn-interrupt-button'),
+            onPressed:
+                widget.controlsEnabled && !widget.isInterruptMutationInFlight
+                ? () async {
+                    await widget.onInterruptActiveTurn();
+                  }
+                : null,
+            style: TextButton.styleFrom(
+              foregroundColor: AppTheme.rose,
+              backgroundColor: AppTheme.rose.withValues(alpha: 0.08),
+              disabledForegroundColor: AppTheme.textSubtle,
+              disabledBackgroundColor: AppTheme.surfaceZinc800.withValues(
+                alpha: 0.35,
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              minimumSize: const Size(0, 40),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: AppTheme.rose.withValues(alpha: 0.16)),
+              ),
+            ),
+            icon: widget.isInterruptMutationInFlight
+                ? const SizedBox.square(
+                    dimension: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : PhosphorIcon(PhosphorIcons.stop(), size: 16),
+            label: Text(
+              widget.isInterruptMutationInFlight ? 'Cancelling' : 'Cancel',
+              style: GoogleFonts.jetBrainsMono(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -1889,6 +1889,74 @@ async fn claude_placeholder_titles_still_generate_and_persist_locally() {
     assert_eq!(summary_title, "Investigate Claude thread title generation");
 }
 
+#[tokio::test]
+async fn codex_generated_titles_persist_locally_even_if_upstream_rename_fails() {
+    let state = test_bridge_app_state().await;
+    let placeholder_snapshot = ThreadSnapshotDto {
+        contract_version: CONTRACT_VERSION.to_string(),
+        thread: ThreadDetailDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread_id: "codex:thread-1".to_string(),
+            native_thread_id: "thread-1".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
+            title: "Untitled thread".to_string(),
+            status: ThreadStatus::Idle,
+            workspace: "/repo".to_string(),
+            repository: "repo".to_string(),
+            branch: "main".to_string(),
+            created_at: "2026-03-29T10:00:00Z".to_string(),
+            updated_at: "2026-03-29T10:00:00Z".to_string(),
+            source: "bridge".to_string(),
+            access_mode: shared_contracts::AccessMode::ControlWithApprovals,
+            last_turn_summary: String::new(),
+            active_turn_id: None,
+        },
+        latest_bridge_seq: None,
+        entries: Vec::new(),
+        approvals: Vec::new(),
+        git_status: None,
+        workflow_state: None,
+        pending_user_input: None,
+    };
+    state.projections().put_snapshot(placeholder_snapshot).await;
+    state
+        .projections()
+        .replace_summaries(vec![ThreadSummaryDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread_id: "codex:thread-1".to_string(),
+            native_thread_id: "thread-1".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
+            title: "Untitled thread".to_string(),
+            status: ThreadStatus::Idle,
+            workspace: "/repo".to_string(),
+            repository: "repo".to_string(),
+            branch: "main".to_string(),
+            updated_at: "2026-03-29T10:00:00Z".to_string(),
+        }])
+        .await;
+
+    state
+        .persist_generated_thread_title("codex:thread-1", "Investigate mobile thread titles")
+        .await
+        .expect("generated title should persist locally even if upstream rename fails");
+
+    let snapshot = state
+        .projections()
+        .snapshot("codex:thread-1")
+        .await
+        .expect("Codex snapshot should exist");
+    assert_eq!(snapshot.thread.title, "Investigate mobile thread titles");
+
+    let summary_title = state
+        .projections()
+        .thread_title("codex:thread-1")
+        .await
+        .expect("Codex summary title should exist");
+    assert_eq!(summary_title, "Investigate mobile thread titles");
+}
+
 #[test]
 fn title_generation_model_uses_requested_model_only_for_codex_threads() {
     assert_eq!(
@@ -1916,6 +1984,274 @@ fn claude_prompt_title_fallback_uses_first_sentence() {
             "Explain why thread titles help mobile triage.",
         ),
         None
+    );
+}
+
+#[test]
+fn snapshot_placeholder_title_fallback_uses_first_sentence_for_codex_threads() {
+    let snapshot = ThreadSnapshotDto {
+        contract_version: CONTRACT_VERSION.to_string(),
+        thread: ThreadDetailDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread_id: "codex:thread-1".to_string(),
+            native_thread_id: "thread-1".to_string(),
+            provider: shared_contracts::ProviderKind::Codex,
+            client: shared_contracts::ThreadClientKind::Cli,
+            title: "Untitled thread".to_string(),
+            status: ThreadStatus::Idle,
+            workspace: "/repo".to_string(),
+            repository: "repo".to_string(),
+            branch: "main".to_string(),
+            created_at: "2026-03-29T10:00:00Z".to_string(),
+            updated_at: "2026-03-29T10:00:00Z".to_string(),
+            source: "bridge".to_string(),
+            access_mode: shared_contracts::AccessMode::ControlWithApprovals,
+            last_turn_summary: String::new(),
+            active_turn_id: None,
+        },
+        latest_bridge_seq: None,
+        entries: vec![ThreadTimelineEntryDto {
+            event_id: "thread-1-msg-1".to_string(),
+            kind: BridgeEventKind::MessageDelta,
+            occurred_at: "2026-03-29T10:00:01Z".to_string(),
+            summary: "Explain why thread titles help mobile triage.".to_string(),
+            payload: json!({
+                "type": "userMessage",
+                "role": "user",
+                "text": "Explain why thread titles help mobile triage. Do not use tools.",
+            }),
+            annotations: None,
+        }],
+        approvals: Vec::new(),
+        git_status: None,
+        workflow_state: None,
+        pending_user_input: None,
+    };
+
+    assert_eq!(
+        super::placeholder_thread_title_fallback_from_snapshot(&snapshot),
+        Some("Explain why thread titles help mobile triage".to_string())
+    );
+}
+
+#[tokio::test]
+async fn external_snapshot_update_backfills_placeholder_title_from_snapshot_content() {
+    let state = test_bridge_app_state().await;
+
+    state
+        .apply_external_snapshot_update(
+            ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "codex:thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: ProviderKind::Codex,
+                    client: ThreadClientKind::Cli,
+                    title: "Untitled thread".to_string(),
+                    status: ThreadStatus::Completed,
+                    workspace: "/repo".to_string(),
+                    repository: "repo".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-04-08T09:00:00Z".to_string(),
+                    updated_at: "2026-04-08T09:05:00Z".to_string(),
+                    source: "bridge".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "idle".to_string(),
+                    active_turn_id: None,
+                },
+                latest_bridge_seq: None,
+                entries: vec![ThreadTimelineEntryDto {
+                    event_id: "thread-1-msg-1".to_string(),
+                    kind: BridgeEventKind::MessageDelta,
+                    occurred_at: "2026-04-08T09:00:01Z".to_string(),
+                    summary: "Why does target debug take so much space".to_string(),
+                    payload: json!({
+                        "type": "userMessage",
+                        "role": "user",
+                        "text": "Why does target debug take so much space? Is that needed for us to work on this?",
+                    }),
+                    annotations: None,
+                }],
+                approvals: Vec::new(),
+                git_status: None,
+                workflow_state: None,
+                pending_user_input: None,
+            },
+            Vec::new(),
+        )
+        .await;
+
+    let snapshot = state
+        .projections()
+        .snapshot("codex:thread-1")
+        .await
+        .expect("snapshot should exist");
+    assert_eq!(
+        snapshot.thread.title,
+        "Why does target debug take so much space"
+    );
+
+    let summary_title = state
+        .projections()
+        .thread_title("codex:thread-1")
+        .await
+        .expect("summary title should exist");
+    assert_eq!(summary_title, "Why does target debug take so much space");
+}
+
+#[tokio::test]
+async fn ensure_snapshot_backfills_cached_placeholder_title_without_gateway_refresh() {
+    let state = test_bridge_app_state().await;
+    let snapshot = ThreadSnapshotDto {
+        contract_version: CONTRACT_VERSION.to_string(),
+        thread: ThreadDetailDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread_id: "codex:thread-1".to_string(),
+            native_thread_id: "thread-1".to_string(),
+            provider: ProviderKind::Codex,
+            client: ThreadClientKind::Cli,
+            title: "Untitled thread".to_string(),
+            status: ThreadStatus::Idle,
+            workspace: "/repo".to_string(),
+            repository: "repo".to_string(),
+            branch: "main".to_string(),
+            created_at: "2026-04-08T09:00:00Z".to_string(),
+            updated_at: "2026-04-08T09:05:00Z".to_string(),
+            source: "bridge".to_string(),
+            access_mode: AccessMode::ControlWithApprovals,
+            last_turn_summary: "idle".to_string(),
+            active_turn_id: None,
+        },
+        latest_bridge_seq: None,
+        entries: vec![ThreadTimelineEntryDto {
+            event_id: "thread-1-msg-1".to_string(),
+            kind: BridgeEventKind::MessageDelta,
+            occurred_at: "2026-04-08T09:00:01Z".to_string(),
+            summary: "Investigate slow thread opening in Codex mobile companion".to_string(),
+            payload: json!({
+                "type": "userMessage",
+                "role": "user",
+                "text": "Investigate slow thread opening in Codex mobile companion.",
+            }),
+            annotations: None,
+        }],
+        approvals: Vec::new(),
+        git_status: None,
+        workflow_state: None,
+        pending_user_input: None,
+    };
+    state.projections().put_snapshot(snapshot).await;
+    state
+        .projections()
+        .replace_summaries(vec![ThreadSummaryDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread_id: "codex:thread-1".to_string(),
+            native_thread_id: "thread-1".to_string(),
+            provider: ProviderKind::Codex,
+            client: ThreadClientKind::Cli,
+            title: "Untitled thread".to_string(),
+            status: ThreadStatus::Idle,
+            workspace: "/repo".to_string(),
+            repository: "repo".to_string(),
+            branch: "main".to_string(),
+            updated_at: "2026-04-08T09:05:00Z".to_string(),
+        }])
+        .await;
+
+    let refreshed = state
+        .ensure_snapshot("codex:thread-1")
+        .await
+        .expect("cached snapshot should load");
+    assert_eq!(
+        refreshed.thread.title,
+        "Investigate slow thread opening in Codex mobile companion"
+    );
+
+    let summary_title = state
+        .projections()
+        .thread_title("codex:thread-1")
+        .await
+        .expect("summary title should exist");
+    assert_eq!(
+        summary_title,
+        "Investigate slow thread opening in Codex mobile companion"
+    );
+}
+
+#[tokio::test]
+async fn list_thread_summaries_backfills_cached_placeholder_titles() {
+    let state = test_bridge_app_state().await;
+    let snapshot = ThreadSnapshotDto {
+        contract_version: CONTRACT_VERSION.to_string(),
+        thread: ThreadDetailDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread_id: "codex:thread-1".to_string(),
+            native_thread_id: "thread-1".to_string(),
+            provider: ProviderKind::Codex,
+            client: ThreadClientKind::Cli,
+            title: "Untitled thread".to_string(),
+            status: ThreadStatus::Idle,
+            workspace: "/repo".to_string(),
+            repository: "repo".to_string(),
+            branch: "main".to_string(),
+            created_at: "2026-04-08T09:00:00Z".to_string(),
+            updated_at: "2026-04-08T09:05:00Z".to_string(),
+            source: "bridge".to_string(),
+            access_mode: AccessMode::ControlWithApprovals,
+            last_turn_summary: "idle".to_string(),
+            active_turn_id: None,
+        },
+        latest_bridge_seq: None,
+        entries: vec![ThreadTimelineEntryDto {
+            event_id: "thread-1-msg-1".to_string(),
+            kind: BridgeEventKind::MessageDelta,
+            occurred_at: "2026-04-08T09:00:01Z".to_string(),
+            summary: "Investigate why thread list refresh misses generated titles".to_string(),
+            payload: json!({
+                "type": "userMessage",
+                "role": "user",
+                "text": "Investigate why thread list refresh misses generated titles.",
+            }),
+            annotations: None,
+        }],
+        approvals: Vec::new(),
+        git_status: None,
+        workflow_state: None,
+        pending_user_input: None,
+    };
+    state.projections().put_snapshot(snapshot).await;
+    state
+        .projections()
+        .replace_summaries(vec![ThreadSummaryDto {
+            contract_version: CONTRACT_VERSION.to_string(),
+            thread_id: "codex:thread-1".to_string(),
+            native_thread_id: "thread-1".to_string(),
+            provider: ProviderKind::Codex,
+            client: ThreadClientKind::Cli,
+            title: "Untitled thread".to_string(),
+            status: ThreadStatus::Idle,
+            workspace: "/repo".to_string(),
+            repository: "repo".to_string(),
+            branch: "main".to_string(),
+            updated_at: "2026-04-08T09:05:00Z".to_string(),
+        }])
+        .await;
+
+    let summaries = state.list_thread_summaries().await;
+
+    assert_eq!(
+        summaries[0].title,
+        "Investigate why thread list refresh misses generated titles"
+    );
+    let summary_title = state
+        .projections()
+        .thread_title("codex:thread-1")
+        .await
+        .expect("summary title should exist");
+    assert_eq!(
+        summary_title,
+        "Investigate why thread list refresh misses generated titles"
     );
 }
 

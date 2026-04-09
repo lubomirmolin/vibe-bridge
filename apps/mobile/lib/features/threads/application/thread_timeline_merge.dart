@@ -207,14 +207,10 @@ bool _isEquivalentTimelineActivityItem({
 
   switch (candidate.type) {
     case ThreadActivityItemType.userPrompt:
-      final sameContent =
+      final sameBody =
           _normalizeActivityBody(existing.body) ==
-              _normalizeActivityBody(candidate.body) &&
-          setEquals(
-            existing.messageImageUrls.toSet(),
-            candidate.messageImageUrls.toSet(),
-          );
-      if (!sameContent) {
+          _normalizeActivityBody(candidate.body);
+      if (!sameBody) {
         return false;
       }
       if (_sharesClientMessageIdentity(existing, candidate)) {
@@ -222,6 +218,12 @@ bool _isEquivalentTimelineActivityItem({
       }
       if (_isSyntheticAndCanonicalPairForSameTurn(existing, candidate)) {
         return true;
+      }
+      if (!setEquals(
+        existing.messageImageUrls.toSet(),
+        candidate.messageImageUrls.toSet(),
+      )) {
+        return false;
       }
       return _areTimelineMomentsEquivalent(
         existing.occurredAt,

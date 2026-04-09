@@ -301,6 +301,26 @@ fn command_execution_annotations_use_command_even_when_output_is_scalar_json() {
 }
 
 #[test]
+fn command_execution_annotations_ignore_scalar_json_output_flags() {
+    let payload = json!({
+        "id": "item-2",
+        "command": "shell",
+        "arguments": "{\"command\":[\"bash\",\"-lc\",\"sed -n '1,20p' src/lib.rs\"],\"output\":true}",
+        "output": true,
+    });
+
+    let annotations =
+        timeline_annotations_for_event("turn-1-item-2", BridgeEventKind::CommandDelta, &payload)
+            .expect("annotations should exist");
+
+    assert_eq!(
+        annotations.exploration_kind,
+        Some(ThreadTimelineExplorationKind::Read)
+    );
+    assert_eq!(annotations.entry_label.as_deref(), Some("Read lib.rs"));
+}
+
+#[test]
 fn summarize_claude_stderr_prefers_human_readable_error_lines() {
     let stderr = "Error: Session ID 123 is already in use.\n    at main (file:///tmp/cli.js:1:1)";
     assert_eq!(

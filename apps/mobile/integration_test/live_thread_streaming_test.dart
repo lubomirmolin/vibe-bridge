@@ -236,7 +236,6 @@ class _FakeThreadLiveStream implements ThreadLiveStream {
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
     String? threadId,
-    int? afterSeq,
   }) async {
     subscriptionCount += 1;
     final controller =

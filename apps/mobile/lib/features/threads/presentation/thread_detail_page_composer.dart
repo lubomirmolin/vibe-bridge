@@ -3,33 +3,11 @@ part of 'thread_detail_page.dart';
 const double _composerPrimaryButtonSize = 56;
 const double _composerModePeekOffset = 62;
 const double _composerPrimaryRailWidth = 74;
-const double _composerPrimaryRailTrailingInset =
-    _composerPrimaryRailWidth - _composerPrimaryButtonSize;
-const double _composerModeSwitchThreshold = 30;
-const double _composerModeSwitchVelocityThreshold = 260;
-const double _composerModeForwardDragResistance = 0.52;
-const double _composerModeNearSnapDragResistance = 0.3;
-const double _composerModePastSnapDragResistance = 0.12;
-const double _composerModeReturnDragResistance = 0.72;
-const double _composerModeRightOverscrollLimit = 16;
-const double _composerModePastSnapOverscrollLimit = 8;
 
 bool _isProviderApprovalPrompt(PendingUserInputDto? pendingUserInput) {
   return pendingUserInput != null &&
       pendingUserInput.questions.length == 1 &&
       pendingUserInput.questions.first.questionId == 'approval_decision';
-}
-
-bool _isExpiredProviderApprovalWorkflow(ThreadWorkflowStateDto? workflowState) {
-  return workflowState?.workflowKind == 'provider_approval' &&
-      workflowState?.state == 'expired';
-}
-
-bool _isExpiredPlanQuestionnaireWorkflow(
-  ThreadWorkflowStateDto? workflowState,
-) {
-  return workflowState?.workflowKind == 'plan_questionnaire' &&
-      workflowState?.state == 'expired';
 }
 
 class _PinnedTurnComposer extends StatelessWidget {
@@ -50,7 +28,6 @@ class _PinnedTurnComposer extends StatelessWidget {
     required this.attachedImages,
     required this.threadUsage,
     required this.composerMode,
-    required this.workflowState,
     required this.selectedPlanOptionByQuestionId,
     required this.selectedProvider,
     required this.supportsPlanMode,
@@ -82,7 +59,6 @@ class _PinnedTurnComposer extends StatelessWidget {
   final List<XFile> attachedImages;
   final ThreadUsageDto? threadUsage;
   final TurnMode composerMode;
-  final ThreadWorkflowStateDto? workflowState;
   final PendingUserInputDto? pendingUserInput;
   final Map<String, String> selectedPlanOptionByQuestionId;
   final ProviderKind selectedProvider;
@@ -103,12 +79,6 @@ class _PinnedTurnComposer extends StatelessWidget {
     final isProviderApprovalPrompt = _isProviderApprovalPrompt(
       pendingUserInput,
     );
-    final hasExpiredProviderApproval =
-        !hasPendingUserInput &&
-        _isExpiredProviderApprovalWorkflow(workflowState);
-    final hasExpiredPlanQuestionnaire =
-        !hasPendingUserInput &&
-        _isExpiredPlanQuestionnaireWorkflow(workflowState);
     final canEditPinnedControls =
         !isComposerMutationInFlight &&
         !isInterruptMutationInFlight &&
@@ -190,14 +160,6 @@ class _PinnedTurnComposer extends StatelessWidget {
                 ),
               ),
             ),
-          ],
-          if (hasExpiredProviderApproval) ...[
-            const SizedBox(height: 8),
-            _ExpiredProviderApprovalNotice(),
-          ],
-          if (hasExpiredPlanQuestionnaire) ...[
-            const SizedBox(height: 8),
-            _ExpiredPlanQuestionnaireNotice(),
           ],
         ],
       );
@@ -1082,90 +1044,6 @@ class _PendingProviderApprovalCard extends StatelessWidget {
   }
 }
 
-class _ExpiredProviderApprovalNotice extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      key: const Key('turn-composer-expired-approval-notice'),
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF2A2114),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: const Color(0xFFF59E0B).withValues(alpha: 0.28),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 1),
-            child: PhosphorIcon(
-              PhosphorIcons.warningCircle(PhosphorIconsStyle.fill),
-              color: const Color(0xFFF59E0B),
-              size: 18,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'The previous approval request expired when the bridge restarted. Re-run the action if you still want to approve it.',
-              style: TextStyle(
-                color: AppTheme.textMuted,
-                fontSize: 12,
-                height: 1.35,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ExpiredPlanQuestionnaireNotice extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      key: const Key('turn-composer-expired-plan-questionnaire-notice'),
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E2230),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: const Color(0xFF60A5FA).withValues(alpha: 0.28),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 1),
-            child: PhosphorIcon(
-              PhosphorIcons.info(PhosphorIconsStyle.fill),
-              color: const Color(0xFF60A5FA),
-              size: 18,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'The previous plan questionnaire expired when the bridge restarted. Re-run plan mode if you still want Codex to continue with the clarification flow.',
-              style: TextStyle(
-                color: AppTheme.textMuted,
-                fontSize: 12,
-                height: 1.35,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _PendingProviderApprovalActionButton extends StatelessWidget {
   const _PendingProviderApprovalActionButton({
     required this.option,
@@ -1485,30 +1363,9 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
     if (widget.hasPendingUserInput || !widget.supportsPlanMode) return;
     _snapController.stop();
     setState(() {
-      final deltaX = details.delta.dx;
-      if (deltaX < 0) {
-        final pastSnapPoint = _dragDx <= -_composerModePeekOffset;
-        final nearSnapPoint = _dragDx <= -(_composerModePeekOffset * 0.55);
-        final resistance = pastSnapPoint
-            ? _composerModePastSnapDragResistance
-            : nearSnapPoint
-            ? _composerModeNearSnapDragResistance
-            : _composerModeForwardDragResistance;
-        _dragDx += deltaX * resistance;
-        final minDragDx =
-            -(_composerModePeekOffset + _composerModePastSnapOverscrollLimit);
-        if (_dragDx < minDragDx) {
-          _dragDx = minDragDx;
-        }
-      } else {
-        final resistance = _dragDx < 0
-            ? _composerModeReturnDragResistance
-            : 0.35;
-        _dragDx += deltaX * resistance;
-        if (_dragDx > _composerModeRightOverscrollLimit) {
-          _dragDx = _composerModeRightOverscrollLimit;
-        }
-      }
+      _dragDx += details.delta.dx;
+      // Soft clamp for pulling right (elastic feel)
+      if (_dragDx > 24.0) _dragDx = 24.0;
     });
   }
 
@@ -1516,16 +1373,11 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
     if (widget.hasPendingUserInput || !widget.supportsPlanMode) return;
     final velocity = details.primaryVelocity ?? 0;
 
-    if (_dragDx < -_composerModeSwitchThreshold ||
-        velocity < -_composerModeSwitchVelocityThreshold) {
+    if (_dragDx < -20 || velocity < -180) {
       // Snap to next
-      _snapAnimation =
-          Tween<double>(begin: _dragDx, end: -_composerModePeekOffset).animate(
-            CurvedAnimation(
-              parent: _snapController,
-              curve: Curves.easeOutCubic,
-            ),
-          );
+      _snapAnimation = Tween<double>(begin: _dragDx, end: -68.0).animate(
+        CurvedAnimation(parent: _snapController, curve: Curves.easeOutCubic),
+      );
 
       _snapController.forward(from: 0.0).then((_) {
         final secondaryMode = widget.composerMode == TurnMode.act
@@ -1723,7 +1575,7 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
               // progress = 1.0 when active is fully centered, 0.0 when active is completely offset
               // secondaryProgress = 1.0 when secondary is fully centered, 0.0 when secondary is completely offset
               final activeOffset = effectiveDrag;
-              final secondaryOffset = -spacing - effectiveDrag;
+              final secondaryOffset = spacing + effectiveDrag;
 
               final activeProgress = math
                   .max(0.0, 1.0 - (activeOffset.abs() / spacing))
@@ -1747,8 +1599,7 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
                 ),
                 behavior: HitTestBehavior.translucent,
                 onTapUp: (details) {
-                  if (details.localPosition.dx <=
-                      _composerPrimaryRailTrailingInset) {
+                  if (details.localPosition.dx >= _composerPrimaryButtonSize) {
                     widget.onComposerModeChanged(secondaryMode);
                   } else {
                     handleSubmit();
@@ -1763,7 +1614,7 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
                     clipBehavior: Clip.none,
                     children: [
                       Positioned(
-                        left: _composerPrimaryRailTrailingInset,
+                        left: 0,
                         child: Transform(
                           transform: Matrix4.identity()
                             ..translate(secondaryOffset, 0.0)
@@ -1777,7 +1628,7 @@ class _ComposerPrimaryActionRailState extends State<_ComposerPrimaryActionRail>
                         ),
                       ),
                       Positioned(
-                        left: _composerPrimaryRailTrailingInset,
+                        left: 0,
                         child: Transform(
                           transform: Matrix4.identity()
                             ..translate(activeOffset, 0.0)

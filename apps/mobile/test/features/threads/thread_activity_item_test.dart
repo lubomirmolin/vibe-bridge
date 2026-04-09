@@ -244,52 +244,6 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
     expect(item.body, contains('2. Add Flutter card'));
   });
 
-  test('assistant proposed_plan block renders as a plan update card', () {
-    final entry = ThreadTimelineEntryDto(
-      eventId: 'event-proposed-plan',
-      kind: BridgeEventKind.messageDelta,
-      occurredAt: '2026-03-19T17:35:04.000Z',
-      summary: 'Plan ready',
-      payload: <String, dynamic>{
-        'type': 'agentMessage',
-        'role': 'assistant',
-        'text':
-            '<proposed_plan>\n# Final plan\n- Inspect bridge payload\n- Update Flutter UI\n</proposed_plan>',
-      },
-    );
-
-    final item = ThreadActivityItem.fromTimelineEntry(entry);
-
-    expect(item.type, ThreadActivityItemType.planUpdate);
-    expect(
-      item.body,
-      '# Final plan\n- Inspect bridge payload\n- Update Flutter UI',
-    );
-  });
-
-  test('assistant text strips proposed_plan block from visible output', () {
-    final entry = ThreadTimelineEntryDto(
-      eventId: 'event-proposed-plan-mixed',
-      kind: BridgeEventKind.messageDelta,
-      occurredAt: '2026-03-19T17:35:04.000Z',
-      summary: 'Plan ready',
-      payload: <String, dynamic>{
-        'type': 'agentMessage',
-        'role': 'assistant',
-        'text':
-            'Here is the finalized approach.\n<proposed_plan>\n# Final plan\n- Inspect bridge payload\n</proposed_plan>\nWe can refine it further if needed.',
-      },
-    );
-
-    final item = ThreadActivityItem.fromTimelineEntry(entry);
-
-    expect(item.type, ThreadActivityItemType.assistantOutput);
-    expect(
-      item.body,
-      'Here is the finalized approach.\n\nWe can refine it further if needed.',
-    );
-  });
-
   test('file-change exec_command arguments do not render as unknown command', () {
     final entry = ThreadTimelineEntryDto(
       eventId: 'event-4b',

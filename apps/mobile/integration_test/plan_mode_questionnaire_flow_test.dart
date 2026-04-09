@@ -61,32 +61,17 @@ void main() {
           ),
         ),
       );
-      await _pumpUntilFound(
-        tester,
-        find.byKey(const Key('thread-list-create-button')),
-      );
+      await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const Key('thread-list-create-button')));
-      await _pumpUntil(
-        tester,
-        () =>
-            find.byKey(const Key('thread-draft-title')).evaluate().isNotEmpty ||
-            find
-                .byKey(const Key('thread-list-workspace-option-$_workspace'))
-                .evaluate()
-                .isNotEmpty,
-        description: 'draft open or workspace options',
-      );
+      await tester.pumpAndSettle();
 
       final workspaceOption = find.byKey(
         const Key('thread-list-workspace-option-$_workspace'),
       );
       if (workspaceOption.evaluate().isNotEmpty) {
         await tester.tap(workspaceOption);
-        await _pumpUntilFound(
-          tester,
-          find.byKey(const Key('thread-draft-title')),
-        );
+        await tester.pumpAndSettle();
       }
 
       expect(find.byKey(const Key('thread-draft-title')), findsOneWidget);
@@ -95,11 +80,8 @@ void main() {
       final railRect = tester.getRect(
         find.byKey(const Key('turn-composer-primary-rail')),
       );
-      await tester.tapAt(Offset(railRect.left + 5, railRect.center.dy));
-      await _pumpUntilFound(
-        tester,
-        find.byKey(const Key('turn-composer-plan-submit')),
-      );
+      await tester.tapAt(Offset(railRect.right - 5, railRect.center.dy));
+      await tester.pumpAndSettle();
 
       expect(
         find.byKey(const Key('turn-composer-plan-submit')),
@@ -112,11 +94,7 @@ void main() {
       );
       await tester.pump();
       await tester.tap(find.byKey(const Key('turn-composer-plan-submit')));
-      await _pumpUntil(
-        tester,
-        () => detailApi.startTurnCalls.isNotEmpty,
-        description: 'plan-mode turn start',
-      );
+      await tester.pumpAndSettle();
 
       expect(detailApi.createThreadCallCount, 1);
       expect(detailApi.createdThreadWorkspaces, equals(<String>[_workspace]));
@@ -142,11 +120,11 @@ void main() {
       expect(find.byKey(const Key('turn-composer-model-button')), findsNothing);
 
       await tester.tap(find.text('Bridge'));
-      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Detailed'));
-      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Integration'));
-      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pumpAndSettle();
 
       await tester.enterText(
         find.byKey(const Key('turn-composer-input')),
@@ -154,11 +132,7 @@ void main() {
       );
       await tester.pump();
       await tester.tap(find.byKey(const Key('turn-composer-plan-submit')));
-      await _pumpUntil(
-        tester,
-        () => detailApi.respondCalls.isNotEmpty,
-        description: 'plan questionnaire response submission',
-      );
+      await tester.pumpAndSettle();
 
       expect(detailApi.respondCalls.length, 1);
       final response = detailApi.respondCalls.single;
@@ -375,8 +349,6 @@ class _PlanModeThreadDetailBridgeApi extends ThreadDetailBridgeApi {
     required String bridgeApiBaseUrl,
     required String threadId,
     required String prompt,
-    String? clientMessageId,
-    String? clientTurnIntentId,
     TurnMode mode = TurnMode.act,
     List<String> images = const <String>[],
     String? model,
@@ -533,7 +505,6 @@ class _FakeThreadLiveStream implements ThreadLiveStream {
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
     String? threadId,
-    int? afterSeq,
   }) async {
     final controller =
         StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();

@@ -3,13 +3,48 @@ use crate::server::timeline_dedupe::dedupe_visible_user_prompt_representations;
 use crate::server::timeline_events::build_timeline_event_envelope;
 
 impl BridgeAppState {
+    pub async fn list_thread_summaries(&self) -> Vec<ThreadSummaryDto> {
+        let summaries = self.projections().list_summaries().await;
+        let placeholder_thread_ids = summaries
+            .iter()
+            .filter(|summary| is_placeholder_thread_title(&summary.title))
+            .map(|summary| summary.thread_id.clone())
+            .collect::<Vec<_>>();
+        if placeholder_thread_ids.is_empty() {
+            return summaries;
+        }
+
+        let mut backfilled_any = false;
+        for thread_id in placeholder_thread_ids {
+            if self
+                .apply_local_placeholder_thread_title_fallback(&thread_id)
+                .await
+                .is_some()
+            {
+                backfilled_any = true;
+            }
+        }
+
+        if backfilled_any {
+            return self.projections().list_summaries().await;
+        }
+
+        summaries
+    }
+
     pub async fn ensure_snapshot(&self, thread_id: &str) -> Result<ThreadSnapshotDto, String> {
         if let Some(snapshot) = self.projections().snapshot(thread_id).await {
             let needs_full_load = snapshot.thread.status != ThreadStatus::Running
                 && !snapshot_has_substantive_entries(&snapshot);
             if !needs_full_load {
+                self.apply_local_placeholder_thread_title_fallback(thread_id)
+                    .await;
                 self.request_notification_thread_resume(thread_id).await;
-                return Ok(snapshot);
+                return Ok(self
+                    .projections()
+                    .snapshot(thread_id)
+                    .await
+                    .unwrap_or(snapshot));
             }
         }
 
@@ -64,6 +99,8 @@ impl BridgeAppState {
         if should_refresh {
             self.refresh_snapshot_from_gateway(thread_id).await?;
         }
+        self.apply_local_placeholder_thread_title_fallback(thread_id)
+            .await;
 
         let mut page = self
             .projections()
@@ -83,7 +120,12 @@ impl BridgeAppState {
         self.merge_bridge_turn_metadata(&mut snapshot).await;
         self.apply_external_snapshot_update(snapshot.clone(), Vec::new())
             .await;
-        Ok(snapshot)
+        self.apply_local_placeholder_thread_title_fallback(thread_id)
+            .await;
+        self.projections()
+            .snapshot(thread_id)
+            .await
+            .ok_or_else(|| format!("thread {thread_id} not found"))
     }
 
     pub async fn git_status(&self, thread_id: &str) -> Result<GitStatusResponse, String> {
@@ -258,6 +300,9 @@ impl BridgeAppState {
             preserve_generated_thread_title(&previous_snapshot, &mut snapshot);
         }
         dedupe_visible_user_prompt_representations(&mut snapshot.entries);
+        if let Some(fallback_title) = placeholder_thread_title_fallback_from_snapshot(&snapshot) {
+            snapshot.thread.title = fallback_title;
+        }
         let next_summary = thread_summary_from_snapshot(&snapshot);
         let mut summaries = self.projections().list_summaries().await;
         if let Some(index) = summaries
@@ -278,6 +323,22 @@ impl BridgeAppState {
             }
             self.event_hub().publish(event);
         }
+    }
+
+    async fn apply_local_placeholder_thread_title_fallback(
+        &self,
+        thread_id: &str,
+    ) -> Option<String> {
+        if !self.thread_title_still_needs_generation(thread_id).await {
+            return None;
+        }
+
+        let snapshot = self.projections().snapshot(thread_id).await?;
+        let fallback_title = placeholder_thread_title_fallback_from_snapshot(&snapshot)?;
+        self.projections()
+            .update_thread_title(thread_id, &fallback_title, &snapshot.thread.updated_at)
+            .await?;
+        Some(fallback_title)
     }
 
     async fn inject_pending_turn_client_message_id_into_snapshot(
@@ -482,10 +543,16 @@ impl BridgeAppState {
         }
 
         if is_provider_thread_id(thread_id, ProviderKind::Codex) {
-            self.inner
+            if let Err(error) = self
+                .inner
                 .gateway
                 .set_thread_name(thread_id, normalized_title)
-                .await?;
+                .await
+            {
+                eprintln!(
+                    "bridge generated thread title upstream rename failed thread_id={thread_id}: {error}; keeping local title"
+                );
+            }
         }
         let occurred_at = Utc::now().to_rfc3339();
         let status = self

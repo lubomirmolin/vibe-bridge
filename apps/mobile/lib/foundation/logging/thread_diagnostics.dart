@@ -14,11 +14,13 @@ final threadDiagnosticsServiceProvider = Provider<ThreadDiagnosticsService>((
 });
 
 class ThreadDiagnosticsService {
-  ThreadDiagnosticsService();
+  ThreadDiagnosticsService({Future<File> Function()? logFileResolver})
+    : _logFileResolver = logFileResolver ?? _defaultLogFileResolver;
 
   static const int _maxRecords = 1200;
 
   final String _sessionId = DateTime.now().microsecondsSinceEpoch.toString();
+  final Future<File> Function() _logFileResolver;
   Future<void> _pendingWrite = Future<void>.value();
   Future<File>? _logFileFuture;
   bool _isDisposed = false;
@@ -56,7 +58,13 @@ class ThreadDiagnosticsService {
     return _pendingWrite;
   }
 
-  Future<String> export({String? threadId, int limit = 500}) async {
+  Future<String> export({
+    String? threadId,
+    int limit = 500,
+    bool includeFallbackRecent = false,
+    int fallbackLimit = 200,
+  }) async {
+    await _flushPendingWrites();
     final file = await _resolveLogFile();
     if (!await file.exists()) {
       return '';
@@ -64,34 +72,32 @@ class ThreadDiagnosticsService {
 
     final lines = await file.readAsLines();
     final normalizedThreadId = threadId?.trim();
-    final filtered = <String>[];
-    for (final line in lines.reversed) {
-      if (line.trim().isEmpty) {
-        continue;
-      }
-      if (normalizedThreadId != null && normalizedThreadId.isNotEmpty) {
-        try {
-          final decoded = jsonDecode(line);
-          if (decoded is Map<String, dynamic>) {
-            final recordThreadId = (decoded['threadId'] as String?)?.trim();
-            if (recordThreadId != normalizedThreadId) {
-              continue;
-            }
-          }
-        } catch (_) {
-          continue;
-        }
-      }
-      filtered.add(line);
-      if (filtered.length >= limit) {
-        break;
-      }
+    final filtered = _collectLines(
+      lines,
+      threadId: normalizedThreadId,
+      limit: limit,
+    );
+    if (filtered.isNotEmpty ||
+        !includeFallbackRecent ||
+        normalizedThreadId == null ||
+        normalizedThreadId.isEmpty) {
+      return filtered.reversed.join('\n');
     }
 
-    return filtered.reversed.join('\n');
+    final fallback = _collectLines(lines, limit: fallbackLimit);
+    if (fallback.isEmpty) {
+      return '';
+    }
+
+    return [
+      'No exact diagnostics matched threadId=$normalizedThreadId. Showing recent session diagnostics instead.',
+      '',
+      ...fallback.reversed,
+    ].join('\n');
   }
 
   Future<void> clear() async {
+    await _flushPendingWrites();
     final file = await _resolveLogFile();
     if (await file.exists()) {
       await file.writeAsString('');
@@ -108,10 +114,7 @@ class ThreadDiagnosticsService {
   }
 
   Future<File> _resolveLogFile() {
-    return _logFileFuture ??= () async {
-      final directory = await getApplicationSupportDirectory();
-      return File('${directory.path}/thread_diagnostics.ndjson');
-    }();
+    return _logFileFuture ??= _logFileResolver();
   }
 
   Future<void> _trimIfNeeded(File file) async {
@@ -122,4 +125,44 @@ class ThreadDiagnosticsService {
     final retained = lines.sublist(lines.length - _maxRecords);
     await file.writeAsString('${retained.join('\n')}\n');
   }
+
+  Future<void> _flushPendingWrites() async {
+    await _pendingWrite;
+  }
+}
+
+List<String> _collectLines(
+  List<String> lines, {
+  String? threadId,
+  required int limit,
+}) {
+  final filtered = <String>[];
+  for (final line in lines.reversed) {
+    if (line.trim().isEmpty) {
+      continue;
+    }
+    if (threadId != null && threadId.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(line);
+        if (decoded is Map<String, dynamic>) {
+          final recordThreadId = (decoded['threadId'] as String?)?.trim();
+          if (recordThreadId != threadId) {
+            continue;
+          }
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+    filtered.add(line);
+    if (filtered.length >= limit) {
+      break;
+    }
+  }
+  return filtered;
+}
+
+Future<File> _defaultLogFileResolver() async {
+  final directory = await getApplicationSupportDirectory();
+  return File('${directory.path}/thread_diagnostics.ndjson');
 }

@@ -19,6 +19,21 @@ pub(super) fn provisional_thread_title_from_prompt(
         return None;
     }
 
+    prompt_fallback_thread_title(prompt)
+}
+
+pub(super) fn placeholder_thread_title_fallback_from_snapshot(
+    snapshot: &ThreadSnapshotDto,
+) -> Option<String> {
+    if !is_placeholder_thread_title(&snapshot.thread.title) {
+        return None;
+    }
+
+    title_generation_source_from_snapshot(snapshot)
+        .and_then(|source| prompt_fallback_thread_title(&source.prompt))
+}
+
+fn prompt_fallback_thread_title(prompt: &str) -> Option<String> {
     let first_sentence = prompt
         .split(['.', '?', '!'])
         .find(|segment| !segment.trim().is_empty())

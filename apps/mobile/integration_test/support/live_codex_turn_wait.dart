@@ -11,8 +11,6 @@ Future<void> waitForCodexTurnCompletion(
   required String promptLabel,
   required String expectedPrompt,
   required int expectedUserPromptCount,
-  bool failOnExcessUserPromptCount = false,
-  Future<void> Function()? onPendingUserInput,
   Duration timeout = const Duration(minutes: 3),
 }) async {
   final deadline = DateTime.now().add(timeout);
@@ -44,11 +42,6 @@ Future<void> waitForCodexTurnCompletion(
       );
     }
     if (snapshot['pending_user_input'] != null) {
-      if (onPendingUserInput != null) {
-        await onPendingUserInput();
-        await tester.pump(const Duration(milliseconds: 300));
-        continue;
-      }
       fail(
         'Codex thread $threadId unexpectedly requested user input during the $promptLabel turn.',
       );
@@ -66,17 +59,6 @@ Future<void> waitForCodexTurnCompletion(
         signals.userPrompts.length >= expectedUserPromptCount &&
         signals.userPrompts[expectedUserPromptCount - 1] ==
             normalizedExpectedPrompt;
-
-    if (failOnExcessUserPromptCount &&
-        signals.userPrompts.length > expectedUserPromptCount) {
-      fail(
-        'Codex thread $threadId observed too many user prompts during the $promptLabel turn. '
-        'expected=$expectedUserPromptCount '
-        'observed=${signals.userPrompts.length} '
-        'prompts="${signals.userPrompts.join(' || ')}"',
-      );
-    }
-
     final settledThreadStatus =
         rawStatus == ThreadStatus.completed.wireValue ||
         rawStatus == ThreadStatus.idle.wireValue;
@@ -160,9 +142,6 @@ class _SnapshotTurnSignals {
 
       if (kind == 'message_delta') {
         final role = (payload['role'] as String?)?.trim();
-        if (_payloadContainsHiddenMessage(payload)) {
-          continue;
-        }
         final text = _extractMessageText(payload);
         if (text.isEmpty) {
           continue;
@@ -233,24 +212,6 @@ String _extractMessageText(Map<String, dynamic> payload) {
 
 String _normalizeText(String text) {
   return text.replaceAll(RegExp(r'\s+'), ' ').trim();
-}
-
-bool _payloadContainsHiddenMessage(Map<String, dynamic> payload) {
-  final primaryText = _extractMessageText(payload);
-  return _isHiddenMessage(primaryText);
-}
-
-bool _isHiddenMessage(String message) {
-  final trimmed = message.trim();
-  return trimmed.startsWith('# AGENTS.md instructions for ') ||
-      trimmed.startsWith('<permissions instructions>') ||
-      trimmed.startsWith('<app-context>') ||
-      trimmed.startsWith('<environment_context>') ||
-      trimmed.startsWith('<collaboration_mode>') ||
-      trimmed.startsWith('<turn_aborted>') ||
-      trimmed.startsWith('You are running in mobile plan intake mode.') ||
-      trimmed.startsWith('You are continuing a mobile planning workflow.') ||
-      trimmed.contains('<codex-plan-questions>');
 }
 
 Uri _buildBridgeUri(String baseUrl, String path) {

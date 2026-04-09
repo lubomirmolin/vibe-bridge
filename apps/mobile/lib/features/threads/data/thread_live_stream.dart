@@ -13,7 +13,6 @@ abstract class ThreadLiveStream {
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
     String? threadId,
-    int? afterSeq,
   });
 }
 
@@ -29,21 +28,6 @@ class ThreadLiveSubscription {
   Future<void> close() => _close();
 }
 
-class ThreadLiveReplayGapException implements Exception {
-  const ThreadLiveReplayGapException({
-    required this.latestSeq,
-    required this.oldestSeq,
-  });
-
-  final int? latestSeq;
-  final int? oldestSeq;
-
-  @override
-  String toString() {
-    return 'ThreadLiveReplayGapException(latestSeq: $latestSeq, oldestSeq: $oldestSeq)';
-  }
-}
-
 class HttpThreadLiveStream implements ThreadLiveStream {
   const HttpThreadLiveStream({required BridgeTransport transport})
     : _transport = transport;
@@ -54,14 +38,12 @@ class HttpThreadLiveStream implements ThreadLiveStream {
   Future<ThreadLiveSubscription> subscribe({
     required String bridgeApiBaseUrl,
     String? threadId,
-    int? afterSeq,
   }) async {
-    final uri = _buildStreamUri(bridgeApiBaseUrl, threadId, afterSeq: afterSeq);
+    final uri = _buildStreamUri(bridgeApiBaseUrl, threadId);
     final connection = await _transport.openEventStream(uri);
     final controller =
         StreamController<BridgeEventEnvelope<Map<String, dynamic>>>();
     Future<void>? closeFuture;
-    final subscribedCompleter = Completer<void>();
 
     void closeController() {
       if (!controller.isClosed) {
@@ -97,22 +79,6 @@ class HttpThreadLiveStream implements ThreadLiveStream {
           }
 
           if (decoded['event'] == 'subscribed') {
-            final replayGap = decoded['replay_gap'] == true;
-            if (replayGap) {
-              if (!subscribedCompleter.isCompleted) {
-                subscribedCompleter.completeError(
-                  ThreadLiveReplayGapException(
-                    latestSeq: decoded['latest_seq'] as int?,
-                    oldestSeq: decoded['oldest_seq'] as int?,
-                  ),
-                );
-              }
-              unawaited(closeSubscription());
-              return;
-            }
-            if (!subscribedCompleter.isCompleted) {
-              subscribedCompleter.complete();
-            }
             return;
           }
 
@@ -128,26 +94,14 @@ class HttpThreadLiveStream implements ThreadLiveStream {
         }
       },
       onError: (Object error, StackTrace stackTrace) {
-        if (!subscribedCompleter.isCompleted) {
-          subscribedCompleter.completeError(error, stackTrace);
-        }
         if (!controller.isClosed) {
           controller.addError(error, stackTrace);
         }
         closeController();
       },
-      onDone: () {
-        if (!subscribedCompleter.isCompleted) {
-          subscribedCompleter.completeError(
-            StateError('Live stream closed before subscription completed.'),
-          );
-        }
-        closeController();
-      },
+      onDone: closeController,
       cancelOnError: false,
     );
-
-    await subscribedCompleter.future;
 
     return ThreadLiveSubscription(
       events: controller.stream,
@@ -156,7 +110,7 @@ class HttpThreadLiveStream implements ThreadLiveStream {
   }
 }
 
-Uri _buildStreamUri(String baseUrl, String? threadId, {int? afterSeq}) {
+Uri _buildStreamUri(String baseUrl, String? threadId) {
   final baseUri = Uri.parse(baseUrl);
   final normalizedBasePath = baseUri.path.endsWith('/')
       ? baseUri.path.substring(0, baseUri.path.length - 1)
@@ -166,15 +120,12 @@ Uri _buildStreamUri(String baseUrl, String? threadId, {int? afterSeq}) {
       '${normalizedBasePath.isEmpty ? '' : normalizedBasePath}/events';
 
   final normalizedThreadId = threadId?.trim();
+
   return baseUri.replace(
     scheme: wsScheme,
     path: fullPath,
     queryParameters: normalizedThreadId == null || normalizedThreadId.isEmpty
         ? <String, String>{'scope': 'list'}
-        : <String, String>{
-            'scope': 'thread',
-            'thread_id': normalizedThreadId,
-            if (afterSeq != null && afterSeq > 0) 'after_seq': '$afterSeq',
-          },
+        : <String, String>{'scope': 'thread', 'thread_id': normalizedThreadId},
   );
 }

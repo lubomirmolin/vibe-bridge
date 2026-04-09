@@ -5,6 +5,7 @@ class _ThreadDetailBody extends StatelessWidget {
     required this.state,
     required this.isReadOnlyMode,
     required this.controlsEnabled,
+    required this.onInterruptActiveTurn,
     required this.desktopIntegrationEnabled,
     required this.onRetry,
     required this.onRetryReconnect,
@@ -29,6 +30,7 @@ class _ThreadDetailBody extends StatelessWidget {
   final ThreadDetailState state;
   final bool isReadOnlyMode;
   final bool controlsEnabled;
+  final Future<bool> Function() onInterruptActiveTurn;
   final bool desktopIntegrationEnabled;
   final Future<void> Function() onRetry;
   final Future<void> Function() onRetryReconnect;
@@ -94,11 +96,13 @@ class _ThreadDetailBody extends StatelessWidget {
       openOnMacMessage: openOnMacMessage,
       openOnMacErrorMessage: openOnMacErrorMessage,
     );
+    final trailingChildren = _buildTrailingChildren(state: state);
     final timelineItemCount =
         state.isInitialTimelineLoading || state.visibleItems.isEmpty
         ? 1
         : timelineBlocks.length * 2;
-    final itemCount = leadingChildren.length + timelineItemCount;
+    final itemCount =
+        leadingChildren.length + timelineItemCount + trailingChildren.length;
 
     return RefreshIndicator(
       color: AppTheme.emerald,
@@ -123,12 +127,12 @@ class _ThreadDetailBody extends StatelessWidget {
             padding: EdgeInsets.only(
               left: 24,
               right: 24,
-              bottom: hasPinnedComposer ? 232 : 16,
+              bottom: hasPinnedComposer ? 140 : 16,
               top: 212,
             ),
             itemCount: itemCount,
             itemBuilder: (context, index) {
-              Widget child = const SizedBox.shrink();
+              Widget child;
               if (index < leadingChildren.length) {
                 child = leadingChildren[index];
               } else if (index < leadingChildren.length + timelineItemCount) {
@@ -137,6 +141,11 @@ class _ThreadDetailBody extends StatelessWidget {
                   timelineBlocks: timelineBlocks,
                   timelineIndex: index - leadingChildren.length,
                 );
+              } else {
+                child =
+                    trailingChildren[index -
+                        leadingChildren.length -
+                        timelineItemCount];
               }
 
               return Align(
@@ -279,6 +288,22 @@ class _ThreadDetailBody extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  List<Widget> _buildTrailingChildren({required ThreadDetailState state}) {
+    return <Widget>[
+      if (state.isTurnActive) ...[
+        _ChatLoadingMessageCard(
+          phaseLabel: _runningTurnPhaseLabel(state.visibleItems),
+          controlsEnabled: controlsEnabled,
+          isInterruptMutationInFlight: state.isInterruptMutationInFlight,
+          onInterruptActiveTurn: onInterruptActiveTurn,
+        ),
+        const SizedBox(height: 12),
+      ],
+      if (!state.isInitialTimelineLoading && state.visibleItems.isNotEmpty)
+        const SizedBox(height: 12),
+    ];
   }
 
   String _timelineBlockKey(ThreadTimelineBlock block) {

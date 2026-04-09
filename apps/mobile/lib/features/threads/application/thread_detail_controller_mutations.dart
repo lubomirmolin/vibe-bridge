@@ -1,6 +1,7 @@
 part of 'thread_detail_controller.dart';
 
 mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
+  @override
   Future<bool> submitComposerInput(
     String rawInput, {
     TurnMode mode = TurnMode.act,
@@ -10,13 +11,32 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
   }) async {
     final thread = state.thread;
     if (thread == null) {
+      _debugLog(
+        'thread_detail_submit_composer_blocked '
+        'threadId=${state.threadId} '
+        'reason=missing_thread',
+      );
       return false;
     }
     if (state.isComposerMutationInFlight || state.isInterruptMutationInFlight) {
+      _debugLog(
+        'thread_detail_submit_composer_blocked '
+        'threadId=${state.threadId} '
+        'reason=mutation_in_flight '
+        'isComposerMutationInFlight=${state.isComposerMutationInFlight} '
+        'isInterruptMutationInFlight=${state.isInterruptMutationInFlight}',
+      );
       return false;
     }
 
     if (!state.canRunMutatingActions) {
+      _debugLog(
+        'thread_detail_submit_composer_blocked '
+        'threadId=${state.threadId} '
+        'reason=mutating_actions_unavailable '
+        'isConnectivityUnavailable=${state.isConnectivityUnavailable} '
+        'liveConnectionState=${state.liveConnectionState.name}',
+      );
       state = state.copyWith(
         turnControlErrorMessage:
             'Turn controls are unavailable while the bridge is offline.',
@@ -30,6 +50,11 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
         .where((image) => image.isNotEmpty)
         .toList(growable: false);
     if (input.isEmpty && normalizedImages.isEmpty) {
+      _debugLog(
+        'thread_detail_submit_composer_blocked '
+        'threadId=${state.threadId} '
+        'reason=empty_input',
+      );
       state = state.copyWith(
         turnControlErrorMessage: state.isTurnActive
             ? 'Active-turn steering is unavailable in this build. Interrupt the turn or wait for it to finish before sending a new prompt.'
@@ -39,6 +64,12 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
     }
 
     if (state.isTurnActive && normalizedImages.isNotEmpty) {
+      _debugLog(
+        'thread_detail_submit_composer_blocked '
+        'threadId=${state.threadId} '
+        'reason=images_during_active_turn '
+        'imageCount=${normalizedImages.length}',
+      );
       state = state.copyWith(
         turnControlErrorMessage:
             'Interrupt the active turn or wait for it to finish before attaching images.',
@@ -133,6 +164,12 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
       );
       return true;
     } on ThreadTurnBridgeException catch (error) {
+      _debugLog(
+        'thread_detail_submit_composer_failed '
+        'threadId=${state.threadId} '
+        'message=${error.message} '
+        'isConnectivityError=${error.isConnectivityError}',
+      );
       _recordDiagnostic(
         'composer_submit_failed',
         data: <String, Object?>{
@@ -149,7 +186,14 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
         turnControlErrorMessage: error.message,
       );
       return false;
-    } catch (_) {
+    } catch (error, stackTrace) {
+      _debugLog(
+        'thread_detail_submit_composer_failed '
+        'threadId=${state.threadId} '
+        'message=unknown_error '
+        'errorType=${error.runtimeType} '
+        'stackPreview=${stackTrace.toString().split('\n').take(6).join(' | ')}',
+      );
       _recordDiagnostic(
         'composer_submit_failed',
         data: <String, Object?>{'message': 'unknown_error'},
@@ -164,6 +208,7 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
     }
   }
 
+  @override
   Future<bool> _shouldRouteComposerInputToActiveTurnSteer() async {
     if (!state.isTurnActive) {
       _recordDiagnostic(
@@ -241,6 +286,7 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
     }
   }
 
+  @override
   Future<bool> respondToPendingUserInput({
     required String freeText,
     required List<UserInputAnswerDto> answers,
@@ -336,6 +382,7 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
     }
   }
 
+  @override
   Future<bool> openOnMac() async {
     state = state.copyWith(
       isOpenOnMacInFlight: false,
@@ -345,6 +392,7 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
     return false;
   }
 
+  @override
   Future<bool> submitCommitAction({
     String? model,
     String? reasoningEffort,
@@ -409,6 +457,7 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
     }
   }
 
+  @override
   Future<bool> interruptActiveTurn() async {
     if (!state.isTurnActive) {
       return false;
@@ -458,12 +507,18 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
     }
   }
 
+  @override
   Future<void> refreshGitStatus({bool showLoading = true}) async {
     final thread = state.thread;
     if (thread == null) {
       return;
     }
     final requestedThreadId = state.threadId;
+
+    _recordDiagnostic(
+      'thread_git_status_load_started',
+      data: <String, Object?>{'showLoading': showLoading},
+    );
 
     state = state.copyWith(
       isGitStatusLoading: showLoading,
@@ -492,12 +547,30 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
         clearGitControlsUnavailableReason: unavailableReason == null,
         gitControlsUnavailableReason: unavailableReason,
       );
+      _recordDiagnostic(
+        'thread_git_status_load_completed',
+        data: <String, Object?>{
+          'showLoading': showLoading,
+          'hasRepositoryContext': unavailableReason == null,
+          'branch': gitStatus.repository.branch,
+        },
+      );
     } on ThreadGitBridgeException catch (error) {
       if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
         return;
       }
       final isNonRepositoryContext = _isNonRepositoryGitStatusError(
         error.message,
+      );
+      _recordDiagnostic(
+        'thread_git_status_load_failed',
+        data: <String, Object?>{
+          'showLoading': showLoading,
+          'error': error.message,
+          'errorType': error.runtimeType.toString(),
+          'isConnectivityError': error.isConnectivityError,
+          'isNonRepositoryContext': isNonRepositoryContext,
+        },
       );
       state = state.copyWith(
         clearGitStatus: state.gitStatus == null,
@@ -512,10 +585,19 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
             ? 'Git controls are unavailable for this thread.'
             : error.message,
       );
-    } catch (_) {
+    } catch (error, stackTrace) {
       if (_isDisposed || !_isRequestCurrent(requestedThreadId)) {
         return;
       }
+      _recordDiagnostic(
+        'thread_git_status_load_failed',
+        data: <String, Object?>{
+          'showLoading': showLoading,
+          'error': error.toString(),
+          'errorType': error.runtimeType.toString(),
+          'stackPreview': _stackPreview(stackTrace),
+        },
+      );
       state = state.copyWith(
         clearGitStatus: state.gitStatus == null,
         isGitStatusLoading: false,
@@ -530,6 +612,7 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
     }
   }
 
+  @override
   Future<bool> switchBranch(String rawBranch) async {
     if (!state.canRunMutatingActions) {
       state = state.copyWith(
@@ -587,6 +670,7 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
     }
   }
 
+  @override
   Future<bool> pullRepository() async {
     if (!state.canRunMutatingActions) {
       state = state.copyWith(
@@ -634,6 +718,7 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
     }
   }
 
+  @override
   Future<bool> pushRepository() async {
     if (!state.canRunMutatingActions) {
       state = state.copyWith(
@@ -681,6 +766,7 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
     }
   }
 
+  @override
   void _applyGitMutationResult(MutationResultResponseDto mutationResult) {
     final thread = state.thread;
     final nextUpdatedAt = DateTime.now().toUtc().toIso8601String();
@@ -714,6 +800,7 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
     );
   }
 
+  @override
   void _applyTurnMutationResult(TurnMutationResult mutationResult) {
     final thread = state.thread;
     if (thread == null) {
@@ -754,6 +841,7 @@ mixin _ThreadDetailControllerMutationsMixin on _ThreadDetailControllerContext {
     );
   }
 
+  @override
   Future<void> _refreshThreadSnapshotAfterMutation() async {
     final requestedThreadId = state.threadId;
     if (_isDisposed || requestedThreadId.trim().isEmpty) {
