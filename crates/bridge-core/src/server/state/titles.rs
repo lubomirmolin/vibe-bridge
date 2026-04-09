@@ -1,5 +1,167 @@
 use super::*;
 
+impl BridgeAppState {
+    pub(super) async fn apply_local_placeholder_thread_title_fallback(
+        &self,
+        thread_id: &str,
+    ) -> Option<String> {
+        if !self.thread_title_still_needs_generation(thread_id).await {
+            return None;
+        }
+
+        let snapshot = self.projections().snapshot(thread_id).await?;
+        let fallback_title = title_generation_source_from_snapshot(&snapshot)
+            .and_then(|source| provisional_thread_title_from_prompt(thread_id, &source.prompt))?;
+        self.projections()
+            .update_thread_title(thread_id, &fallback_title, &snapshot.thread.updated_at)
+            .await?;
+        Some(fallback_title)
+    }
+
+    pub(super) async fn schedule_thread_title_generation_from_prompt(
+        &self,
+        thread_id: &str,
+        visible_prompt: &str,
+        workspace: &str,
+        model: Option<&str>,
+    ) {
+        let normalized_prompt = visible_prompt.trim();
+        if normalized_prompt.is_empty() {
+            return;
+        }
+        if let Some(fallback_title) =
+            provisional_thread_title_from_prompt(thread_id, normalized_prompt)
+        {
+            let _ = self
+                .persist_generated_thread_title(thread_id, &fallback_title)
+                .await;
+            return;
+        }
+        if !self
+            .reserve_thread_title_generation_if_needed(thread_id)
+            .await
+        {
+            return;
+        }
+
+        let state = self.clone();
+        let thread_id = thread_id.to_string();
+        let prompt = normalized_prompt.to_string();
+        let workspace = workspace.to_string();
+        let model = title_generation_model_for_thread(&thread_id, model).map(str::to_string);
+        tokio::spawn(async move {
+            let generation_result = state
+                .inner
+                .gateway
+                .generate_thread_title_candidate(&workspace, &prompt, model.as_deref())
+                .await;
+
+            if let Ok(Some(title)) = generation_result {
+                let _ = state
+                    .persist_generated_thread_title(&thread_id, &title)
+                    .await;
+            }
+
+            state.release_thread_title_generation(&thread_id).await;
+        });
+    }
+
+    async fn reserve_thread_title_generation_if_needed(&self, thread_id: &str) -> bool {
+        if !self.should_generate_thread_title(thread_id).await {
+            return false;
+        }
+
+        self.inner
+            .inflight_thread_title_generations
+            .write()
+            .await
+            .insert(thread_id.to_string())
+    }
+
+    async fn release_thread_title_generation(&self, thread_id: &str) {
+        self.inner
+            .inflight_thread_title_generations
+            .write()
+            .await
+            .remove(thread_id);
+    }
+
+    pub(super) async fn should_generate_thread_title(&self, thread_id: &str) -> bool {
+        if !matches!(
+            provider_from_thread_id(thread_id),
+            Some(
+                shared_contracts::ProviderKind::Codex | shared_contracts::ProviderKind::ClaudeCode
+            )
+        ) {
+            return false;
+        }
+        if self
+            .inner
+            .inflight_thread_title_generations
+            .read()
+            .await
+            .contains(thread_id)
+        {
+            return false;
+        }
+
+        self.thread_title_still_needs_generation(thread_id).await
+    }
+
+    async fn thread_title_still_needs_generation(&self, thread_id: &str) -> bool {
+        self.projections()
+            .thread_title(thread_id)
+            .await
+            .map(|title| is_placeholder_thread_title(&title))
+            .unwrap_or(true)
+    }
+
+    async fn persist_generated_thread_title(
+        &self,
+        thread_id: &str,
+        title: &str,
+    ) -> Result<(), String> {
+        let normalized_title = title.trim();
+        if normalized_title.is_empty() || !self.thread_title_still_needs_generation(thread_id).await
+        {
+            return Ok(());
+        }
+
+        if is_provider_thread_id(thread_id, ProviderKind::Codex) {
+            if let Err(error) = self
+                .inner
+                .gateway
+                .set_thread_name(thread_id, normalized_title)
+                .await
+            {
+                eprintln!(
+                    "bridge generated thread title upstream rename failed thread_id={thread_id}: {error}; keeping local title"
+                );
+            }
+        }
+        let occurred_at = Utc::now().to_rfc3339();
+        let status = self
+            .projections()
+            .update_thread_title(thread_id, normalized_title, &occurred_at)
+            .await
+            .unwrap_or(ThreadStatus::Idle);
+        self.event_hub().publish(BridgeEventEnvelope {
+            contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
+            event_id: format!("{thread_id}-title-{occurred_at}"),
+            thread_id: thread_id.to_string(),
+            kind: BridgeEventKind::ThreadStatusChanged,
+            occurred_at,
+            payload: json!({
+                "status": thread_status_wire_value(status),
+                "reason": "thread_title_generated",
+                "title": normalized_title,
+            }),
+            annotations: None,
+        });
+        Ok(())
+    }
+}
+
 pub(super) fn title_generation_model_for_thread<'a>(
     thread_id: &str,
     model: Option<&'a str>,
@@ -19,21 +181,6 @@ pub(super) fn provisional_thread_title_from_prompt(
         return None;
     }
 
-    prompt_fallback_thread_title(prompt)
-}
-
-pub(super) fn placeholder_thread_title_fallback_from_snapshot(
-    snapshot: &ThreadSnapshotDto,
-) -> Option<String> {
-    if !is_placeholder_thread_title(&snapshot.thread.title) {
-        return None;
-    }
-
-    title_generation_source_from_snapshot(snapshot)
-        .and_then(|source| prompt_fallback_thread_title(&source.prompt))
-}
-
-fn prompt_fallback_thread_title(prompt: &str) -> Option<String> {
     let first_sentence = prompt
         .split(['.', '?', '!'])
         .find(|segment| !segment.trim().is_empty())
@@ -122,12 +269,11 @@ pub(super) fn thread_summary_from_snapshot(snapshot: &ThreadSnapshotDto) -> Thre
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct ThreadTitleGenerationSource {
-    pub(super) workspace: String,
-    pub(super) prompt: String,
+struct ThreadTitleGenerationSource {
+    prompt: String,
 }
 
-pub(super) fn title_generation_source_from_snapshot(
+fn title_generation_source_from_snapshot(
     snapshot: &ThreadSnapshotDto,
 ) -> Option<ThreadTitleGenerationSource> {
     let prompt = snapshot
@@ -139,15 +285,7 @@ pub(super) fn title_generation_source_from_snapshot(
             (!summary.is_empty() && !is_placeholder_thread_title(summary))
                 .then(|| summary.to_string())
         })?;
-    let workspace = snapshot.thread.workspace.trim();
-    if workspace.is_empty() {
-        return None;
-    }
-
-    Some(ThreadTitleGenerationSource {
-        workspace: workspace.to_string(),
-        prompt,
-    })
+    Some(ThreadTitleGenerationSource { prompt })
 }
 
 fn first_user_message_text_from_entry(entry: &ThreadTimelineEntryDto) -> Option<String> {

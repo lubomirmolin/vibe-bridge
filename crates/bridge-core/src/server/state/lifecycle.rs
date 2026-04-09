@@ -6,7 +6,6 @@ impl BridgeAppState {
         pairing_sessions: PairingSessionService,
         pairing_route: PairingRouteState,
         speech: SpeechService,
-        state_directory: std::path::PathBuf,
     ) -> Self {
         Self {
             inner: Arc::new(BridgeAppStateInner {
@@ -17,13 +16,21 @@ impl BridgeAppState {
                 }),
                 available_models: RwLock::new(Vec::new()),
                 bridge_turn_metadata: RwLock::new(HashMap::new()),
-                thread_runtimes: RwLock::new(HashMap::new()),
+                active_turn_ids: RwLock::new(HashMap::new()),
+                active_turn_stream_threads: RwLock::new(HashSet::new()),
+                interrupted_threads: RwLock::new(HashSet::new()),
+                pending_bridge_owned_turns: RwLock::new(HashSet::new()),
+                awaiting_plan_question_prompts: RwLock::new(HashMap::new()),
+                pending_user_inputs: RwLock::new(HashMap::new()),
+                resumed_notification_threads: RwLock::new(HashSet::new()),
                 inflight_thread_title_generations: RwLock::new(HashSet::new()),
+                pending_user_message_images: RwLock::new(HashMap::new()),
                 access_mode: RwLock::new(AccessMode::ControlWithApprovals),
                 security_events: RwLock::new(Vec::new()),
                 codex_usage_client: RwLock::new(CodexUsageClient::default()),
                 gateway: CodexGateway::new(config),
-                event_hub: build_event_hub(&state_directory),
+                event_hub: EventHub::new(512),
+                notification_control_tx: Mutex::new(None),
                 desktop_ipc_control_tx: Mutex::new(None),
                 pairing_sessions: Mutex::new(pairing_sessions),
                 pairing_route,
@@ -41,14 +48,7 @@ impl BridgeAppState {
             config.state_directory.clone(),
         );
         let speech = SpeechService::from_config(&config).await;
-        let state_directory = config.state_directory.clone();
-        let state = Self::new(
-            config.codex,
-            pairing_sessions,
-            config.pairing_route,
-            speech,
-            state_directory,
-        );
+        let state = Self::new(config.codex, pairing_sessions, config.pairing_route, speech);
 
         match state.inner.gateway.bootstrap().await {
             Ok(bootstrap) => {
@@ -58,16 +58,6 @@ impl BridgeAppState {
                     .projections()
                     .replace_summaries(preserved_summaries)
                     .await;
-                let persisted_events = state.event_hub().history_snapshot();
-                if !persisted_events.is_empty() {
-                    state
-                        .projections()
-                        .hydrate_from_events(&persisted_events, AccessMode::ControlWithApprovals)
-                        .await;
-                }
-                state
-                    .restore_pending_user_input_sessions_from_projection()
-                    .await;
                 state.set_available_models(bootstrap.models).await;
                 state
                     .set_codex_health(ServiceHealthDto {
@@ -75,7 +65,6 @@ impl BridgeAppState {
                         message: bootstrap.message,
                     })
                     .await;
-                state.schedule_recent_placeholder_title_backfill(3).await;
             }
             Err(error) => {
                 state
@@ -217,7 +206,6 @@ impl BridgeAppState {
                 "security-{}",
                 self.inner.security_events.read().await.len() + 1
             ),
-            bridge_seq: None,
             thread_id: target.into(),
             kind: BridgeEventKind::SecurityAudit,
             occurred_at,
@@ -296,20 +284,5 @@ impl BridgeAppState {
             .speech
             .transcribe_bytes(file_name, audio_bytes)
             .await
-    }
-}
-
-fn build_event_hub(state_directory: &std::path::Path) -> EventHub {
-    let event_log_path =
-        crate::persistence::PersistenceBoundary::new(state_directory.to_path_buf())
-            .event_log_path();
-    match EventHub::with_persistence(512, event_log_path) {
-        Ok(event_hub) => event_hub,
-        Err(error) => {
-            eprintln!(
-                "bridge event hub persistence unavailable; falling back to in-memory replay: {error}"
-            );
-            EventHub::new(512)
-        }
     }
 }

@@ -60,9 +60,8 @@ impl BridgeAppState {
                 }
 
                 loop {
-                    if let Err(error) = drain_notification_control_messages(
-                        &control_rx,
-                        |message| match message {
+                    if let Err(error) =
+                        drain_notification_control_messages(&control_rx, |message| match message {
                             NotificationControlMessage::ResumeThread(thread_id) => {
                                 tracked_threads.insert(thread_id.to_string());
                                 if let Some(conversation_state) =
@@ -84,7 +83,7 @@ impl BridgeAppState {
                                                 let state = state.clone();
                                                 handle.block_on(async move {
                                                     state
-                                                        .backoff_resumable_notification_thread_after_stale_rollout(
+                                                        .forget_resumable_notification_thread(
                                                             &thread_id,
                                                         )
                                                         .await;
@@ -139,9 +138,7 @@ impl BridgeAppState {
                                         let state = state.clone();
                                         handle.block_on(async move {
                                             state
-                                                .backoff_resumable_notification_thread_after_stale_rollout(
-                                                    &thread_id,
-                                                )
+                                                .forget_resumable_notification_thread(&thread_id)
                                                 .await;
                                         });
                                         Ok(())
@@ -149,8 +146,8 @@ impl BridgeAppState {
                                     Err(error) => Err(error),
                                 }
                             }
-                        },
-                    ) {
+                        })
+                    {
                         eprintln!("bridge desktop IPC control failed: {error}");
                         break;
                     }
@@ -258,16 +255,6 @@ impl BridgeAppState {
                             .projections()
                             .replace_summaries(preserved_summaries)
                             .await;
-                        let persisted_events = state.event_hub().history_snapshot();
-                        if !persisted_events.is_empty() {
-                            state
-                                .projections()
-                                .hydrate_from_events(
-                                    &persisted_events,
-                                    AccessMode::ControlWithApprovals,
-                                )
-                                .await;
-                        }
                         state.set_available_models(bootstrap.models).await;
                         state
                             .set_codex_health(ServiceHealthDto {

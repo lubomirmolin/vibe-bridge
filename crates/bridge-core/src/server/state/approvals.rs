@@ -31,7 +31,6 @@ impl BridgeAppState {
         let event = BridgeEventEnvelope {
             contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
             event_id: format!("evt-{}", approval.approval_id),
-            bridge_seq: None,
             thread_id: approval.thread_id.clone(),
             kind: BridgeEventKind::ApprovalRequested,
             occurred_at: approval.requested_at.clone(),

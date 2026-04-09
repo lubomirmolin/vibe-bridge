@@ -19,13 +19,9 @@ impl LiveDeltaCompactor {
                 {
                     return event;
                 }
-                let role = match event.payload.get("role").and_then(Value::as_str) {
-                    Some("user") => "user",
-                    Some("assistant") => "assistant",
-                    _ => match event.payload.get("type").and_then(Value::as_str) {
-                        Some("userMessage") => "user",
-                        _ => "assistant",
-                    },
+                let role = match event.payload.get("type").and_then(Value::as_str) {
+                    Some("userMessage") => "user",
+                    _ => "assistant",
                 };
                 let current_text = event
                     .payload
@@ -38,27 +34,16 @@ impl LiveDeltaCompactor {
                     current_text,
                 );
 
-                let mut payload = json!({
-                    "id": event.payload.get("id").and_then(Value::as_str).unwrap_or_default(),
-                    "type": "message",
-                    "role": role,
-                    "delta": delta,
-                    "replace": replace,
-                });
-                if let Some(client_message_id) = event
-                    .payload
-                    .get("client_message_id")
-                    .and_then(Value::as_str)
-                    .filter(|value| !value.trim().is_empty())
-                    && let Some(object) = payload.as_object_mut()
-                {
-                    object.insert(
-                        "client_message_id".to_string(),
-                        Value::String(client_message_id.to_string()),
-                    );
+                BridgeEventEnvelope {
+                    payload: json!({
+                        "id": event.payload.get("id").and_then(Value::as_str).unwrap_or_default(),
+                        "type": "message",
+                        "role": role,
+                        "delta": delta,
+                        "replace": replace,
+                    }),
+                    ..event
                 }
-
-                BridgeEventEnvelope { payload, ..event }
             }
             BridgeEventKind::PlanDelta => {
                 if event.payload.get("text").is_none()
@@ -205,86 +190,8 @@ pub(super) fn build_turn_started_history_event(
     BridgeEventEnvelope {
         contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
         event_id: format!("{thread_id}-status-turn-started-{occurred_at}"),
-        bridge_seq: None,
         thread_id: thread_id.to_string(),
         kind: BridgeEventKind::ThreadStatusChanged,
-        occurred_at: occurred_at.to_string(),
-        payload,
-        annotations: None,
-    }
-}
-
-pub(super) fn should_synthesize_visible_user_prompt(
-    visible_prompt: &str,
-    upstream_prompt: &str,
-) -> bool {
-    let _ = upstream_prompt;
-    !visible_prompt.trim().is_empty()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn live_delta_compactor_preserves_explicit_message_role() {
-        let mut compactor = LiveDeltaCompactor::default();
-        let compacted = compactor.compact(BridgeEventEnvelope {
-            contract_version: CONTRACT_VERSION.to_string(),
-            event_id: "evt-role-preserve".to_string(),
-            bridge_seq: None,
-            thread_id: "codex:thread-role-preserve".to_string(),
-            kind: BridgeEventKind::MessageDelta,
-            occurred_at: "2026-04-06T09:00:00Z".to_string(),
-            payload: json!({
-                "id": "item-user-1",
-                "type": "message",
-                "role": "user",
-                "text": "Hello",
-            }),
-            annotations: None,
-        });
-
-        assert_eq!(compacted.payload["role"], "user");
-    }
-}
-
-pub(super) fn build_visible_user_message_event(
-    thread_id: &str,
-    occurred_at: &str,
-    turn_id: Option<&str>,
-    visible_prompt: &str,
-    client_message_id: Option<&str>,
-) -> BridgeEventEnvelope<Value> {
-    let prompt = visible_prompt.trim();
-    let mut payload = json!({
-        "type": "userMessage",
-        "role": "user",
-        "text": prompt,
-        "content": [{
-            "text": prompt,
-        }],
-    });
-    if let Some(client_message_id) = client_message_id.filter(|value| !value.trim().is_empty())
-        && let Some(object) = payload.as_object_mut()
-    {
-        object.insert(
-            "client_message_id".to_string(),
-            Value::String(client_message_id.to_string()),
-        );
-    }
-
-    let event_id = match turn_id.filter(|value| !value.trim().is_empty()) {
-        Some(turn_id) => format!("{turn_id}-visible-user-prompt"),
-        None => format!("{thread_id}-visible-user-prompt-{occurred_at}"),
-    };
-
-    BridgeEventEnvelope {
-        contract_version: shared_contracts::CONTRACT_VERSION.to_string(),
-        event_id,
-        bridge_seq: None,
-        thread_id: thread_id.to_string(),
-        kind: BridgeEventKind::MessageDelta,
         occurred_at: occurred_at.to_string(),
         payload,
         annotations: None,
@@ -375,7 +282,7 @@ pub(super) fn should_skip_background_notification_event(
         .is_none_or(|status| status == "running")
 }
 
-pub(super) fn should_suppress_non_running_thread_status_for_bridge_active_turn(
+fn should_suppress_non_running_thread_status_for_bridge_active_turn(
     event: &BridgeEventEnvelope<Value>,
     has_bridge_owned_active_turn: bool,
 ) -> bool {
@@ -386,19 +293,6 @@ pub(super) fn should_suppress_non_running_thread_status_for_bridge_active_turn(
             .get("status")
             .and_then(Value::as_str)
             .is_some_and(|status| status != "running")
-}
-
-#[cfg(test)]
-pub(super) fn should_defer_bridge_owned_turn_finalization(status: ThreadStatus) -> bool {
-    status == ThreadStatus::Running
-}
-
-#[cfg(test)]
-pub(super) fn watchdog_should_finalize_bridge_owned_turn(
-    status: ThreadStatus,
-    has_active_turn_stream: bool,
-) -> bool {
-    status != ThreadStatus::Running && !has_active_turn_stream
 }
 
 pub(super) fn build_desktop_ipc_snapshot_update(
@@ -453,7 +347,7 @@ fn should_publish_desktop_ipc_live_event(
     !has_bridge_owned_active_turn
 }
 
-pub(super) fn preserve_running_status_for_bridge_owned_desktop_update(
+fn preserve_running_status_for_bridge_owned_desktop_update(
     previous_snapshot: Option<&ThreadSnapshotDto>,
     next_snapshot: &mut ThreadSnapshotDto,
     latest_raw_turn_status: Option<&str>,
@@ -503,7 +397,7 @@ fn desktop_raw_turn_status_is_terminal(latest_raw_turn_status: Option<&str>) -> 
     )
 }
 
-pub(super) fn preserve_bootstrap_status_for_cached_desktop_snapshot(
+fn preserve_bootstrap_status_for_cached_desktop_snapshot(
     previous_snapshot: Option<&ThreadSnapshotDto>,
     previous_summary_status: Option<ThreadStatus>,
     next_snapshot: &mut ThreadSnapshotDto,
@@ -526,7 +420,7 @@ pub(super) fn preserve_bootstrap_status_for_cached_desktop_snapshot(
     next_snapshot.thread.status = previous_summary_status;
 }
 
-pub(super) fn ensure_running_status_for_desktop_patch_update(
+fn ensure_running_status_for_desktop_patch_update(
     previous_snapshot: Option<&ThreadSnapshotDto>,
     next_snapshot: &mut ThreadSnapshotDto,
     is_patch_update: bool,
@@ -572,7 +466,7 @@ fn desktop_patch_update_has_fresh_activity(
     previous_snapshot.entries != next_snapshot.entries
 }
 
-pub(super) fn payload_contains_hidden_message(payload: &Value) -> bool {
+fn payload_contains_hidden_message(payload: &Value) -> bool {
     payload_primary_text(payload)
         .map(is_hidden_message)
         .unwrap_or(false)
@@ -598,7 +492,7 @@ fn payload_primary_text(payload: &Value) -> Option<&str> {
         .filter(|text| !text.is_empty())
 }
 
-pub(super) fn is_hidden_message(message: &str) -> bool {
+fn is_hidden_message(message: &str) -> bool {
     let trimmed = message.trim();
     trimmed.starts_with("# AGENTS.md instructions for ")
         || trimmed.starts_with("<permissions instructions>")
@@ -609,6 +503,25 @@ pub(super) fn is_hidden_message(message: &str) -> bool {
         || trimmed.starts_with("You are running in mobile plan intake mode.")
         || trimmed.starts_with("You are continuing a mobile planning workflow.")
         || trimmed.contains("<codex-plan-questions>")
+}
+
+pub(super) fn build_hidden_commit_prompt() -> String {
+    r#"<app-context>
+Mobile quick action: the user tapped Commit in the current session. In the visible thread transcript, the user message should appear as exactly:
+
+Commit
+
+Treat that visible message as the full user request.
+
+Analyze the current workspace changes for this session.
+Stage only files that belong to the current task or clear logical units.
+Split commits logically when the changes should not land as one commit.
+Use concise commit messages consistent with the repository style.
+If there are unrelated, risky, or incomplete changes, leave them unstaged and explain why.
+If there is nothing appropriate to commit, say that clearly and do not create an empty commit.
+After you finish, respond with a short summary of the commit split you made, including commit messages and any skipped files.
+</app-context>"#
+        .to_string()
 }
 
 pub(super) fn resume_notification_threads<'a, I, F>(

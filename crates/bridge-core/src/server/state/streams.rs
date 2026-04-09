@@ -1,13 +1,4 @@
 use super::*;
-use std::fmt::Write as _;
-use std::time::{Duration as StdDuration, Instant};
-
-use crate::server::gateway::GatewayTurnStreamActivity;
-
-#[cfg(test)]
-const STALE_NOTIFICATION_RESUME_COOLDOWN: StdDuration = StdDuration::from_millis(200);
-#[cfg(not(test))]
-const STALE_NOTIFICATION_RESUME_COOLDOWN: StdDuration = StdDuration::from_secs(10);
 
 impl BridgeAppState {
     pub(super) async fn request_notification_thread_resume(&self, thread_id: &str) {
@@ -19,27 +10,29 @@ impl BridgeAppState {
         }
 
         let next_thread_id = normalized_thread_id.to_string();
-        let now = Instant::now();
-        let should_request = self
-            .update_thread_runtime(&next_thread_id, |runtime| {
-                if let Some(stale_until) = runtime.resumable_notifications_stale_until {
-                    if stale_until > now {
-                        return false;
-                    }
-                    runtime.resumable_notifications_stale_until = None;
-                }
-                if runtime.resumable_notifications {
-                    return false;
-                }
-                runtime.resumable_notifications = true;
-                true
-            })
-            .await;
-        if !should_request {
+        let is_new = self
+            .inner
+            .resumed_notification_threads
+            .write()
+            .await
+            .insert(next_thread_id.clone());
+        if !is_new {
             return;
         }
-        eprintln!("bridge notification resume requested thread_id={next_thread_id}");
-        self.ensure_actor_owned_notification_stream(next_thread_id.clone());
+
+        self.dispatch_notification_thread_resume(next_thread_id);
+    }
+
+    fn dispatch_notification_thread_resume(&self, thread_id: String) {
+        let sender = self
+            .inner
+            .notification_control_tx
+            .lock()
+            .expect("notification control lock should not be poisoned")
+            .clone();
+        if let Some(sender) = sender {
+            let _ = sender.send(NotificationControlMessage::ResumeThread(thread_id.clone()));
+        }
         let desktop_sender = self
             .inner
             .desktop_ipc_control_tx
@@ -47,56 +40,20 @@ impl BridgeAppState {
             .expect("desktop IPC control lock should not be poisoned")
             .clone();
         if let Some(sender) = desktop_sender {
-            let _ = sender.send(NotificationControlMessage::ResumeThread(next_thread_id));
+            let _ = sender.send(NotificationControlMessage::ResumeThread(thread_id));
         }
     }
 
-    async fn apply_resumable_notification_event(&self, mut normalized: BridgeEventEnvelope<Value>) {
-        let has_live_turn_stream = self
-            .has_bridge_turn_stream_active(&normalized.thread_id)
-            .await;
-        if has_live_turn_stream && should_skip_background_notification_event(&normalized) {
-            return;
-        }
-        let should_suppress_for_bridge_owned_turn =
-            should_suppress_notification_event_for_bridge_active_turn(
-                &normalized,
-                self.has_bridge_owned_active_turn(&normalized.thread_id)
-                    .await,
-            );
-        if should_suppress_for_bridge_owned_turn {
-            return;
-        }
-        if should_clear_transient_thread_state(&normalized) {
-            self.clear_transient_thread_state(&normalized.thread_id)
-                .await;
-        }
-        if normalized.kind != BridgeEventKind::ThreadStatusChanged {
-            self.merge_pending_user_message_images(&mut normalized)
-                .await;
-        }
-        self.projections().apply_live_event(&normalized).await;
-        self.event_hub().publish(normalized);
+    pub(super) async fn resumable_notification_threads(&self) -> HashSet<String> {
+        self.inner.resumed_notification_threads.read().await.clone()
     }
 
     pub(super) async fn forget_resumable_notification_thread(&self, thread_id: &str) {
-        self.update_thread_runtime(thread_id, |runtime| {
-            runtime.resumable_notifications = false;
-            runtime.resumable_notifications_stale_until = None;
-        })
-        .await;
-    }
-
-    pub(super) async fn backoff_resumable_notification_thread_after_stale_rollout(
-        &self,
-        thread_id: &str,
-    ) {
-        let stale_until = Instant::now() + STALE_NOTIFICATION_RESUME_COOLDOWN;
-        self.update_thread_runtime(thread_id, |runtime| {
-            runtime.resumable_notifications = false;
-            runtime.resumable_notifications_stale_until = Some(stale_until);
-        })
-        .await;
+        self.inner
+            .resumed_notification_threads
+            .write()
+            .await
+            .remove(thread_id);
     }
 
     pub(super) async fn forget_resumable_notification_threads<I>(&self, thread_ids: I)
@@ -104,46 +61,48 @@ impl BridgeAppState {
         I: IntoIterator,
         I::Item: AsRef<str>,
     {
+        let mut tracked = self.inner.resumed_notification_threads.write().await;
         for thread_id in thread_ids {
-            self.forget_resumable_notification_thread(thread_id.as_ref())
-                .await;
+            tracked.remove(thread_id.as_ref());
         }
     }
 
     pub(super) async fn clear_transient_thread_state(&self, thread_id: &str) {
-        self.update_thread_runtime(thread_id, |runtime| {
-            runtime.active_turn_id = None;
-            runtime.pending_user_message_images.clear();
-        })
-        .await;
-    }
-
-    pub(super) async fn clear_pending_turn_client_message(&self, thread_id: &str) {
-        self.update_thread_runtime(thread_id, |runtime| {
-            runtime.pending_client_message = None;
-        })
-        .await;
+        self.inner.active_turn_ids.write().await.remove(thread_id);
+        self.inner
+            .pending_bridge_owned_turns
+            .write()
+            .await
+            .remove(thread_id);
+        self.inner
+            .pending_user_message_images
+            .write()
+            .await
+            .remove(thread_id);
     }
 
     pub(super) async fn clear_interrupted_thread_state(&self, thread_id: &str) {
-        self.update_thread_runtime(thread_id, |runtime| {
-            runtime.interrupted = false;
-        })
-        .await;
+        self.inner
+            .interrupted_threads
+            .write()
+            .await
+            .remove(thread_id);
     }
 
     pub(super) async fn mark_thread_interrupt_requested(&self, thread_id: &str) {
-        self.update_thread_runtime(thread_id, |runtime| {
-            runtime.interrupted = true;
-        })
-        .await;
+        self.inner
+            .interrupted_threads
+            .write()
+            .await
+            .insert(thread_id.to_string());
     }
 
     async fn should_preserve_interrupted_thread_state(&self, thread_id: &str) -> bool {
-        self.read_thread_runtime(thread_id, |runtime| {
-            runtime.is_some_and(|runtime| runtime.interrupted)
-        })
-        .await
+        self.inner
+            .interrupted_threads
+            .read()
+            .await
+            .contains(thread_id)
     }
 
     pub(super) async fn rewrite_interrupted_thread_status_event(
@@ -183,38 +142,36 @@ impl BridgeAppState {
     }
 
     pub(super) async fn finalize_bridge_owned_turn(&self, thread_id: &str) {
-        eprintln!("bridge turn finalize thread_id={thread_id}");
         self.clear_transient_thread_state(thread_id).await;
     }
 
-    async fn has_bridge_turn_stream_active(&self, thread_id: &str) -> bool {
+    pub(super) async fn mark_bridge_turn_stream_started(&self, thread_id: &str) {
         self.inner
-            .gateway
-            .thread_lifecycle_state(thread_id)
+            .active_turn_stream_threads
+            .write()
             .await
-            .map(|state| state.stream_active)
-            .unwrap_or(false)
+            .insert(thread_id.to_string());
+    }
+
+    pub(super) async fn mark_bridge_turn_stream_finished(&self, thread_id: &str) {
+        self.inner
+            .active_turn_stream_threads
+            .write()
+            .await
+            .remove(thread_id);
+    }
+
+    pub(super) async fn has_bridge_turn_stream_active(&self, thread_id: &str) -> bool {
+        self.inner
+            .active_turn_stream_threads
+            .read()
+            .await
+            .contains(thread_id)
     }
 
     pub(super) fn schedule_bridge_owned_turn_watchdog(&self, _thread_id: &str) {}
 
-    pub(super) async fn refresh_snapshot_after_bridge_turn_completion(
-        &self,
-        thread_id: &str,
-        activity: GatewayTurnStreamActivity,
-    ) {
-        if !activity.requires_completion_snapshot_refresh() {
-            eprintln!(
-                "bridge completion snapshot refresh skipped thread_id={thread_id} reason=stream_was_self_sufficient activity=user:{} assistant:{} workflow:{} completed:{}",
-                activity.saw_user_message,
-                activity.saw_assistant_message,
-                activity.saw_workflow_event,
-                activity.saw_turn_completed
-            );
-            return;
-        }
-        let refresh_started_at = Instant::now();
-        eprintln!("bridge completion snapshot refresh start thread_id={thread_id}");
+    pub(super) async fn refresh_snapshot_after_bridge_turn_completion(&self, thread_id: &str) {
         let snapshot = match self.inner.gateway.fetch_thread_snapshot(thread_id).await {
             Ok(snapshot) => snapshot,
             Err(error) => {
@@ -224,16 +181,11 @@ impl BridgeAppState {
                 return;
             }
         };
-        eprintln!(
-            "bridge completion snapshot refresh fetched thread_id={thread_id} elapsed_ms={} snapshot={}",
-            refresh_started_at.elapsed().as_millis(),
-            summarize_snapshot_for_debug(&snapshot)
-        );
         self.apply_bridge_turn_completion_snapshot(thread_id, snapshot)
             .await;
     }
 
-    pub(super) async fn apply_bridge_turn_completion_snapshot(
+    async fn apply_bridge_turn_completion_snapshot(
         &self,
         thread_id: &str,
         mut snapshot: ThreadSnapshotDto,
@@ -261,134 +213,175 @@ impl BridgeAppState {
             })
             .collect::<Vec<_>>();
 
-        eprintln!(
-            "bridge completion snapshot apply thread_id={thread_id} previous={} next={} published_status_events={}",
-            previous_snapshot
-                .as_ref()
-                .map(summarize_snapshot_for_debug)
-                .unwrap_or_else(|| "<none>".to_string()),
-            summarize_snapshot_for_debug(&snapshot),
-            events.len()
-        );
-
         self.apply_external_snapshot_update(snapshot, events).await;
     }
-}
 
-impl BridgeAppState {
-    fn ensure_actor_owned_notification_stream(&self, thread_id: String) {
-        let handle = tokio::runtime::Handle::current();
+    pub fn start_notification_forwarder(&self) {
         let state = self.clone();
-        let thread_id_for_error = thread_id.clone();
-        let compactor = Arc::new(std::sync::Mutex::new(LiveDeltaCompactor::default()));
-        let event_state = state.clone();
-        let event_handle = handle.clone();
-        let stale_state = state.clone();
-        let stale_handle = handle.clone();
-        let result = self.inner.gateway.ensure_notification_stream(
-            &thread_id,
-            move |event| {
-                let normalized = compactor
-                    .lock()
-                    .expect("notification compactor lock should not be poisoned")
-                    .compact(event);
-                if !should_publish_compacted_event(&normalized) {
-                    return;
-                }
-                if should_suppress_live_event(&normalized) {
-                    return;
-                }
-                let state = event_state.clone();
-                event_handle.block_on(async move {
-                    state.apply_resumable_notification_event(normalized).await;
-                });
-            },
-            move |thread_id| {
-                let state = stale_state.clone();
-                stale_handle.block_on(async move {
-                    state
-                        .backoff_resumable_notification_thread_after_stale_rollout(&thread_id)
-                        .await;
-                });
-            },
-        );
-        if let Err(error) = result {
-            eprintln!(
-                "bridge actor notification stream dispatch failed thread_id={thread_id_for_error}: {error}"
-            );
-        }
-    }
-}
+        let handle = tokio::runtime::Handle::current();
+        let (control_tx, control_rx) = mpsc::channel();
+        *self
+            .inner
+            .notification_control_tx
+            .lock()
+            .expect("notification control lock should not be poisoned") = Some(control_tx);
+        std::thread::spawn(move || {
+            let mut compactor = LiveDeltaCompactor::default();
+            loop {
+                let mut notifications = match state.inner.gateway.notification_stream() {
+                    Ok(stream) => {
+                        let state = state.clone();
+                        handle.block_on(async move {
+                            state
+                                .set_codex_health(ServiceHealthDto {
+                                    status: ServiceHealthStatus::Healthy,
+                                    message: None,
+                                })
+                                .await;
+                        });
+                        stream
+                    }
+                    Err(error) => {
+                        eprintln!("bridge notification stream failed to start: {error}");
+                        let state = state.clone();
+                        handle.block_on(async move {
+                            state
+                                .set_codex_health(ServiceHealthDto {
+                                    status: ServiceHealthStatus::Degraded,
+                                    message: Some(format!(
+                                        "notification stream unavailable: {error}"
+                                    )),
+                                })
+                                .await;
+                        });
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        continue;
+                    }
+                };
 
-fn summarize_snapshot_for_debug(snapshot: &ThreadSnapshotDto) -> String {
-    let mut buffer = String::new();
-    let message_count = snapshot
-        .entries
-        .iter()
-        .filter(|entry| entry.kind == BridgeEventKind::MessageDelta)
-        .count();
-    let status_count = snapshot
-        .entries
-        .iter()
-        .filter(|entry| entry.kind == BridgeEventKind::ThreadStatusChanged)
-        .count();
-    let recent_entries = snapshot
-        .entries
-        .iter()
-        .rev()
-        .take(5)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .map(|entry| {
-            format!(
-                "{}:{:?}:{}",
-                entry.event_id,
-                entry.kind,
-                entry
-                    .payload
-                    .get("type")
-                    .and_then(Value::as_str)
-                    .or_else(|| entry.payload.get("status").and_then(Value::as_str))
-                    .unwrap_or("-")
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    let latest_message = snapshot
-        .entries
-        .iter()
-        .rev()
-        .find(|entry| entry.kind == BridgeEventKind::MessageDelta)
-        .and_then(|entry| {
-            entry
-                .payload
-                .get("text")
-                .and_then(Value::as_str)
-                .or_else(|| entry.payload.get("delta").and_then(Value::as_str))
-                .map(|text| truncate_for_debug(text, 80))
-        })
-        .unwrap_or_else(|| "<none>".to_string());
-    let _ = write!(
-        buffer,
-        "status={:?} updated_at={} entries={} messages={} statuses={} last_message={} recent=[{}]",
-        snapshot.thread.status,
-        snapshot.thread.updated_at,
-        snapshot.entries.len(),
-        message_count,
-        status_count,
-        latest_message,
-        recent_entries
-    );
-    buffer
-}
+                let resumed_threads =
+                    handle.block_on(async { state.resumable_notification_threads().await });
+                let dropped_threads =
+                    match resume_notification_threads(resumed_threads.iter(), |thread_id| {
+                        notifications.resume_thread(thread_id)
+                    }) {
+                        Ok(dropped_threads) => dropped_threads,
+                        Err(error) => {
+                            eprintln!("bridge notification resume sync failed: {error}");
+                            std::thread::sleep(std::time::Duration::from_secs(1));
+                            continue;
+                        }
+                    };
+                if !dropped_threads.is_empty() {
+                    let state = state.clone();
+                    handle.block_on(async move {
+                        state
+                            .forget_resumable_notification_threads(dropped_threads)
+                            .await;
+                    });
+                }
 
-fn truncate_for_debug(value: &str, max_chars: usize) -> String {
-    let trimmed = value.trim();
-    if trimmed.chars().count() <= max_chars {
-        return trimmed.to_string();
+                loop {
+                    if let Err(error) =
+                        drain_notification_control_messages(&control_rx, |message| match message {
+                            NotificationControlMessage::ResumeThread(thread_id) => {
+                                match resume_notification_thread_until_rollout_exists(
+                                    &thread_id,
+                                    |thread_id| notifications.resume_thread(thread_id),
+                                ) {
+                                    Ok(()) => Ok(()),
+                                    Err(error) if is_stale_rollout_resume_error(&error) => {
+                                        let state = state.clone();
+                                        handle.block_on(async move {
+                                            state
+                                                .forget_resumable_notification_thread(&thread_id)
+                                                .await;
+                                        });
+                                        Ok(())
+                                    }
+                                    Err(error) => Err(error),
+                                }
+                            }
+                        })
+                    {
+                        eprintln!("bridge notification control failed: {error}");
+                        break;
+                    }
+
+                    match notifications.next_event() {
+                        Ok(Some(event)) => {
+                            let mut normalized = compactor.compact(event);
+                            if !should_publish_compacted_event(&normalized) {
+                                continue;
+                            }
+                            let state = state.clone();
+                            handle.block_on(async move {
+                                let has_live_turn_stream = state
+                                    .has_bridge_turn_stream_active(&normalized.thread_id)
+                                    .await;
+                                if has_live_turn_stream
+                                    && should_skip_background_notification_event(&normalized)
+                                {
+                                    return;
+                                }
+                                let should_suppress_for_bridge_owned_turn =
+                                    should_suppress_notification_event_for_bridge_active_turn(
+                                        &normalized,
+                                        state
+                                            .has_bridge_owned_active_turn(&normalized.thread_id)
+                                            .await,
+                                    );
+                                if should_suppress_for_bridge_owned_turn {
+                                    return;
+                                }
+                                if should_clear_transient_thread_state(&normalized) {
+                                    state
+                                        .clear_transient_thread_state(&normalized.thread_id)
+                                        .await;
+                                }
+                                if normalized.kind != BridgeEventKind::ThreadStatusChanged {
+                                    state
+                                        .merge_pending_user_message_images(&mut normalized)
+                                        .await;
+                                }
+                                state.projections().apply_live_event(&normalized).await;
+                                state.event_hub().publish(normalized);
+                            });
+                        }
+                        Ok(None) => {
+                            let state = state.clone();
+                            handle.block_on(async move {
+                                state
+                                    .set_codex_health(ServiceHealthDto {
+                                        status: ServiceHealthStatus::Degraded,
+                                        message: Some(
+                                            "notification stream closed; reconnecting".to_string(),
+                                        ),
+                                    })
+                                    .await;
+                            });
+                            break;
+                        }
+                        Err(error) => {
+                            eprintln!("bridge notification stream failed: {error}");
+                            let state = state.clone();
+                            handle.block_on(async move {
+                                state
+                                    .set_codex_health(ServiceHealthDto {
+                                        status: ServiceHealthStatus::Degraded,
+                                        message: Some(format!(
+                                            "notification stream failed: {error}"
+                                        )),
+                                    })
+                                    .await;
+                            });
+                            break;
+                        }
+                    }
+                }
+
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        });
     }
-    let mut truncated = trimmed.chars().take(max_chars).collect::<String>();
-    truncated.push_str("...");
-    truncated
 }
