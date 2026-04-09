@@ -227,6 +227,78 @@ void main() {
   });
 
   testWidgets(
+    'thread detail shows latest file-change line counts under composer',
+    (tester) async {
+      final detailApi = FakeThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [_thread123Detail(status: ThreadStatus.completed)],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            <ThreadTimelineEntryDto>[
+              _timelineEvent(
+                id: 'evt-file-change-diff',
+                kind: BridgeEventKind.fileChange,
+                summary: 'Updated composer footer',
+                payload: {
+                  'path': 'lib/thread_detail_page.dart',
+                  'change': '''*** Begin Patch
+*** Update File: lib/thread_detail_page.dart
+@@
+-old line
++new line 1
++new line 2
+*** End Patch''',
+                },
+                occurredAt: '2026-03-18T10:05:00Z',
+              ),
+              _timelineEvent(
+                id: 'evt-after-diff-message',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Assistant output',
+                payload: {'delta': 'Footer counts are ready.'},
+                occurredAt: '2026-03-18T10:06:00Z',
+              ),
+            ],
+          ],
+        },
+      );
+
+      await _pumpThreadDetailApp(
+        tester,
+        detailApi: detailApi,
+        threadId: 'thread-123',
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('thread-composer-diff-summary')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('thread-composer-diff-additions')),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const Key('thread-composer-diff-additions')),
+            )
+            .data,
+        '+2',
+      );
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const Key('thread-composer-diff-deletions')),
+            )
+            .data,
+        '-1',
+      );
+    },
+  );
+
+  testWidgets(
     'thread detail shows inline loader until initial timeline page resolves',
     (tester) async {
       final timelineCompleter = Completer<List<ThreadTimelineEntryDto>>();
@@ -3407,6 +3479,31 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
       expect(find.byKey(const Key('turn-composer-submit')), findsOneWidget);
     },
   );
+
+  testWidgets('composer rail drag switches into plan mode', (tester) async {
+    final detailApi = FakeThreadDetailBridgeApi(
+      detailScriptByThreadId: {
+        'thread-456': [_thread456Detail()],
+      },
+      timelineScriptByThreadId: {
+        'thread-456': [<ThreadTimelineEntryDto>[]],
+      },
+    );
+
+    await _pumpThreadDetailApp(
+      tester,
+      detailApi: detailApi,
+      threadId: 'thread-456',
+    );
+
+    await tester.drag(
+      find.byKey(const Key('turn-composer-primary-rail')),
+      const Offset(-80, 0),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('turn-composer-plan-submit')), findsOneWidget);
+  });
 
   testWidgets('picking an image only attaches it until submit is pressed', (
     tester,

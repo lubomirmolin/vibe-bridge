@@ -40,6 +40,9 @@ import '../application/thread_list_controller.dart';
 
 part 'thread_detail_page_body.dart';
 part 'thread_detail_page_composer.dart';
+part 'thread_detail_page_composer_pending_input.dart';
+part 'thread_detail_page_composer_primary_action.dart';
+part 'thread_detail_page_composer_settings.dart';
 part 'thread_detail_page_draft.dart';
 part 'thread_detail_page_header.dart';
 part 'thread_detail_page_message.dart';
@@ -2041,6 +2044,8 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                           attachedImages: _attachedImages,
                           threadUsage: _threadUsage,
                           composerMode: _composerMode,
+                          latestDiffAdditions: null,
+                          latestDiffDeletions: null,
                           pendingUserInput: null,
                           selectedPlanOptionByQuestionId:
                               _selectedPlanOptionByQuestionId,
@@ -2065,6 +2070,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                                   optionId;
                             });
                           },
+                          onOpenDiff: null,
                           onSubmitComposer: _submitDraftComposerInput,
                           onSubmitPendingUserInput: null,
                         ),
@@ -2374,161 +2380,183 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                     bottom: 0,
                     left: 0,
                     right: 0,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            AppTheme.background.withValues(alpha: 0.0),
-                            AppTheme.background,
-                            AppTheme.background,
-                          ],
-                          stops: const [0.0, 0.45, 1.0],
-                        ),
-                      ),
-                      child: SafeArea(
-                        top: false,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            ValueListenableBuilder<bool>(
-                              valueListenable: _showNewMessagePill,
-                              builder: (context, show, child) {
-                                return AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 240),
-                                  transitionBuilder: (child, animation) =>
-                                      FadeTransition(
-                                        opacity: animation,
-                                        child: SlideTransition(
-                                          position:
-                                              Tween<Offset>(
-                                                begin: const Offset(0, 0.4),
-                                                end: Offset.zero,
-                                              ).animate(
-                                                CurvedAnimation(
-                                                  parent: animation,
-                                                  curve: Curves.easeOutBack,
-                                                ),
-                                              ),
-                                          child: child,
-                                        ),
+                    child: Builder(
+                      builder: (context) {
+                        final latestDiffOutput = _latestComposerDiffOutput(
+                          state.items,
+                        );
+                        return Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                AppTheme.background.withValues(alpha: 0.0),
+                                AppTheme.background,
+                                AppTheme.background,
+                              ],
+                              stops: const [0.0, 0.45, 1.0],
+                            ),
+                          ),
+                          child: SafeArea(
+                            top: false,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                ValueListenableBuilder<bool>(
+                                  valueListenable: _showNewMessagePill,
+                                  builder: (context, show, child) {
+                                    return AnimatedSwitcher(
+                                      duration: const Duration(
+                                        milliseconds: 240,
                                       ),
-                                  child: show
-                                      ? Padding(
-                                          padding: const EdgeInsets.only(
-                                            top: 8,
-                                          ),
-                                          child: SizedBox(
-                                            width: 40,
-                                            height: 40,
-                                            child: DecoratedBox(
-                                              decoration: BoxDecoration(
-                                                color: AppTheme.surfaceZinc800
-                                                    .withValues(alpha: 0.94),
-                                                shape: BoxShape.circle,
-                                                border: Border.all(
-                                                  color: Colors.white
-                                                      .withValues(alpha: 0.08),
-                                                ),
-                                              ),
-                                              child: IconButton(
-                                                key: const Key(
-                                                  'thread-detail-new-message-button',
-                                                ),
-                                                tooltip:
-                                                    'Scroll to new messages',
-                                                padding: EdgeInsets.zero,
-                                                visualDensity:
-                                                    VisualDensity.compact,
-                                                iconSize: 18,
-                                                onPressed: () {
-                                                  _isTimelineAutoFollowEnabled =
-                                                      true;
-                                                  _showNewMessagePill.value =
-                                                      false;
-                                                  _newMessagePreview.value =
-                                                      null;
-                                                  _followTimelineBottomUntilSettled();
-                                                },
-                                                icon: PhosphorIcon(
-                                                  PhosphorIcons.arrowDown(),
-                                                  color: AppTheme.textMain,
-                                                ),
-                                              ),
+                                      transitionBuilder: (child, animation) =>
+                                          FadeTransition(
+                                            opacity: animation,
+                                            child: SlideTransition(
+                                              position:
+                                                  Tween<Offset>(
+                                                    begin: const Offset(0, 0.4),
+                                                    end: Offset.zero,
+                                                  ).animate(
+                                                    CurvedAnimation(
+                                                      parent: animation,
+                                                      curve: Curves.easeOutBack,
+                                                    ),
+                                                  ),
+                                              child: child,
                                             ),
                                           ),
+                                      child: show
+                                          ? Padding(
+                                              padding: const EdgeInsets.only(
+                                                top: 8,
+                                              ),
+                                              child: SizedBox(
+                                                width: 40,
+                                                height: 40,
+                                                child: DecoratedBox(
+                                                  decoration: BoxDecoration(
+                                                    color: AppTheme
+                                                        .surfaceZinc800
+                                                        .withValues(
+                                                          alpha: 0.94,
+                                                        ),
+                                                    shape: BoxShape.circle,
+                                                    border: Border.all(
+                                                      color: Colors.white
+                                                          .withValues(
+                                                            alpha: 0.08,
+                                                          ),
+                                                    ),
+                                                  ),
+                                                  child: IconButton(
+                                                    key: const Key(
+                                                      'thread-detail-new-message-button',
+                                                    ),
+                                                    tooltip:
+                                                        'Scroll to new messages',
+                                                    padding: EdgeInsets.zero,
+                                                    visualDensity:
+                                                        VisualDensity.compact,
+                                                    iconSize: 18,
+                                                    onPressed: () {
+                                                      _isTimelineAutoFollowEnabled =
+                                                          true;
+                                                      _showNewMessagePill
+                                                              .value =
+                                                          false;
+                                                      _newMessagePreview.value =
+                                                          null;
+                                                      _followTimelineBottomUntilSettled();
+                                                    },
+                                                    icon: PhosphorIcon(
+                                                      PhosphorIcons.arrowDown(),
+                                                      color: AppTheme.textMain,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            )
+                                          : const SizedBox.shrink(),
+                                    );
+                                  },
+                                ),
+                                _PinnedTurnComposer(
+                                  composerController: _composerController,
+                                  composerFocusNode: _composerFocusNode,
+                                  isTurnActive: state.isTurnActive,
+                                  controlsEnabled: controlsEnabled,
+                                  isComposerMutationInFlight:
+                                      state.isComposerMutationInFlight,
+                                  isInterruptMutationInFlight:
+                                      state.isInterruptMutationInFlight,
+                                  isSpeechRecording: _isSpeechRecording,
+                                  isSpeechTranscribing: _isSpeechTranscribing,
+                                  speechDurationSeconds: _speechDurationSeconds,
+                                  speechAmplitudeStream: _isSpeechRecording
+                                      ? _resolvedSpeechCapture.amplitudeStream(
+                                          const Duration(milliseconds: 50),
                                         )
-                                      : const SizedBox.shrink(),
-                                );
-                              },
-                            ),
-                            _PinnedTurnComposer(
-                              composerController: _composerController,
-                              composerFocusNode: _composerFocusNode,
-                              isTurnActive: state.isTurnActive,
-                              controlsEnabled: controlsEnabled,
-                              isComposerMutationInFlight:
-                                  state.isComposerMutationInFlight,
-                              isInterruptMutationInFlight:
-                                  state.isInterruptMutationInFlight,
-                              isSpeechRecording: _isSpeechRecording,
-                              isSpeechTranscribing: _isSpeechTranscribing,
-                              speechDurationSeconds: _speechDurationSeconds,
-                              speechAmplitudeStream: _isSpeechRecording
-                                  ? _resolvedSpeechCapture.amplitudeStream(
-                                      const Duration(milliseconds: 50),
-                                    )
-                                  : null,
-                              speechMessage: _speechMessage,
-                              speechMessageIsError: _speechMessageIsError,
-                              isComposerFocused: _isComposerFocused,
-                              attachedImages: _attachedImages,
-                              threadUsage: _threadUsage,
-                              composerMode: _composerMode,
-                              pendingUserInput: pendingUserInput,
-                              selectedPlanOptionByQuestionId:
-                                  _selectedPlanOptionByQuestionId,
-                              selectedProvider: _selectedProvider,
-                              selectedModel: _selectedModel,
-                              selectedReasoning: _selectedReasoning,
-                              supportsPlanMode: _supportsPlanMode,
-                              session: currentSession,
-                              accessModeErrorMessage:
-                                  deviceSettingsState.accessModeErrorMessage,
-                              onPickImages: _pickImages,
-                              onToggleSpeechInput: _toggleSpeechInput,
-                              onRemoveImage: _removeAttachedImage,
-                              onComposerModeChanged: (mode) {
-                                setState(() {
-                                  _composerMode = mode;
-                                });
-                              },
-                              onSelectPlanOption: (questionId, optionId) {
-                                final activePendingUserInput = pendingUserInput;
-                                if (activePendingUserInput == null) {
-                                  return;
-                                }
-                                _handlePendingUserInputSelection(
-                                  controller,
-                                  activePendingUserInput,
-                                  questionId,
-                                  optionId,
-                                );
-                              },
-                              onSubmitComposer: (value) =>
-                                  _submitComposerInput(controller, value),
-                              onSubmitPendingUserInput: pendingUserInput == null
-                                  ? null
-                                  : (value) => _submitPendingUserInput(
+                                      : null,
+                                  speechMessage: _speechMessage,
+                                  speechMessageIsError: _speechMessageIsError,
+                                  isComposerFocused: _isComposerFocused,
+                                  attachedImages: _attachedImages,
+                                  threadUsage: _threadUsage,
+                                  composerMode: _composerMode,
+                                  latestDiffAdditions:
+                                      latestDiffOutput?.diffAdditions,
+                                  latestDiffDeletions:
+                                      latestDiffOutput?.diffDeletions,
+                                  pendingUserInput: pendingUserInput,
+                                  selectedPlanOptionByQuestionId:
+                                      _selectedPlanOptionByQuestionId,
+                                  selectedProvider: _selectedProvider,
+                                  selectedModel: _selectedModel,
+                                  selectedReasoning: _selectedReasoning,
+                                  supportsPlanMode: _supportsPlanMode,
+                                  session: currentSession,
+                                  accessModeErrorMessage: deviceSettingsState
+                                      .accessModeErrorMessage,
+                                  onPickImages: _pickImages,
+                                  onToggleSpeechInput: _toggleSpeechInput,
+                                  onRemoveImage: _removeAttachedImage,
+                                  onComposerModeChanged: (mode) {
+                                    setState(() {
+                                      _composerMode = mode;
+                                    });
+                                  },
+                                  onSelectPlanOption: (questionId, optionId) {
+                                    final activePendingUserInput =
+                                        pendingUserInput;
+                                    if (activePendingUserInput == null) {
+                                      return;
+                                    }
+                                    _handlePendingUserInputSelection(
                                       controller,
-                                      pendingUserInput,
-                                      value,
-                                    ),
+                                      activePendingUserInput,
+                                      questionId,
+                                      optionId,
+                                    );
+                                  },
+                                  onOpenDiff: _toggleDiffView,
+                                  onSubmitComposer: (value) =>
+                                      _submitComposerInput(controller, value),
+                                  onSubmitPendingUserInput:
+                                      pendingUserInput == null
+                                      ? null
+                                      : (value) => _submitPendingUserInput(
+                                          controller,
+                                          pendingUserInput,
+                                          value,
+                                        ),
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
-                      ),
+                          ),
+                        );
+                      },
                     ),
                   ),
               ],
