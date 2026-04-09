@@ -315,6 +315,9 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Pre-warm the syntax highlighter so code blocks render without a
+    // FutureBuilder-driven layout reflow.
+    _ThreadCodeHighlighterSet.warmUp();
     final initialThreadId = widget.threadId?.trim();
     _selectedProvider = initialThreadId == null || initialThreadId.isEmpty
         ? ProviderKind.codex

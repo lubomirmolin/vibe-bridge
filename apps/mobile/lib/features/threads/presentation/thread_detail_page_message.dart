@@ -610,52 +610,90 @@ class _ThreadCodeBlockViewer extends StatelessWidget {
                 ],
               ),
             ),
-          FutureBuilder<_ThreadCodeHighlighterSet>(
-            future: _ThreadCodeHighlighterSet.load(),
-            builder: (context, snapshot) {
-              final highlighted = language == null
-                  ? null
-                  : snapshot.data?.highlight(language, code);
-              final codeStyle = GoogleFonts.jetBrainsMono(
-                color: AppTheme.textMuted,
-                fontSize: 11.5,
-                height: 1.4,
-              );
+          _buildCodeContent(
+            language: language,
+            lineCount: lineCount,
+            gutterWidth: gutterWidth,
+          ),
+        ],
+      ),
+    );
+  }
 
-              return SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: gutterWidth,
-                      child: Text(
-                        _lineNumbers(lineCount),
-                        textAlign: TextAlign.right,
-                        style: GoogleFonts.jetBrainsMono(
-                          color: AppTheme.textSubtle,
-                          fontSize: 10.5,
-                          height: 1.4,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      width: 1,
-                      height: 18.0 * lineCount,
-                      color: Colors.white.withValues(alpha: 0.08),
-                    ),
-                    const SizedBox(width: 8),
-                    SelectableText.rich(
-                      highlighted == null
-                          ? TextSpan(text: code, style: codeStyle)
-                          : TextSpan(style: codeStyle, children: [highlighted]),
-                    ),
-                  ],
-                ),
-              );
-            },
+  Widget _buildCodeContent({
+    required String? language,
+    required int lineCount,
+    required double gutterWidth,
+  }) {
+    // Use the cached instance synchronously when available to avoid
+    // FutureBuilder-driven layout reflows.
+    final cached = _ThreadCodeHighlighterSet.cachedInstance;
+    if (cached != null) {
+      return _codeContentBody(
+        highlighterSet: cached,
+        language: language,
+        lineCount: lineCount,
+        gutterWidth: gutterWidth,
+      );
+    }
+
+    return FutureBuilder<_ThreadCodeHighlighterSet>(
+      future: _ThreadCodeHighlighterSet.load(),
+      builder: (context, snapshot) {
+        return _codeContentBody(
+          highlighterSet: snapshot.data,
+          language: language,
+          lineCount: lineCount,
+          gutterWidth: gutterWidth,
+        );
+      },
+    );
+  }
+
+  Widget _codeContentBody({
+    required _ThreadCodeHighlighterSet? highlighterSet,
+    required String? language,
+    required int lineCount,
+    required double gutterWidth,
+  }) {
+    final highlighted = language == null
+        ? null
+        : highlighterSet?.highlight(language, code);
+    final codeStyle = GoogleFonts.jetBrainsMono(
+      color: AppTheme.textMuted,
+      fontSize: 11.5,
+      height: 1.4,
+    );
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: gutterWidth,
+            child: Text(
+              _lineNumbers(lineCount),
+              textAlign: TextAlign.right,
+              style: GoogleFonts.jetBrainsMono(
+                color: AppTheme.textSubtle,
+                fontSize: 10.5,
+                height: 1.4,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            width: 1,
+            height: 18.0 * lineCount,
+            color: Colors.white.withValues(alpha: 0.08),
+          ),
+          const SizedBox(width: 8),
+          SelectableText.rich(
+            highlighted == null
+                ? TextSpan(text: code, style: codeStyle)
+                : TextSpan(style: codeStyle, children: [highlighted]),
           ),
         ],
       ),
@@ -695,12 +733,39 @@ class _ThreadCodeHighlighterSet {
   static Future<HighlighterTheme>? _darkThemeFuture;
   static final Map<String, Highlighter> _highlighters = <String, Highlighter>{};
 
-  static Future<_ThreadCodeHighlighterSet> load() async {
+  /// Eagerly-resolved singleton. Available synchronously once the first
+  /// [load] completes; `null` while still loading.
+  static _ThreadCodeHighlighterSet? _cached;
+
+  /// Shared future so multiple callers coalesce on the same load.
+  static Future<_ThreadCodeHighlighterSet>? _loadFuture;
+
+  /// Kick off the highlighter load early so it is ready before any code
+  /// blocks need it. Call this once at app/page startup.
+  static void warmUp() {
+    _loadFuture ??= _doLoad();
+  }
+
+  static Future<_ThreadCodeHighlighterSet> load() {
+    return _loadFuture ??= _doLoad();
+  }
+
+  static Future<_ThreadCodeHighlighterSet> _doLoad() async {
+    if (_cached != null) {
+      return _cached!;
+    }
     await _init;
     final darkTheme = await (_darkThemeFuture ??=
         HighlighterTheme.loadDarkTheme());
-    return _ThreadCodeHighlighterSet._(darkTheme: darkTheme);
+    final instance = _ThreadCodeHighlighterSet._(darkTheme: darkTheme);
+    _cached = instance;
+    return instance;
   }
+
+  /// Returns the cached instance synchronously, or `null` if not yet
+  /// loaded. This avoids FutureBuilder rebuilds for code blocks rendered
+  /// after the first load finishes.
+  static _ThreadCodeHighlighterSet? get cachedInstance => _cached;
 
   final HighlighterTheme darkTheme;
 
