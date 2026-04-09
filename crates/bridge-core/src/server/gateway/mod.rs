@@ -421,6 +421,25 @@ mod tests {
     }
 
     #[test]
+    fn custom_tool_output_preserves_apply_patch_command() {
+        let item = json!({
+            "id": "tool-3",
+            "type": "customToolCallOutput",
+            "name": "apply_patch",
+            "output": "{\"output\":\"Success. Updated the following files:\\nM lib/main.dart\\n\",\"metadata\":{\"exit_code\":0}}"
+        });
+
+        let (kind, payload) =
+            normalize_codex_item_payload(&item).expect("custom tool output should normalize");
+        assert_eq!(kind, BridgeEventKind::FileChange);
+        assert_eq!(payload["command"], "apply_patch");
+        assert_eq!(
+            payload["resolved_unified_diff"],
+            "Success. Updated the following files:\nM lib/main.dart\n"
+        );
+    }
+
+    #[test]
     fn summarize_claude_stderr_prefers_human_readable_error_lines() {
         let stderr =
             "Error: Session ID 123 is already in use.\n    at main (file:///tmp/cli.js:1:1)";

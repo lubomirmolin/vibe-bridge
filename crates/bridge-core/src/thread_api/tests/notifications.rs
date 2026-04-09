@@ -334,6 +334,33 @@ fn codex_notification_normalizer_maps_custom_tool_output_deltas() {
 }
 
 #[test]
+fn codex_notification_normalizer_preserves_apply_patch_name_on_output_items() {
+    let mut normalizer = CodexNotificationNormalizer::default();
+
+    let event = normalizer
+        .normalize(
+            "thread/realtime/itemAdded",
+            &json!({
+                "threadId": "thread-123",
+                "item": {
+                    "id": "tool-2",
+                    "type": "customToolCallOutput",
+                    "name": "apply_patch",
+                    "output": "{\"output\":\"Success. Updated the following files:\\nM lib/main.dart\\n\",\"metadata\":{\"exit_code\":0}}",
+                }
+            }),
+        )
+        .expect("custom tool output item should produce an event");
+
+    assert_eq!(event.kind, BridgeEventKind::FileChange);
+    assert_eq!(event.payload["command"], "apply_patch");
+    assert_eq!(
+        event.payload["output"],
+        "Success. Updated the following files:\nM lib/main.dart\n"
+    );
+}
+
+#[test]
 fn codex_notification_normalizer_maps_web_search_items_to_command_events() {
     let mut normalizer = CodexNotificationNormalizer::default();
 

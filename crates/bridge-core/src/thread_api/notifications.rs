@@ -699,10 +699,18 @@ fn normalize_codex_tool_output_item(item: &Value) -> Option<(BridgeEventKind, Va
         .unwrap_or_default();
     let normalized_output = normalize_custom_tool_output(output);
     let is_file_change = is_file_change_text(&normalized_output);
+    let tool_name = item
+        .get("name")
+        .and_then(Value::as_str)
+        .or_else(|| item.get("command").and_then(Value::as_str))
+        .unwrap_or_default();
 
     let mut payload = item.clone();
     if let Some(object) = payload.as_object_mut() {
         object.insert("output".to_string(), Value::String(normalized_output));
+        if !tool_name.trim().is_empty() {
+            object.insert("command".to_string(), Value::String(tool_name.to_string()));
+        }
     }
 
     Some((

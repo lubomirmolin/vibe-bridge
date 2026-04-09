@@ -412,6 +412,7 @@ fn merge_live_payload(existing: Option<&Value>, kind: BridgeEventKind, incoming:
             serde_json::json!({
                 "id": incoming.get("id").and_then(Value::as_str).or_else(|| existing.and_then(|payload| payload.get("id")).and_then(Value::as_str)).unwrap_or_default(),
                 "type": "file_change",
+                "command": incoming.get("command").and_then(Value::as_str).or_else(|| existing.and_then(|payload| payload.get("command")).and_then(Value::as_str)).unwrap_or_default(),
                 "path": incoming.get("path").and_then(Value::as_str).or_else(|| incoming.get("file").and_then(Value::as_str)).or_else(|| existing.and_then(|payload| payload.get("path")).and_then(Value::as_str)).unwrap_or_default(),
                 "resolved_unified_diff": next_diff,
             })
