@@ -2402,7 +2402,7 @@ Output:
     expect(find.text('@@'), findsNothing);
     expect(find.text('+1'), findsOneWidget);
     expect(find.text('-1'), findsOneWidget);
-    expect(find.text('Modified'), findsOneWidget);
+    expect(find.text('Modified'), findsNothing);
   });
 
   testWidgets('multi-file diffs render one visible card per edited file', (

@@ -45,8 +45,7 @@ class _ThreadActivityCard extends StatelessWidget {
     Widget content;
 
     if (parsedContent != null) {
-      if (parsedContent.isStatusOnlyFileList ||
-          _isHiddenInternalToolCommand(parsedContent)) {
+      if (_isHiddenInternalToolCommand(parsedContent)) {
         return const SizedBox.shrink();
       }
       if (parsedContent.hasDiffBlock) {
@@ -615,9 +614,12 @@ class _CollapsibleTerminalCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final commandStr = parsed.terminalDisplayTitle;
+    final commandSubtitle = parsed.terminalDisplaySubtitle;
     final outputBody = parsed.terminalDisplayBody;
     final isSuccess = parsed.isSuccess;
     final isBackgroundTerminal = parsed.backgroundTerminalSummary != null;
+    final showHumanizedHeader =
+        commandSubtitle != null && commandSubtitle.trim().isNotEmpty;
     final workedForLabel = _workedForLabel(parsed.wallTimeSeconds);
     final cardDecoration = isBackgroundTerminal
         ? BoxDecoration(
@@ -655,7 +657,7 @@ class _CollapsibleTerminalCard extends StatelessWidget {
                     size: isBackgroundTerminal ? 15 : 16,
                   ),
                   SizedBox(width: isBackgroundTerminal ? 12 : 8),
-                  if (!isBackgroundTerminal) ...[
+                  if (!isBackgroundTerminal && !showHumanizedHeader) ...[
                     Text(
                       '\$',
                       style: GoogleFonts.jetBrainsMono(
@@ -666,24 +668,43 @@ class _CollapsibleTerminalCard extends StatelessWidget {
                     const SizedBox(width: 6),
                   ],
                   Expanded(
-                    child: Text(
-                      commandStr,
-                      key: isBackgroundTerminal
-                          ? const Key('thread-terminal-background-summary')
-                          : null,
-                      style: isBackgroundTerminal
-                          ? const TextStyle(
-                              color: AppTheme.textMain,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          commandStr,
+                          key: isBackgroundTerminal
+                              ? const Key('thread-terminal-background-summary')
+                              : null,
+                          style: isBackgroundTerminal || showHumanizedHeader
+                              ? const TextStyle(
+                                  color: AppTheme.textMain,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                  height: 1.25,
+                                )
+                              : GoogleFonts.jetBrainsMono(
+                                  color: AppTheme.textMain,
+                                  fontSize: 13,
+                                ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (showHumanizedHeader) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            commandSubtitle,
+                            style: GoogleFonts.jetBrainsMono(
+                              color: AppTheme.textSubtle,
+                              fontSize: 11,
                               height: 1.25,
-                            )
-                          : GoogleFonts.jetBrainsMono(
-                              color: AppTheme.textMain,
-                              fontSize: 13,
                             ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -1287,6 +1308,7 @@ class _CollapsibleParsedDiffFileCard extends StatelessWidget {
               ),
               child: _ThreadDiffViewer(
                 document: ParsedDiffDocument(files: <ParsedDiffFile>[file]),
+                showFileHeader: false,
               ),
             ),
           ],
@@ -1308,9 +1330,10 @@ class _CollapsibleParsedDiffFileCard extends StatelessWidget {
 }
 
 class _ThreadDiffViewer extends StatelessWidget {
-  const _ThreadDiffViewer({required this.document});
+  const _ThreadDiffViewer({required this.document, this.showFileHeader = true});
 
   final ParsedDiffDocument document;
+  final bool showFileHeader;
 
   @override
   Widget build(BuildContext context) {
@@ -1328,6 +1351,7 @@ class _ThreadDiffViewer extends StatelessWidget {
             _ThreadDiffFileSection(
               file: document.files[index],
               highlighterSet: highlighterSet,
+              showFileHeader: showFileHeader,
             ),
           );
         }
@@ -1345,10 +1369,12 @@ class _ThreadDiffFileSection extends StatelessWidget {
   const _ThreadDiffFileSection({
     required this.file,
     required this.highlighterSet,
+    required this.showFileHeader,
   });
 
   final ParsedDiffFile file;
   final _ThreadCodeHighlighterSet? highlighterSet;
+  final bool showFileHeader;
 
   @override
   Widget build(BuildContext context) {
@@ -1361,6 +1387,7 @@ class _ThreadDiffFileSection extends StatelessWidget {
     final gutterWidth = _gutterWidthForLines(visibleLines);
 
     return Container(
+      key: Key('thread-diff-file-$fileName'),
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.25),
         borderRadius: BorderRadius.circular(10),
@@ -1369,74 +1396,74 @@ class _ThreadDiffFileSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.03),
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(10),
-                topRight: Radius.circular(10),
+          if (showFileHeader)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.03),
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(10),
+                  topRight: Radius.circular(10),
+                ),
               ),
-            ),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Text(
-                  fileName,
-                  key: Key('thread-diff-file-$fileName'),
-                  style: GoogleFonts.jetBrainsMono(
-                    color: AppTheme.textMain,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                Text(
-                  '+${file.additions}',
-                  style: GoogleFonts.jetBrainsMono(
-                    color: AppTheme.emerald,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                Text(
-                  '-${file.deletions}',
-                  style: GoogleFonts.jetBrainsMono(
-                    color: AppTheme.rose,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppTheme.surfaceZinc800.withValues(alpha: 0.8),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.08),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    fileName,
+                    style: GoogleFonts.jetBrainsMono(
+                      color: AppTheme.textMain,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  child: Text(
-                    changeLabel,
+                  Text(
+                    '+${file.additions}',
                     style: GoogleFonts.jetBrainsMono(
-                      color: AppTheme.textSubtle,
-                      fontSize: 10.5,
+                      color: AppTheme.emerald,
+                      fontSize: 12,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                ),
-              ],
+                  Text(
+                    '-${file.deletions}',
+                    style: GoogleFonts.jetBrainsMono(
+                      color: AppTheme.rose,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppTheme.surfaceZinc800.withValues(alpha: 0.8),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.08),
+                      ),
+                    ),
+                    child: Text(
+                      changeLabel,
+                      style: GoogleFonts.jetBrainsMono(
+                        color: AppTheme.textSubtle,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
+              padding: EdgeInsets.fromLTRB(0, showFileHeader ? 6 : 10, 0, 6),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: visibleLines

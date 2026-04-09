@@ -201,9 +201,10 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
 
     expect(item.type, ThreadActivityItemType.terminalOutput);
     expect(item.parsedCommandOutput, isNotNull);
+    expect(item.parsedCommandOutput!.terminalDisplayTitle, 'Formatting code');
     expect(
-      item.parsedCommandOutput!.terminalDisplayTitle,
-      'Background terminal finished with dart format apps/mobile/lib/features/threads/presentation/thread_detail_page.dart',
+      item.parsedCommandOutput!.terminalDisplaySubtitle,
+      'dart format apps/mobile/lib/features/threads/presentation/thread_detail_page.dart',
     );
     expect(
       item.parsedCommandOutput!.terminalDisplayBody,
@@ -261,13 +262,14 @@ diff --git a/apps/mobile/test/features/threads/thread_live_timeline_regression_t
 
     expect(item.type, ThreadActivityItemType.fileChange);
     expect(item.parsedCommandOutput, isNotNull);
-    expect(
-      item.parsedCommandOutput!.terminalDisplayTitle,
-      startsWith('Background terminal finished with git diff -- '),
-    );
+    expect(item.parsedCommandOutput!.terminalDisplayTitle, 'Reviewing changes');
     expect(
       item.parsedCommandOutput!.terminalDisplayTitle,
       isNot('Unknown command'),
+    );
+    expect(
+      item.parsedCommandOutput!.terminalDisplaySubtitle,
+      startsWith('git diff -- '),
     );
     expect(
       item.parsedCommandOutput!.terminalDisplayBody,
@@ -299,8 +301,9 @@ Formatted 1 file (0 changed) in 0.02 seconds.
 ''');
 
     expect(parsed.command, 'dart format apps/mobile/lib/main.dart');
+    expect(parsed.terminalDisplayTitle, 'Formatting code');
     expect(
-      parsed.terminalDisplayTitle,
+      parsed.terminalDisplaySubtitle,
       'dart format apps/mobile/lib/main.dart',
     );
     expect(
@@ -308,6 +311,61 @@ Formatted 1 file (0 changed) in 0.02 seconds.
       'Formatted 1 file (0 changed) in 0.02 seconds.',
     );
   });
+
+  test('search commands render a humanized command title', () {
+    final parsed = ParsedCommandOutput.parse('''
+Command: /bin/zsh -lc "rg -n 'thread_status' apps/mobile/lib"
+Output:
+apps/mobile/lib/main.dart:1:thread_status
+''');
+
+    expect(
+      parsed.terminalDisplayTitle,
+      'Searching codebase for "thread_status"',
+    );
+    expect(
+      parsed.terminalDisplaySubtitle,
+      "rg -n 'thread_status' apps/mobile/lib",
+    );
+  });
+
+  test('git diff stat renders a summary label', () {
+    final parsed = ParsedCommandOutput.parse('''
+Command: /bin/zsh -lc "git diff --stat"
+Output:
+ apps/mobile/lib/main.dart | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+''');
+
+    expect(parsed.terminalDisplayTitle, 'Summarizing changes');
+    expect(parsed.terminalDisplaySubtitle, 'git diff --stat');
+  });
+
+  test('git status renders a working-tree label', () {
+    final parsed = ParsedCommandOutput.parse('''
+Command: /bin/zsh -lc "git status --short"
+Output:
+ M apps/mobile/lib/main.dart
+''');
+
+    expect(parsed.isStatusOnlyFileList, isTrue);
+    expect(parsed.terminalDisplayTitle, 'Checking working tree');
+    expect(parsed.terminalDisplaySubtitle, 'git status --short');
+  });
+
+  test(
+    'apply_patch success output no longer falls back to unknown command',
+    () {
+      final parsed = ParsedCommandOutput.parse('''
+Success. Updated the following files:
+M apps/mobile/lib/main.dart
+''');
+
+      expect(parsed.command, isNull);
+      expect(parsed.terminalDisplayTitle, 'Updating files');
+      expect(parsed.terminalDisplaySubtitle, isNull);
+    },
+  );
 
   test('plain MCP tool identifiers render as the command title', () {
     final parsed = ParsedCommandOutput.parse('mcp__playwright__browser_resize');
@@ -368,6 +426,24 @@ Output:
       );
     },
   );
+
+  test('git show piped through sed parses into a read snippet', () {
+    final parsed = ParsedCommandOutput.parse('''
+Command: /bin/zsh -lc "git show HEAD:apps/mobile/lib/features/threads/presentation/thread_detail_page.dart | sed -n '680,830p'"
+Output:
+void example() {
+  print('hello');
+}
+''');
+
+    expect(parsed.readSnippet, isNotNull);
+    expect(
+      parsed.readSnippet!.path,
+      'apps/mobile/lib/features/threads/presentation/thread_detail_page.dart',
+    );
+    expect(parsed.readSnippet!.startLine, 680);
+    expect(parsed.readSnippet!.endLine, 830);
+  });
 
   test('consecutive work items bundle into a work summary block', () {
     final items = <ThreadActivityItem>[

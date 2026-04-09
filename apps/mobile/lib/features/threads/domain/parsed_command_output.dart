@@ -23,6 +23,7 @@ class ParsedCommandOutput {
     required this.outputBody,
     required this.hasDiffBlock,
     required this.isStatusOnlyFileList,
+    required this.commandPresentation,
     this.wallTimeSeconds,
     this.diffDocument,
     this.diffPath,
@@ -35,6 +36,7 @@ class ParsedCommandOutput {
   final int? exitCode;
   final String outputBody;
   final double? wallTimeSeconds;
+  final ParsedCommandPresentation? commandPresentation;
 
   final bool hasDiffBlock;
   final bool isStatusOnlyFileList;
@@ -56,7 +58,12 @@ class ParsedCommandOutput {
   }
 
   String get terminalDisplayTitle =>
-      backgroundTerminalSummary ?? command ?? 'Unknown command';
+      commandPresentation?.title ??
+      backgroundTerminalSummary ??
+      command ??
+      'Unknown command';
+
+  String? get terminalDisplaySubtitle => commandPresentation?.subtitle;
 
   String get terminalDisplayBody {
     final summary = backgroundTerminalSummary;
@@ -232,7 +239,15 @@ class ParsedCommandOutput {
         r'^(?:\s?[MADRCU?]{1,2})\s+(.+)$',
         multiLine: true,
       ).allMatches(body).toList(growable: false);
-      if (statusMatches.isNotEmpty) {
+      final nonEmptyLines = body
+          .split('\n')
+          .map((line) => line.trimRight())
+          .where((line) => line.trim().isNotEmpty)
+          .toList(growable: false);
+      final isPureStatusList =
+          statusMatches.isNotEmpty &&
+          statusMatches.length == nonEmptyLines.length;
+      if (isPureStatusList) {
         isStatusOnlyFileList = true;
         diffPath = statusMatches.first.group(1)?.trim();
         body = statusMatches
@@ -259,6 +274,11 @@ class ParsedCommandOutput {
       command: command,
       exitCode: exitCode,
       outputBody: body,
+      commandPresentation: _buildCommandPresentation(
+        command: command,
+        outputBody: body,
+        isStatusOnlyFileList: isStatusOnlyFileList,
+      ),
       hasDiffBlock: hasDiffBlock,
       isStatusOnlyFileList: isStatusOnlyFileList,
       wallTimeSeconds: wallTimeSeconds,
@@ -269,6 +289,290 @@ class ParsedCommandOutput {
       readSnippet: readSnippet,
     );
   }
+}
+
+@immutable
+class ParsedCommandPresentation {
+  const ParsedCommandPresentation({required this.title, this.subtitle});
+
+  final String title;
+  final String? subtitle;
+}
+
+ParsedCommandPresentation? _buildCommandPresentation({
+  required String? command,
+  required String outputBody,
+  required bool isStatusOnlyFileList,
+}) {
+  final trimmedCommand = command?.trim();
+  final trimmedOutput = outputBody.trim();
+  if (trimmedCommand == null || trimmedCommand.isEmpty) {
+    if (trimmedOutput.startsWith('Success. Updated the following files:')) {
+      return const ParsedCommandPresentation(title: 'Updating files');
+    }
+    return null;
+  }
+
+  final segments = _splitShellSegments(trimmedCommand);
+  if (segments.isEmpty) {
+    return null;
+  }
+
+  final primarySegment = segments.last;
+  final lowerCommand = trimmedCommand.toLowerCase();
+  final lowerPrimary = primarySegment.toLowerCase();
+
+  if (isStatusOnlyFileList || lowerPrimary.startsWith('git status')) {
+    return ParsedCommandPresentation(
+      title: 'Checking working tree',
+      subtitle: trimmedCommand,
+    );
+  }
+
+  if (lowerPrimary == 'apply_patch' ||
+      lowerPrimary == 'replace_file_content' ||
+      lowerPrimary == 'multi_replace_file_content') {
+    return ParsedCommandPresentation(
+      title: 'Updating files',
+      subtitle: trimmedCommand,
+    );
+  }
+
+  final searchQuery = _extractSearchQuery(trimmedCommand);
+  if (searchQuery != null) {
+    return ParsedCommandPresentation(
+      title: 'Searching codebase for "$searchQuery"',
+      subtitle: trimmedCommand,
+    );
+  }
+
+  if (_looksLikeFileListingCommand(trimmedCommand)) {
+    return ParsedCommandPresentation(
+      title: 'Listing files',
+      subtitle: trimmedCommand,
+    );
+  }
+
+  if (lowerPrimary.startsWith('git diff --stat') ||
+      lowerPrimary.startsWith('git diff --cached --stat')) {
+    return ParsedCommandPresentation(
+      title: 'Summarizing changes',
+      subtitle: trimmedCommand,
+    );
+  }
+
+  if (lowerPrimary.startsWith('git diff')) {
+    return ParsedCommandPresentation(
+      title: 'Reviewing changes',
+      subtitle: trimmedCommand,
+    );
+  }
+
+  if (lowerPrimary.startsWith('git log')) {
+    return ParsedCommandPresentation(
+      title: 'Reviewing commit history',
+      subtitle: trimmedCommand,
+    );
+  }
+
+  if (lowerPrimary.startsWith('git add') &&
+      lowerCommand.contains('git commit')) {
+    return ParsedCommandPresentation(
+      title: 'Staging and committing changes',
+      subtitle: trimmedCommand,
+    );
+  }
+
+  if (lowerPrimary.startsWith('git add')) {
+    return ParsedCommandPresentation(
+      title: 'Staging changes',
+      subtitle: trimmedCommand,
+    );
+  }
+
+  if (lowerPrimary.startsWith('git commit')) {
+    return ParsedCommandPresentation(
+      title: 'Creating commit',
+      subtitle: trimmedCommand,
+    );
+  }
+
+  if (_looksLikeValidationCommand(primarySegment)) {
+    return ParsedCommandPresentation(
+      title: 'Validating project',
+      subtitle: trimmedCommand,
+    );
+  }
+
+  if (_looksLikeTestCommand(primarySegment)) {
+    return ParsedCommandPresentation(
+      title: 'Running tests',
+      subtitle: trimmedCommand,
+    );
+  }
+
+  if (_looksLikeFormatCommand(primarySegment)) {
+    return ParsedCommandPresentation(
+      title: 'Formatting code',
+      subtitle: trimmedCommand,
+    );
+  }
+
+  if (_looksLikeBuildCommand(primarySegment)) {
+    return ParsedCommandPresentation(
+      title: 'Building project',
+      subtitle: trimmedCommand,
+    );
+  }
+
+  if (lowerPrimary.startsWith('wc -l') ||
+      lowerPrimary.contains(' xargs wc -l') ||
+      lowerPrimary.contains('| xargs wc -l')) {
+    return ParsedCommandPresentation(
+      title: 'Counting lines',
+      subtitle: trimmedCommand,
+    );
+  }
+
+  if (lowerPrimary.startsWith('python3 - <<') ||
+      lowerPrimary.startsWith('python - <<')) {
+    return ParsedCommandPresentation(
+      title: 'Running inline analysis script',
+      subtitle: trimmedCommand,
+    );
+  }
+
+  if (lowerPrimary.contains('infer_commit_style.py')) {
+    return ParsedCommandPresentation(
+      title: 'Inferring commit style',
+      subtitle: trimmedCommand,
+    );
+  }
+
+  if (_looksLikeFilesystemMutationCommand(trimmedCommand)) {
+    return ParsedCommandPresentation(
+      title: 'Reorganizing files',
+      subtitle: trimmedCommand,
+    );
+  }
+
+  if (outputBody.trim().isEmpty) {
+    if (lowerPrimary.startsWith('git add')) {
+      return ParsedCommandPresentation(
+        title: 'Staging changes',
+        subtitle: trimmedCommand,
+      );
+    }
+    if (_looksLikeFilesystemMutationCommand(trimmedCommand)) {
+      return ParsedCommandPresentation(
+        title: 'Updating files',
+        subtitle: trimmedCommand,
+      );
+    }
+  }
+
+  return null;
+}
+
+List<String> _splitShellSegments(String command) {
+  return command
+      .split(RegExp(r'\s*(?:&&|\|\||;)\s*'))
+      .map((segment) => segment.trim())
+      .where((segment) => segment.isNotEmpty)
+      .toList(growable: false);
+}
+
+String? _extractSearchQuery(String command) {
+  final rgWithFiles = RegExp(
+    r'''(?:^|[;&]\s*)(?:pwd\s*&&\s*)?rg\s+--files(?:\s+[^\n|]+)?\s*\|\s*rg(?:\s+-[^\s]+)*\s+["']([^"']+)["']''',
+    caseSensitive: false,
+  ).firstMatch(command);
+  if (rgWithFiles != null) {
+    return rgWithFiles.group(1)?.trim();
+  }
+
+  final rgMatch = RegExp(
+    r'''(?:^|[;&]\s*)(?:pwd\s*&&\s*)?rg(?:\s+-[^\s]+)*\s+["']([^"']+)["']''',
+    caseSensitive: false,
+  ).firstMatch(command);
+  if (rgMatch != null) {
+    return rgMatch.group(1)?.trim();
+  }
+
+  final rgUnquotedMatch = RegExp(
+    r'''(?:^|[;&]\s*)(?:pwd\s*&&\s*)?rg(?:\s+-[^\s]+)*\s+([^\s"'|;][^\s|;]*)''',
+    caseSensitive: false,
+  ).firstMatch(command);
+  if (rgUnquotedMatch != null) {
+    return rgUnquotedMatch.group(1)?.trim();
+  }
+
+  final grepMatch = RegExp(
+    r'''(?:^|[;&]\s*)grep(?:\s+-[^\s]+)*\s+["']([^"']+)["']''',
+    caseSensitive: false,
+  ).firstMatch(command);
+  if (grepMatch != null) {
+    return grepMatch.group(1)?.trim();
+  }
+
+  final grepUnquotedMatch = RegExp(
+    r'''(?:^|[;&]\s*)grep(?:\s+-[^\s]+)*\s+([^\s"'|;][^\s|;]*)''',
+    caseSensitive: false,
+  ).firstMatch(command);
+  return grepUnquotedMatch?.group(1)?.trim();
+}
+
+bool _looksLikeFileListingCommand(String command) {
+  final trimmed = command.trim().toLowerCase();
+  return trimmed.startsWith('rg --files') ||
+      trimmed.startsWith('find ') ||
+      trimmed.startsWith('ls ') ||
+      trimmed.startsWith('ls -') ||
+      trimmed.startsWith('pwd && find ') ||
+      trimmed.startsWith('pwd && ls ');
+}
+
+bool _looksLikeValidationCommand(String command) {
+  final lower = command.trim().toLowerCase();
+  return lower.startsWith('flutter analyze') ||
+      lower.startsWith('cargo check') ||
+      lower.startsWith('cargo clippy') ||
+      (lower.startsWith('xcodebuild ') && lower.contains(' build')) ||
+      lower.startsWith('dart analyze');
+}
+
+bool _looksLikeTestCommand(String command) {
+  final lower = command.trim().toLowerCase();
+  return lower.startsWith('flutter test') ||
+      lower.startsWith('cargo test') ||
+      (lower.startsWith('xcodebuild ') && lower.contains(' test')) ||
+      lower.startsWith('dart test');
+}
+
+bool _looksLikeFormatCommand(String command) {
+  final lower = command.trim().toLowerCase();
+  return lower.startsWith('dart format') ||
+      lower.startsWith('cargo fmt') ||
+      lower.startsWith('swiftformat');
+}
+
+bool _looksLikeBuildCommand(String command) {
+  final lower = command.trim().toLowerCase();
+  return lower.startsWith('flutter build') ||
+      lower.startsWith('cargo build') ||
+      (lower.startsWith('xcodebuild ') && lower.contains(' build'));
+}
+
+bool _looksLikeFilesystemMutationCommand(String command) {
+  final lower = command.trim().toLowerCase();
+  return lower.startsWith('rm ') ||
+      lower.startsWith('mv ') ||
+      lower.startsWith('cp ') ||
+      lower.startsWith('mkdir ') ||
+      lower.contains('&& rm ') ||
+      lower.contains('&& mv ') ||
+      lower.contains('&& cp ') ||
+      lower.contains('&& mkdir ');
 }
 
 bool _looksLikeToolInvocationName(String value) {
@@ -347,6 +651,26 @@ class ParsedReadSnippet {
           code: numberedBody?.code ?? trimmedBody,
           startLine: numberedBody?.startLine ?? startLine,
           endLine: numberedBody?.endLine ?? endLine,
+        );
+      }
+    }
+
+    final gitShowWithSedMatch = RegExp(
+      r'''(?:^|[;&]\s*)git\s+show\s+[^\s:]+:(?:"([^"]+)"|'([^']+)'|([^\s|;]+))\s*\|\s*sed\s+-n\s+["'](\d+),(\d+)p["']''',
+      multiLine: true,
+      caseSensitive: false,
+      dotAll: true,
+    ).firstMatch(trimmedCommand);
+    if (gitShowWithSedMatch != null) {
+      final path = _firstNonEmptyGroup(gitShowWithSedMatch, 1, 2, 3);
+      final startLine = int.tryParse(gitShowWithSedMatch.group(4) ?? '');
+      final endLine = int.tryParse(gitShowWithSedMatch.group(5) ?? '');
+      if (path != null && startLine != null && endLine != null) {
+        return ParsedReadSnippet(
+          path: path,
+          code: trimmedBody,
+          startLine: startLine,
+          endLine: endLine,
         );
       }
     }
