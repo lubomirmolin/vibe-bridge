@@ -7,7 +7,7 @@ const Duration _assistantReplayDedupWindow = Duration(minutes: 2);
 List<ThreadActivityItem> replaceTimelineItems(
   List<ThreadTimelineEntryDto> timeline,
 ) {
-  return List<ThreadActivityItem>.unmodifiable(
+  return _chronologicallySortedTimelineItems(
     timeline.map(ThreadActivityItem.fromTimelineEntry),
   );
 }
@@ -37,7 +37,7 @@ List<ThreadActivityItem> mergeTimelineEntries({
     }
   }
 
-  return List<ThreadActivityItem>.unmodifiable(nextItems);
+  return _chronologicallySortedTimelineItems(nextItems);
 }
 
 List<ThreadActivityItem> prependTimelineEntries({
@@ -73,8 +73,7 @@ List<ThreadActivityItem> prependTimelineEntries({
           currentItems.first.copyWith(startsNewVisualGroup: true),
           ...currentItems.skip(1),
         ]);
-
-  return List<ThreadActivityItem>.unmodifiable(<ThreadActivityItem>[
+  return _chronologicallySortedTimelineItems(<ThreadActivityItem>[
     ...prependedItems,
     ...currentItemsWithBoundary,
   ]);
@@ -112,10 +111,6 @@ ThreadActivityItem preferTimelineMergedItem({
 
   switch (candidate.type) {
     case ThreadActivityItemType.userPrompt:
-      if (_isSyntheticAndCanonicalPairForSameTurn(current, candidate)) {
-        return candidate;
-      }
-
       final currentClientMessageId = _normalizedClientMessageId(current);
       final candidateClientMessageId = _normalizedClientMessageId(candidate);
       if (candidateClientMessageId != null && currentClientMessageId == null) {
@@ -130,6 +125,10 @@ ThreadActivityItem preferTimelineMergedItem({
       }
       if (current.messageImageUrls.length > candidate.messageImageUrls.length) {
         return current;
+      }
+
+      if (_isSyntheticAndCanonicalPairForSameTurn(current, candidate)) {
+        return candidate;
       }
 
       final currentBody = _normalizeActivityBody(current.body);
@@ -353,4 +352,94 @@ bool _eventBelongsToTurn(String eventId, String turnId) {
     return true;
   }
   return eventId.startsWith('$turnId-');
+}
+
+List<ThreadActivityItem> _chronologicallySortedTimelineItems(
+  Iterable<ThreadActivityItem> items,
+) {
+  final indexedItems = items.toList(growable: false).indexed.toList();
+  indexedItems.sort((left, right) {
+    final momentComparison = _compareTimelineMoments(
+      left.$2.occurredAt,
+      right.$2.occurredAt,
+    );
+    if (momentComparison != 0) {
+      return momentComparison;
+    }
+    final sameMomentComparison = _compareTimelineItemsAtSameMoment(
+      left.$2,
+      right.$2,
+    );
+    if (sameMomentComparison != 0) {
+      return sameMomentComparison;
+    }
+    return left.$1.compareTo(right.$1);
+  });
+
+  return List<ThreadActivityItem>.unmodifiable(
+    indexedItems.map((entry) => entry.$2),
+  );
+}
+
+int _compareTimelineMoments(String left, String right) {
+  final leftTime = DateTime.tryParse(left);
+  final rightTime = DateTime.tryParse(right);
+  if (leftTime == null || rightTime == null) {
+    return 0;
+  }
+  return leftTime.compareTo(rightTime);
+}
+
+int _compareTimelineItemsAtSameMoment(
+  ThreadActivityItem left,
+  ThreadActivityItem right,
+) {
+  final leftTurnId = _timelineTurnId(left.eventId);
+  final rightTurnId = _timelineTurnId(right.eventId);
+  if (leftTurnId == null || leftTurnId != rightTurnId) {
+    return 0;
+  }
+
+  return _timelineTypeRank(left.type).compareTo(_timelineTypeRank(right.type));
+}
+
+String? _timelineTurnId(String eventId) {
+  const delimiters = <String>[
+    '-item-',
+    '-call_',
+    '-call-',
+    '-tool-',
+    '-claude-',
+  ];
+  final indices = delimiters
+      .map(eventId.indexOf)
+      .where((index) => index > 0)
+      .toList(growable: false);
+  if (indices.isEmpty) {
+    return null;
+  }
+  return eventId.substring(
+    0,
+    indices.reduce((left, right) => left < right ? left : right),
+  );
+}
+
+int _timelineTypeRank(ThreadActivityItemType type) {
+  switch (type) {
+    case ThreadActivityItemType.userPrompt:
+      return 0;
+    case ThreadActivityItemType.assistantOutput:
+      return 1;
+    case ThreadActivityItemType.planUpdate:
+      return 2;
+    case ThreadActivityItemType.lifecycleUpdate:
+    case ThreadActivityItemType.approvalRequest:
+    case ThreadActivityItemType.securityEvent:
+    case ThreadActivityItemType.generic:
+      return 3;
+    case ThreadActivityItemType.terminalOutput:
+      return 4;
+    case ThreadActivityItemType.fileChange:
+      return 5;
+  }
 }

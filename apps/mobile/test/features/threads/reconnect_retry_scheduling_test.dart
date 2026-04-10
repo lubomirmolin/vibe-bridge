@@ -1185,7 +1185,7 @@ void main() {
   });
 
   test(
-    'thread-detail replaces replayed live prompt and assistant items with canonical snapshot timeline',
+    'thread-detail reconnect catch-up keeps completed detail while deduplicating replayed live items',
     () async {
       final listController = ThreadListController(
         bridgeApi: ScriptedThreadListBridgeApi(
@@ -1312,29 +1312,169 @@ void main() {
 
       await _waitUntil(() => detailController.state.items.length == 2);
 
+      await detailController.retryReconnectCatchUp();
+
+      final promptBodies = detailController.state.items
+          .where((item) => item.type == ThreadActivityItemType.userPrompt)
+          .map((item) => item.body)
+          .toList(growable: false);
+      final assistantBodies = detailController.state.items
+          .where((item) => item.type == ThreadActivityItemType.assistantOutput)
+          .map((item) => item.body)
+          .toList(growable: false);
+
+      expect(detailController.state.thread?.status, ThreadStatus.completed);
+      expect(promptBodies, ['Ship the fix']);
+      expect(assistantBodies, ['Patched tests']);
+      expect(detailController.state.items, hasLength(2));
+    },
+  );
+
+  test(
+    'thread-detail merges synthetic same-turn prompt during reconnect catch-up',
+    () async {
+      final listController = ThreadListController(
+        bridgeApi: ScriptedThreadListBridgeApi(
+          scriptedResults: [
+            _threadSummaries(
+              reconnectThreadStatus: ThreadStatus.idle,
+              reconnectUpdatedAt: '2026-03-18T09:30:00Z',
+            ),
+          ],
+        ),
+        cacheRepository: _newCacheRepository(),
+        liveStream: ScriptedThreadLiveStream(),
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+      );
+      addTearDown(listController.dispose);
+
+      final detailApi = ScriptedThreadDetailBridgeApi(
+        detailScriptByThreadId: {
+          'thread-123': [
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.idle,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:00:00Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Normalize event payloads',
+            ),
+            const ThreadDetailDto(
+              contractVersion: contractVersion,
+              threadId: 'thread-123',
+              title: 'Implement shared contracts',
+              status: ThreadStatus.completed,
+              workspace: '/workspace/vibe-bridge-companion',
+              repository: 'vibe-bridge-companion',
+              branch: 'master',
+              createdAt: '2026-03-18T09:45:00Z',
+              updatedAt: '2026-03-18T10:04:10Z',
+              source: 'cli',
+              accessMode: AccessMode.controlWithApprovals,
+              lastTurnSummary: 'Patched tests',
+            ),
+          ],
+        },
+        timelineScriptByThreadId: {
+          'thread-123': [
+            <ThreadTimelineEntryDto>[],
+            <ThreadTimelineEntryDto>[
+              _timelineEvent(
+                id: 'turn-123-item-user-1',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Ship the fix',
+                payload: {
+                  'type': 'userMessage',
+                  'role': 'user',
+                  'text': 'Ship the fix',
+                },
+                occurredAt: '2026-03-18T10:04:08Z',
+              ),
+              _timelineEvent(
+                id: 'evt-assistant-canonical',
+                kind: BridgeEventKind.messageDelta,
+                summary: 'Patched tests',
+                payload: {
+                  'type': 'agentMessage',
+                  'role': 'assistant',
+                  'text': 'Patched tests',
+                },
+                occurredAt: '2026-03-18T10:04:09Z',
+              ),
+            ],
+          ],
+        },
+      );
+      final liveStream = ScriptedThreadLiveStream();
+
+      final detailController = ThreadDetailController(
+        bridgeApiBaseUrl: _bridgeApiBaseUrl,
+        threadId: 'thread-123',
+        initialVisibleTimelineEntries: 20,
+        bridgeApi: detailApi,
+        liveStream: liveStream,
+        threadListController: listController,
+      );
+      addTearDown(detailController.dispose);
+
+      await _waitUntil(() => !detailController.state.isLoading);
+      await _waitUntil(() => liveStream.totalSubscriptions >= 1);
+
+      final submitted = await detailController.submitComposerInput(
+        'Ship the fix',
+      );
+      expect(submitted, isTrue);
+
       liveStream.emit(
         const BridgeEventEnvelope<Map<String, dynamic>>(
           contractVersion: contractVersion,
-          eventId: 'evt-status-complete',
+          eventId: 'turn-123-visible-user-prompt',
           threadId: 'thread-123',
-          kind: BridgeEventKind.threadStatusChanged,
-          occurredAt: '2026-03-18T10:04:02Z',
-          payload: {'status': 'completed', 'reason': 'upstream_notification'},
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:04:00Z',
+          payload: {
+            'type': 'userMessage',
+            'role': 'user',
+            'text': 'Ship the fix',
+          },
+        ),
+      );
+      liveStream.emit(
+        const BridgeEventEnvelope<Map<String, dynamic>>(
+          contractVersion: contractVersion,
+          eventId: 'evt-assistant-live',
+          threadId: 'thread-123',
+          kind: BridgeEventKind.messageDelta,
+          occurredAt: '2026-03-18T10:04:01Z',
+          payload: {
+            'type': 'agentMessage',
+            'role': 'assistant',
+            'text': 'Patched tests',
+          },
         ),
       );
 
-      await _waitUntil(() => detailApi.timelineFetchCount >= 2);
+      await _waitUntil(() => detailController.state.items.length == 2);
+
+      await detailController.retryReconnectCatchUp();
+
       await _waitUntil(
         () =>
             detailController.state.items.length == 2 &&
-            detailController.state.items[0].eventId == 'evt-user-canonical' &&
+            detailController.state.items[0].eventId == 'turn-123-item-user-1' &&
             detailController.state.items[1].eventId ==
                 'evt-assistant-canonical',
       );
 
       expect(
         detailController.state.items.map((item) => item.eventId).toList(),
-        ['evt-user-canonical', 'evt-assistant-canonical'],
+        ['turn-123-item-user-1', 'evt-assistant-canonical'],
       );
       expect(detailController.state.items.map((item) => item.body).toList(), [
         'Ship the fix',

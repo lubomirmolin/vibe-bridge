@@ -106,6 +106,140 @@ void main() {
 
     expect(mergeIndex, 0);
   });
+
+  test(
+    'mergeTimelineEntries reinserts older snapshot assistant output ahead of newer live terminal events',
+    () {
+      final merged = mergeTimelineEntries(
+        currentItems: <ThreadActivityItem>[
+          _userPrompt(
+            eventId: 'evt-user',
+            occurredAt: '2026-04-06T09:00:00.000Z',
+            text: 'Split these commits',
+          ),
+          _terminalOutput(
+            eventId: 'evt-live-command',
+            occurredAt: '2026-04-06T09:00:12.000Z',
+            summary: r'$ git status',
+          ),
+        ],
+        timeline: <ThreadTimelineEntryDto>[
+          _assistantOutputEntry(
+            eventId: 'evt-snapshot-assistant',
+            occurredAt: '2026-04-06T09:00:05.000Z',
+            text: "I'm checking the worktree first.",
+          ),
+        ],
+      );
+
+      expect(merged.map((item) => item.eventId).toList(), <String>[
+        'evt-user',
+        'evt-snapshot-assistant',
+        'evt-live-command',
+      ]);
+    },
+  );
+
+  test('replaceTimelineItems normalizes unsorted timeline entries', () {
+    final replaced = replaceTimelineItems(<ThreadTimelineEntryDto>[
+      _terminalOutputEntry(
+        eventId: 'evt-command',
+        occurredAt: '2026-04-06T09:00:12.000Z',
+        summary: r'$ git status',
+      ),
+      _userPromptEntry(
+        eventId: 'evt-user',
+        occurredAt: '2026-04-06T09:00:00.000Z',
+        text: 'Split these commits',
+      ),
+      _assistantOutputEntry(
+        eventId: 'evt-assistant',
+        occurredAt: '2026-04-06T09:00:05.000Z',
+        text: "I'm checking the worktree first.",
+      ),
+    ]);
+
+    expect(replaced.map((item) => item.eventId).toList(), <String>[
+      'evt-user',
+      'evt-assistant',
+      'evt-command',
+    ]);
+  });
+
+  test(
+    'replaceTimelineItems orders same-turn same-timestamp user before work',
+    () {
+      final replaced = replaceTimelineItems(<ThreadTimelineEntryDto>[
+        _terminalOutputEntry(
+          eventId: 'turn-123-call_status',
+          occurredAt: '2026-04-06T09:00:12.000Z',
+          summary: r'$ git status',
+        ),
+        _assistantOutputEntry(
+          eventId: 'turn-123-item-2',
+          occurredAt: '2026-04-06T09:00:12.000Z',
+          text: "I'm checking the worktree first.",
+        ),
+        _userPromptEntry(
+          eventId: 'turn-123-item-1',
+          occurredAt: '2026-04-06T09:00:12.000Z',
+          text: 'Split these commits',
+        ),
+        _terminalOutputEntry(
+          eventId: 'turn-123-call_ls',
+          occurredAt: '2026-04-06T09:00:12.000Z',
+          summary: r'$ ls',
+        ),
+      ]);
+
+      expect(replaced.map((item) => item.eventId).toList(), <String>[
+        'turn-123-item-1',
+        'turn-123-item-2',
+        'turn-123-call_status',
+        'turn-123-call_ls',
+      ]);
+    },
+  );
+
+  test(
+    'prependTimelineEntries reorders older same-turn work behind existing user prompt',
+    () {
+      final prepended = prependTimelineEntries(
+        currentItems: <ThreadActivityItem>[
+          _userPrompt(
+            eventId: 'turn-123-item-1',
+            occurredAt: '2026-04-06T09:00:12.000Z',
+            text: 'Split these commits',
+          ),
+          _assistantOutput(
+            eventId: 'turn-123-item-2',
+            occurredAt: '2026-04-06T09:00:12.000Z',
+            text: "I'm checking the worktree first.",
+          ),
+        ],
+        timeline: <ThreadTimelineEntryDto>[
+          _terminalOutputEntry(
+            eventId: 'turn-123-call_status',
+            occurredAt: '2026-04-06T09:00:12.000Z',
+            summary: r'$ git status',
+          ),
+          _terminalOutputEntry(
+            eventId: 'turn-123-call_ls',
+            occurredAt: '2026-04-06T09:00:12.000Z',
+            summary: r'$ ls',
+          ),
+        ],
+        knownEventIds: <String>{'turn-123-item-1', 'turn-123-item-2'},
+      );
+
+      expect(prepended.map((item) => item.eventId).toList(), <String>[
+        'turn-123-item-1',
+        'turn-123-item-2',
+        'turn-123-call_status',
+        'turn-123-call_ls',
+      ]);
+    },
+  );
 }
 
 ThreadActivityItem _userPrompt({
@@ -131,5 +265,85 @@ ThreadActivityItem _userPrompt({
             : <String, dynamic>{'client_message_id': clientMessageId},
       },
     ),
+  );
+}
+
+ThreadActivityItem _terminalOutput({
+  required String eventId,
+  required String occurredAt,
+  required String summary,
+}) {
+  return ThreadActivityItem.fromTimelineEntry(
+    _terminalOutputEntry(
+      eventId: eventId,
+      occurredAt: occurredAt,
+      summary: summary,
+    ),
+  );
+}
+
+ThreadActivityItem _assistantOutput({
+  required String eventId,
+  required String occurredAt,
+  required String text,
+}) {
+  return ThreadActivityItem.fromTimelineEntry(
+    _assistantOutputEntry(eventId: eventId, occurredAt: occurredAt, text: text),
+  );
+}
+
+ThreadTimelineEntryDto _userPromptEntry({
+  required String eventId,
+  required String occurredAt,
+  required String text,
+  String? clientMessageId,
+  List<String> images = const <String>[],
+}) {
+  return ThreadTimelineEntryDto(
+    eventId: eventId,
+    kind: BridgeEventKind.messageDelta,
+    occurredAt: occurredAt,
+    summary: text,
+    payload: <String, dynamic>{
+      'type': 'userMessage',
+      'role': 'user',
+      'text': text,
+      if (images.isNotEmpty) 'images': images,
+      ...?clientMessageId == null
+          ? null
+          : <String, dynamic>{'client_message_id': clientMessageId},
+    },
+  );
+}
+
+ThreadTimelineEntryDto _assistantOutputEntry({
+  required String eventId,
+  required String occurredAt,
+  required String text,
+}) {
+  return ThreadTimelineEntryDto(
+    eventId: eventId,
+    kind: BridgeEventKind.messageDelta,
+    occurredAt: occurredAt,
+    summary: text,
+    payload: <String, dynamic>{
+      'type': 'agentMessage',
+      'role': 'assistant',
+      'text': text,
+    },
+  );
+}
+
+ThreadTimelineEntryDto _terminalOutputEntry({
+  required String eventId,
+  required String occurredAt,
+  required String summary,
+}) {
+  return ThreadTimelineEntryDto(
+    eventId: eventId,
+    kind: BridgeEventKind.commandDelta,
+    occurredAt: occurredAt,
+    summary: summary,
+    payload: <String, dynamic>{'command': 'exec_command', 'output': summary},
   );
 }
