@@ -158,11 +158,81 @@ pub(crate) fn materialize_entries(
         .map(|(event_id, state)| state.materialize_entry(event_id))
         .collect::<Vec<_>>();
     entries.sort_by(|left, right| {
-        left.occurred_at
-            .cmp(&right.occurred_at)
-            .then_with(|| left.event_id.cmp(&right.event_id))
+        let moment_comparison = left.occurred_at.cmp(&right.occurred_at);
+        if moment_comparison != std::cmp::Ordering::Equal {
+            return moment_comparison;
+        }
+
+        let same_turn_comparison = compare_same_turn_entry_order(left, right);
+        if same_turn_comparison != std::cmp::Ordering::Equal {
+            return same_turn_comparison;
+        }
+
+        left.event_id.cmp(&right.event_id)
     });
     entries
+}
+
+fn compare_same_turn_entry_order(
+    left: &ThreadTimelineEntryDto,
+    right: &ThreadTimelineEntryDto,
+) -> std::cmp::Ordering {
+    let Some(left_turn_id) = timeline_turn_id(&left.event_id) else {
+        return std::cmp::Ordering::Equal;
+    };
+    let Some(right_turn_id) = timeline_turn_id(&right.event_id) else {
+        return std::cmp::Ordering::Equal;
+    };
+    if left_turn_id != right_turn_id {
+        return std::cmp::Ordering::Equal;
+    }
+
+    timeline_entry_type_rank(left.kind, &left.payload)
+        .cmp(&timeline_entry_type_rank(right.kind, &right.payload))
+}
+
+pub(crate) fn should_keep_entries_together(
+    older: &ThreadTimelineEntryDto,
+    newer: &ThreadTimelineEntryDto,
+) -> bool {
+    older.occurred_at == newer.occurred_at
+        && timeline_turn_id(&older.event_id)
+            .zip(timeline_turn_id(&newer.event_id))
+            .is_some_and(|(older_turn_id, newer_turn_id)| older_turn_id == newer_turn_id)
+}
+
+fn timeline_turn_id(event_id: &str) -> Option<&str> {
+    const DELIMITERS: [&str; 5] = ["-item-", "-call_", "-call-", "-tool-", "-claude-"];
+
+    DELIMITERS
+        .iter()
+        .filter_map(|delimiter| event_id.find(delimiter))
+        .min()
+        .map(|index| &event_id[..index])
+}
+
+fn timeline_entry_type_rank(kind: BridgeEventKind, payload: &Value) -> u8 {
+    match kind {
+        BridgeEventKind::MessageDelta => {
+            let role = payload
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            match role.as_str() {
+                "user" => 0,
+                "assistant" => 1,
+                _ => 1,
+            }
+        }
+        BridgeEventKind::PlanDelta => 2,
+        BridgeEventKind::ThreadStatusChanged
+        | BridgeEventKind::ApprovalRequested
+        | BridgeEventKind::SecurityAudit
+        | BridgeEventKind::UserInputRequested => 3,
+        BridgeEventKind::CommandDelta => 4,
+        BridgeEventKind::FileChange => 5,
+    }
 }
 
 fn merge_primary_with_repair(kind: BridgeEventKind, primary: &Value, repair: &Value) -> Value {

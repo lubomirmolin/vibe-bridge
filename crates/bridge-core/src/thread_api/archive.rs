@@ -264,9 +264,73 @@ pub(super) fn merge_snapshot_timeline(
     sort_timeline_events(merged_events)
 }
 
-fn sort_timeline_events(mut events: Vec<UpstreamTimelineEvent>) -> Vec<UpstreamTimelineEvent> {
-    events.sort_by(|left, right| left.happened_at.cmp(&right.happened_at));
+pub(super) fn sort_timeline_events(
+    mut events: Vec<UpstreamTimelineEvent>,
+) -> Vec<UpstreamTimelineEvent> {
+    events.sort_by(|left, right| {
+        let moment_comparison = left.happened_at.cmp(&right.happened_at);
+        if moment_comparison != std::cmp::Ordering::Equal {
+            return moment_comparison;
+        }
+
+        let same_turn_comparison = compare_same_turn_event_order(left, right);
+        if same_turn_comparison != std::cmp::Ordering::Equal {
+            return same_turn_comparison;
+        }
+
+        left.id.cmp(&right.id)
+    });
     events
+}
+
+fn compare_same_turn_event_order(
+    left: &UpstreamTimelineEvent,
+    right: &UpstreamTimelineEvent,
+) -> std::cmp::Ordering {
+    let Some(left_turn_id) = timeline_turn_id(&left.id) else {
+        return std::cmp::Ordering::Equal;
+    };
+    let Some(right_turn_id) = timeline_turn_id(&right.id) else {
+        return std::cmp::Ordering::Equal;
+    };
+    if left_turn_id != right_turn_id {
+        return std::cmp::Ordering::Equal;
+    }
+
+    timeline_event_type_rank(left).cmp(&timeline_event_type_rank(right))
+}
+
+fn timeline_turn_id(event_id: &str) -> Option<&str> {
+    const DELIMITERS: [&str; 5] = ["-item-", "-call_", "-call-", "-tool-", "-claude-"];
+
+    DELIMITERS
+        .iter()
+        .filter_map(|delimiter| event_id.find(delimiter))
+        .min()
+        .map(|index| &event_id[..index])
+}
+
+fn timeline_event_type_rank(event: &UpstreamTimelineEvent) -> u8 {
+    match event.event_type.as_str() {
+        "agent_message_delta" => {
+            let role = event
+                .data
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            match role.as_str() {
+                "user" => 0,
+                "assistant" => 1,
+                _ => 1,
+            }
+        }
+        "plan_delta" => 2,
+        "thread_status_changed" | "approval_requested" | "security_audit" => 3,
+        "command_output_delta" => 4,
+        "file_change_delta" => 5,
+        _ => 3,
+    }
 }
 
 fn merge_detail_record_for_thread(

@@ -15,7 +15,7 @@ use crate::server::controls::ApprovalRecordDto;
 use crate::thread_api::RepositoryContextDto;
 use item_state::{
     ProjectionItemPhase, ThreadItemProjectionState, infer_item_phase, is_incremental_item_kind,
-    materialize_entries,
+    materialize_entries, should_keep_entries_together,
 };
 
 #[derive(Debug, Default, Clone)]
@@ -128,7 +128,15 @@ impl ProjectionStore {
                     .position(|entry| entry.event_id == cursor)
             })
             .unwrap_or(snapshot.entries.len());
-        let start_index = end_index.saturating_sub(normalized_limit);
+        let mut start_index = end_index.saturating_sub(normalized_limit);
+        while start_index > 0
+            && should_keep_entries_together(
+                &snapshot.entries[start_index - 1],
+                &snapshot.entries[start_index],
+            )
+        {
+            start_index -= 1;
+        }
         let has_more_before = start_index > 0;
         let next_before = has_more_before.then(|| snapshot.entries[start_index].event_id.clone());
 
@@ -779,6 +787,182 @@ mod tests {
         assert_eq!(page.entries.len(), 1);
         assert!(!page.has_more_before);
         assert_eq!(page.entries[0].event_id, "evt-1");
+    }
+
+    #[tokio::test]
+    async fn put_snapshot_orders_same_turn_messages_before_work_for_equal_timestamps() {
+        let store = ProjectionStore::new();
+        store
+            .put_snapshot(ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
+                    title: "Thread".to_string(),
+                    status: ThreadStatus::Completed,
+                    workspace: "/tmp/a".to_string(),
+                    repository: "repo-a".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-03-21T09:00:00Z".to_string(),
+                    updated_at: "2026-03-21T10:00:00Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "done".to_string(),
+                    active_turn_id: None,
+                },
+                entries: vec![
+                    ThreadTimelineEntryDto {
+                        event_id: "turn-123-call-z".to_string(),
+                        kind: BridgeEventKind::FileChange,
+                        occurred_at: "2026-03-21T10:00:00Z".to_string(),
+                        summary: "Edited".to_string(),
+                        payload: json!({"resolved_unified_diff": "diff"}),
+                        annotations: None,
+                    },
+                    ThreadTimelineEntryDto {
+                        event_id: "turn-123-call-a".to_string(),
+                        kind: BridgeEventKind::CommandDelta,
+                        occurred_at: "2026-03-21T10:00:00Z".to_string(),
+                        summary: "Ran".to_string(),
+                        payload: json!({"output": "ran"}),
+                        annotations: None,
+                    },
+                    ThreadTimelineEntryDto {
+                        event_id: "turn-123-item-2".to_string(),
+                        kind: BridgeEventKind::MessageDelta,
+                        occurred_at: "2026-03-21T10:00:00Z".to_string(),
+                        summary: "Tracing".to_string(),
+                        payload: json!({"role": "assistant", "text": "Tracing"}),
+                        annotations: None,
+                    },
+                    ThreadTimelineEntryDto {
+                        event_id: "turn-123-item-1".to_string(),
+                        kind: BridgeEventKind::MessageDelta,
+                        occurred_at: "2026-03-21T10:00:00Z".to_string(),
+                        summary: "Inspect this".to_string(),
+                        payload: json!({"role": "user", "text": "Inspect this"}),
+                        annotations: None,
+                    },
+                ],
+                approvals: vec![],
+                git_status: None,
+                pending_user_input: None,
+            })
+            .await;
+
+        let snapshot = store
+            .snapshot("thread-1")
+            .await
+            .expect("snapshot should exist");
+        assert_eq!(
+            snapshot
+                .entries
+                .iter()
+                .map(|entry| entry.event_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "turn-123-item-1",
+                "turn-123-item-2",
+                "turn-123-call-a",
+                "turn-123-call-z",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn timeline_page_does_not_split_same_turn_equal_timestamp_batches() {
+        let store = ProjectionStore::new();
+        store
+            .put_snapshot(ThreadSnapshotDto {
+                contract_version: CONTRACT_VERSION.to_string(),
+                thread: ThreadDetailDto {
+                    contract_version: CONTRACT_VERSION.to_string(),
+                    thread_id: "thread-1".to_string(),
+                    native_thread_id: "thread-1".to_string(),
+                    provider: shared_contracts::ProviderKind::Codex,
+                    client: shared_contracts::ThreadClientKind::Cli,
+                    title: "Thread".to_string(),
+                    status: ThreadStatus::Completed,
+                    workspace: "/tmp/a".to_string(),
+                    repository: "repo-a".to_string(),
+                    branch: "main".to_string(),
+                    created_at: "2026-03-21T09:00:00Z".to_string(),
+                    updated_at: "2026-03-21T10:00:00Z".to_string(),
+                    source: "cli".to_string(),
+                    access_mode: AccessMode::ControlWithApprovals,
+                    last_turn_summary: "done".to_string(),
+                    active_turn_id: None,
+                },
+                entries: vec![
+                    ThreadTimelineEntryDto {
+                        event_id: "turn-older-item-1".to_string(),
+                        kind: BridgeEventKind::MessageDelta,
+                        occurred_at: "2026-03-21T09:59:59Z".to_string(),
+                        summary: "older".to_string(),
+                        payload: json!({"role": "user", "text": "older"}),
+                        annotations: None,
+                    },
+                    ThreadTimelineEntryDto {
+                        event_id: "turn-123-call-z".to_string(),
+                        kind: BridgeEventKind::FileChange,
+                        occurred_at: "2026-03-21T10:00:00Z".to_string(),
+                        summary: "Edited".to_string(),
+                        payload: json!({"resolved_unified_diff": "diff"}),
+                        annotations: None,
+                    },
+                    ThreadTimelineEntryDto {
+                        event_id: "turn-123-call-a".to_string(),
+                        kind: BridgeEventKind::CommandDelta,
+                        occurred_at: "2026-03-21T10:00:00Z".to_string(),
+                        summary: "Ran".to_string(),
+                        payload: json!({"output": "ran"}),
+                        annotations: None,
+                    },
+                    ThreadTimelineEntryDto {
+                        event_id: "turn-123-item-2".to_string(),
+                        kind: BridgeEventKind::MessageDelta,
+                        occurred_at: "2026-03-21T10:00:00Z".to_string(),
+                        summary: "Tracing".to_string(),
+                        payload: json!({"role": "assistant", "text": "Tracing"}),
+                        annotations: None,
+                    },
+                    ThreadTimelineEntryDto {
+                        event_id: "turn-123-item-1".to_string(),
+                        kind: BridgeEventKind::MessageDelta,
+                        occurred_at: "2026-03-21T10:00:00Z".to_string(),
+                        summary: "Inspect this".to_string(),
+                        payload: json!({"role": "user", "text": "Inspect this"}),
+                        annotations: None,
+                    },
+                ],
+                approvals: vec![],
+                git_status: None,
+                pending_user_input: None,
+            })
+            .await;
+
+        let newest_page = store
+            .timeline_page("thread-1", None, 2)
+            .await
+            .expect("timeline page should exist");
+        assert_eq!(
+            newest_page
+                .entries
+                .iter()
+                .map(|entry| entry.event_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "turn-123-item-1",
+                "turn-123-item-2",
+                "turn-123-call-a",
+                "turn-123-call-z",
+            ]
+        );
+        assert_eq!(newest_page.next_before.as_deref(), Some("turn-123-item-1"));
+        assert!(newest_page.has_more_before);
     }
 
     #[tokio::test]

@@ -11,7 +11,7 @@ use shared_contracts::{
 
 use super::archive::{
     load_thread_snapshot, load_thread_snapshot_for_id, merge_snapshot_timeline,
-    resolve_codex_home_dir,
+    resolve_codex_home_dir, sort_timeline_events,
 };
 use super::rpc::{
     CodexRpcClient, fallback_model_options, normalize_turn_text, read_thread_with_resume,
@@ -438,17 +438,23 @@ impl ThreadApiService {
             .thread_records
             .iter()
             .find(|thread| thread.id == thread_id)?;
-        let events = self
-            .timeline_by_thread_id
-            .get(thread_id)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
+        let events = sort_timeline_events(
+            self.timeline_by_thread_id
+                .get(thread_id)
+                .cloned()
+                .unwrap_or_default(),
+        );
 
         let normalized_limit = limit.max(1);
         let end_index = before
             .and_then(|cursor| events.iter().position(|event| event.id == cursor))
             .unwrap_or(events.len());
-        let start_index = end_index.saturating_sub(normalized_limit);
+        let mut start_index = end_index.saturating_sub(normalized_limit);
+        while start_index > 0
+            && should_keep_timeline_events_together(&events[start_index - 1], &events[start_index])
+        {
+            start_index -= 1;
+        }
         let page_events = &events[start_index..end_index];
         let has_more_before = start_index > 0;
         let next_before = has_more_before.then(|| events[start_index].id.clone());
@@ -1067,6 +1073,26 @@ impl ThreadApiService {
         let second = sequence % 60;
         format!("2026-03-17T22:{minute:02}:{second:02}Z")
     }
+}
+
+fn should_keep_timeline_events_together(
+    older: &UpstreamTimelineEvent,
+    newer: &UpstreamTimelineEvent,
+) -> bool {
+    older.happened_at == newer.happened_at
+        && timeline_event_group_key(older)
+            .zip(timeline_event_group_key(newer))
+            .is_some_and(|(older_key, newer_key)| older_key == newer_key)
+}
+
+fn timeline_event_group_key(event: &UpstreamTimelineEvent) -> Option<&str> {
+    const DELIMITERS: [&str; 5] = ["-item-", "-call_", "-call-", "-tool-", "-claude-"];
+
+    DELIMITERS
+        .iter()
+        .filter_map(|delimiter| event.id.find(delimiter))
+        .min()
+        .map(|index| &event.id[..index])
 }
 
 fn resolve_latest_thread_change_diff(
