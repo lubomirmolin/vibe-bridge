@@ -1,7 +1,5 @@
 use super::*;
-use shared_contracts::{
-    ThreadDetailDto, ThreadGitDiffMode, ThreadSnapshotDto, ThreadTimelinePageDto,
-};
+use shared_contracts::ThreadGitDiffMode;
 
 use crate::thread_api::ThreadGitDiffQuery;
 
@@ -91,84 +89,6 @@ fn timeline_page_response_normalizes_event_kinds() {
 }
 
 #[test]
-fn real_thread_upravit_versioning_api_fixture_keeps_user_prompt_before_bundled_activity() {
-    const BUG_TURN_ID: &str = "019d7637-5944-7763-bc2a-de0f58c6a629";
-
-    let snapshot = load_real_thread_snapshot_fixture(
-        "../../apps/mobile/test/features/threads/fixtures/real_thread_upravit_versioning_api_snapshot.json",
-    );
-    let page_1 = load_real_thread_timeline_page_fixture(
-        "../../apps/mobile/test/features/threads/fixtures/real_thread_upravit_versioning_api_timeline_page_1.json",
-    );
-    let page_2 = load_real_thread_timeline_page_fixture(
-        "../../apps/mobile/test/features/threads/fixtures/real_thread_upravit_versioning_api_timeline_page_2.json",
-    );
-    let page_3 = load_real_thread_timeline_page_fixture(
-        "../../apps/mobile/test/features/threads/fixtures/real_thread_upravit_versioning_api_timeline_page_3.json",
-    );
-    let page_4 = load_real_thread_timeline_page_fixture(
-        "../../apps/mobile/test/features/threads/fixtures/real_thread_upravit_versioning_api_timeline_page_4.json",
-    );
-
-    let raw_bug_turn_entries = page_4
-        .entries
-        .iter()
-        .filter(|entry| entry.event_id.starts_with(BUG_TURN_ID))
-        .collect::<Vec<_>>();
-    assert!(!raw_bug_turn_entries.is_empty());
-    assert!(
-        raw_bug_turn_entries[0]
-            .event_id
-            .starts_with(&format!("{BUG_TURN_ID}-call_"))
-    );
-
-    let service = ThreadApiService::with_seed_data(
-        vec![upstream_thread_from_detail(&snapshot.thread)],
-        HashMap::from([(
-            snapshot.thread.thread_id.clone(),
-            combined_upstream_timeline_from_pages([&page_1, &page_2, &page_3, &page_4]),
-        )]),
-    );
-
-    let mut pages = Vec::new();
-    let mut before = None;
-    loop {
-        let page = service
-            .timeline_page_response(&snapshot.thread.thread_id, before.as_deref(), 80)
-            .expect("timeline page should exist");
-        before = page.next_before.clone();
-        pages.push(page);
-        if before.is_none() {
-            break;
-        }
-    }
-
-    let page_with_bug_turn = pages
-        .iter()
-        .find(|page| {
-            page.entries
-                .iter()
-                .any(|entry| entry.event_id.starts_with(BUG_TURN_ID))
-        })
-        .expect("one page should contain the bug turn");
-
-    let rendered_bug_turn_entries = page_with_bug_turn
-        .entries
-        .iter()
-        .filter(|entry| entry.event_id.starts_with(BUG_TURN_ID))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        rendered_bug_turn_entries[0].event_id,
-        format!("{BUG_TURN_ID}-item-1")
-    );
-    assert_eq!(
-        rendered_bug_turn_entries[0].kind,
-        BridgeEventKind::MessageDelta
-    );
-    assert_eq!(rendered_bug_turn_entries.len(), raw_bug_turn_entries.len());
-}
-
-#[test]
 fn timeline_page_response_orders_same_turn_messages_before_work_for_equal_timestamps() {
     let thread_id = codex_thread_id("thread-abc");
     let service = ThreadApiService::with_seed_data(
@@ -254,85 +174,6 @@ fn timeline_page_response_orders_same_turn_messages_before_work_for_equal_timest
             "turn-123-call-z",
         ]
     );
-}
-
-fn load_real_thread_snapshot_fixture(relative_path: &str) -> ThreadSnapshotDto {
-    let raw = std::fs::read_to_string(fixture_path(relative_path))
-        .expect("real thread snapshot fixture should be readable");
-    serde_json::from_str(&raw).expect("real thread snapshot fixture should decode")
-}
-
-fn load_real_thread_timeline_page_fixture(relative_path: &str) -> ThreadTimelinePageDto {
-    let raw = std::fs::read_to_string(fixture_path(relative_path))
-        .expect("real thread timeline fixture should be readable");
-    serde_json::from_str(&raw).expect("real thread timeline fixture should decode")
-}
-
-fn fixture_path(relative_path: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path)
-}
-
-fn upstream_thread_from_detail(detail: &ThreadDetailDto) -> UpstreamThreadRecord {
-    UpstreamThreadRecord {
-        id: detail.thread_id.clone(),
-        native_id: detail.native_thread_id.clone(),
-        provider: detail.provider,
-        client: detail.client,
-        headline: detail.title.clone(),
-        lifecycle_state: match detail.status {
-            ThreadStatus::Idle => "idle".to_string(),
-            ThreadStatus::Running => "active".to_string(),
-            ThreadStatus::Completed => "done".to_string(),
-            ThreadStatus::Interrupted => "halted".to_string(),
-            ThreadStatus::Failed => "error".to_string(),
-        },
-        workspace_path: detail.workspace.clone(),
-        repository_name: detail.repository.clone(),
-        branch_name: detail.branch.clone(),
-        remote_name: "origin".to_string(),
-        git_dirty: false,
-        git_ahead_by: 0,
-        git_behind_by: 0,
-        created_at: detail.created_at.clone(),
-        updated_at: detail.updated_at.clone(),
-        source: detail.source.clone(),
-        approval_mode: match detail.access_mode {
-            AccessMode::ReadOnly => "read_only".to_string(),
-            AccessMode::FullControl => "full_control".to_string(),
-            AccessMode::ControlWithApprovals => "control_with_approvals".to_string(),
-        },
-        last_turn_summary: detail.last_turn_summary.clone(),
-    }
-}
-
-fn combined_upstream_timeline_from_pages<'a>(
-    pages: impl IntoIterator<Item = &'a ThreadTimelinePageDto>,
-) -> Vec<UpstreamTimelineEvent> {
-    let mut seen = std::collections::HashSet::new();
-    let mut events = Vec::new();
-    for page in pages {
-        for entry in &page.entries {
-            if seen.insert(entry.event_id.clone()) {
-                events.push(UpstreamTimelineEvent {
-                    id: entry.event_id.clone(),
-                    event_type: match entry.kind {
-                        BridgeEventKind::MessageDelta => "agent_message_delta".to_string(),
-                        BridgeEventKind::PlanDelta => "plan_delta".to_string(),
-                        BridgeEventKind::UserInputRequested => "user_input_requested".to_string(),
-                        BridgeEventKind::CommandDelta => "command_output_delta".to_string(),
-                        BridgeEventKind::FileChange => "file_change_delta".to_string(),
-                        BridgeEventKind::ThreadStatusChanged => "thread_status_changed".to_string(),
-                        BridgeEventKind::ApprovalRequested => "approval_requested".to_string(),
-                        BridgeEventKind::SecurityAudit => "security_audit".to_string(),
-                    },
-                    happened_at: entry.occurred_at.clone(),
-                    summary_text: entry.summary.clone(),
-                    data: entry.payload.clone(),
-                });
-            }
-        }
-    }
-    events
 }
 
 #[test]

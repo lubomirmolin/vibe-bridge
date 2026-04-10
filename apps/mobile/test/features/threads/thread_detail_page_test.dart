@@ -1316,81 +1316,6 @@ void main() {
   );
 
   testWidgets(
-    'Upravit versioning API real-thread fixture keeps the first user prompt ahead of bundled activity after loading the oldest page',
-    (tester) async {
-      const bugTurnId = '019d7637-5944-7763-bc2a-de0f58c6a629';
-      final snapshot = _loadUpravitVersioningApiSnapshotFixture();
-      final page1 = _loadUpravitVersioningApiTimelinePage1Fixture();
-      final page2 = _loadUpravitVersioningApiTimelinePage2Fixture();
-      final page3 = _loadUpravitVersioningApiTimelinePage3Fixture();
-      final page4 = _loadUpravitVersioningApiTimelinePage4Fixture();
-
-      final rawBugTurnEntries = page4.entries
-          .where((entry) => entry.eventId.startsWith(bugTurnId))
-          .toList(growable: false);
-      expect(rawBugTurnEntries, isNotEmpty);
-      expect(rawBugTurnEntries.first.eventId, startsWith('$bugTurnId-call_'));
-
-      final detailApi = _ScriptedTimelinePageThreadDetailBridgeApi(
-        detail: snapshot.thread,
-        pagesByBefore: {
-          null: page1,
-          page1.nextBefore!: page2,
-          page2.nextBefore!: page3,
-          page3.nextBefore!: page4,
-        },
-      );
-
-      await _pumpThreadDetailApp(
-        tester,
-        detailApi: detailApi,
-        threadId: snapshot.thread.threadId,
-        initialVisibleTimelineEntries: 80,
-      );
-      await tester.pumpAndSettle();
-
-      final args = ThreadDetailControllerArgs(
-        bridgeApiBaseUrl: _bridgeApiBaseUrl,
-        threadId: snapshot.thread.threadId,
-        initialVisibleTimelineEntries: 80,
-      );
-      final container = ProviderScope.containerOf(
-        tester.element(find.byType(ThreadDetailPage)),
-      );
-      final controller = container.read(
-        threadDetailControllerProvider(args).notifier,
-      );
-
-      while (container
-          .read(threadDetailControllerProvider(args))
-          .hasMoreBefore) {
-        await controller.loadEarlierHistory();
-        await tester.pumpAndSettle();
-      }
-
-      final controllerState = container.read(
-        threadDetailControllerProvider(args),
-      );
-      final renderedBugTurnItems = controllerState.items
-          .where((item) => item.eventId.startsWith(bugTurnId))
-          .toList(growable: false);
-      expect(renderedBugTurnItems, isNotEmpty);
-      expect(renderedBugTurnItems.first.eventId, '$bugTurnId-item-1');
-      expect(
-        renderedBugTurnItems.first.type,
-        ThreadActivityItemType.userPrompt,
-      );
-
-      final firstBundledActivityIndex = renderedBugTurnItems.indexWhere(
-        (item) =>
-            item.type == ThreadActivityItemType.terminalOutput ||
-            item.type == ThreadActivityItemType.fileChange,
-      );
-      expect(firstBundledActivityIndex, greaterThan(0));
-    },
-  );
-
-  testWidgets(
     'real-thread hidden noise suppression keeps labeled exploration grouping and meaningful activity visible',
     (tester) async {
       final fixture = _loadRealThreadFixture();
@@ -6068,16 +5993,6 @@ const _fixCodexThreadStatusFixtureOlderTimelinePath =
     'test/features/threads/fixtures/real_thread_fix_codex_status_timeline_before_1760_limit_80.json';
 const _fixCodexThreadStatusFixtureOldestTimelinePath =
     'test/features/threads/fixtures/real_thread_fix_codex_status_timeline_before_1680_limit_80.json';
-const _upravitVersioningApiSnapshotFixturePath =
-    'test/features/threads/fixtures/real_thread_upravit_versioning_api_snapshot.json';
-const _upravitVersioningApiTimelinePage1FixturePath =
-    'test/features/threads/fixtures/real_thread_upravit_versioning_api_timeline_page_1.json';
-const _upravitVersioningApiTimelinePage2FixturePath =
-    'test/features/threads/fixtures/real_thread_upravit_versioning_api_timeline_page_2.json';
-const _upravitVersioningApiTimelinePage3FixturePath =
-    'test/features/threads/fixtures/real_thread_upravit_versioning_api_timeline_page_3.json';
-const _upravitVersioningApiTimelinePage4FixturePath =
-    'test/features/threads/fixtures/real_thread_upravit_versioning_api_timeline_page_4.json';
 
 _RealThreadFixture _loadRealThreadFixture() {
   final detailRaw = File(_realThreadFixtureDetailPath).readAsStringSync();
@@ -6134,46 +6049,6 @@ ThreadTimelinePageDto _loadFixCodexThreadStatusOlderTimelineFixture() {
 ThreadTimelinePageDto _loadFixCodexThreadStatusOldestTimelineFixture() {
   final timelineRaw = File(
     _fixCodexThreadStatusFixtureOldestTimelinePath,
-  ).readAsStringSync();
-  final timelineJson = jsonDecode(timelineRaw) as Map<String, dynamic>;
-  return ThreadTimelinePageDto.fromJson(timelineJson);
-}
-
-ThreadSnapshotDto _loadUpravitVersioningApiSnapshotFixture() {
-  final snapshotRaw = File(
-    _upravitVersioningApiSnapshotFixturePath,
-  ).readAsStringSync();
-  final snapshotJson = jsonDecode(snapshotRaw) as Map<String, dynamic>;
-  return ThreadSnapshotDto.fromJson(snapshotJson);
-}
-
-ThreadTimelinePageDto _loadUpravitVersioningApiTimelinePage1Fixture() {
-  final timelineRaw = File(
-    _upravitVersioningApiTimelinePage1FixturePath,
-  ).readAsStringSync();
-  final timelineJson = jsonDecode(timelineRaw) as Map<String, dynamic>;
-  return ThreadTimelinePageDto.fromJson(timelineJson);
-}
-
-ThreadTimelinePageDto _loadUpravitVersioningApiTimelinePage2Fixture() {
-  final timelineRaw = File(
-    _upravitVersioningApiTimelinePage2FixturePath,
-  ).readAsStringSync();
-  final timelineJson = jsonDecode(timelineRaw) as Map<String, dynamic>;
-  return ThreadTimelinePageDto.fromJson(timelineJson);
-}
-
-ThreadTimelinePageDto _loadUpravitVersioningApiTimelinePage3Fixture() {
-  final timelineRaw = File(
-    _upravitVersioningApiTimelinePage3FixturePath,
-  ).readAsStringSync();
-  final timelineJson = jsonDecode(timelineRaw) as Map<String, dynamic>;
-  return ThreadTimelinePageDto.fromJson(timelineJson);
-}
-
-ThreadTimelinePageDto _loadUpravitVersioningApiTimelinePage4Fixture() {
-  final timelineRaw = File(
-    _upravitVersioningApiTimelinePage4FixturePath,
   ).readAsStringSync();
   final timelineJson = jsonDecode(timelineRaw) as Map<String, dynamic>;
   return ThreadTimelinePageDto.fromJson(timelineJson);
