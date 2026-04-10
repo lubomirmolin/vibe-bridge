@@ -1,6 +1,10 @@
 part of 'thread_detail_page.dart';
 
 class _ThreadDetailBody extends StatelessWidget {
+  static const ValueKey<String> _timelineCenterSliverKey = ValueKey<String>(
+    'thread-detail-timeline-center-sliver',
+  );
+
   const _ThreadDetailBody({
     required this.state,
     required this.isReadOnlyMode,
@@ -25,6 +29,7 @@ class _ThreadDetailBody extends StatelessWidget {
     required this.onTimelineCardExpansionChanged,
     required this.timelineBlockMeasurementKey,
     required this.timelineScrollViewKey,
+    required this.timelineCenterBlockId,
   });
 
   final ThreadDetailState state;
@@ -52,6 +57,7 @@ class _ThreadDetailBody extends StatelessWidget {
   onTimelineCardExpansionChanged;
   final GlobalKey Function(String id) timelineBlockMeasurementKey;
   final GlobalKey timelineScrollViewKey;
+  final String? timelineCenterBlockId;
 
   @override
   Widget build(BuildContext context) {
@@ -85,6 +91,10 @@ class _ThreadDetailBody extends StatelessWidget {
     }
 
     final timelineBlocks = buildThreadTimelineBlocks(state.visibleItems);
+    final splitTimelineBlocks = _splitTimelineBlocks(
+      timelineBlocks: timelineBlocks,
+      timelineCenterBlockId: timelineCenterBlockId,
+    );
     final leadingChildren = _buildLeadingChildren(
       state: state,
       controlsEnabled: controlsEnabled,
@@ -97,12 +107,6 @@ class _ThreadDetailBody extends StatelessWidget {
       openOnMacErrorMessage: openOnMacErrorMessage,
     );
     final trailingChildren = _buildTrailingChildren(state: state);
-    final timelineItemCount =
-        state.isInitialTimelineLoading || state.visibleItems.isEmpty
-        ? 1
-        : timelineBlocks.length * 2;
-    final itemCount =
-        leadingChildren.length + timelineItemCount + trailingChildren.length;
 
     return RefreshIndicator(
       color: AppTheme.emerald,
@@ -117,7 +121,7 @@ class _ThreadDetailBody extends StatelessWidget {
         },
         child: KeyedSubtree(
           key: timelineScrollViewKey,
-          child: ListView.builder(
+          child: CustomScrollView(
             reverse: true,
             controller: scrollController,
             key: const Key('thread-detail-scroll-view'),
@@ -125,59 +129,87 @@ class _ThreadDetailBody extends StatelessWidget {
             physics: const AlwaysScrollableScrollPhysics(
               parent: BouncingScrollPhysics(),
             ),
-            // In a reversed list, `top` padding is rendered at the visual
-            // bottom (near the composer) and `bottom` at the visual top
-            // (behind the header).
-            padding: EdgeInsets.only(
-              left: 24,
-              right: 24,
-              top: hasPinnedComposer ? 140 : 16,
-              bottom: 212,
-            ),
-            itemCount: itemCount,
-            itemBuilder: (context, index) {
-              // In a reversed list index 0 is the visually bottommost item.
-              // We map reversed indices so that trailing children (active
-              // turn indicator) are at the visual bottom and leading
-              // children (warnings, "Timeline" label, earlier-history
-              // loader) are at the visual top.
-              final reversedIndex = itemCount - 1 - index;
-              Widget child;
-              if (reversedIndex < leadingChildren.length) {
-                child = leadingChildren[reversedIndex];
-              } else if (reversedIndex <
-                  leadingChildren.length + timelineItemCount) {
-                child = _buildTimelineChild(
-                  state: state,
-                  timelineBlocks: timelineBlocks,
-                  timelineIndex: reversedIndex - leadingChildren.length,
-                );
-              } else {
-                child =
-                    trailingChildren[reversedIndex -
-                        leadingChildren.length -
-                        timelineItemCount];
-              }
-
-              return Align(
-                alignment: Alignment.topCenter,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    maxWidth: _ThreadDetailPageState._sessionContentMaxWidth,
-                  ),
-                  child: SizedBox(
-                    key: reversedIndex == 0
-                        ? const Key('thread-detail-session-content')
-                        : null,
-                    width: double.infinity,
-                    child: child,
-                  ),
-                ),
-              );
-            },
+            center: _timelineCenterSliverKey,
+            slivers: [
+              _singleChildSliver(
+                SizedBox(height: hasPinnedComposer ? 140 : 16),
+                sessionKey: const Key('thread-detail-session-content'),
+              ),
+              _buildWrappedChildrenSliver(trailingChildren),
+              _buildTimelineSliver(
+                key: _timelineCenterSliverKey,
+                state: state,
+                timelineBlocks: splitTimelineBlocks.newerBlocks,
+                showEmptyTimelineState: true,
+              ),
+              _buildTimelineSliver(
+                state: state,
+                timelineBlocks: splitTimelineBlocks.olderBlocks,
+              ),
+              _buildWrappedChildrenSliver(leadingChildren),
+              _singleChildSliver(const SizedBox(height: 212)),
+            ],
           ),
         ),
       ),
+    );
+  }
+
+  SliverToBoxAdapter _singleChildSliver(Widget child, {Key? sessionKey}) {
+    return SliverToBoxAdapter(
+      child: _wrapSessionChild(child, sessionKey: sessionKey),
+    );
+  }
+
+  Widget _wrapSessionChild(Widget child, {Key? sessionKey}) {
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(
+          maxWidth: _ThreadDetailPageState._sessionContentMaxWidth,
+        ),
+        child: SizedBox(key: sessionKey, width: double.infinity, child: child),
+      ),
+    );
+  }
+
+  SliverList _buildWrappedChildrenSliver(List<Widget> children) {
+    return SliverList(
+      delegate: SliverChildBuilderDelegate((context, index) {
+        return _wrapSessionChild(children[index]);
+      }, childCount: children.length),
+    );
+  }
+
+  SliverList _buildTimelineSliver({
+    Key? key,
+    required ThreadDetailState state,
+    required List<ThreadTimelineBlock> timelineBlocks,
+    bool showEmptyTimelineState = false,
+  }) {
+    final showLoadingOrEmptyState =
+        showEmptyTimelineState &&
+        (state.isInitialTimelineLoading || state.visibleItems.isEmpty);
+    final timelineItemCount = showLoadingOrEmptyState
+        ? 1
+        : timelineBlocks.length * 2;
+
+    return SliverList(
+      key: key,
+      delegate: SliverChildBuilderDelegate((context, index) {
+        Widget child;
+        if (showLoadingOrEmptyState) {
+          child = state.isInitialTimelineLoading
+              ? const _TimelineLoadingState()
+              : const _EmptyTimelineState();
+        } else if (index.isOdd) {
+          child = const SizedBox(height: 12);
+        } else {
+          final block = timelineBlocks[index ~/ 2];
+          child = _buildTimelineBlockChild(block);
+        }
+        return _wrapSessionChild(child);
+      }, childCount: timelineItemCount),
     );
   }
 
@@ -271,22 +303,7 @@ class _ThreadDetailBody extends StatelessWidget {
     ];
   }
 
-  Widget _buildTimelineChild({
-    required ThreadDetailState state,
-    required List<ThreadTimelineBlock> timelineBlocks,
-    required int timelineIndex,
-  }) {
-    if (state.isInitialTimelineLoading) {
-      return const _TimelineLoadingState();
-    }
-    if (state.visibleItems.isEmpty) {
-      return const _EmptyTimelineState();
-    }
-    if (timelineIndex.isOdd) {
-      return const SizedBox(height: 12);
-    }
-
-    final block = timelineBlocks[timelineIndex ~/ 2];
+  Widget _buildTimelineBlockChild(ThreadTimelineBlock block) {
     final blockId = _timelineBlockKey(block);
     return KeyedSubtree(
       key: ValueKey(blockId),
@@ -317,6 +334,40 @@ class _ThreadDetailBody extends StatelessWidget {
     ];
   }
 
+  _TimelineBlockSplit _splitTimelineBlocks({
+    required List<ThreadTimelineBlock> timelineBlocks,
+    required String? timelineCenterBlockId,
+  }) {
+    if (timelineBlocks.isEmpty) {
+      return const _TimelineBlockSplit(
+        olderBlocks: <ThreadTimelineBlock>[],
+        newerBlocks: <ThreadTimelineBlock>[],
+      );
+    }
+
+    if (timelineCenterBlockId == null || timelineCenterBlockId.isEmpty) {
+      return _TimelineBlockSplit(
+        olderBlocks: const <ThreadTimelineBlock>[],
+        newerBlocks: timelineBlocks,
+      );
+    }
+
+    final centerIndex = timelineBlocks.indexWhere(
+      (block) => _timelineBlockKey(block) == timelineCenterBlockId,
+    );
+    if (centerIndex <= 0) {
+      return _TimelineBlockSplit(
+        olderBlocks: const <ThreadTimelineBlock>[],
+        newerBlocks: timelineBlocks,
+      );
+    }
+
+    return _TimelineBlockSplit(
+      olderBlocks: timelineBlocks.sublist(0, centerIndex),
+      newerBlocks: timelineBlocks.sublist(centerIndex),
+    );
+  }
+
   String _timelineBlockKey(ThreadTimelineBlock block) {
     final item = block.item;
     if (item != null) {
@@ -335,6 +386,16 @@ class _ThreadDetailBody extends StatelessWidget {
 
     return 'timeline-block';
   }
+}
+
+class _TimelineBlockSplit {
+  const _TimelineBlockSplit({
+    required this.olderBlocks,
+    required this.newerBlocks,
+  });
+
+  final List<ThreadTimelineBlock> olderBlocks;
+  final List<ThreadTimelineBlock> newerBlocks;
 }
 
 class _ThreadTimelineBlockView extends StatelessWidget {

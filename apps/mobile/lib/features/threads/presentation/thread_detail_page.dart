@@ -225,6 +225,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   final Map<String, GlobalKey> _timelineBlockMeasurementKeys =
       <String, GlobalKey>{};
   List<String> _timelineBlockOrder = const <String>[];
+  String? _timelineCenterBlockId;
   bool? _lastObservedWideLayout;
   bool _isWideLayoutExitScheduled = false;
   int _modelCatalogLoadEpoch = 0;
@@ -691,9 +692,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       position.maxScrollExtent,
     );
     final scrollDelta = currentOffset - _lastScrollOffset;
-    // In a reversed list, increasing offset means the user is scrolling
-    // toward *older* content (visually upward).
-    final isScrollingTowardOlder = currentOffset > _lastScrollOffset;
+    final isScrollingTowardOlder = currentOffset < _lastScrollOffset;
 
     if (isScrollingTowardOlder != _isScrollingDown) {
       _isScrollingDown = isScrollingTowardOlder;
@@ -703,14 +702,17 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     final scrollDeltaSinceDirectionChange =
         currentOffset - _scrollOffsetOnDirectionChange;
 
-    // Collapse the header when the user scrolls toward older content (up).
+    final headerCollapseThreshold = math.max(
+      position.minScrollExtent + 100,
+      position.maxScrollExtent - 140,
+    );
     if (isScrollingTowardOlder &&
-        scrollDeltaSinceDirectionChange > 30 &&
+        scrollDeltaSinceDirectionChange < -30 &&
         !_isHeaderCollapsed.value &&
-        currentOffset > 100) {
+        currentOffset < headerCollapseThreshold) {
       _isHeaderCollapsed.value = true;
     } else if (!isScrollingTowardOlder &&
-        scrollDeltaSinceDirectionChange < -30 &&
+        scrollDeltaSinceDirectionChange > 30 &&
         _isHeaderCollapsed.value) {
       _isHeaderCollapsed.value = false;
     }
@@ -720,9 +722,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     final isNearBottom = _isTimelineNearBottom(currentOffset: currentOffset);
     if (isNearBottom) {
       _isTimelineAutoFollowEnabled = true;
-    } else if (scrollDelta > 24) {
-      // In a reversed list, scrolling *away* from the bottom means offset
-      // is increasing, so we disable auto-follow when delta > 0.
+    } else if (scrollDelta < -24) {
       _isTimelineAutoFollowEnabled = false;
     }
     if (isNearBottom && _showNewMessagePill.value) {
@@ -746,9 +746,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
           position.minScrollExtent,
           position.maxScrollExtent,
         );
-    // In a reversed list, offset 0 is the visual bottom (newest content).
-    // "Near bottom" means the offset is close to minScrollExtent.
-    final distanceFromBottom = effectiveOffset - position.minScrollExtent;
+    final distanceFromBottom = position.maxScrollExtent - effectiveOffset;
     final effectiveTolerance = math.min(
       tolerance,
       position.maxScrollExtent * 0.25,
@@ -765,14 +763,13 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     }
 
     final position = _timelineScrollController.position;
-    // In a reversed list, older content is at maxScrollExtent. Trigger
-    // earlier history load when the user scrolls close to maxScrollExtent.
-    if (position.pixels <
-        position.maxScrollExtent - _historyPrefetchTriggerOffset) {
+    if (position.pixels >
+        position.minScrollExtent + _historyPrefetchTriggerOffset) {
       return;
     }
 
     final previousOffset = position.pixels;
+    final previousMinScrollExtent = position.minScrollExtent;
     final previousMaxScrollExtent = position.maxScrollExtent;
     final anchor = _captureLeadingVisibleTimelineAnchor();
     final loadEarlierHistory = _loadEarlierHistory;
@@ -784,6 +781,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       _stabilizeEarlierHistoryOffset(
         anchor: anchor,
         previousOffset: previousOffset,
+        previousMinScrollExtent: previousMinScrollExtent,
         previousMaxScrollExtent: previousMaxScrollExtent,
       );
     });
@@ -792,10 +790,11 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
   void _stabilizeEarlierHistoryOffset({
     _TimelineViewportAnchor? anchor,
     required double previousOffset,
+    required double previousMinScrollExtent,
     required double previousMaxScrollExtent,
     int remainingFrames = 12,
     int stableFrameCount = 0,
-    double? previousObservedMaxScrollExtent,
+    double? previousObservedScrollExtent,
   }) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_timelineScrollController.hasClients) {
@@ -804,10 +803,6 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       }
 
       final position = _timelineScrollController.position;
-      // In a reversed list, prepending older items extends maxScrollExtent
-      // while the current scroll offset (anchored to the newest/bottom end)
-      // naturally stays stable. We still use the visual anchor when
-      // available to correct any layout-driven drift.
       final anchorDelta = _timelineAnchorDelta(anchor);
       if (anchorDelta != null && anchorDelta.abs() >= 0.5) {
         final compensatedOffset = clampDouble(
@@ -819,11 +814,16 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
           _timelineScrollController.jumpTo(compensatedOffset);
         }
       } else {
-        final insertedExtent =
+        final minExtentDelta =
+            position.minScrollExtent - previousMinScrollExtent;
+        final maxExtentDelta =
             position.maxScrollExtent - previousMaxScrollExtent;
-        if (insertedExtent > 0) {
+        final inferredExtentDelta = minExtentDelta.abs() >= maxExtentDelta.abs()
+            ? minExtentDelta
+            : maxExtentDelta;
+        if (inferredExtentDelta.abs() >= 0.5) {
           final compensatedOffset = clampDouble(
-            previousOffset + insertedExtent,
+            previousOffset + inferredExtentDelta,
             position.minScrollExtent,
             position.maxScrollExtent,
           );
@@ -833,10 +833,11 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
         }
       }
 
+      final totalScrollExtent =
+          position.maxScrollExtent - position.minScrollExtent;
       final hasStableExtent =
-          previousObservedMaxScrollExtent != null &&
-          (position.maxScrollExtent - previousObservedMaxScrollExtent).abs() <
-              0.5;
+          previousObservedScrollExtent != null &&
+          (totalScrollExtent - previousObservedScrollExtent).abs() < 0.5;
       final nextStableFrameCount = hasStableExtent ? stableFrameCount + 1 : 0;
       if (remainingFrames <= 0 || nextStableFrameCount >= 2) {
         _isAutoLoadingEarlierHistory = false;
@@ -846,10 +847,11 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       _stabilizeEarlierHistoryOffset(
         anchor: anchor,
         previousOffset: previousOffset,
+        previousMinScrollExtent: previousMinScrollExtent,
         previousMaxScrollExtent: previousMaxScrollExtent,
         remainingFrames: remainingFrames - 1,
         stableFrameCount: nextStableFrameCount,
-        previousObservedMaxScrollExtent: position.maxScrollExtent,
+        previousObservedScrollExtent: totalScrollExtent,
       );
     });
   }
@@ -878,6 +880,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       _isTimelineAutoFollowEnabled = true;
       _timelineBottomFollowRunId += 1;
       _timelineExpansionState.clear();
+      _timelineCenterBlockId = null;
       _threadUsage = null;
       unawaited(_restorePersistedComposerDraft());
       unawaited(_loadComposerModelCatalog());
@@ -987,17 +990,14 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       return;
     }
     _didInitialScrollToBottom = true;
-    // In a reversed list the initial scroll position is already at offset 0
-    // (the visual bottom / newest content), so no jump is needed. We just
-    // mark the flag to prevent future re-entry.
+    _followTimelineBottomUntilSettled();
   }
 
   /// Scrolls to the visual bottom of the timeline (newest content).
-  /// In a reversed list this means jumping to minScrollExtent (offset 0).
   void _followTimelineBottomUntilSettled({
     int remainingFrames = 12,
     int stableFrameCount = 0,
-    double? previousMinScrollExtent,
+    double? previousMaxScrollExtent,
     int? runId,
   }) {
     final activeRunId = runId ?? ++_timelineBottomFollowRunId;
@@ -1021,15 +1021,15 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       }
 
       final position = _timelineScrollController.position;
-      final minScrollExtent = position.minScrollExtent;
+      final maxScrollExtent = position.maxScrollExtent;
       _isTimelineAutoFollowEnabled = true;
-      if ((position.pixels - minScrollExtent).abs() > 0.5) {
-        _timelineScrollController.jumpTo(minScrollExtent);
+      if ((position.pixels - maxScrollExtent).abs() > 0.5) {
+        _timelineScrollController.jumpTo(maxScrollExtent);
       }
 
       final hasStableExtent =
-          previousMinScrollExtent != null &&
-          (minScrollExtent - previousMinScrollExtent).abs() < 0.5;
+          previousMaxScrollExtent != null &&
+          (maxScrollExtent - previousMaxScrollExtent).abs() < 0.5;
       final nextStableFrameCount = hasStableExtent ? stableFrameCount + 1 : 0;
       if (remainingFrames <= 0 || nextStableFrameCount >= 2) {
         return;
@@ -1038,7 +1038,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       _followTimelineBottomUntilSettled(
         remainingFrames: remainingFrames - 1,
         stableFrameCount: nextStableFrameCount,
-        previousMinScrollExtent: minScrollExtent,
+        previousMaxScrollExtent: maxScrollExtent,
         runId: activeRunId,
       );
     });
@@ -1149,6 +1149,21 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     return 'timeline-block';
   }
 
+  void _syncTimelineCenterBlockId() {
+    if (_timelineBlockOrder.isEmpty) {
+      _timelineCenterBlockId = null;
+      return;
+    }
+
+    final existingCenter = _timelineCenterBlockId;
+    if (existingCenter != null &&
+        _timelineBlockOrder.contains(existingCenter)) {
+      return;
+    }
+
+    _timelineCenterBlockId = _timelineBlockOrder.first;
+  }
+
   void _setTimelineCardExpanded(String id, bool isExpanded) {
     if (_timelineExpansionState[id] == isExpanded) {
       return;
@@ -1164,10 +1179,8 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
       if (!mounted || !_timelineScrollController.hasClients) return;
       final position = _timelineScrollController.position;
       _isTimelineAutoFollowEnabled = true;
-      // In a reversed list, the visual bottom (newest content) is at
-      // minScrollExtent (offset 0).
       _timelineScrollController.animateTo(
-        position.minScrollExtent,
+        position.maxScrollExtent,
         duration: const Duration(milliseconds: 250),
         curve: Curves.easeOutCubic,
       );
@@ -1550,17 +1563,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     }
 
     _markTimelineUserScroll();
-    if (!_isTimelineNearBottom(tolerance: 180)) {
-      _isTimelineAutoFollowEnabled = false;
-      return;
-    }
-
-    // In a reversed list, ScrollDirection.forward means the user is
-    // dragging toward the visual bottom (newer content), which is the
-    // direction where auto-follow should re-engage.
-    if (direction == ScrollDirection.forward) {
-      _isTimelineAutoFollowEnabled = true;
-    }
+    _isTimelineAutoFollowEnabled = _isTimelineNearBottom(tolerance: 180);
   }
 
   Future<void> _showGitBranchSheet(
@@ -2266,6 +2269,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
     _timelineBlockOrder = buildThreadTimelineBlocks(
       state.visibleItems,
     ).map(_timelineBlockId).toList(growable: false);
+    _syncTimelineCenterBlockId();
 
     if (state.hasThread &&
         !state.isInitialTimelineLoading &&
@@ -2346,6 +2350,7 @@ class _ThreadDetailPageState extends ConsumerState<ThreadDetailPage>
                   onTimelineCardExpansionChanged: _setTimelineCardExpanded,
                   timelineBlockMeasurementKey: _timelineBlockMeasurementKey,
                   timelineScrollViewKey: _timelineScrollViewKey,
+                  timelineCenterBlockId: _timelineCenterBlockId,
                 ),
                 Positioned(
                   top: 0,

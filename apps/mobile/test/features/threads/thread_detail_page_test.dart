@@ -1120,18 +1120,21 @@ void main() {
       final scrollViewFinder = find.byKey(
         const Key('thread-detail-scroll-view'),
       );
-      final scrollView = tester.widget<ListView>(scrollViewFinder);
-      final scrollController = scrollView.controller!;
-      scrollController.jumpTo(scrollController.position.maxScrollExtent - 40);
+      final scrollPosition = _threadDetailScrollPosition(tester);
+      final anchorOffset = scrollPosition.minScrollExtent + 40;
+      scrollPosition.jumpTo(anchorOffset);
       await tester.pump();
 
-      await tester.drag(scrollViewFinder, const Offset(0, -80));
+      await tester.drag(scrollViewFinder, const Offset(0, 80));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
       await tester.pumpAndSettle();
 
       expect(detailApi.timelineFetchCount, 2);
-      expect(scrollController.offset, greaterThan(60));
+      expect(
+        scrollPosition.pixels,
+        greaterThan(scrollPosition.minScrollExtent + 20),
+      );
     },
   );
 
@@ -1243,12 +1246,12 @@ void main() {
       final scrollViewFinder = find.byKey(
         const Key('thread-detail-scroll-view'),
       );
-      final scrollView = tester.widget<ListView>(scrollViewFinder);
-      final scrollController = scrollView.controller!;
-      scrollController.jumpTo(scrollController.position.maxScrollExtent - 40);
+      final scrollPosition = _threadDetailScrollPosition(tester);
+      final anchorOffset = scrollPosition.minScrollExtent + 40;
+      scrollPosition.jumpTo(anchorOffset);
       await tester.pump();
 
-      await tester.drag(scrollViewFinder, const Offset(0, -80));
+      await tester.drag(scrollViewFinder, const Offset(0, 80));
       await tester.pump();
       await _pumpUntilCondition(
         tester,
@@ -1258,7 +1261,10 @@ void main() {
 
       expect(detailApi.historyRequests.length, 2);
       expect(detailApi.historyRequests[1].before, latestPageFixture.nextBefore);
-      expect(scrollController.offset, greaterThan(60));
+      expect(
+        scrollPosition.pixels,
+        greaterThan(scrollPosition.minScrollExtent + 20),
+      );
     },
   );
 
