@@ -1538,6 +1538,7 @@ fn parse_archived_session(
     let mut timeline = Vec::new();
     let mut last_turn_summary: Option<String> = None;
     let mut visible_message_fingerprints = HashSet::new();
+    let mut tool_calls_by_id = HashMap::new();
     let thread_id = provider_thread_id(ProviderKind::Codex, &index_entry.id);
 
     for line in raw.lines().filter(|line| !line.trim().is_empty()) {
@@ -1598,6 +1599,7 @@ fn parse_archived_session(
             &payload,
             timeline.len() as u64 + 1,
             cwd.as_deref(),
+            &mut tool_calls_by_id,
         ) {
             if let Some(fingerprint) = archived_message_fingerprint(&event)
                 && !visible_message_fingerprints.insert(fingerprint)
@@ -1682,6 +1684,7 @@ fn map_archived_session_event(
     payload: &Value,
     sequence: u64,
     workspace_path: Option<&str>,
+    tool_calls_by_id: &mut HashMap<String, ArchivedCodexToolCallMetadata>,
 ) -> Option<UpstreamTimelineEvent> {
     match record_type {
         "event_msg" => {
@@ -1792,6 +1795,7 @@ fn map_archived_session_event(
                         .get("name")
                         .and_then(Value::as_str)
                         .unwrap_or("command");
+                    record_archived_codex_tool_call(payload, tool_calls_by_id);
                     if name == "update_plan"
                         && let Some(plan_data) =
                             normalize_archived_update_plan_payload(payload.get("arguments"))
@@ -1825,17 +1829,34 @@ fn map_archived_session_event(
                         .get("output")
                         .and_then(Value::as_str)
                         .unwrap_or_default();
+                    let tool_call_metadata = payload
+                        .get("call_id")
+                        .and_then(Value::as_str)
+                        .and_then(|call_id| tool_calls_by_id.get(call_id));
                     let summary = if output.trim().is_empty() {
                         "Command completed".to_string()
                     } else {
                         truncate_summary(output)
                     };
+                    let mut data = payload.clone();
+                    if let Some(object) = data.as_object_mut()
+                        && let Some(tool_call_metadata) = tool_call_metadata
+                    {
+                        object.insert(
+                            "command".to_string(),
+                            Value::String(tool_call_metadata.command.clone()),
+                        );
+                        if !object.contains_key("arguments") {
+                            object
+                                .insert("arguments".to_string(), tool_call_metadata.input.clone());
+                        }
+                    }
                     Some(UpstreamTimelineEvent {
                         id: format!("{thread_id}-archive-{sequence}"),
                         event_type: "command_output_delta".to_string(),
                         happened_at: timestamp.to_string(),
                         summary_text: summary,
-                        data: payload.clone(),
+                        data,
                     })
                 }
                 "custom_tool_call" => {
@@ -1843,6 +1864,7 @@ fn map_archived_session_event(
                         .get("name")
                         .and_then(Value::as_str)
                         .unwrap_or("custom_tool");
+                    record_archived_codex_tool_call(payload, tool_calls_by_id);
                     if tool_name == "update_plan"
                         && let Some(plan_data) =
                             normalize_archived_update_plan_payload(payload.get("input"))
@@ -1904,7 +1926,13 @@ fn map_archived_session_event(
                         .and_then(Value::as_str)
                         .unwrap_or_default();
                     let normalized_output = normalize_custom_tool_output(output);
-                    let is_file_change = is_file_change_text(&normalized_output);
+                    let tool_call_metadata = payload
+                        .get("call_id")
+                        .and_then(Value::as_str)
+                        .and_then(|call_id| tool_calls_by_id.get(call_id));
+                    let is_file_change = tool_call_metadata
+                        .map(|metadata| metadata.is_file_change)
+                        .unwrap_or_else(|| is_file_change_text(&normalized_output));
                     let summary = if normalized_output.trim().is_empty() {
                         if is_file_change {
                             "File change completed".to_string()
@@ -1918,6 +1946,18 @@ fn map_archived_session_event(
                     let mut data = payload.clone();
                     if let Some(object) = data.as_object_mut() {
                         object.insert("output".to_string(), Value::String(normalized_output));
+                        if let Some(tool_call_metadata) = tool_call_metadata {
+                            object.insert(
+                                "command".to_string(),
+                                Value::String(tool_call_metadata.command.clone()),
+                            );
+                            if !object.contains_key("arguments") {
+                                object.insert(
+                                    "arguments".to_string(),
+                                    tool_call_metadata.input.clone(),
+                                );
+                            }
+                        }
                     }
 
                     Some(UpstreamTimelineEvent {
@@ -2022,6 +2062,48 @@ fn map_archived_session_event(
         }
         _ => None,
     }
+}
+
+#[derive(Debug, Clone)]
+struct ArchivedCodexToolCallMetadata {
+    command: String,
+    input: Value,
+    is_file_change: bool,
+}
+
+fn record_archived_codex_tool_call(
+    payload: &Value,
+    tool_calls_by_id: &mut HashMap<String, ArchivedCodexToolCallMetadata>,
+) {
+    let Some(call_id) = payload.get("call_id").and_then(Value::as_str) else {
+        return;
+    };
+    if call_id.trim().is_empty() {
+        return;
+    }
+
+    let command = payload
+        .get("name")
+        .and_then(Value::as_str)
+        .or_else(|| payload.get("command").and_then(Value::as_str))
+        .unwrap_or("command")
+        .to_string();
+    let input = payload
+        .get("input")
+        .cloned()
+        .or_else(|| payload.get("arguments").cloned())
+        .unwrap_or(Value::Null);
+    let input_text = value_to_text(&input).unwrap_or_default();
+    let is_file_change = is_file_change_custom_tool(&command) || is_file_change_text(&input_text);
+
+    tool_calls_by_id.insert(
+        call_id.to_string(),
+        ArchivedCodexToolCallMetadata {
+            command,
+            input,
+            is_file_change,
+        },
+    );
 }
 
 fn normalize_archived_update_plan_payload(input: Option<&Value>) -> Option<Value> {
@@ -2519,6 +2601,7 @@ mod tests {
 
     #[test]
     fn archived_task_events_map_to_thread_status_changes() {
+        let mut tool_calls_by_id = HashMap::new();
         let started = map_archived_session_event(
             "codex:thread-123",
             "2026-03-19T10:00:00Z",
@@ -2526,6 +2609,7 @@ mod tests {
             &json!({"type": "task_started"}),
             1,
             Some("/Users/test/workspace"),
+            &mut tool_calls_by_id,
         )
         .expect("task_started should map to a status event");
         assert_eq!(started.event_type, "thread_status_changed");
@@ -2538,6 +2622,7 @@ mod tests {
             &json!({"type": "task_complete"}),
             2,
             Some("/Users/test/workspace"),
+            &mut tool_calls_by_id,
         )
         .expect("task_complete should map to a status event");
         assert_eq!(completed.event_type, "thread_status_changed");

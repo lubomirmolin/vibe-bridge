@@ -185,6 +185,74 @@ fn archived_custom_tool_file_changes_map_to_file_change_events() {
 }
 
 #[test]
+fn archived_codex_tool_outputs_inherit_command_metadata_by_call_id() {
+    let codex_home = unique_test_codex_home();
+    let sessions_directory = codex_home.join("sessions/2026/04/10");
+    fs::create_dir_all(&sessions_directory).expect("test sessions directory should exist");
+    fs::write(
+        codex_home.join("session_index.jsonl"),
+        r#"{"id":"thread-archive-call-id","thread_name":"Hydrate tool outputs","updated_at":"2026-04-10T10:00:00Z"}"#,
+    )
+    .expect("session index should be writable");
+
+    let session_path =
+        sessions_directory.join("rollout-2026-04-10T10-00-00-thread-archive-call-id.jsonl");
+    let entries = vec![
+        json!({
+            "timestamp":"2026-04-10T09:55:00Z",
+            "type":"session_meta",
+            "payload":{
+                "id":"thread-archive-call-id",
+                "timestamp":"2026-04-10T09:55:00Z",
+                "cwd":"/Users/test/workspace",
+                "source":"cli"
+            }
+        }),
+        json!({
+            "timestamp":"2026-04-10T09:56:00Z",
+            "type":"response_item",
+            "payload":{
+                "type":"function_call",
+                "name":"exec_command",
+                "call_id":"call-1",
+                "arguments":{"cmd":"rg -n title crates/bridge-core"}
+            }
+        }),
+        json!({
+            "timestamp":"2026-04-10T09:56:01Z",
+            "type":"response_item",
+            "payload":{
+                "type":"function_call_output",
+                "call_id":"call-1",
+                "output":"Command: /bin/zsh -lc 'rg -n title crates/bridge-core'\nOutput:\ncrates/bridge-core/src/thread_api/archive.rs:1:title"
+            }
+        }),
+    ];
+    let content = entries
+        .into_iter()
+        .map(|entry| entry.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(session_path, format!("{content}\n")).expect("session log should be writable");
+
+    let (_, timeline) = super::load_thread_snapshot_from_codex_archive(&codex_home)
+        .expect("archive fallback should load");
+
+    let thread_timeline = timeline
+        .get(&codex_thread_id("thread-archive-call-id"))
+        .expect("timeline should exist for archived thread");
+    assert_eq!(thread_timeline.len(), 2);
+    assert_eq!(thread_timeline[1].event_type, "command_output_delta");
+    assert_eq!(thread_timeline[1].data["command"], "exec_command");
+    assert_eq!(
+        thread_timeline[1].data["arguments"]["cmd"],
+        "rg -n title crates/bridge-core"
+    );
+
+    let _ = fs::remove_dir_all(codex_home);
+}
+
+#[test]
 fn archived_web_search_calls_map_to_command_events() {
     let codex_home = unique_test_codex_home();
     let sessions_directory = codex_home.join("sessions/2026/03/19");

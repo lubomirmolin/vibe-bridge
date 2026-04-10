@@ -361,6 +361,50 @@ fn codex_notification_normalizer_preserves_apply_patch_name_on_output_items() {
 }
 
 #[test]
+fn codex_notification_normalizer_recovers_tool_metadata_for_output_items_by_call_id() {
+    let mut normalizer = CodexNotificationNormalizer::default();
+
+    let invocation = normalizer
+        .normalize(
+            "thread/realtime/itemAdded",
+            &json!({
+                "threadId": "thread-123",
+                "item": {
+                    "id": "tool-1",
+                    "type": "functionCall",
+                    "name": "exec_command",
+                    "call_id": "call-1",
+                    "arguments": {"cmd": "rg -n title crates/bridge-core"}
+                }
+            }),
+        )
+        .expect("tool invocation should produce a command event");
+    assert_eq!(invocation.payload["command"], "exec_command");
+
+    let output = normalizer
+        .normalize(
+            "thread/realtime/itemAdded",
+            &json!({
+                "threadId": "thread-123",
+                "item": {
+                    "id": "tool-2",
+                    "type": "functionCallOutput",
+                    "call_id": "call-1",
+                    "output": "Command: /bin/zsh -lc 'rg -n title crates/bridge-core'\nOutput:\ncrates/bridge-core/src/thread_api/archive.rs:1:title"
+                }
+            }),
+        )
+        .expect("tool output item should produce an event");
+
+    assert_eq!(output.kind, BridgeEventKind::CommandDelta);
+    assert_eq!(output.payload["command"], "exec_command");
+    assert_eq!(
+        output.payload["arguments"]["cmd"],
+        "rg -n title crates/bridge-core"
+    );
+}
+
+#[test]
 fn codex_notification_normalizer_maps_web_search_items_to_command_events() {
     let mut normalizer = CodexNotificationNormalizer::default();
 

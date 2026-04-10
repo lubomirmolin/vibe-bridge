@@ -30,6 +30,14 @@ pub(crate) struct CodexNotificationNormalizer {
     active_turn_id_by_thread: HashMap<String, String>,
     items_by_event_id: HashMap<String, Value>,
     message_event_ids_with_delta: HashSet<String>,
+    tool_calls_by_call_id: HashMap<String, CodexToolCallMetadata>,
+}
+
+#[derive(Debug, Clone)]
+struct CodexToolCallMetadata {
+    command: String,
+    input: Value,
+    is_file_change: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -251,6 +259,7 @@ impl CodexNotificationNormalizer {
         let event_id = turn_id
             .map(|turn_id| format!("{turn_id}-{item_id}"))
             .unwrap_or_else(|| self.event_id_for_item(&thread_id, &item_id));
+        self.record_tool_call_metadata(&item);
         self.items_by_event_id
             .insert(event_id.clone(), item.clone());
 
@@ -262,7 +271,7 @@ impl CodexNotificationNormalizer {
             }
         }
 
-        let (kind, payload) = normalize_realtime_item_payload(&item)?;
+        let (kind, payload) = self.normalize_realtime_item_payload(&item)?;
         if !should_publish_live_payload(kind, &payload) {
             return None;
         }
@@ -293,6 +302,7 @@ impl CodexNotificationNormalizer {
             });
 
         apply_delta_to_item_payload(payload, &notification.delta, target);
+        let normalized_item = payload.clone();
         if matches!(canonical_item_type, "agentMessage" | "userMessage") {
             self.message_event_ids_with_delta.insert(event_id.clone());
         }
@@ -327,7 +337,7 @@ impl CodexNotificationNormalizer {
                     "replace": false,
                 }),
             ),
-            _ => normalize_realtime_item_payload(payload)?,
+            _ => self.normalize_realtime_item_payload(&normalized_item)?,
         };
         if !should_publish_live_payload(kind, &normalized_payload) {
             return None;
@@ -346,6 +356,51 @@ impl CodexNotificationNormalizer {
             .get(thread_id)
             .map(|turn_id| format!("{turn_id}-{item_id}"))
             .unwrap_or_else(|| item_id.to_string())
+    }
+
+    fn record_tool_call_metadata(&mut self, item: &Value) {
+        let Some(call_id) = item.get("call_id").and_then(Value::as_str) else {
+            return;
+        };
+        if call_id.trim().is_empty() {
+            return;
+        }
+        let item_type = item
+            .get("type")
+            .and_then(Value::as_str)
+            .map(canonicalize_codex_item_type)
+            .unwrap_or_default();
+        if !matches!(item_type, "functionCall" | "customToolCall") {
+            return;
+        }
+
+        let command = item
+            .get("name")
+            .and_then(Value::as_str)
+            .or_else(|| item.get("command").and_then(Value::as_str))
+            .unwrap_or("command")
+            .to_string();
+        let input = item
+            .get("input")
+            .cloned()
+            .or_else(|| item.get("arguments").cloned())
+            .unwrap_or(Value::Null);
+        let input_text = value_to_text(&input).unwrap_or_default();
+        let is_file_change =
+            is_file_change_custom_tool(&command) || is_file_change_text(&input_text);
+
+        self.tool_calls_by_call_id.insert(
+            call_id.to_string(),
+            CodexToolCallMetadata {
+                command,
+                input,
+                is_file_change,
+            },
+        );
+    }
+
+    fn normalize_realtime_item_payload(&self, item: &Value) -> Option<(BridgeEventKind, Value)> {
+        normalize_codex_item_payload_with_tool_calls(item, None, &self.tool_calls_by_call_id)
     }
 }
 
@@ -376,10 +431,6 @@ enum ItemLifecyclePhase {
     Added,
     Started,
     Completed,
-}
-
-pub(super) fn normalize_realtime_item_payload(item: &Value) -> Option<(BridgeEventKind, Value)> {
-    normalize_codex_item_payload(item, None)
 }
 
 pub(crate) fn should_publish_live_payload(kind: BridgeEventKind, payload: &Value) -> bool {
@@ -427,6 +478,14 @@ pub(crate) fn normalize_codex_item_payload(
     item: &Value,
     workspace_path: Option<&str>,
 ) -> Option<(BridgeEventKind, Value)> {
+    normalize_codex_item_payload_with_tool_calls(item, workspace_path, &HashMap::new())
+}
+
+fn normalize_codex_item_payload_with_tool_calls(
+    item: &Value,
+    workspace_path: Option<&str>,
+    tool_calls_by_call_id: &HashMap<String, CodexToolCallMetadata>,
+) -> Option<(BridgeEventKind, Value)> {
     let item_type = canonicalize_codex_item_type(item.get("type").and_then(Value::as_str)?);
     match item_type {
         "userMessage" => Some((
@@ -462,7 +521,9 @@ pub(crate) fn normalize_codex_item_payload(
         "functionCall" | "customToolCall" => {
             normalize_codex_tool_invocation_item(item, workspace_path)
         }
-        "functionCallOutput" | "customToolCallOutput" => normalize_codex_tool_output_item(item),
+        "functionCallOutput" | "customToolCallOutput" => {
+            normalize_codex_tool_output_item(item, tool_calls_by_call_id)
+        }
         _ => None,
     }
 }
@@ -692,17 +753,27 @@ fn render_update_plan_text(
     lines.join("\n")
 }
 
-fn normalize_codex_tool_output_item(item: &Value) -> Option<(BridgeEventKind, Value)> {
+fn normalize_codex_tool_output_item(
+    item: &Value,
+    tool_calls_by_call_id: &HashMap<String, CodexToolCallMetadata>,
+) -> Option<(BridgeEventKind, Value)> {
     let output = item
         .get("output")
         .and_then(Value::as_str)
         .unwrap_or_default();
     let normalized_output = normalize_custom_tool_output(output);
-    let is_file_change = is_file_change_text(&normalized_output);
+    let tool_metadata = item
+        .get("call_id")
+        .and_then(Value::as_str)
+        .and_then(|call_id| tool_calls_by_call_id.get(call_id));
+    let is_file_change = tool_metadata
+        .map(|metadata| metadata.is_file_change)
+        .unwrap_or_else(|| is_file_change_text(&normalized_output));
     let tool_name = item
         .get("name")
         .and_then(Value::as_str)
         .or_else(|| item.get("command").and_then(Value::as_str))
+        .or_else(|| tool_metadata.map(|metadata| metadata.command.as_str()))
         .unwrap_or_default();
 
     let mut payload = item.clone();
@@ -710,6 +781,11 @@ fn normalize_codex_tool_output_item(item: &Value) -> Option<(BridgeEventKind, Va
         object.insert("output".to_string(), Value::String(normalized_output));
         if !tool_name.trim().is_empty() {
             object.insert("command".to_string(), Value::String(tool_name.to_string()));
+        }
+        if let Some(tool_metadata) = tool_metadata
+            && !object.contains_key("arguments")
+        {
+            object.insert("arguments".to_string(), tool_metadata.input.clone());
         }
     }
 
